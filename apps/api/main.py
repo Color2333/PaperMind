@@ -8,7 +8,13 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
+from packages.ai.agent_service import (
+    confirm_action,
+    reject_action,
+    stream_chat,
+)
 from packages.ai.brief_service import DailyBriefService
 from packages.ai.daily_runner import (
     run_daily_brief,
@@ -21,6 +27,7 @@ from packages.ai.rag_service import RAGService
 from packages.config import get_settings
 from packages.domain.enums import ReadStatus
 from packages.domain.schemas import (
+    AgentChatRequest,
     AskRequest,
     AskResponse,
     DailyBriefRequest,
@@ -44,6 +51,15 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _iso(dt: datetime | None) -> str | None:
+    """确保返回带时区的 ISO 格式（SQLite 读出来的可能是 naive datetime）"""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.isoformat()
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -106,7 +122,7 @@ def system_status() -> dict:
                 {
                     "pipeline_name": runs[0].pipeline_name,
                     "status": runs[0].status.value,
-                    "created_at": runs[0].created_at.isoformat(),
+                    "created_at": _iso(runs[0].created_at),
                     "error_message": runs[0].error_message,
                 }
                 if runs
@@ -373,7 +389,7 @@ def list_pipeline_runs(
                     "decision_note": r.decision_note,
                     "elapsed_ms": r.elapsed_ms,
                     "error_message": r.error_message,
-                    "created_at": r.created_at.isoformat(),
+                    "created_at": _iso(r.created_at),
                 }
                 for r in runs
             ]
@@ -420,6 +436,8 @@ def latest(
             )
         else:
             papers = repo.list_latest(limit=limit)
+        paper_ids = [str(p.id) for p in papers]
+        topic_map = repo.get_topic_names_for_papers(paper_ids)
         return {
             "items": [
                 {
@@ -427,14 +445,15 @@ def latest(
                     "title": p.title,
                     "arxiv_id": p.arxiv_id,
                     "abstract": p.abstract,
-                    "publication_date": (
-                        p.publication_date.isoformat()
-                        if p.publication_date
-                        else None
-                    ),
+                    "publication_date": str(p.publication_date) if p.publication_date else None,
                     "read_status": p.read_status.value,
                     "pdf_path": p.pdf_path,
                     "has_embedding": p.embedding is not None,
+                    "categories": (p.metadata_json or {}).get("categories", []),
+                    "keywords": (p.metadata_json or {}).get("keywords", []),
+                    "title_zh": (p.metadata_json or {}).get("title_zh", ""),
+                    "abstract_zh": (p.metadata_json or {}).get("abstract_zh", ""),
+                    "topics": topic_map.get(str(p.id), []),
                 }
                 for p in papers
             ]
@@ -444,24 +463,28 @@ def latest(
 @app.get("/papers/{paper_id}")
 def paper_detail(paper_id: UUID) -> dict:
     with session_scope() as session:
+        repo = PaperRepository(session)
         try:
-            p = PaperRepository(session).get_by_id(paper_id)
+            p = repo.get_by_id(paper_id)
         except ValueError as exc:
             raise HTTPException(
                 status_code=404, detail=str(exc)
             ) from exc
+        topic_map = repo.get_topic_names_for_papers([str(p.id)])
         return {
             "id": str(p.id),
             "title": p.title,
             "arxiv_id": p.arxiv_id,
             "abstract": p.abstract,
-            "publication_date": (
-                p.publication_date.isoformat()
-                if p.publication_date
-                else None
-            ),
+            "publication_date": str(p.publication_date) if p.publication_date else None,
             "read_status": p.read_status.value,
             "pdf_path": p.pdf_path,
+            "categories": (p.metadata_json or {}).get("categories", []),
+            "authors": (p.metadata_json or {}).get("authors", []),
+            "keywords": (p.metadata_json or {}).get("keywords", []),
+            "title_zh": (p.metadata_json or {}).get("title_zh", ""),
+            "abstract_zh": (p.metadata_json or {}).get("abstract_zh", ""),
+            "topics": topic_map.get(str(p.id), []),
             "metadata": p.metadata_json,
             "has_embedding": p.embedding is not None,
         }
@@ -510,7 +533,7 @@ def generated_list(
                     "title": gc.title,
                     "keyword": gc.keyword,
                     "paper_id": gc.paper_id,
-                    "created_at": gc.created_at.isoformat() if gc.created_at else None,
+                    "created_at": _iso(gc.created_at),
                 }
                 for gc in items
             ]
@@ -532,7 +555,7 @@ def generated_detail(content_id: str) -> dict:
             "paper_id": gc.paper_id,
             "markdown": gc.markdown,
             "metadata_json": gc.metadata_json,
-            "created_at": gc.created_at.isoformat() if gc.created_at else None,
+            "created_at": _iso(gc.created_at),
         }
 
 
@@ -704,3 +727,45 @@ def activate_llm_provider(config_id: str) -> dict:
                 status_code=404, detail=str(exc)
             ) from exc
         return _cfg_to_out(cfg)
+
+
+# ---------- Agent ----------
+
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-store",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+@app.post("/agent/chat")
+async def agent_chat(req: AgentChatRequest):
+    """Agent 对话 - SSE 流式响应"""
+    msgs = [m.model_dump() for m in req.messages]
+    return StreamingResponse(
+        stream_chat(msgs, confirmed_action_id=req.confirmed_action_id),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@app.post("/agent/confirm/{action_id}")
+async def agent_confirm(action_id: str):
+    """确认执行 Agent 挂起的操作"""
+    return StreamingResponse(
+        confirm_action(action_id),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@app.post("/agent/reject/{action_id}")
+async def agent_reject(action_id: str):
+    """拒绝 Agent 挂起的操作"""
+    return StreamingResponse(
+        reject_action(action_id),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )

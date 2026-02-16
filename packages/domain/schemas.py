@@ -28,6 +28,9 @@ class PaperOut(BaseModel):
 class SkimReport(BaseModel):
     one_liner: str
     innovations: list[str]
+    keywords: list[str] = []
+    title_zh: str = ""
+    abstract_zh: str = ""
     relevance_score: float
 
 
@@ -108,3 +111,33 @@ class LLMProviderOut(BaseModel):
     model_embedding: str
     model_fallback: str
     is_active: bool
+
+
+# ---------- Agent ----------
+
+
+class AgentMessage(BaseModel):
+    """Agent 对话消息"""
+
+    role: str  # user / assistant / tool
+    content: str = ""
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    tool_args: dict | None = None
+    tool_result: dict | None = None
+
+
+class AgentChatRequest(BaseModel):
+    """Agent 对话请求"""
+
+    messages: list[AgentMessage]
+    confirmed_action_id: str | None = None
+
+
+class PendingAction(BaseModel):
+    """等待用户确认的操作"""
+
+    id: str
+    tool: str
+    args: dict
+    description: str

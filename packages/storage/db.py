@@ -21,11 +21,11 @@ class Base(DeclarativeBase):
 
 
 settings = get_settings()
-connect_args = (
-    {"check_same_thread": False}
-    if settings.database_url.startswith("sqlite")
-    else {}
-)
+_is_sqlite = settings.database_url.startswith("sqlite")
+connect_args: dict = {}
+if _is_sqlite:
+    # timeout=30s 避免并发写入时立即报 database is locked
+    connect_args = {"check_same_thread": False, "timeout": 30}
 engine = create_engine(
     settings.database_url, pool_pre_ping=True, connect_args=connect_args
 )
@@ -33,11 +33,13 @@ SessionLocal = sessionmaker(
     bind=engine, autocommit=False, autoflush=False
 )
 
-if settings.database_url.startswith("sqlite"):
+if _is_sqlite:
 
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragma(dbapi_connection, _connection_record):  # type: ignore[no-redef]
         cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 

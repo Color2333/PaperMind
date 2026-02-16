@@ -8,15 +8,35 @@ export function cn(...inputs: ClassValue[]) {
   return clsx(inputs);
 }
 
+const TZ = "Asia/Shanghai";
+
 /**
- * 格式化日期
+ * 格式化日期（统一使用 Asia/Shanghai 时区）
  */
 export function formatDate(date: string | Date): string {
   const d = new Date(date);
+  if (isNaN(d.getTime())) return String(date);
   return d.toLocaleDateString("zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    timeZone: TZ,
+  });
+}
+
+/**
+ * 格式化日期+时间
+ */
+export function formatDateTime(date: string | Date): string {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return String(date);
+  return d.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: TZ,
   });
 }
 
@@ -24,8 +44,9 @@ export function formatDate(date: string | Date): string {
  * 格式化相对时间
  */
 export function timeAgo(date: string | Date): string {
-  const now = new Date();
   const d = new Date(date);
+  if (isNaN(d.getTime())) return String(date);
+  const now = new Date();
   const diff = now.getTime() - d.getTime();
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);

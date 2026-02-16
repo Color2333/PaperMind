@@ -23,6 +23,8 @@ import {
   Zap,
   CheckCircle2,
   Filter,
+  Tag,
+  Folder,
 } from "lucide-react";
 
 const STATUS_TABS = [
@@ -73,11 +75,17 @@ export default function Papers() {
     loadPapers();
   }, [loadPapers]);
 
-  const filtered = papers.filter(
-    (p) =>
-      p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.arxiv_id?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filtered = papers.filter((p) => {
+    const term = searchTerm.toLowerCase();
+    if (!term) return true;
+    return (
+      p.title.toLowerCase().includes(term) ||
+      p.arxiv_id?.toLowerCase().includes(term) ||
+      p.title_zh?.toLowerCase().includes(term) ||
+      p.keywords?.some((kw) => kw.toLowerCase().includes(term)) ||
+      p.topics?.some((t) => t.toLowerCase().includes(term))
+    );
+  });
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -289,9 +297,14 @@ export default function Papers() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start gap-2">
-                        <h3 className="text-sm font-semibold leading-snug text-ink">
-                          {paper.title}
-                        </h3>
+                        <div>
+                          <h3 className="text-sm font-semibold leading-snug text-ink">
+                            {paper.title}
+                          </h3>
+                          {paper.title_zh && (
+                            <p className="text-xs text-ink-tertiary">{paper.title_zh}</p>
+                          )}
+                        </div>
                         <Badge variant={sc.variant} className="shrink-0">
                           {sc.label}
                         </Badge>
@@ -305,6 +318,34 @@ export default function Papers() {
                         <p className="mt-1.5 text-sm leading-relaxed text-ink-secondary">
                           {truncate(paper.abstract, 200)}
                         </p>
+                      )}
+                      {/* 主题分类 */}
+                      {paper.topics && paper.topics.length > 0 && (
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          <Folder className="h-3 w-3 text-primary" />
+                          {paper.topics.map((t) => (
+                            <span
+                              key={t}
+                              className="inline-flex items-center rounded-md bg-primary-light px-2 py-0.5 text-xs font-medium text-primary"
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {/* 关键词 */}
+                      {paper.keywords && paper.keywords.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <Tag className="h-3 w-3 text-ink-tertiary" />
+                          {paper.keywords.map((kw) => (
+                            <span
+                              key={kw}
+                              className="inline-flex items-center rounded-md bg-hover px-2 py-0.5 text-xs text-ink-secondary"
+                            >
+                              {kw}
+                            </span>
+                          ))}
+                        </div>
                       )}
                       <div className="mt-2 flex items-center gap-3 text-xs text-ink-tertiary">
                         {paper.arxiv_id && (

@@ -60,6 +60,12 @@ export interface Paper {
   pdf_path?: string;
   metadata?: Record<string, unknown>;
   has_embedding?: boolean;
+  categories?: string[];
+  keywords?: string[];
+  authors?: string[];
+  title_zh?: string;
+  abstract_zh?: string;
+  topics?: string[];
 }
 
 /* ========== Pipeline ========== */
@@ -180,9 +186,63 @@ export interface SurveyResponse {
 }
 
 /* ========== Wiki ========== */
+export interface WikiSection {
+  title: string;
+  content: string;
+  key_insight?: string;
+}
+
+export interface PdfExcerpt {
+  title: string;
+  excerpt: string;
+}
+
+export interface ScholarMetadataItem {
+  title: string;
+  year?: number;
+  citationCount?: number;
+  influentialCitationCount?: number;
+  venue?: string;
+  fieldsOfStudy?: string[];
+  tldr?: string;
+}
+
+export interface WikiReadingItem {
+  title: string;
+  year?: number;
+  reason: string;
+}
+
+export interface TopicWikiContent {
+  overview: string;
+  sections: WikiSection[];
+  key_findings: string[];
+  methodology_evolution: string;
+  future_directions: string[];
+  reading_list: WikiReadingItem[];
+  citation_contexts?: string[];
+  pdf_excerpts?: PdfExcerpt[];
+  scholar_metadata?: ScholarMetadataItem[];
+}
+
+export interface PaperWikiContent {
+  summary: string;
+  contributions: string[];
+  methodology: string;
+  significance: string;
+  limitations: string[];
+  related_work_analysis: string;
+  reading_suggestions: WikiReadingItem[];
+  citation_contexts?: string[];
+  pdf_excerpts?: PdfExcerpt[];
+  scholar_metadata?: ScholarMetadataItem[];
+}
+
 export interface PaperWiki {
   paper_id: string;
+  title?: string;
   markdown: string;
+  wiki_content?: PaperWikiContent;
   graph: CitationTree;
   content_id?: string;
 }
@@ -190,6 +250,7 @@ export interface PaperWiki {
 export interface TopicWiki {
   keyword: string;
   markdown: string;
+  wiki_content?: TopicWikiContent;
   timeline: TimelineResponse;
   survey: SurveyResponse;
   content_id?: string;
@@ -321,4 +382,102 @@ export interface LLMProviderUpdate {
 export interface ActiveLLMConfig {
   source: "database" | "env";
   config: LLMProviderConfig & { provider?: string };
+}
+
+/* ========== Agent ========== */
+export interface AgentMessage {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  tool_call_id?: string;
+  tool_name?: string;
+  tool_args?: Record<string, unknown>;
+  tool_result?: Record<string, unknown>;
+}
+
+export interface AgentToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface PendingAction {
+  id: string;
+  tool: string;
+  args: Record<string, unknown>;
+  description: string;
+}
+
+export type SSEEventType =
+  | "text_delta"
+  | "tool_start"
+  | "tool_result"
+  | "tool_progress"
+  | "action_confirm"
+  | "action_result"
+  | "done"
+  | "error";
+
+export interface SSEEvent {
+  type: SSEEventType;
+  data: Record<string, unknown>;
+}
+
+/**
+ * 解析 SSE 文本流
+ */
+export function parseSSEStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onEvent: (event: SSEEvent) => void,
+  onDone?: () => void,
+): () => void {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let cancelled = false;
+  // 跨 chunk 保留事件类型
+  let currentEvent = "";
+
+  const processBuffer = () => {
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        const dataStr = line.slice(6);
+        try {
+          const data = JSON.parse(dataStr);
+          onEvent({ type: currentEvent as SSEEventType, data });
+        } catch {
+          // 忽略解析失败
+        }
+        currentEvent = "";
+      }
+    }
+  };
+
+  const read = async () => {
+    try {
+      while (!cancelled) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        processBuffer();
+      }
+      // 流结束时处理残余数据
+      if (buffer.trim()) {
+        buffer += "\n";
+        processBuffer();
+      }
+    } finally {
+      onDone?.();
+    }
+  };
+
+  read();
+
+  return () => {
+    cancelled = true;
+    reader.cancel();
+  };
 }

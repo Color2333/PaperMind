@@ -97,3 +97,47 @@ class SemanticScholarClient:
             return edges
         except Exception:
             return []
+
+    def fetch_paper_metadata(self, title: str) -> dict | None:
+        paper_id = self._search_paper_id(title)
+        if not paper_id:
+            return None
+        headers = {}
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+        fields = "title,year,citationCount,influentialCitationCount,venue,fieldsOfStudy,tldr"
+        try:
+            with httpx.Client(timeout=20, follow_redirects=True) as client:
+                resp = client.get(
+                    f"{self.base_url}/paper/{paper_id}",
+                    params={"fields": fields},
+                    headers=headers,
+                )
+                resp.raise_for_status()
+            data = resp.json()
+            tldr_obj = data.get("tldr")
+            tldr_text = tldr_obj.get("text") if isinstance(tldr_obj, dict) else None
+            return {
+                "title": data.get("title"),
+                "year": data.get("year"),
+                "citationCount": data.get("citationCount"),
+                "influentialCitationCount": data.get("influentialCitationCount"),
+                "venue": data.get("venue"),
+                "fieldsOfStudy": data.get("fieldsOfStudy") or [],
+                "tldr": tldr_text,
+            }
+        except Exception:
+            return None
+
+    def fetch_batch_metadata(
+        self, titles: list[str], max_papers: int = 10
+    ) -> list[dict]:
+        results: list[dict] = []
+        try:
+            for title in titles[:max_papers]:
+                meta = self.fetch_paper_metadata(title)
+                if meta is not None:
+                    results.append(meta)
+        except Exception:
+            pass
+        return results

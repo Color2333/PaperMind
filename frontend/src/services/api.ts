@@ -182,3 +182,32 @@ export const llmConfigApi = {
   deactivate: () => post<{ status: string }>("/settings/llm-providers/deactivate"),
   active: () => get<ActiveLLMConfig>("/settings/llm-providers/active"),
 };
+
+/* ========== Agent ========== */
+import type { AgentMessage } from "@/types";
+
+export const agentApi = {
+  /**
+   * 发起 Agent 对话（SSE 流）
+   * 返回 Response 对象，调用方自行读取 body stream
+   */
+  chat: async (messages: AgentMessage[], confirmedActionId?: string): Promise<Response> => {
+    const url = `${API_BASE.replace(/\/+$/, "")}/agent/chat`;
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages,
+        confirmed_action_id: confirmedActionId || null,
+      }),
+    });
+  },
+  confirm: async (actionId: string): Promise<Response> => {
+    const url = `${API_BASE.replace(/\/+$/, "")}/agent/confirm/${actionId}`;
+    return fetch(url, { method: "POST" });
+  },
+  reject: async (actionId: string): Promise<Response> => {
+    const url = `${API_BASE.replace(/\/+$/, "")}/agent/reject/${actionId}`;
+    return fetch(url, { method: "POST" });
+  },
+};

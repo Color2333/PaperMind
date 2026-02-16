@@ -4,13 +4,13 @@
  */
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Layout from "@/components/Layout";
+import AgentPage from "@/pages/Agent";
+import Collect from "@/pages/Collect";
 import Dashboard from "@/pages/Dashboard";
-import Topics from "@/pages/Topics";
 import Papers from "@/pages/Papers";
 import PaperDetail from "@/pages/PaperDetail";
 import GraphExplorer from "@/pages/GraphExplorer";
 import Wiki from "@/pages/Wiki";
-import Chat from "@/pages/Chat";
 import DailyBrief from "@/pages/DailyBrief";
 import Pipelines from "@/pages/Pipelines";
 import Operations from "@/pages/Operations";
@@ -21,13 +21,13 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/topics" element={<Topics />} />
+          <Route path="/" element={<AgentPage />} />
+          <Route path="/collect" element={<Collect />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/papers" element={<Papers />} />
           <Route path="/papers/:id" element={<PaperDetail />} />
           <Route path="/graph" element={<GraphExplorer />} />
           <Route path="/wiki" element={<Wiki />} />
-          <Route path="/chat" element={<Chat />} />
           <Route path="/brief" element={<DailyBrief />} />
           <Route path="/pipelines" element={<Pipelines />} />
           <Route path="/operations" element={<Operations />} />

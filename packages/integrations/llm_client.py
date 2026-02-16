@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from packages.config import get_settings
@@ -37,6 +38,21 @@ class LLMResult:
     input_cost_usd: float | None = None
     output_cost_usd: float | None = None
     total_cost_usd: float | None = None
+
+
+@dataclass
+class StreamEvent:
+    """SSE event from streaming chat"""
+
+    type: str  # "text_delta" | "tool_call" | "done" | "usage" | "error"
+    content: str = ""
+    tool_call_id: str = ""
+    tool_name: str = ""
+    tool_arguments: str = ""  # JSON string of args
+    # usage fields (only for type="usage")
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 def _load_active_config() -> LLMConfig:
@@ -139,15 +155,18 @@ class LLMClient:
         prompt: str,
         stage: str,
         model_override: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResult:
         cfg = self._config()
         if cfg.provider in ("openai", "zhipu") and cfg.api_key:
             return self._call_openai_compatible(
-                prompt, stage, cfg, model_override
+                prompt, stage, cfg, model_override,
+                max_tokens=max_tokens,
             )
         if cfg.provider == "anthropic" and cfg.api_key:
             return self._call_anthropic(
-                prompt, stage, cfg, model_override
+                prompt, stage, cfg, model_override,
+                max_tokens=max_tokens,
             )
         return self._pseudo_summary(
             prompt, stage, cfg, model_override
@@ -158,6 +177,7 @@ class LLMClient:
         prompt: str,
         stage: str,
         model_override: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResult:
         wrapped = (
             "请只输出单个 JSON 对象，"
@@ -167,7 +187,8 @@ class LLMClient:
             f"{prompt}"
         )
         result = self.summarize_text(
-            wrapped, stage=stage, model_override=model_override
+            wrapped, stage=stage, model_override=model_override,
+            max_tokens=max_tokens,
         )
         parsed = self._try_parse_json(result.content)
         return LLMResult(
@@ -190,6 +211,143 @@ class LLMClient:
                 return maybe
         return self._pseudo_embedding(text, dimensions)
 
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        max_tokens: int = 4096,
+    ) -> Iterator[StreamEvent]:
+        """Stream chat completions with optional tool calling support"""
+        cfg = self._config()
+        if cfg.provider in ("openai", "zhipu") and cfg.api_key:
+            yield from self._chat_stream_openai_compatible(
+                messages, tools, max_tokens, cfg
+            )
+        elif cfg.provider == "anthropic" and cfg.api_key:
+            yield from self._chat_stream_anthropic_fallback(
+                messages, max_tokens, cfg
+            )
+        else:
+            yield from self._chat_stream_pseudo(messages, cfg)
+
+    def _chat_stream_openai_compatible(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        max_tokens: int,
+        cfg: LLMConfig,
+    ) -> Iterator[StreamEvent]:
+        try:
+            from openai import OpenAI
+
+            model = self._resolve_model("rag", None, cfg)
+            base_url = self._resolve_base_url(cfg)
+            client = OpenAI(api_key=cfg.api_key, base_url=base_url)
+            kwargs: dict = {
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "max_tokens": max_tokens,
+                "stream_options": {"include_usage": True},
+            }
+            if tools:
+                kwargs["tools"] = tools
+
+            stream = client.chat.completions.create(**kwargs)
+            tools_buffer: dict[int, dict[str, str]] = {}
+            in_tok, out_tok = 0, 0
+
+            for chunk in stream:
+                # 捕获 usage（通常在最后一个 chunk）
+                usage = getattr(chunk, "usage", None)
+                if usage:
+                    in_tok = getattr(usage, "prompt_tokens", 0) or 0
+                    out_tok = getattr(usage, "completion_tokens", 0) or 0
+
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta is None:
+                    continue
+
+                if delta.content:
+                    yield StreamEvent(type="text_delta", content=delta.content)
+
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = getattr(tc, "index", 0)
+                        if idx not in tools_buffer:
+                            tools_buffer[idx] = {
+                                "id": "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        buf = tools_buffer[idx]
+                        if getattr(tc, "id", None):
+                            buf["id"] = tc.id
+                        fn = getattr(tc, "function", None)
+                        if fn:
+                            if getattr(fn, "name", None):
+                                buf["name"] += fn.name or ""
+                            if getattr(fn, "arguments", None):
+                                buf["arguments"] += fn.arguments or ""
+
+            for idx in sorted(tools_buffer.keys()):
+                buf = tools_buffer[idx]
+                if buf["id"] or buf["name"] or buf["arguments"]:
+                    yield StreamEvent(
+                        type="tool_call",
+                        tool_call_id=buf["id"],
+                        tool_name=buf["name"],
+                        tool_arguments=buf["arguments"],
+                    )
+
+            # yield usage event before done
+            if in_tok or out_tok:
+                yield StreamEvent(
+                    type="usage", model=model,
+                    input_tokens=in_tok, output_tokens=out_tok,
+                )
+            yield StreamEvent(type="done")
+        except Exception as exc:
+            logger.warning("chat_stream OpenAI-compatible failed: %s", exc)
+            yield StreamEvent(type="error", content=str(exc))
+
+    def _chat_stream_anthropic_fallback(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        cfg: LLMConfig,
+    ) -> Iterator[StreamEvent]:
+        try:
+            prompt = "\n\n".join(
+                f"{m.get('role', 'user')}: {m.get('content', '')}"
+                for m in messages
+                if isinstance(m.get("content"), str)
+            )
+            result = self._call_anthropic(
+                prompt, "rag", cfg, None, max_tokens=max_tokens
+            )
+            if result.content:
+                yield StreamEvent(type="text_delta", content=result.content)
+            yield StreamEvent(type="done")
+        except Exception as exc:
+            logger.warning("chat_stream Anthropic fallback failed: %s", exc)
+            yield StreamEvent(type="error", content=str(exc))
+
+    def _chat_stream_pseudo(
+        self, messages: list[dict], cfg: LLMConfig
+    ) -> Iterator[StreamEvent]:
+        prompt = "\n\n".join(
+            f"{m.get('role', 'user')}: {m.get('content', '')}"
+            for m in messages
+            if isinstance(m.get("content"), str)
+        )
+        result = self._pseudo_summary(prompt, "rag", cfg, None)
+        if result.content:
+            yield StreamEvent(type="text_delta", content=result.content)
+        yield StreamEvent(type="done")
+
     # ---------- OpenAI 兼容调用（OpenAI / 智谱）----------
 
     def _call_openai_compatible(
@@ -198,6 +356,7 @@ class LLMClient:
         stage: str,
         cfg: LLMConfig,
         model_override: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResult:
         try:
             from openai import OpenAI
@@ -209,10 +368,13 @@ class LLMClient:
             client = OpenAI(
                 api_key=cfg.api_key, base_url=base_url
             )
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            kwargs: dict = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            response = client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content or ""
             usage = response.usage
             in_tokens = (
@@ -271,6 +433,7 @@ class LLMClient:
         stage: str,
         cfg: LLMConfig,
         model_override: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResult:
         try:
             from anthropic import Anthropic
@@ -281,7 +444,7 @@ class LLMClient:
             client = Anthropic(api_key=cfg.api_key)
             response = client.messages.create(
                 model=model,
-                max_tokens=1500,
+                max_tokens=max_tokens or 4096,
                 messages=[{"role": "user", "content": prompt}],
             )
             text_blocks: list[str] = []
@@ -387,12 +550,18 @@ class LLMClient:
     ) -> tuple[float, float]:
         model_lower = (model or "").lower()
         price_book: list[tuple[str, float, float]] = [
+            # 顺序：更具体的模式放前面
+            ("gpt-4.1-mini", 0.4, 1.6),
             ("gpt-4.1", 2.0, 8.0),
             ("gpt-4o-mini", 0.15, 0.6),
+            ("gpt-4o", 2.5, 10.0),
             ("claude-3-haiku", 0.25, 1.25),
             ("claude-3-5-sonnet", 3.0, 15.0),
+            ("glm-4.6v", 0.14, 0.14),
+            ("glm-4.7", 0.1, 0.1),
+            ("glm-4-flash", 0.01, 0.01),
+            ("glm-4v", 0.14, 0.14),
             ("glm-4", 0.1, 0.1),
-            ("glm-4v", 0.15, 0.15),
             ("embedding", 0.005, 0.0),
         ]
         in_million = 1.0

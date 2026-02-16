@@ -4,13 +4,19 @@
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict, deque
 from datetime import date
 
 from packages.ai.prompts import (
     build_evolution_prompt,
+    build_paper_wiki_prompt,
     build_survey_prompt,
+    build_topic_wiki_prompt,
+    build_wiki_outline_prompt,
+    build_wiki_section_prompt,
 )
+from packages.ai.wiki_context import WikiContextGatherer
 from packages.config import get_settings
 from packages.domain.schemas import PaperCreate
 from packages.integrations.llm_client import LLMClient
@@ -19,11 +25,12 @@ from packages.integrations.semantic_scholar_client import (
 )
 from packages.storage.db import session_scope
 from packages.storage.repositories import (
-    AnalysisRepository,
     CitationRepository,
     PaperRepository,
     TopicRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GraphService:
@@ -33,6 +40,7 @@ class GraphService:
             api_key=self.settings.semantic_scholar_api_key
         )
         self.llm = LLMClient()
+        self.context_gatherer = WikiContextGatherer()
 
     def sync_citations_for_paper(
         self, paper_id: str, limit: int = 8
@@ -404,78 +412,295 @@ class GraphService:
         tree = self.citation_tree(
             root_paper_id=paper_id, depth=2
         )
-        with session_scope() as session:
-            paper = PaperRepository(session).get_by_id(paper_id)
-            analysis = (
-                AnalysisRepository(session)
-                .contexts_for_papers([paper_id])
-                .get(paper_id, "")
+
+        # 1. 富化上下文收集（向量搜索 + 引用上下文 + PDF）
+        ctx = self.context_gatherer.gather_paper_context(paper_id)
+        p_title = ctx["paper"].get("title", "")
+        p_abstract = ctx["paper"].get("abstract", "")
+        p_arxiv = ctx["paper"].get("arxiv_id", "")
+        analysis = ctx["paper"].get("analysis", "")
+
+        # 2. Semantic Scholar 元数据
+        scholar_meta: list[dict] = []
+        try:
+            all_titles = [p_title] + ctx.get("ancestor_titles", [])[:5]
+            scholar_meta = self.scholar.fetch_batch_metadata(
+                all_titles, max_papers=6
             )
-            p_title = paper.title
-            p_id = paper.id
-            p_arxiv = paper.arxiv_id
-            p_status = paper.read_status.value
-        md = [
+        except Exception as exc:
+            logger.warning("Scholar metadata fetch failed: %s", exc)
+
+        # 3. LLM 生成结构化 wiki
+        prompt = build_paper_wiki_prompt(
+            title=p_title,
+            abstract=p_abstract,
+            analysis=analysis,
+            related_papers=ctx.get("related_papers", [])[:10],
+            ancestors=ctx.get("ancestor_titles", []),
+            descendants=ctx.get("descendant_titles", []),
+        )
+        # 注入引用上下文 + PDF + Scholar 到 prompt
+        extra_context = self._build_extra_context(
+            citation_contexts=ctx.get("citation_contexts", []),
+            pdf_excerpt=ctx.get("pdf_excerpt", ""),
+            scholar_metadata=scholar_meta,
+        )
+        full_prompt = prompt + extra_context
+
+        result = self.llm.complete_json(
+            full_prompt,
+            stage="rag",
+            model_override=self.settings.llm_model_deep,
+            max_tokens=4096,
+        )
+        wiki_content = result.parsed_json or {
+            "summary": analysis or "暂无分析。",
+            "contributions": [],
+            "methodology": "",
+            "significance": "",
+            "limitations": [],
+            "related_work_analysis": "",
+            "reading_suggestions": [],
+        }
+
+        # 注入额外元数据供前端展示
+        wiki_content["citation_contexts"] = ctx.get(
+            "citation_contexts", []
+        )[:20]
+        wiki_content["pdf_excerpts"] = (
+            [{"title": p_title, "excerpt": ctx.get("pdf_excerpt", "")[:2000]}]
+            if ctx.get("pdf_excerpt")
+            else []
+        )
+        wiki_content["scholar_metadata"] = scholar_meta
+
+        # 备用 markdown
+        md_parts = [
             f"# {p_title}",
-            "",
-            f"- Paper ID: {p_id}",
-            f"- ArXiv ID: {p_arxiv}",
-            f"- Read Status: {p_status}",
-            "",
-            "## Summary",
-            analysis or "暂无分析内容。",
-            "",
-            "## Ancestor Papers (Depth<=2)",
+            f"\narXiv: {p_arxiv}",
+            f"\n## 摘要\n\n{wiki_content.get('summary', '')}",
         ]
-        for e in tree["ancestors"][:20]:
-            md.append(
-                f"- {tree['root']} -> {e['target']} "
-                f"(depth={e['depth']})"
+        if wiki_content.get("methodology"):
+            md_parts.append(
+                f"\n## 方法论\n\n{wiki_content['methodology']}"
             )
-        md.append("")
-        md.append("## Descendant Papers (Depth<=2)")
-        for e in tree["descendants"][:20]:
-            md.append(
-                f"- {e['source']} -> {tree['root']} "
-                f"(depth={e['depth']})"
+        if wiki_content.get("significance"):
+            md_parts.append(
+                f"\n## 学术意义\n\n{wiki_content['significance']}"
             )
+        markdown = "\n".join(md_parts)
+
         return {
             "paper_id": paper_id,
-            "markdown": "\n".join(md),
+            "title": p_title,
+            "markdown": markdown,
+            "wiki_content": wiki_content,
             "graph": tree,
         }
 
     def topic_wiki(
         self, keyword: str, limit: int = 120
     ) -> dict:
+        # Phase 0: 并行收集数据
         tl = self.timeline(keyword=keyword, limit=limit)
-        survey = self.survey(keyword=keyword, limit=limit)
-        md = [
-            f"# Topic Wiki: {keyword}",
-            "",
-            "## Seminal Papers",
+        survey_data = self.survey(keyword=keyword, limit=limit)
+
+        # Phase 1: 富化上下文（向量搜索 + 引用上下文 + PDF）
+        ctx = self.context_gatherer.gather_topic_context(
+            keyword, limit=limit
+        )
+        paper_contexts = ctx.get("paper_contexts", [])[:25]
+        citation_contexts = ctx.get("citation_contexts", [])[:30]
+        pdf_excerpts = ctx.get("pdf_excerpts", [])[:5]
+
+        # Phase 2: Semantic Scholar 元数据增强
+        scholar_meta: list[dict] = []
+        try:
+            top_titles = [
+                s["title"]
+                for s in tl.get("seminal", [])[:8]
+                if s.get("title")
+            ]
+            scholar_meta = self.scholar.fetch_batch_metadata(
+                top_titles, max_papers=8
+            )
+        except Exception as exc:
+            logger.warning("Scholar metadata fetch failed: %s", exc)
+
+        # Phase 3: 多轮生成 — 先生成大纲
+        outline_prompt = build_wiki_outline_prompt(
+            keyword=keyword,
+            paper_summaries=paper_contexts,
+            citation_contexts=citation_contexts,
+            scholar_metadata=scholar_meta,
+            pdf_excerpts=pdf_excerpts,
+        )
+        outline_result = self.llm.complete_json(
+            outline_prompt,
+            stage="rag",
+            model_override=self.settings.llm_model_deep,
+            max_tokens=2048,
+        )
+        outline = outline_result.parsed_json or {
+            "title": keyword,
+            "outline": [],
+            "total_sections": 0,
+        }
+
+        # Phase 4: 逐章节生成
+        all_sources_text = self._build_all_sources_text(
+            paper_contexts,
+            citation_contexts,
+            scholar_meta,
+            pdf_excerpts,
+        )
+        sections: list[dict] = []
+        for sec_plan in outline.get("outline", [])[:8]:
+            sec_prompt = build_wiki_section_prompt(
+                keyword=keyword,
+                section_title=sec_plan.get("section_title", ""),
+                key_points=sec_plan.get("key_points", []),
+                source_refs=sec_plan.get("source_refs", []),
+                all_sources_text=all_sources_text,
+            )
+            sec_result = self.llm.complete_json(
+                sec_prompt,
+                stage="rag",
+                model_override=self.settings.llm_model_deep,
+                max_tokens=2048,
+            )
+            sec_content = sec_result.parsed_json or {
+                "title": sec_plan.get("section_title", ""),
+                "content": "",
+                "key_insight": "",
+            }
+            sections.append(sec_content)
+
+        # Phase 5: 生成概述 + 汇总（使用旧 prompt 作为补充）
+        overview_prompt = build_topic_wiki_prompt(
+            keyword=keyword,
+            paper_contexts=paper_contexts,
+            milestones=tl["milestones"],
+            seminal=tl["seminal"],
+            survey_summary=survey_data.get("summary"),
+        )
+        overview_result = self.llm.complete_json(
+            overview_prompt,
+            stage="rag",
+            model_override=self.settings.llm_model_deep,
+            max_tokens=4096,
+        )
+        overview_data = overview_result.parsed_json or {}
+
+        # 组装最终 wiki_content
+        wiki_content: dict = {
+            "overview": overview_data.get("overview", ""),
+            "sections": sections,
+            "key_findings": overview_data.get(
+                "key_findings", []
+            ),
+            "methodology_evolution": overview_data.get(
+                "methodology_evolution", ""
+            ),
+            "future_directions": overview_data.get(
+                "future_directions", []
+            ),
+            "reading_list": overview_data.get(
+                "reading_list", []
+            ),
+            "citation_contexts": citation_contexts[:20],
+            "pdf_excerpts": pdf_excerpts,
+            "scholar_metadata": scholar_meta,
+        }
+
+        # 备用 markdown
+        md_parts = [
+            f"# {keyword}\n\n{wiki_content.get('overview', '')}"
         ]
-        for s in tl["seminal"][:10]:
-            md.append(
-                f"- {s['year']} | {s['title']} "
-                f"| score={s['seminal_score']:.3f}"
+        for sec in sections:
+            md_parts.append(
+                f"\n## {sec.get('title', '')}\n\n"
+                f"{sec.get('content', '')}"
             )
-        md.append("")
-        md.append("## Milestones")
-        for m in tl["milestones"][:12]:
-            md.append(
-                f"- {m['year']} | {m['title']} "
-                f"| score={m['seminal_score']:.3f}"
+        if wiki_content.get("methodology_evolution"):
+            md_parts.append(
+                f"\n## 方法论演化\n\n"
+                f"{wiki_content['methodology_evolution']}"
             )
-        md.append("")
-        md.append("## Survey")
-        md.append(str(survey["summary"]))
+        markdown = "\n".join(md_parts)
+
         return {
             "keyword": keyword,
-            "markdown": "\n".join(md),
+            "markdown": markdown,
+            "wiki_content": wiki_content,
             "timeline": tl,
-            "survey": survey,
+            "survey": survey_data,
         }
+
+    @staticmethod
+    def _build_extra_context(
+        *,
+        citation_contexts: list[str],
+        pdf_excerpt: str,
+        scholar_metadata: list[dict],
+    ) -> str:
+        """拼装额外上下文注入到 paper wiki prompt"""
+        parts: list[str] = []
+        if citation_contexts:
+            parts.append("\n## 引用关系上下文:")
+            for i, c in enumerate(citation_contexts[:15], 1):
+                parts.append(f"[C{i}] {c}")
+        if pdf_excerpt:
+            parts.append(
+                f"\n## PDF 全文摘录（前 2000 字）:\n"
+                f"{pdf_excerpt[:2000]}"
+            )
+        if scholar_metadata:
+            parts.append("\n## Semantic Scholar 外部元数据:")
+            for i, s in enumerate(scholar_metadata[:6], 1):
+                parts.append(
+                    f"[S{i}] {s.get('title', 'N/A')} "
+                    f"({s.get('year', '?')}) "
+                    f"引用数={s.get('citationCount', 'N/A')} "
+                    f"Venue={s.get('venue', 'N/A')}"
+                )
+                if s.get("tldr"):
+                    parts.append(f"  TLDR: {s['tldr'][:200]}")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _build_all_sources_text(
+        paper_contexts: list[dict],
+        citation_contexts: list[str],
+        scholar_metadata: list[dict],
+        pdf_excerpts: list[dict],
+    ) -> str:
+        """拼装所有来源文本供逐章节生成使用"""
+        parts: list[str] = []
+        for i, p in enumerate(paper_contexts[:25], 1):
+            parts.append(
+                f"[P{i}] {p.get('title', 'N/A')} "
+                f"({p.get('year', '?')})\n"
+                f"Abstract: {p.get('abstract', '')[:400]}\n"
+                f"Analysis: {p.get('analysis', '')[:400]}"
+            )
+        for i, c in enumerate(citation_contexts[:20], 1):
+            parts.append(f"[C{i}] {c}")
+        for i, s in enumerate(scholar_metadata[:8], 1):
+            line = (
+                f"[S{i}] {s.get('title', 'N/A')} "
+                f"({s.get('year', '?')}) "
+                f"citations={s.get('citationCount', '?')}"
+            )
+            if s.get("tldr"):
+                line += f" TLDR: {s['tldr'][:200]}"
+            parts.append(line)
+        for i, ex in enumerate(pdf_excerpts[:5], 1):
+            parts.append(
+                f"[PDF{i}] {ex.get('title', 'N/A')}\n"
+                f"Excerpt: {ex.get('excerpt', '')[:500]}"
+            )
+        return "\n\n".join(parts)
 
     @staticmethod
     def _title_to_id(title: str) -> str:

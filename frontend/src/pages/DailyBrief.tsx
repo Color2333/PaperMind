@@ -94,7 +94,12 @@ export default function DailyBrief() {
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
-    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("zh-CN", {
+      month: "numeric", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+      timeZone: "Asia/Shanghai",
+    });
   };
 
   return (

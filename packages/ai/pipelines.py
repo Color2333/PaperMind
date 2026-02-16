@@ -94,6 +94,7 @@ class PaperPipelines:
         max_results: int = 20,
         topic_id: str | None = None,
     ) -> list[str]:
+        """Agent 调用的入库方法，不做 checkpoint 过滤，靠 upsert 去重"""
         papers = self.arxiv.fetch_latest(
             query=query, max_results=max_results
         )
@@ -101,27 +102,12 @@ class PaperPipelines:
         with session_scope() as session:
             repo = PaperRepository(session)
             run_repo = PipelineRunRepository(session)
-            checkpoint_repo = SourceCheckpointRepository(session)
-            checkpoint = checkpoint_repo.get("arxiv")
             run = run_repo.start(
                 "ingest_arxiv",
-                decision_note="collect_inserted_ids",
+                decision_note=f"query={query}",
             )
             try:
-                max_published = (
-                    checkpoint.last_published_date
-                    if checkpoint
-                    else None
-                )
                 for paper in papers:
-                    if (
-                        checkpoint
-                        and checkpoint.last_published_date
-                        and paper.publication_date
-                        and paper.publication_date
-                        <= checkpoint.last_published_date
-                    ):
-                        continue
                     saved = repo.upsert_paper(paper)
                     if topic_id:
                         repo.link_to_topic(saved.id, topic_id)
@@ -133,12 +119,6 @@ class PaperPipelines:
                         repo.set_pdf_path(saved.id, pdf_path)
                     except Exception:
                         pass
-                    if paper.publication_date and (
-                        max_published is None
-                        or paper.publication_date > max_published
-                    ):
-                        max_published = paper.publication_date
-                checkpoint_repo.upsert("arxiv", max_published)
                 run_repo.finish(run.id)
                 return inserted_ids
             except Exception as exc:
@@ -180,6 +160,15 @@ class PaperPipelines:
                     result.parsed_json,
                 )
                 analysis_repo.upsert_skim(paper_id, skim)
+                # 保存关键词和翻译到论文 metadata
+                meta = dict(paper.metadata_json or {})
+                if skim.keywords:
+                    meta["keywords"] = skim.keywords
+                if skim.title_zh:
+                    meta["title_zh"] = skim.title_zh
+                if skim.abstract_zh:
+                    meta["abstract_zh"] = skim.abstract_zh
+                paper.metadata_json = meta
                 paper_repo.update_read_status(
                     paper_id, ReadStatus.skimmed
                 )
@@ -311,6 +300,11 @@ class PaperPipelines:
             innovations = parsed_json.get("innovations") or []
             if not isinstance(innovations, list):
                 innovations = [str(innovations)]
+            keywords = parsed_json.get("keywords") or []
+            if not isinstance(keywords, list):
+                keywords = [str(keywords)]
+            title_zh = str(parsed_json.get("title_zh", "")).strip()
+            abstract_zh = str(parsed_json.get("abstract_zh", "")).strip()
             try:
                 score = float(
                     parsed_json.get("relevance_score", 0.5)
@@ -329,6 +323,9 @@ class PaperPipelines:
                 innovations=[
                     str(x)[:180] for x in innovations[:5]
                 ],
+                keywords=[str(k)[:60] for k in keywords[:8]],
+                title_zh=title_zh[:500],
+                abstract_zh=abstract_zh[:3000],
                 relevance_score=score,
             )
 
@@ -340,6 +337,7 @@ class PaperPipelines:
         return SkimReport(
             one_liner=llm_text[:140],
             innovations=innovations,
+            keywords=[],
             relevance_score=score,
         )
 

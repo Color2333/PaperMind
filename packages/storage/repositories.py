@@ -160,14 +160,18 @@ class PaperRepository:
     def full_text_candidates(
         self, query: str, limit: int = 8
     ) -> list[Paper]:
-        q = (
-            select(Paper)
-            .where(
-                func.lower(Paper.title).contains(query.lower())
-                | func.lower(Paper.abstract).contains(query.lower())
+        """按关键词搜索论文（每个词独立匹配 title/abstract）"""
+        tokens = [t for t in query.lower().split() if len(t) >= 2]
+        if not tokens:
+            return []
+        # 每个关键词必须出现在 title 或 abstract 中
+        conditions = []
+        for token in tokens:
+            conditions.append(
+                func.lower(Paper.title).contains(token)
+                | func.lower(Paper.abstract).contains(token)
             )
-            .limit(limit)
-        )
+        q = select(Paper).where(*conditions).limit(limit)
         return list(self.session.execute(q).scalars())
 
     def semantic_candidates(
@@ -196,6 +200,26 @@ class PaperRepository:
         self.session.add(
             PaperTopic(paper_id=paper_id, topic_id=topic_id)
         )
+
+    def get_topic_names_for_papers(
+        self, paper_ids: list[str]
+    ) -> dict[str, list[str]]:
+        """批量查 paper → topic name 映射"""
+        if not paper_ids:
+            return {}
+        q = (
+            select(PaperTopic.paper_id, TopicSubscription.name)
+            .join(
+                TopicSubscription,
+                PaperTopic.topic_id == TopicSubscription.id,
+            )
+            .where(PaperTopic.paper_id.in_(paper_ids))
+        )
+        rows = self.session.execute(q).all()
+        result: dict[str, list[str]] = {}
+        for pid, tname in rows:
+            result.setdefault(pid, []).append(tname)
+        return result
 
 
 class AnalysisRepository:

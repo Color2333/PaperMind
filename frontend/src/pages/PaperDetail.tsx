@@ -23,6 +23,8 @@ import {
   Shield,
   Sparkles,
   Link2,
+  Tag,
+  Folder,
 } from "lucide-react";
 
 export default function PaperDetail() {
@@ -156,13 +158,66 @@ export default function PaperDetail() {
         <h1 className="mt-3 text-xl font-bold leading-snug text-ink">
           {paper.title}
         </h1>
+        {paper.title_zh && (
+          <p className="mt-1 text-base text-ink-secondary">{paper.title_zh}</p>
+        )}
         {paper.abstract && (
           <p className="mt-4 leading-relaxed text-ink-secondary">{paper.abstract}</p>
+        )}
+        {paper.abstract_zh && (
+          <div className="mt-3 rounded-lg border border-border-light bg-page p-3">
+            <p className="mb-1 text-xs font-medium text-ink-tertiary">中文摘要</p>
+            <p className="text-sm leading-relaxed text-ink-secondary">{paper.abstract_zh}</p>
+          </div>
         )}
         {paper.publication_date && (
           <p className="mt-3 text-sm text-ink-tertiary">
             发表日期: {paper.publication_date}
           </p>
+        )}
+        {/* 主题分类 */}
+        {paper.topics && paper.topics.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Folder className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium text-ink-secondary">主题:</span>
+            {paper.topics.map((t) => (
+              <span
+                key={t}
+                className="inline-flex items-center rounded-md bg-primary-light px-2.5 py-1 text-xs font-medium text-primary"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
+        {/* 关键词 */}
+        {paper.keywords && paper.keywords.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Tag className="h-4 w-4 text-ink-tertiary" />
+            <span className="text-sm font-medium text-ink-secondary">关键词:</span>
+            {paper.keywords.map((kw) => (
+              <span
+                key={kw}
+                className="inline-flex items-center rounded-md bg-hover px-2.5 py-1 text-xs text-ink-secondary"
+              >
+                {kw}
+              </span>
+            ))}
+          </div>
+        )}
+        {/* 分类 (ArXiv categories) */}
+        {paper.categories && paper.categories.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-ink-secondary">ArXiv 分类:</span>
+            {paper.categories.map((c) => (
+              <span
+                key={c}
+                className="inline-flex items-center rounded-md border border-border-light bg-surface px-2 py-0.5 text-xs text-ink-tertiary"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
         )}
       </Card>
 
