@@ -1,0 +1,16 @@
+{
+  "name": "papermind",
+  "version": "1.0.0",
+  "description": "PaperMind is an AI-native research workflow backend with:",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "claude-skills-frontend": "^1.4.0"
+  }
+}

@@ -1,0 +1,53 @@
+[project]
+name = "papermind"
+version = "0.1.0"
+description = "PaperMind research pipeline backend"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.14.0",
+  "apscheduler>=3.10.4",
+  "fastapi>=0.116.0",
+  "httpx>=0.28.1",
+  "jinja2>=3.1.4",
+  "pydantic-settings>=2.10.1",
+  "python-dotenv>=1.1.1",
+  "sqlalchemy>=2.0.43",
+  "uvicorn>=0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.1",
+  "ruff>=0.12.12",
+]
+llm = [
+  "openai>=1.102.0",
+  "anthropic>=0.62.0",
+]
+pdf = [
+  "pymupdf>=1.25.5",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+  "apps",
+  "apps.api",
+  "apps.worker",
+  "packages",
+  "packages.ai",
+  "packages.domain",
+  "packages.integrations",
+  "packages.storage",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

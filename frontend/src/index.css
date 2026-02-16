@@ -1,0 +1,183 @@
+/**
+ * PaperMind - Claude-inspired Design System
+ * @author Bamzc
+ */
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-primary: #C4663C;
+  --color-primary-hover: #A8522D;
+  --color-primary-light: #F7EDE8;
+  --color-primary-50: #FDF5F1;
+
+  --color-page: #FAF9F6;
+  --color-surface: #FFFFFF;
+  --color-sidebar: #FDFCFA;
+  --color-border: #E8E2D9;
+  --color-border-light: #F0EBE4;
+
+  --color-ink: #1A1612;
+  --color-ink-secondary: #7C7369;
+  --color-ink-tertiary: #B5AEA5;
+  --color-ink-placeholder: #C8C2BA;
+
+  --color-hover: #F5F0EA;
+  --color-active: #EDE6DD;
+
+  --color-success: #059669;
+  --color-success-light: #ECFDF5;
+  --color-warning: #D97706;
+  --color-warning-light: #FFFBEB;
+  --color-error: #DC2626;
+  --color-error-light: #FEF2F2;
+  --color-info: #2563EB;
+  --color-info-light: #EFF6FF;
+}
+
+/* 暗色模式变量覆盖 */
+html.dark {
+  --color-primary: #D4825E;
+  --color-primary-hover: #C4663C;
+  --color-primary-light: #2A2018;
+  --color-primary-50: #1E1814;
+
+  --color-page: #141210;
+  --color-surface: #1C1A17;
+  --color-sidebar: #181614;
+  --color-border: #2E2A25;
+  --color-border-light: #252220;
+
+  --color-ink: #E8E2D9;
+  --color-ink-secondary: #9E958A;
+  --color-ink-tertiary: #6B6359;
+  --color-ink-placeholder: #554E46;
+
+  --color-hover: #222018;
+  --color-active: #2A2720;
+
+  --color-success: #34D399;
+  --color-success-light: #0A2A1F;
+  --color-warning: #F59E0B;
+  --color-warning-light: #2A1E08;
+  --color-error: #F87171;
+  --color-error-light: #2A1414;
+  --color-info: #60A5FA;
+  --color-info-light: #0E1E3A;
+}
+
+/* 全局基础样式 */
+html {
+  background-color: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-tertiary);
+}
+
+/* 动画 */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.animate-slide-in {
+  animation: slide-in 0.2s ease-out;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+/* Markdown 内容样式 */
+.markdown-body h1 { font-size: 1.5rem; font-weight: 700; margin: 1.5rem 0 0.75rem; color: var(--color-ink); }
+.markdown-body h2 { font-size: 1.25rem; font-weight: 600; margin: 1.25rem 0 0.5rem; color: var(--color-ink); }
+.markdown-body h3 { font-size: 1.1rem; font-weight: 600; margin: 1rem 0 0.5rem; color: var(--color-ink); }
+.markdown-body p { margin: 0.5rem 0; line-height: 1.7; color: var(--color-ink-secondary); }
+.markdown-body ul, .markdown-body ol { padding-left: 1.5rem; margin: 0.5rem 0; }
+.markdown-body li { margin: 0.25rem 0; line-height: 1.6; color: var(--color-ink-secondary); }
+.markdown-body code {
+  background: var(--color-hover);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  color: var(--color-primary);
+}
+.markdown-body pre {
+  background: var(--color-ink);
+  color: #E8E2D9;
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+.markdown-body pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+.markdown-body blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  color: var(--color-ink-secondary);
+}
+.markdown-body strong { color: var(--color-ink); font-weight: 600; }
+.markdown-body a { color: var(--color-primary); text-decoration: underline; }
+.markdown-body hr { border: none; border-top: 1px solid var(--color-border); margin: 1.5rem 0; }
+
+/* 暗色模式下 form 控件 */
+html.dark select,
+html.dark input,
+html.dark textarea {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  border-color: var(--color-border);
+}
+html.dark select option {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}

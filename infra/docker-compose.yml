@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: papermind-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: papermind
+      POSTGRES_USER: papermind
+      POSTGRES_PASSWORD: papermind
+    ports:
+      - "5432:5432"
+    volumes:
+      - papermind_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U papermind -d papermind"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  papermind_pgdata:
