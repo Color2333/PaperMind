@@ -232,3 +232,113 @@ html.dark select option {
   0%, 100% { box-shadow: 0 4px 12px rgba(234, 179, 8, 0.1); }
   50% { box-shadow: 0 4px 20px rgba(234, 179, 8, 0.25); }
 }
+
+/* 统计卡片渐变背景 */
+.stat-gradient-primary {
+  background: linear-gradient(135deg, rgba(196, 102, 60, 0.08), rgba(196, 102, 60, 0.02));
+}
+.stat-gradient-info {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0.02));
+}
+.stat-gradient-success {
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.08), rgba(5, 150, 105, 0.02));
+}
+.stat-gradient-warning {
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.08), rgba(217, 119, 6, 0.02));
+}
+html.dark .stat-gradient-primary {
+  background: linear-gradient(135deg, rgba(212, 130, 94, 0.12), rgba(212, 130, 94, 0.03));
+}
+html.dark .stat-gradient-info {
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.12), rgba(96, 165, 250, 0.03));
+}
+html.dark .stat-gradient-success {
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.12), rgba(52, 211, 153, 0.03));
+}
+html.dark .stat-gradient-warning {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(245, 158, 11, 0.03));
+}
+
+/* 页面标题渐变 */
+.page-hero {
+  background: linear-gradient(135deg, var(--color-surface) 0%, var(--color-page) 100%);
+  border: 1px solid var(--color-border-light);
+}
+
+/* 细腻悬浮效果 */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.08);
+}
+html.dark .hover-lift:hover {
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.3);
+}
+
+/* 进度条动画 */
+@keyframes bar-fill {
+  from { width: 0; }
+}
+.bar-animate {
+  animation: bar-fill 0.6s ease-out;
+}
+
+/* 时间线节点 */
+.timeline-dot {
+  position: relative;
+}
+.timeline-dot::before {
+  content: '';
+  position: absolute;
+  left: -17px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+.timeline-dot::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  width: 2px;
+  height: calc(100% + 8px);
+  background: var(--color-border-light);
+}
+
+/* 活跃状态指示器 */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.status-running {
+  animation: status-pulse 1.5s ease-in-out infinite;
+}
+
+/* 表单控件通用样式 */
+.form-input {
+  display: block;
+  width: 100%;
+  height: 2.5rem;
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.form-input::placeholder { color: var(--color-ink-placeholder); }
+.form-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(196, 102, 60, 0.12);
+}
+.form-input:disabled { opacity: 0.5; }
+html.dark .form-input:focus {
+  box-shadow: 0 0 0 3px rgba(212, 130, 94, 0.15);
+}

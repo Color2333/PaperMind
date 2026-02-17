@@ -77,6 +77,9 @@ if origins:
         allow_headers=["*"],
     )
 
+from packages.storage.db import run_migrations
+run_migrations()
+
 pipelines = PaperPipelines()
 rag_service = RAGService()
 brief_service = DailyBriefService()
@@ -150,25 +153,26 @@ def ingest_arxiv(
 # ---------- 主题 ----------
 
 
+def _topic_dict(t) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "query": t.query,
+        "enabled": t.enabled,
+        "max_results_per_run": t.max_results_per_run,
+        "retry_limit": t.retry_limit,
+        "schedule_frequency": getattr(t, "schedule_frequency", "daily"),
+        "schedule_time_utc": getattr(t, "schedule_time_utc", 21),
+    }
+
+
 @app.get("/topics")
 def list_topics(enabled_only: bool = False) -> dict:
     with session_scope() as session:
         topics = TopicRepository(session).list_topics(
             enabled_only=enabled_only
         )
-        return {
-            "items": [
-                {
-                    "id": t.id,
-                    "name": t.name,
-                    "query": t.query,
-                    "enabled": t.enabled,
-                    "max_results_per_run": t.max_results_per_run,
-                    "retry_limit": t.retry_limit,
-                }
-                for t in topics
-            ]
-        }
+        return {"items": [_topic_dict(t) for t in topics]}
 
 
 @app.post("/topics")
@@ -180,15 +184,10 @@ def upsert_topic(req: TopicCreate) -> dict:
             enabled=req.enabled,
             max_results_per_run=req.max_results_per_run,
             retry_limit=req.retry_limit,
+            schedule_frequency=req.schedule_frequency,
+            schedule_time_utc=req.schedule_time_utc,
         )
-        return {
-            "id": topic.id,
-            "name": topic.name,
-            "query": topic.query,
-            "enabled": topic.enabled,
-            "max_results_per_run": topic.max_results_per_run,
-            "retry_limit": topic.retry_limit,
-        }
+        return _topic_dict(topic)
 
 
 @app.patch("/topics/{topic_id}")
@@ -201,19 +200,14 @@ def update_topic(topic_id: str, req: TopicUpdate) -> dict:
                 enabled=req.enabled,
                 max_results_per_run=req.max_results_per_run,
                 retry_limit=req.retry_limit,
+                schedule_frequency=req.schedule_frequency,
+                schedule_time_utc=req.schedule_time_utc,
             )
         except ValueError as exc:
             raise HTTPException(
                 status_code=404, detail=str(exc)
             ) from exc
-        return {
-            "id": topic.id,
-            "name": topic.name,
-            "query": topic.query,
-            "enabled": topic.enabled,
-            "max_results_per_run": topic.max_results_per_run,
-            "retry_limit": topic.retry_limit,
-        }
+        return _topic_dict(topic)
 
 
 @app.delete("/topics/{topic_id}")
@@ -221,6 +215,16 @@ def delete_topic(topic_id: str) -> dict:
     with session_scope() as session:
         TopicRepository(session).delete_topic(topic_id)
         return {"deleted": topic_id}
+
+
+@app.post("/topics/suggest-keywords")
+def suggest_keywords(req: dict) -> dict:
+    from packages.ai.keyword_service import KeywordService
+    description = req.get("description", "")
+    if not description.strip():
+        raise HTTPException(400, "description is required")
+    suggestions = KeywordService().suggest(description.strip())
+    return {"suggestions": suggestions}
 
 
 # ---------- 引用同步 ----------
@@ -420,15 +424,57 @@ def similar(
 # ---------- 论文 ----------
 
 
+@app.get("/papers/folder-stats")
+def paper_folder_stats() -> dict:
+    """论文文件夹统计"""
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        return repo.folder_stats()
+
+
+def _paper_list_response(papers: list, repo: "PaperRepository") -> dict:
+    """论文列表统一序列化"""
+    paper_ids = [str(p.id) for p in papers]
+    topic_map = repo.get_topic_names_for_papers(paper_ids)
+    return {
+        "items": [
+            {
+                "id": str(p.id),
+                "title": p.title,
+                "arxiv_id": p.arxiv_id,
+                "abstract": p.abstract,
+                "publication_date": str(p.publication_date) if p.publication_date else None,
+                "read_status": p.read_status.value,
+                "pdf_path": p.pdf_path,
+                "has_embedding": p.embedding is not None,
+                "favorited": getattr(p, "favorited", False),
+                "categories": (p.metadata_json or {}).get("categories", []),
+                "keywords": (p.metadata_json or {}).get("keywords", []),
+                "title_zh": (p.metadata_json or {}).get("title_zh", ""),
+                "abstract_zh": (p.metadata_json or {}).get("abstract_zh", ""),
+                "topics": topic_map.get(str(p.id), []),
+            }
+            for p in papers
+        ]
+    }
+
+
 @app.get("/papers/latest")
 def latest(
-    limit: int = Query(default=20, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=500),
     status: str | None = Query(default=None),
     topic_id: str | None = Query(default=None),
+    folder: str | None = Query(default=None),
 ) -> dict:
     with session_scope() as session:
         repo = PaperRepository(session)
-        if topic_id:
+        if folder == "favorites":
+            papers = repo.list_favorited(limit=limit)
+        elif folder == "recent":
+            papers = repo.list_recent(days=7, limit=limit)
+        elif folder == "unclassified":
+            papers = repo.list_unclassified(limit=limit)
+        elif topic_id:
             papers = repo.list_by_topic(topic_id, limit=limit)
         elif status and status in ("unread", "skimmed", "deep_read"):
             papers = repo.list_by_read_status(
@@ -436,28 +482,13 @@ def latest(
             )
         else:
             papers = repo.list_latest(limit=limit)
-        paper_ids = [str(p.id) for p in papers]
-        topic_map = repo.get_topic_names_for_papers(paper_ids)
-        return {
-            "items": [
-                {
-                    "id": str(p.id),
-                    "title": p.title,
-                    "arxiv_id": p.arxiv_id,
-                    "abstract": p.abstract,
-                    "publication_date": str(p.publication_date) if p.publication_date else None,
-                    "read_status": p.read_status.value,
-                    "pdf_path": p.pdf_path,
-                    "has_embedding": p.embedding is not None,
-                    "categories": (p.metadata_json or {}).get("categories", []),
-                    "keywords": (p.metadata_json or {}).get("keywords", []),
-                    "title_zh": (p.metadata_json or {}).get("title_zh", ""),
-                    "abstract_zh": (p.metadata_json or {}).get("abstract_zh", ""),
-                    "topics": topic_map.get(str(p.id), []),
-                }
-                for p in papers
-            ]
-        }
+        return _paper_list_response(papers, repo)
+
+
+@app.get("/papers/recommended")
+def recommended_papers(top_k: int = Query(default=10, ge=1, le=50)) -> dict:
+    from packages.ai.recommendation_service import RecommendationService
+    return {"items": RecommendationService().recommend(top_k=top_k)}
 
 
 @app.get("/papers/{paper_id}")
@@ -471,6 +502,26 @@ def paper_detail(paper_id: UUID) -> dict:
                 status_code=404, detail=str(exc)
             ) from exc
         topic_map = repo.get_topic_names_for_papers([str(p.id)])
+        # 查询已有分析报告
+        from packages.storage.models import AnalysisReport as AR
+        from sqlalchemy import select as _sel
+        ar = session.execute(
+            _sel(AR).where(AR.paper_id == str(p.id))
+        ).scalar_one_or_none()
+        skim_data = None
+        deep_data = None
+        if ar:
+            if ar.summary_md:
+                skim_data = {
+                    "summary_md": ar.summary_md,
+                    "skim_score": ar.skim_score,
+                    "key_insights": ar.key_insights or {},
+                }
+            if ar.deep_dive_md:
+                deep_data = {
+                    "deep_dive_md": ar.deep_dive_md,
+                    "key_insights": ar.key_insights or {},
+                }
         return {
             "id": str(p.id),
             "title": p.title,
@@ -479,6 +530,7 @@ def paper_detail(paper_id: UUID) -> dict:
             "publication_date": str(p.publication_date) if p.publication_date else None,
             "read_status": p.read_status.value,
             "pdf_path": p.pdf_path,
+            "favorited": getattr(p, "favorited", False),
             "categories": (p.metadata_json or {}).get("categories", []),
             "authors": (p.metadata_json or {}).get("authors", []),
             "keywords": (p.metadata_json or {}).get("keywords", []),
@@ -487,7 +539,24 @@ def paper_detail(paper_id: UUID) -> dict:
             "topics": topic_map.get(str(p.id), []),
             "metadata": p.metadata_json,
             "has_embedding": p.embedding is not None,
+            "skim_report": skim_data,
+            "deep_report": deep_data,
         }
+
+
+@app.patch("/papers/{paper_id}/favorite")
+def toggle_favorite(paper_id: UUID) -> dict:
+    """切换论文收藏状态"""
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            p = repo.get_by_id(paper_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        current = getattr(p, "favorited", False)
+        p.favorited = not current
+        session.commit()
+        return {"id": str(p.id), "favorited": p.favorited}
 
 
 # ---------- 简报 ----------
@@ -587,6 +656,31 @@ def run_weekly_graph_once() -> dict:
     return run_weekly_graph_maintenance()
 
 
+# ---------- 推荐 & 趋势 ----------
+
+
+@app.get("/trends/hot")
+def hot_keywords(
+    days: int = Query(default=7, ge=1, le=30),
+    top_k: int = Query(default=15, ge=1, le=50),
+) -> dict:
+    from packages.ai.recommendation_service import TrendService
+    items = TrendService().detect_hot_keywords(days=days, top_k=top_k)
+    return {"items": items}
+
+
+@app.get("/trends/emerging")
+def emerging_trends(days: int = Query(default=14, ge=7, le=60)) -> dict:
+    from packages.ai.recommendation_service import TrendService
+    return TrendService().detect_trends(days=days)
+
+
+@app.get("/today")
+def today_summary() -> dict:
+    from packages.ai.recommendation_service import TrendService
+    return TrendService().get_today_summary()
+
+
 # ---------- 指标 ----------
 
 
@@ -658,8 +752,10 @@ def get_active_llm_config() -> dict:
 @app.post("/settings/llm-providers/deactivate")
 def deactivate_llm_providers() -> dict:
     """取消所有配置激活，回退到 .env 默认配置"""
+    from packages.integrations.llm_client import invalidate_llm_config_cache
     with session_scope() as session:
         LLMConfigRepository(session).deactivate_all()
+        invalidate_llm_config_cache()
         return {
             "status": "ok",
             "message": "All deactivated, using .env defaults",
@@ -717,6 +813,7 @@ def delete_llm_provider(config_id: str) -> dict:
 
 @app.post("/settings/llm-providers/{config_id}/activate")
 def activate_llm_provider(config_id: str) -> dict:
+    from packages.integrations.llm_client import invalidate_llm_config_cache
     with session_scope() as session:
         try:
             cfg = LLMConfigRepository(session).activate(
@@ -726,6 +823,7 @@ def activate_llm_provider(config_id: str) -> dict:
             raise HTTPException(
                 status_code=404, detail=str(exc)
             ) from exc
+        invalidate_llm_config_cache()
         return _cfg_to_out(cfg)
 
 

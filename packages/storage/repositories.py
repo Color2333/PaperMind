@@ -93,6 +93,150 @@ class PaperRepository:
         )
         return list(self.session.execute(q).scalars())
 
+    def list_by_read_status_with_embedding(
+        self, statuses: list[str], limit: int = 200
+    ) -> list[Paper]:
+        """查询指定阅读状态且有 embedding 的论文"""
+        status_enums = [ReadStatus(s) for s in statuses]
+        q = (
+            select(Paper)
+            .where(
+                Paper.read_status.in_(status_enums),
+                Paper.embedding.is_not(None),
+            )
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def list_unread_with_embedding(
+        self, limit: int = 200
+    ) -> list[Paper]:
+        """查询未读但有 embedding 的论文"""
+        q = (
+            select(Paper)
+            .where(
+                Paper.read_status == ReadStatus.unread,
+                Paper.embedding.is_not(None),
+            )
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def list_recent_since(
+        self, since: datetime, limit: int = 500
+    ) -> list[Paper]:
+        """查询指定时间之后入库的论文"""
+        q = (
+            select(Paper)
+            .where(Paper.created_at >= since)
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def list_recent_between(
+        self, start: datetime, end: datetime, limit: int = 500
+    ) -> list[Paper]:
+        """查询指定时间区间内入库的论文"""
+        q = (
+            select(Paper)
+            .where(Paper.created_at >= start, Paper.created_at < end)
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def count_all(self) -> int:
+        q = select(func.count()).select_from(Paper)
+        return self.session.execute(q).scalar() or 0
+
+    def folder_stats(self) -> dict:
+        """返回文件夹统计：按主题、收藏、最近、未分类"""
+        total = self.count_all()
+        fav_q = select(func.count()).select_from(Paper).where(Paper.favorited == True)  # noqa: E712
+        favorites = self.session.execute(fav_q).scalar() or 0
+
+        now = datetime.now(UTC)
+        recent_q = (
+            select(func.count())
+            .select_from(Paper)
+            .where(Paper.created_at >= now - timedelta(days=7))
+        )
+        recent_7d = self.session.execute(recent_q).scalar() or 0
+
+        # 有主题的论文 ID 集合
+        has_topic_q = select(func.count(func.distinct(PaperTopic.paper_id)))
+        has_topic = self.session.execute(has_topic_q).scalar() or 0
+        unclassified = total - has_topic
+
+        # 按主题统计
+        topic_counts_q = (
+            select(
+                TopicSubscription.id,
+                TopicSubscription.name,
+                func.count(PaperTopic.paper_id),
+            )
+            .join(PaperTopic, TopicSubscription.id == PaperTopic.topic_id)
+            .group_by(TopicSubscription.id, TopicSubscription.name)
+            .order_by(func.count(PaperTopic.paper_id).desc())
+        )
+        topic_rows = self.session.execute(topic_counts_q).all()
+        by_topic = [
+            {"topic_id": r[0], "topic_name": r[1], "count": r[2]}
+            for r in topic_rows
+        ]
+
+        # 按阅读状态统计
+        status_q = (
+            select(Paper.read_status, func.count())
+            .group_by(Paper.read_status)
+        )
+        status_rows = self.session.execute(status_q).all()
+        by_status = {r[0].value: r[1] for r in status_rows}
+
+        return {
+            "total": total,
+            "favorites": favorites,
+            "recent_7d": recent_7d,
+            "unclassified": unclassified,
+            "by_topic": by_topic,
+            "by_status": by_status,
+        }
+
+    def list_unclassified(self, limit: int = 200) -> list[Paper]:
+        """查询没有关联任何主题的论文"""
+        subq = select(PaperTopic.paper_id).distinct()
+        q = (
+            select(Paper)
+            .where(Paper.id.notin_(subq))
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def list_recent(self, days: int = 7, limit: int = 200) -> list[Paper]:
+        """查询最近 N 天入库的论文"""
+        since = datetime.now(UTC) - timedelta(days=days)
+        q = (
+            select(Paper)
+            .where(Paper.created_at >= since)
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def list_favorited(self, limit: int = 200) -> list[Paper]:
+        """查询收藏的论文"""
+        q = (
+            select(Paper)
+            .where(Paper.favorited == True)  # noqa: E712
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
     def list_by_topic(
         self, topic_id: str, limit: int = 200
     ) -> list[Paper]:
@@ -142,6 +286,7 @@ class PaperRepository:
         vector: list[float],
         exclude: UUID,
         limit: int = 5,
+        max_candidates: int = 500,
     ) -> list[Paper]:
         if not vector:
             return []
@@ -149,6 +294,8 @@ class PaperRepository:
             select(Paper)
             .where(Paper.id != str(exclude))
             .where(Paper.embedding.is_not(None))
+            .order_by(Paper.created_at.desc())
+            .limit(max_candidates)
         )
         candidates = list(self.session.execute(q).scalars())
         ranked = sorted(
@@ -175,11 +322,17 @@ class PaperRepository:
         return list(self.session.execute(q).scalars())
 
     def semantic_candidates(
-        self, query_vector: list[float], limit: int = 8
+        self, query_vector: list[float], limit: int = 8,
+        max_candidates: int = 500,
     ) -> list[Paper]:
         if not query_vector:
             return []
-        q = select(Paper).where(Paper.embedding.is_not(None))
+        q = (
+            select(Paper)
+            .where(Paper.embedding.is_not(None))
+            .order_by(Paper.created_at.desc())
+            .limit(max_candidates)
+        )
         candidates = list(self.session.execute(q).scalars())
         ranked = sorted(
             candidates,
@@ -553,6 +706,8 @@ class TopicRepository:
         enabled: bool = True,
         max_results_per_run: int = 20,
         retry_limit: int = 2,
+        schedule_frequency: str = "daily",
+        schedule_time_utc: int = 21,
     ) -> TopicSubscription:
         found = self.get_by_name(name)
         if found:
@@ -560,6 +715,8 @@ class TopicRepository:
             found.enabled = enabled
             found.max_results_per_run = max(max_results_per_run, 1)
             found.retry_limit = max(retry_limit, 0)
+            found.schedule_frequency = schedule_frequency
+            found.schedule_time_utc = max(0, min(23, schedule_time_utc))
             found.updated_at = datetime.now(UTC)
             self.session.flush()
             return found
@@ -569,6 +726,8 @@ class TopicRepository:
             enabled=enabled,
             max_results_per_run=max(max_results_per_run, 1),
             retry_limit=max(retry_limit, 0),
+            schedule_frequency=schedule_frequency,
+            schedule_time_utc=max(0, min(23, schedule_time_utc)),
         )
         self.session.add(topic)
         self.session.flush()
@@ -582,6 +741,8 @@ class TopicRepository:
         enabled: bool | None = None,
         max_results_per_run: int | None = None,
         retry_limit: int | None = None,
+        schedule_frequency: str | None = None,
+        schedule_time_utc: int | None = None,
     ) -> TopicSubscription:
         topic = self.session.get(TopicSubscription, topic_id)
         if topic is None:
@@ -594,6 +755,10 @@ class TopicRepository:
             topic.max_results_per_run = max(max_results_per_run, 1)
         if retry_limit is not None:
             topic.retry_limit = max(retry_limit, 0)
+        if schedule_frequency is not None:
+            topic.schedule_frequency = schedule_frequency
+        if schedule_time_utc is not None:
+            topic.schedule_time_utc = max(0, min(23, schedule_time_utc))
         topic.updated_at = datetime.now(UTC)
         self.session.flush()
         return topic

@@ -41,6 +41,9 @@ if _is_sqlite:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA busy_timeout=30000")
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB 缓存
+        cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.close()
 
 
@@ -67,3 +70,48 @@ def check_db_connection() -> bool:
     except Exception:
         logger.exception("Database connection check failed")
         return False
+
+
+def _safe_add_column(
+    conn, table: str, column: str, col_type: str, default: str,
+) -> None:
+    """安全添加列（已存在则跳过）"""
+    try:
+        conn.execute(text(
+            f"ALTER TABLE {table} ADD COLUMN {column} "
+            f"{col_type} NOT NULL DEFAULT {default}"
+        ))
+        conn.commit()
+        logger.info("Added column %s.%s", table, column)
+    except Exception:
+        conn.rollback()
+
+
+def _safe_create_index(conn, idx_name: str, table: str, column: str) -> None:
+    """安全创建索引（已存在则跳过）"""
+    try:
+        conn.execute(text(
+            f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({column})"
+        ))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+
+
+def run_migrations() -> None:
+    """启动时执行轻量级数据库迁移"""
+    with engine.connect() as conn:
+        _safe_add_column(
+            conn, "topic_subscriptions",
+            "schedule_frequency", "VARCHAR(20)", "'daily'",
+        )
+        _safe_add_column(
+            conn, "topic_subscriptions",
+            "schedule_time_utc", "INTEGER", "21",
+        )
+        _safe_add_column(conn, "papers", "favorited", "BOOLEAN", "0")
+        # 关键列索引加速 ORDER BY / WHERE 查询
+        _safe_create_index(conn, "ix_papers_created_at", "papers", "created_at")
+        _safe_create_index(conn, "ix_prompt_traces_created_at", "prompt_traces", "created_at")
+        _safe_create_index(conn, "ix_pipeline_runs_created_at", "pipeline_runs", "created_at")
+        _safe_create_index(conn, "ix_papers_read_status", "papers", "read_status")

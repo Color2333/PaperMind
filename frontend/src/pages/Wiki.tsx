@@ -18,8 +18,7 @@ import type {
   GeneratedContentListItem,
   GeneratedContent,
 } from "@/types";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "@/components/Markdown";
 import {
   Search,
   BookOpen,
@@ -303,7 +302,7 @@ function TopicWikiView({
         <Card>
           <CardHeader title="概述" action={<Compass className="h-5 w-5 text-primary" />} />
           <div className="prose-custom">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.overview}</ReactMarkdown>
+            <Markdown>{content.overview}</Markdown>
           </div>
         </Card>
       )}
@@ -318,7 +317,7 @@ function TopicWikiView({
         <Card>
           <CardHeader title="方法论演化" action={<TrendingUp className="h-5 w-5 text-accent" />} />
           <div className="prose-custom">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.methodology_evolution}</ReactMarkdown>
+            <Markdown>{content.methodology_evolution}</Markdown>
           </div>
         </Card>
       )}
@@ -482,7 +481,7 @@ function PaperWikiView({
         <Card>
           <CardHeader title="核心摘要" action={<BookOpen className="h-5 w-5 text-primary" />} />
           <div className="prose-custom">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.summary}</ReactMarkdown>
+            <Markdown>{content.summary}</Markdown>
           </div>
         </Card>
       )}
@@ -509,7 +508,7 @@ function PaperWikiView({
         <Card>
           <CardHeader title="方法论" action={<Layers className="h-5 w-5 text-accent" />} />
           <div className="prose-custom">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.methodology}</ReactMarkdown>
+            <Markdown>{content.methodology}</Markdown>
           </div>
         </Card>
       )}
@@ -519,7 +518,7 @@ function PaperWikiView({
         <Card>
           <CardHeader title="学术意义与影响" action={<TrendingUp className="h-5 w-5 text-success" />} />
           <div className="prose-custom">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.significance}</ReactMarkdown>
+            <Markdown>{content.significance}</Markdown>
           </div>
         </Card>
       )}
@@ -569,7 +568,7 @@ function PaperWikiView({
         <Card>
           <CardHeader title="相关工作分析" />
           <div className="prose-custom">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.related_work_analysis}</ReactMarkdown>
+            <Markdown>{content.related_work_analysis}</Markdown>
           </div>
         </Card>
       )}
@@ -610,7 +609,7 @@ function SectionCard({ section, index }: { section: WikiSection; index: number }
         </div>
       )}
       <div className="prose-custom">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.content}</ReactMarkdown>
+        <Markdown>{section.content}</Markdown>
       </div>
     </Card>
   );
@@ -783,7 +782,7 @@ function MarkdownArticle({
     <Card className="animate-fade-in">
       <CardHeader title={title} action={<BookOpen className="h-5 w-5 text-primary" />} />
       <div className="prose-custom">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+        <Markdown>{markdown}</Markdown>
       </div>
     </Card>
   );

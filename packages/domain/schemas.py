@@ -63,6 +63,8 @@ class TopicCreate(BaseModel):
     enabled: bool = True
     max_results_per_run: int = 20
     retry_limit: int = 2
+    schedule_frequency: str = "daily"
+    schedule_time_utc: int = 21
 
 
 class TopicUpdate(BaseModel):
@@ -70,6 +72,8 @@ class TopicUpdate(BaseModel):
     enabled: bool | None = None
     max_results_per_run: int | None = None
     retry_limit: int | None = None
+    schedule_frequency: str | None = None
+    schedule_time_utc: int | None = None
 
 
 # ---------- LLM Provider Config ----------

@@ -9,12 +9,12 @@ import { Loader2 } from "lucide-react";
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: Size;
   loading?: boolean;
   icon?: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 const variantStyles: Record<Variant, string> = {

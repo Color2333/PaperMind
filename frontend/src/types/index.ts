@@ -23,6 +23,8 @@ export interface SystemStatus {
 }
 
 /* ========== 主题 ========== */
+export type ScheduleFrequency = "daily" | "twice_daily" | "weekdays" | "weekly";
+
 export interface Topic {
   id: string;
   name: string;
@@ -30,6 +32,8 @@ export interface Topic {
   enabled: boolean;
   max_results_per_run: number;
   retry_limit: number;
+  schedule_frequency: ScheduleFrequency;
+  schedule_time_utc: number;
 }
 
 export interface TopicCreate {
@@ -38,6 +42,8 @@ export interface TopicCreate {
   enabled?: boolean;
   max_results_per_run?: number;
   retry_limit?: number;
+  schedule_frequency?: ScheduleFrequency;
+  schedule_time_utc?: number;
 }
 
 export interface TopicUpdate {
@@ -45,6 +51,14 @@ export interface TopicUpdate {
   enabled?: boolean;
   max_results_per_run?: number;
   retry_limit?: number;
+  schedule_frequency?: ScheduleFrequency;
+  schedule_time_utc?: number;
+}
+
+export interface KeywordSuggestion {
+  name: string;
+  query: string;
+  reason: string;
 }
 
 /* ========== 论文 ========== */
@@ -60,12 +74,22 @@ export interface Paper {
   pdf_path?: string;
   metadata?: Record<string, unknown>;
   has_embedding?: boolean;
+  favorited?: boolean;
   categories?: string[];
   keywords?: string[];
   authors?: string[];
   title_zh?: string;
   abstract_zh?: string;
   topics?: string[];
+  skim_report?: {
+    summary_md: string;
+    skim_score: number | null;
+    key_insights: Record<string, unknown>;
+  } | null;
+  deep_report?: {
+    deep_dive_md: string;
+    key_insights: Record<string, unknown>;
+  } | null;
 }
 
 /* ========== Pipeline ========== */

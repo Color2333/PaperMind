@@ -38,11 +38,17 @@ SYSTEM_PROMPT = """\
 - 如果知识库中没有相关内容，告知用户并建议从 arXiv 下载相关论文
 
 ### 搜索调研
-用户要求搜索特定领域时，先用 search_papers 搜本地库，无结果则建议 ingest_arxiv。
+用户要求搜索特定领域时，先用 search_papers 搜本地库，无结果则用 search_arxiv \
+搜索 arXiv 候选论文。
 
-### 论文获取与分析
-从 arXiv 下载（ingest_arxiv）→ 粗读（skim_paper）→ 精读（deep_read_paper）\
-→ 嵌入（embed_paper），按需组合。
+### 论文获取与分析（重要！必须走筛选流程）
+1. **搜索候选**：先调用 search_arxiv 搜索，获取候选论文列表
+2. **展示候选**：将候选论文以编号列表展示给用户（标题、摘要要点、日期、分类）
+3. **等待用户筛选**：明确询问"您要入库哪些论文？可以输入编号（如1,3,5）或输入'全部'"
+4. **选择性入库**：根据用户选择，调用 ingest_arxiv(query=..., arxiv_ids=[...]) 只入库选中的论文
+5. 入库后自动执行粗读 + 向量化
+
+**绝对禁止**：不经用户筛选就直接全部入库。必须让用户看到候选列表后再决定。
 
 ### Wiki 和简报
 generate_wiki 生成主题/论文综述，generate_daily_brief 生成简报。
@@ -50,8 +56,14 @@ generate_wiki 生成主题/论文综述，generate_daily_brief 生成简报。
 ### 订阅管理
 当 ingest_arxiv 返回结果中包含 `suggest_subscribe: true` 时，\
 **必须**询问用户：「要将这个主题设为持续订阅吗？这样系统会每天自动搜集最新论文。」
-- 用户同意 → 调用 manage_subscription(topic_name=..., enabled=true)
+- 用户同意 → 调用 manage_subscription(topic_name=..., enabled=true)，\
+可以追问用户希望的频率（每天/每天两次/工作日/每周）和搜集时间（北京时间几点）
 - 用户拒绝 → 不调用，保持仅搜集一次
+
+### AI 关键词建议
+当用户用自然语言描述研究兴趣（如"我想关注3D重建和神经辐射场"），\
+但没有给出具体搜索词时，**主动调用 suggest_keywords 工具**，\
+将 AI 生成的关键词建议展示给用户选择，然后再进行搜索或创建订阅。
 
 ## 工作流程
 
@@ -462,9 +474,8 @@ def _describe_action(tool_name: str, args: dict) -> str:
     """生成操作描述"""
     descriptions = {
         "ingest_arxiv": lambda a: (
-            f"从 arXiv 下载论文"
-            f"（搜索: {a.get('query', '?')}，"
-            f"最多 {a.get('max_results', 20)} 篇）"
+            f"入库选中的 {len(a.get('arxiv_ids', []))} 篇论文"
+            f"（来源: {a.get('query', '?')}）"
         ),
         "skim_paper": lambda a: (
             f"对论文 {a.get('paper_id', '?')[:8]}..."

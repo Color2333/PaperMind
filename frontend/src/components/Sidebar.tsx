@@ -2,7 +2,7 @@
  * 侧边栏 - AI 应用风格：图标网格 + 对话历史 + 设置弹窗
  * @author Bamzc
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useConversationCtx } from "@/contexts/ConversationContext";
@@ -64,17 +64,17 @@ export default function Sidebar() {
     switchConversation,
     deleteConversation,
   } = useConversationCtx();
-  const groups = groupByDate(metas);
+  const groups = useMemo(() => groupByDate(metas), [metas]);
 
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     createConversation();
     if (location.pathname !== "/") navigate("/");
-  };
+  }, [createConversation, location.pathname, navigate]);
 
-  const handleSelectChat = (id: string) => {
+  const handleSelectChat = useCallback((id: string) => {
     switchConversation(id);
     if (location.pathname !== "/") navigate("/");
-  };
+  }, [switchConversation, location.pathname, navigate]);
 
   return (
     <>

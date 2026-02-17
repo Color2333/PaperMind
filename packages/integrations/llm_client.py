@@ -7,12 +7,18 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 from packages.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# 配置缓存（TTL 30 秒，避免每次 LLM 调用都查库）
+_config_cache: LLMConfig | None = None
+_config_cache_ts: float = 0.0
+_CONFIG_TTL = 30.0
 
 
 @dataclass
@@ -56,8 +62,14 @@ class StreamEvent:
 
 
 def _load_active_config() -> LLMConfig:
-    """从数据库加载激活的 LLM 配置，无则用 .env 默认"""
+    """从数据库加载激活的 LLM 配置，带 TTL 缓存"""
+    global _config_cache, _config_cache_ts  # noqa: PLW0603
+    now = time.monotonic()
+    if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_TTL:
+        return _config_cache
+
     settings = get_settings()
+    cfg: LLMConfig | None = None
     try:
         from packages.storage.db import session_scope
         from packages.storage.repositories import (
@@ -67,7 +79,7 @@ def _load_active_config() -> LLMConfig:
         with session_scope() as session:
             active = LLMConfigRepository(session).get_active()
             if active:
-                return LLMConfig(
+                cfg = LLMConfig(
                     provider=active.provider,
                     api_key=active.api_key,
                     api_base_url=active.api_base_url,
@@ -80,29 +92,40 @@ def _load_active_config() -> LLMConfig:
     except Exception:
         logger.debug("No active DB config, using .env")
 
-    # 根据 provider 选择对应的 api_key
-    api_key = None
-    base_url = None
-    if settings.llm_provider == "zhipu":
-        api_key = settings.zhipu_api_key
-        base_url = "https://open.bigmodel.cn/api/paas/v4/"
-    elif settings.llm_provider == "openai":
-        api_key = settings.openai_api_key
-    elif settings.llm_provider == "anthropic":
-        api_key = settings.anthropic_api_key
+    if cfg is None:
+        api_key = None
+        base_url = None
+        if settings.llm_provider == "zhipu":
+            api_key = settings.zhipu_api_key
+            base_url = "https://open.bigmodel.cn/api/paas/v4/"
+        elif settings.llm_provider == "openai":
+            api_key = settings.openai_api_key
+        elif settings.llm_provider == "anthropic":
+            api_key = settings.anthropic_api_key
 
-    return LLMConfig(
-        provider=settings.llm_provider,
-        api_key=api_key,
-        api_base_url=base_url,
-        model_skim=settings.llm_model_skim,
-        model_deep=settings.llm_model_deep,
-        model_vision=getattr(
-            settings, "llm_model_vision", None
-        ),
-        model_embedding=settings.embedding_model,
-        model_fallback=settings.llm_model_fallback,
-    )
+        cfg = LLMConfig(
+            provider=settings.llm_provider,
+            api_key=api_key,
+            api_base_url=base_url,
+            model_skim=settings.llm_model_skim,
+            model_deep=settings.llm_model_deep,
+            model_vision=getattr(
+                settings, "llm_model_vision", None
+            ),
+            model_embedding=settings.embedding_model,
+            model_fallback=settings.llm_model_fallback,
+        )
+
+    _config_cache = cfg
+    _config_cache_ts = now
+    return cfg
+
+
+def invalidate_llm_config_cache() -> None:
+    """配置变更时调用，清除缓存"""
+    global _config_cache, _config_cache_ts  # noqa: PLW0603
+    _config_cache = None
+    _config_cache_ts = 0.0
 
 
 # 预置的 provider → base_url 映射
@@ -113,10 +136,29 @@ PROVIDER_BASE_URLS: dict[str, str] = {
 }
 
 
+_LLM_TIMEOUT = 120  # LLM 请求超时秒数
+
+# OpenAI 客户端复用缓存（按 api_key + base_url 复用）
+_openai_clients: dict[str, object] = {}
+
+
+def _get_openai_client(api_key: str, base_url: str | None):
+    """复用 OpenAI 客户端，避免每次调用创建新连接"""
+    from openai import OpenAI
+    cache_key = f"{api_key[:8]}|{base_url}"
+    if cache_key not in _openai_clients:
+        _openai_clients[cache_key] = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=_LLM_TIMEOUT,
+        )
+    return _openai_clients[cache_key]
+
+
 class LLMClient:
     """
     统一 LLM 调用客户端。
-    每次调用动态读取当前激活配置。
+    配置带 TTL 缓存，OpenAI 客户端复用。
     """
 
     def __init__(self) -> None:
@@ -238,11 +280,9 @@ class LLMClient:
         cfg: LLMConfig,
     ) -> Iterator[StreamEvent]:
         try:
-            from openai import OpenAI
-
             model = self._resolve_model("rag", None, cfg)
             base_url = self._resolve_base_url(cfg)
-            client = OpenAI(api_key=cfg.api_key, base_url=base_url)
+            client = _get_openai_client(cfg.api_key or "", base_url)
             kwargs: dict = {
                 "model": model,
                 "messages": messages,
@@ -359,15 +399,11 @@ class LLMClient:
         max_tokens: int | None = None,
     ) -> LLMResult:
         try:
-            from openai import OpenAI
-
             model = self._resolve_model(
                 stage, model_override, cfg
             )
             base_url = self._resolve_base_url(cfg)
-            client = OpenAI(
-                api_key=cfg.api_key, base_url=base_url
-            )
+            client = _get_openai_client(cfg.api_key or "", base_url)
             kwargs: dict = {
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -410,12 +446,8 @@ class LLMClient:
         if not text:
             return None
         try:
-            from openai import OpenAI
-
             base_url = self._resolve_base_url(cfg)
-            client = OpenAI(
-                api_key=cfg.api_key, base_url=base_url
-            )
+            client = _get_openai_client(cfg.api_key or "", base_url)
             response = client.embeddings.create(
                 model=cfg.model_embedding, input=text
             )

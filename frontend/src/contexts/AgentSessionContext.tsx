@@ -2,7 +2,7 @@
  * Agent 会话全局上下文 - SSE 流和对话状态在页面切换时保持存活
  * @author Bamzc
  */
-import { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { agentApi } from "@/services/api";
 import type { AgentMessage, SSEEvent, SSEEventType } from "@/types";
 import { parseSSEStream } from "@/types";
@@ -466,10 +466,11 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
 
   const hasPendingConfirm = pendingActions.size > 0;
 
-  const value: AgentSessionCtx = {
+  const value: AgentSessionCtx = useMemo(() => ({
     items, loading, pendingActions, confirmingActions, canvas, hasPendingConfirm,
     setCanvas, sendMessage, handleConfirm, handleReject,
-  };
+  }), [items, loading, pendingActions, confirmingActions, canvas, hasPendingConfirm,
+    setCanvas, sendMessage, handleConfirm, handleReject]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -4,8 +4,8 @@
  * @author Bamzc
  */
 import { useState, useRef, useEffect, useCallback, memo } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useNavigate } from "react-router-dom";
+import Markdown from "@/components/Markdown";
 import { cn } from "@/lib/utils";
 import {
   Send,
@@ -27,8 +27,12 @@ import {
   Square,
   X,
   PanelRightOpen,
+  TrendingUp,
+  Star,
+  Hash,
 } from "lucide-react";
 import { useAgentSession, type ChatItem, type StepItem } from "@/contexts/AgentSessionContext";
+import { todayApi, type TodaySummary } from "@/services/api";
 
 /* ========== 能力芯片（输入框上方始终显示） ========== */
 
@@ -70,7 +74,8 @@ const TOOL_META: Record<string, { icon: typeof Search; label: string }> = {
   get_timeline: { icon: Search, label: "时间线" },
   list_topics: { icon: Search, label: "主题列表" },
   get_system_status: { icon: Search, label: "系统状态" },
-  ingest_arxiv: { icon: Download, label: "下载论文" },
+  search_arxiv: { icon: Search, label: "搜索 arXiv" },
+  ingest_arxiv: { icon: Download, label: "入库论文" },
   skim_paper: { icon: BookOpen, label: "粗读论文" },
   deep_read_paper: { icon: BookOpen, label: "精读论文" },
   embed_paper: { icon: Brain, label: "向量嵌入" },
@@ -294,7 +299,7 @@ export default function Agent() {
               />
             ) : (
               <div className="prose-custom">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{canvas.markdown}</ReactMarkdown>
+                <Markdown>{canvas.markdown}</Markdown>
               </div>
             )}
           </div>
@@ -307,15 +312,96 @@ export default function Agent() {
 /* ========== 空状态 ========== */
 
 const EmptyState = memo(function EmptyState({ onSelect }: { onSelect: (p: string) => void }) {
+  const navigate = useNavigate();
+  const [today, setToday] = useState<TodaySummary | null>(null);
+
+  useEffect(() => {
+    todayApi.summary().then(setToday).catch(() => {});
+  }, []);
+
   return (
-    <div className="flex h-full flex-col items-center justify-center px-4">
-      <div className="mb-8 flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10">
-        <Sparkles className="h-10 w-10 text-primary" />
+    <div className="flex h-full flex-col items-center px-4 pt-12 pb-4 overflow-y-auto">
+      <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+        <Sparkles className="h-8 w-8 text-primary" />
       </div>
-      <h2 className="mb-2 text-2xl font-bold text-ink">PaperMind Agent</h2>
-      <p className="mb-10 max-w-lg text-center text-sm leading-relaxed text-ink-secondary">
+      <h2 className="mb-1 text-2xl font-bold text-ink">PaperMind Agent</h2>
+      <p className="mb-6 max-w-lg text-center text-sm leading-relaxed text-ink-secondary">
         告诉我你的研究需求，我会自动规划执行步骤：搜索论文、下载、分析、生成综述。
       </p>
+
+      {/* 今日研究速览 */}
+      {today && (today.today_new > 0 || today.week_new > 0 || today.recommendations.length > 0) && (
+        <div className="mb-6 w-full max-w-2xl space-y-4">
+          {/* 统计卡片 */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl border border-border bg-surface p-3 text-center">
+              <div className="text-2xl font-bold text-primary">{today.total_papers}</div>
+              <div className="text-xs text-ink-tertiary">论文总量</div>
+            </div>
+            <div className="rounded-xl border border-border bg-surface p-3 text-center">
+              <div className="text-2xl font-bold text-emerald-500">{today.today_new}</div>
+              <div className="text-xs text-ink-tertiary">今日新增</div>
+            </div>
+            <div className="rounded-xl border border-border bg-surface p-3 text-center">
+              <div className="text-2xl font-bold text-amber-500">{today.week_new}</div>
+              <div className="text-xs text-ink-tertiary">本周新增</div>
+            </div>
+          </div>
+
+          {/* 为你推荐 */}
+          {today.recommendations.length > 0 && (
+            <div className="rounded-xl border border-border bg-surface p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+                <Star className="h-4 w-4 text-amber-500" />
+                为你推荐
+              </div>
+              <div className="space-y-2">
+                {today.recommendations.slice(0, 3).map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => navigate(`/papers/${r.id}`)}
+                    className="flex w-full items-start gap-3 rounded-lg p-2.5 text-left transition-colors hover:bg-hover"
+                  >
+                    <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs font-bold text-primary">
+                      {Math.round(r.similarity * 100)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium leading-snug text-ink line-clamp-1">{r.title}</div>
+                      {r.title_zh && (
+                        <div className="text-xs text-ink-tertiary line-clamp-1">{r.title_zh}</div>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 热点关键词 */}
+          {today.hot_keywords.length > 0 && (
+            <div className="rounded-xl border border-border bg-surface p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+                <TrendingUp className="h-4 w-4 text-rose-500" />
+                本周热点
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {today.hot_keywords.map((kw) => (
+                  <span
+                    key={kw.keyword}
+                    className="inline-flex items-center gap-1 rounded-md bg-primary/5 px-2.5 py-1 text-xs text-ink-secondary"
+                  >
+                    <Hash className="h-3 w-3 text-primary" />
+                    {kw.keyword}
+                    <span className="font-medium text-primary">({kw.count})</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 快捷建议 */}
       <div className="grid w-full max-w-2xl grid-cols-2 gap-3 md:grid-cols-3">
         {SUGGESTIONS.map((s) => (
           <button
@@ -387,7 +473,7 @@ const AssistantMessage = memo(function AssistantMessage({
         </p>
       ) : (
         <div className="prose-custom text-sm leading-relaxed text-ink">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          <Markdown>{content}</Markdown>
         </div>
       )}
     </div>
@@ -632,7 +718,7 @@ const ArtifactCard = memo(function ArtifactCard({
               />
             ) : (
               <div className="prose-custom text-sm">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                <Markdown>{content}</Markdown>
               </div>
             )}
           </div>

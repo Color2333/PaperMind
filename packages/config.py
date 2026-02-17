@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     pdf_storage_root: Path = Path("./data/papers")
     brief_output_root: Path = Path("./data/briefs")
     skim_score_threshold: float = 0.65
-    daily_cron: str = "0 2 * * *"
-    weekly_cron: str = "0 3 * * 1"
+    daily_cron: str = "0 21 * * *"
+    weekly_cron: str = "0 22 * * 0"
     cors_allow_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173"
     )

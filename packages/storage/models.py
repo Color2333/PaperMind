@@ -49,6 +49,9 @@ class Paper(Base):
     metadata_json: Mapped[dict] = mapped_column(
         "metadata", JSON, nullable=False, default=dict
     )
+    favorited: Mapped[bool] = mapped_column(
+        nullable=False, default=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False
     )
@@ -202,6 +205,12 @@ class TopicSubscription(Base):
         nullable=False, default=20
     )
     retry_limit: Mapped[int] = mapped_column(nullable=False, default=2)
+    schedule_frequency: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="daily"
+    )
+    schedule_time_utc: Mapped[int] = mapped_column(
+        nullable=False, default=21
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False
     )

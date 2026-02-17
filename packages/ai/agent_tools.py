@@ -157,19 +157,36 @@ TOOL_REGISTRY: list[ToolDef] = [
         requires_confirm=False,
     ),
     ToolDef(
-        name="ingest_arxiv",
-        description="从 arXiv 拉取论文并写入数据库",
+        name="search_arxiv",
+        description="搜索 arXiv 论文，返回候选列表供用户筛选（不入库）",
         parameters={
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "arXiv 搜索查询"},
                 "max_results": {
                     "type": "integer",
-                    "description": "最大拉取数量",
+                    "description": "最大搜索数量",
                     "default": 20,
                 },
             },
             "required": ["query"],
+        },
+        requires_confirm=False,
+    ),
+    ToolDef(
+        name="ingest_arxiv",
+        description="将用户选定的 arXiv 论文入库（需提供 arxiv_ids 列表）",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "原始搜索查询（用于主题关联）"},
+                "arxiv_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "要入库的 arXiv ID 列表",
+                },
+            },
+            "required": ["query", "arxiv_ids"],
         },
         requires_confirm=True,
     ),
@@ -246,7 +263,7 @@ TOOL_REGISTRY: list[ToolDef] = [
     ),
     ToolDef(
         name="manage_subscription",
-        description="管理主题订阅：启用或禁用定时自动搜集",
+        description="管理主题订阅：启用/禁用、设置频率和时间",
         parameters={
             "type": "object",
             "properties": {
@@ -256,12 +273,36 @@ TOOL_REGISTRY: list[ToolDef] = [
                 },
                 "enabled": {
                     "type": "boolean",
-                    "description": "true=启用定时搜集，false=仅一次",
+                    "description": "true=启用定时搜集，false=关闭",
+                },
+                "schedule_frequency": {
+                    "type": "string",
+                    "enum": ["daily", "twice_daily", "weekdays", "weekly"],
+                    "description": "搜集频率：每天/每天两次/工作日/每周",
+                },
+                "schedule_time_beijing": {
+                    "type": "integer",
+                    "description": "北京时间执行小时（0-23），默认 5 点",
                 },
             },
             "required": ["topic_name", "enabled"],
         },
         requires_confirm=True,
+    ),
+    ToolDef(
+        name="suggest_keywords",
+        description="根据用户自然语言描述，AI 生成 arXiv 搜索关键词建议",
+        parameters={
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "用户的研究兴趣描述（自然语言）",
+                },
+            },
+            "required": ["description"],
+        },
+        requires_confirm=False,
     ),
 ]
 
@@ -293,6 +334,7 @@ def _get_tool_handlers() -> dict:
         "get_timeline": _get_timeline,
         "list_topics": _list_topics,
         "get_system_status": _get_system_status,
+        "search_arxiv": _search_arxiv,
         "ingest_arxiv": _ingest_arxiv,
         "skim_paper": _skim_paper,
         "deep_read_paper": _deep_read_paper,
@@ -300,6 +342,7 @@ def _get_tool_handlers() -> dict:
         "generate_wiki": _generate_wiki,
         "generate_daily_brief": _generate_daily_brief,
         "manage_subscription": _manage_subscription,
+        "suggest_keywords": _suggest_keywords,
     }
 
 
@@ -566,16 +609,61 @@ def _get_system_status() -> ToolResult:
     )
 
 
+def _search_arxiv(query: str, max_results: int = 20) -> ToolResult:
+    """搜索 arXiv，返回候选论文列表（不入库）"""
+    from packages.integrations.arxiv_client import ArxivClient
+
+    try:
+        papers = ArxivClient().fetch_latest(query=query, max_results=max_results)
+    except Exception as exc:
+        logger.exception("ArXiv search failed: %s", exc)
+        return ToolResult(success=False, summary=f"ArXiv 搜索失败: {exc!s}")
+
+    if not papers:
+        return ToolResult(
+            success=True,
+            data={"candidates": [], "count": 0, "query": query},
+            summary="未找到相关论文",
+        )
+
+    candidates = []
+    for i, p in enumerate(papers, 1):
+        candidates.append({
+            "index": i,
+            "arxiv_id": p.arxiv_id,
+            "title": p.title,
+            "abstract": (p.abstract or "")[:300],
+            "publication_date": str(p.publication_date) if p.publication_date else None,
+            "categories": (p.metadata or {}).get("categories", []),
+            "authors": (p.metadata or {}).get("authors", [])[:5],
+        })
+
+    return ToolResult(
+        success=True,
+        data={"candidates": candidates, "count": len(candidates), "query": query},
+        summary=f"从 arXiv 搜索到 {len(candidates)} 篇候选论文",
+    )
+
+
 def _ingest_arxiv(
-    query: str, max_results: int = 20
+    query: str, arxiv_ids: list[str] | None = None,
 ) -> Iterator[ToolProgress | ToolResult]:
-    """摄入论文 → 自动分配主题 → 自动向量化 → 自动粗读（带进度）"""
+    """将用户选定的论文入库 → 自动分配主题 → 自动向量化 → 自动粗读"""
+    from packages.integrations.arxiv_client import ArxivClient
+
     pipelines = PaperPipelines()
     topic_name = query.strip()
 
-    yield ToolProgress(message="正在搜索 arXiv...", current=0, total=0)
+    if not arxiv_ids:
+        yield ToolResult(
+            success=False,
+            summary="请先用 search_arxiv 搜索，再提供要入库的 arxiv_ids 列表",
+        )
+        return
 
-    # 1) 查找或创建 Topic（默认 enabled=False，仅搜一次）
+    yield ToolProgress(message="正在准备入库...", current=0, total=0)
+
+    # 查找或创建 Topic
     topic_id: str | None = None
     is_new_topic = False
     try:
@@ -584,100 +672,165 @@ def _ingest_arxiv(
             topic = topic_repo.get_by_name(topic_name)
             if not topic:
                 topic = topic_repo.upsert_topic(
-                    name=topic_name,
-                    query=topic_name,
-                    enabled=False,
+                    name=topic_name, query=topic_name, enabled=False,
                 )
                 is_new_topic = True
             topic_id = topic.id
     except Exception as exc:
         logger.warning("Auto-create topic '%s' failed: %s", topic_name, exc)
 
-    # 2) 摄入论文
-    inserted_ids = pipelines.ingest_arxiv_with_ids(
-        query=query, max_results=max_results, topic_id=topic_id
+    # 从 arXiv 拉取选中论文的完整信息并入库
+    arxiv_client = ArxivClient()
+    selected_set = set(arxiv_ids)
+    inserted_ids: list[str] = []
+
+    yield ToolProgress(
+        message=f"正在下载 {len(selected_set)} 篇选中论文...",
+        current=0, total=len(selected_set),
     )
+
+    # 分批搜索获取论文元数据
+    all_papers = arxiv_client.fetch_latest(query=query, max_results=50)
+    selected_papers = [p for p in all_papers if p.arxiv_id in selected_set]
+
+    # 补充搜索结果中没有的（可能 ID 不在前50条中），逐个按 ID 拉取
+    found_ids = {p.arxiv_id for p in selected_papers}
+    missing_ids = selected_set - found_ids
+    for mid in missing_ids:
+        try:
+            extra = arxiv_client.fetch_latest(query=f"id:{mid}", max_results=1)
+            selected_papers.extend(extra)
+        except Exception:
+            logger.warning("Failed to fetch arxiv paper %s", mid)
+
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        from packages.storage.repositories import PipelineRunRepository
+        run_repo = PipelineRunRepository(session)
+        note = f"selected {len(arxiv_ids)} from query={query}"
+        run = run_repo.start("ingest_arxiv", decision_note=note)
+        try:
+            for paper in selected_papers:
+                saved = repo.upsert_paper(paper)
+                if topic_id:
+                    repo.link_to_topic(saved.id, topic_id)
+                inserted_ids.append(saved.id)
+                try:
+                    pdf_path = arxiv_client.download_pdf(paper.arxiv_id)
+                    repo.set_pdf_path(saved.id, pdf_path)
+                except Exception:
+                    pass
+            run_repo.finish(run.id)
+        except Exception as exc:
+            run_repo.fail(run.id, str(exc))
+            raise
+
     if not inserted_ids:
         yield ToolResult(
             success=True,
-            data={
-                "ingested": 0, "query": query, "topic": topic_name,
-                "suggest_subscribe": False,
-            },
-            summary="未发现新论文（可能已全部入库）",
+            data={"ingested": 0, "query": query, "suggest_subscribe": False},
+            summary="未能入库任何论文",
         )
         return
 
     total = len(inserted_ids)
     yield ToolProgress(
-        message=f"找到 {total} 篇论文，开始向量化和粗读...",
+        message=f"入库 {total} 篇，开始向量化和粗读...",
         current=0, total=total,
     )
 
-    # 3) 自动向量化 + 粗读
-    embed_ok, embed_skip = 0, 0
-    skim_ok, skim_skip = 0, 0
+    # 向量化 + 粗读（论文间 + 论文内双重并行）
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    for i, pid_str in enumerate(inserted_ids, 1):
+    # 最多 3 篇论文同时处理，每篇 2 个 API 调用 → 最多 6 并发
+    PAPER_CONCURRENCY = 3
+
+    # 获取所有论文标题（在 session 内）
+    paper_titles: dict[str, str] = {}
+    with session_scope() as sess:
+        for pid_str in inserted_ids:
+            try:
+                p = PaperRepository(sess).get_by_id(UUID(pid_str))
+                paper_titles[pid_str] = (p.title or "")[:40]
+            except Exception:
+                paper_titles[pid_str] = pid_str[:8]
+
+    def _process_one(pid_str: str) -> tuple[bool, bool]:
+        """单篇论文：embed ∥ skim 并行"""
         pid = UUID(pid_str)
-        with session_scope() as sess:
-            p = PaperRepository(sess).get_by_id(pid)
-            p_title = (p.title or "")[:40]
-            already_embedded = p.embedding is not None
-            already_skimmed = p.read_status.value != "unread"
+        e_ok, s_ok = False, False
+        with ThreadPoolExecutor(max_workers=2) as inner:
+            fe = inner.submit(pipelines.embed_paper, pid)
+            fs = inner.submit(pipelines.skim, pid)
+            for fut in as_completed([fe, fs]):
+                try:
+                    fut.result()
+                    if fut is fe:
+                        e_ok = True
+                    else:
+                        s_ok = True
+                except Exception as exc:
+                    label = "embed" if fut is fe else "skim"
+                    logger.warning(
+                        "%s %s failed: %s",
+                        label, pid_str[:8], exc,
+                    )
+        return e_ok, s_ok
 
-        yield ToolProgress(
-            message=f"处理 {i}/{total}: {p_title}...",
-            current=i, total=total,
-        )
-
-        if not already_embedded:
+    embed_ok, skim_ok, done = 0, 0, 0
+    with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
+        future_map = {
+            pool.submit(_process_one, pid_str): pid_str
+            for pid_str in inserted_ids
+        }
+        for fut in as_completed(future_map):
+            pid_str = future_map[fut]
+            done += 1
+            title = paper_titles.get(pid_str, pid_str[:8])
             try:
-                pipelines.embed_paper(pid)
-                embed_ok += 1
+                e_ok_i, s_ok_i = fut.result()
+                embed_ok += int(e_ok_i)
+                skim_ok += int(s_ok_i)
             except Exception as exc:
-                logger.warning("embed %s failed: %s", pid_str[:8], exc)
-        else:
-            embed_skip += 1
+                logger.warning(
+                    "paper %s failed: %s", pid_str[:8], exc
+                )
+            yield ToolProgress(
+                message=f"完成 {done}/{total}: {title}",
+                current=done, total=total,
+            )
 
-        if not already_skimmed:
-            try:
-                pipelines.skim(pid)
-                skim_ok += 1
-            except Exception as exc:
-                logger.warning("skim %s failed: %s", pid_str[:8], exc)
-        else:
-            skim_skip += 1
-
-    existed = max(embed_skip, skim_skip)
-    part2 = (
-        f"（新处理 {embed_ok}，已有 {existed}）"
-        if existed
-        else f"，向量化 {embed_ok}，粗读 {skim_ok}"
-    )
     yield ToolResult(
         success=True,
         data={
             "total": total,
-            "new_processed": embed_ok,
-            "already_existed": existed,
+            "embedded": embed_ok,
+            "skimmed": skim_ok,
             "query": query,
             "topic": topic_name,
-            "embedded": embed_ok,
-            "embed_skipped": embed_skip,
-            "skimmed": skim_ok,
-            "skim_skipped": skim_skip,
             "paper_ids": inserted_ids[:10],
             "suggest_subscribe": is_new_topic,
         },
         summary=(
-            f"找到 {total} 篇 → 主题「{topic_name}」{part2}"
+            f"入库 {total} 篇 → 主题「{topic_name}」，"
+            f"向量化 {embed_ok}，粗读 {skim_ok}"
         ),
     )
 
 
-def _manage_subscription(topic_name: str, enabled: bool) -> ToolResult:
-    """启用或禁用主题的定时自动搜集"""
+def _manage_subscription(
+    topic_name: str,
+    enabled: bool,
+    schedule_frequency: str | None = None,
+    schedule_time_beijing: int | None = None,
+) -> ToolResult:
+    """管理主题订阅：启用/禁用、设置频率和时间"""
+    freq_map = {
+        "daily": "每天",
+        "twice_daily": "每天两次",
+        "weekdays": "工作日",
+        "weekly": "每周",
+    }
     with session_scope() as session:
         topic_repo = TopicRepository(session)
         topic = topic_repo.get_by_name(topic_name.strip())
@@ -687,14 +840,51 @@ def _manage_subscription(topic_name: str, enabled: bool) -> ToolResult:
                 summary=f"主题「{topic_name}」不存在",
             )
         topic.enabled = enabled
+        if schedule_frequency and schedule_frequency in freq_map:
+            topic.schedule_frequency = schedule_frequency
+        if schedule_time_beijing is not None:
+            utc_hour = (schedule_time_beijing - 8) % 24
+            topic.schedule_time_utc = max(0, min(23, utc_hour))
+
+        freq_label = freq_map.get(topic.schedule_frequency, topic.schedule_frequency)
+        bj_hour = (topic.schedule_time_utc + 8) % 24
         action = "启用定时搜集" if enabled else "关闭定时搜集"
+        schedule_info = f"（{freq_label} · 北京时间 {bj_hour:02d}:00）"
+
     return ToolResult(
         success=True,
         data={
             "topic": topic_name,
             "enabled": enabled,
+            "schedule_frequency": schedule_frequency or "daily",
+            "schedule_time_beijing": (schedule_time_beijing
+                                      if schedule_time_beijing is not None
+                                      else 5),
         },
-        summary=f"已{action}：{topic_name}",
+        summary=f"已{action}：{topic_name} {schedule_info}",
+    )
+
+
+def _suggest_keywords(description: str) -> ToolResult:
+    """AI 生成 arXiv 搜索关键词建议"""
+    from packages.ai.keyword_service import KeywordService
+    try:
+        suggestions = KeywordService().suggest(description.strip())
+    except Exception as exc:
+        logger.exception("Keyword suggestion failed: %s", exc)
+        return ToolResult(
+            success=False, summary=f"关键词建议生成失败: {exc!s}"
+        )
+    if not suggestions:
+        return ToolResult(
+            success=True,
+            data={"suggestions": []},
+            summary="未能生成有效的关键词建议",
+        )
+    return ToolResult(
+        success=True,
+        data={"suggestions": suggestions},
+        summary=f"生成了 {len(suggestions)} 组搜索关键词建议",
     )
 
 

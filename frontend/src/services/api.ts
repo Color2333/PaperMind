@@ -25,6 +25,7 @@ import type {
   CostMetrics,
   CitationSyncResult,
   IngestResult,
+  KeywordSuggestion,
 } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
@@ -64,6 +65,28 @@ export const systemApi = {
   status: () => get<SystemStatus>("/system/status"),
 };
 
+/* ========== 今日速览 ========== */
+export interface TodaySummary {
+  today_new: number;
+  week_new: number;
+  total_papers: number;
+  recommendations: {
+    id: string;
+    title: string;
+    arxiv_id: string;
+    abstract: string;
+    similarity: number;
+    title_zh?: string;
+    keywords?: string[];
+    categories?: string[];
+  }[];
+  hot_keywords: { keyword: string; count: number }[];
+}
+
+export const todayApi = {
+  summary: () => get<TodaySummary>("/today"),
+};
+
 /* ========== 主题 ========== */
 export const topicApi = {
   list: (enabledOnly = false) =>
@@ -71,19 +94,34 @@ export const topicApi = {
   create: (data: TopicCreate) => post<Topic>("/topics", data),
   update: (id: string, data: TopicUpdate) => patch<Topic>(`/topics/${id}`, data),
   delete: (id: string) => del<{ deleted: string }>(`/topics/${id}`),
+  suggestKeywords: (description: string) =>
+    post<{ suggestions: KeywordSuggestion[] }>("/topics/suggest-keywords", { description }),
 };
 
 /* ========== 论文 ========== */
+export interface FolderStats {
+  total: number;
+  favorites: number;
+  recent_7d: number;
+  unclassified: number;
+  by_topic: { topic_id: string; topic_name: string; count: number }[];
+  by_status: Record<string, number>;
+}
+
 export const paperApi = {
-  latest: (limit = 20, status?: string, topicId?: string) => {
+  latest: (limit = 50, status?: string, topicId?: string, folder?: string) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (status) params.append("status", status);
     if (topicId) params.append("topic_id", topicId);
+    if (folder) params.append("folder", folder);
     return get<{ items: Paper[] }>(`/papers/latest?${params}`);
   },
+  folderStats: () => get<FolderStats>("/papers/folder-stats"),
   detail: (id: string) => get<Paper>(`/papers/${id}`),
   similar: (id: string, topK = 5) =>
     get<{ paper_id: string; similar_ids: string[] }>(`/papers/${id}/similar?top_k=${topK}`),
+  toggleFavorite: (id: string) =>
+    patch<{ id: string; favorited: boolean }>(`/papers/${id}/favorite`),
 };
 
 /* ========== 摄入 ========== */

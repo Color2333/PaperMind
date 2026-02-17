@@ -1,9 +1,9 @@
 /**
- * 论文收集与订阅管理 - 手动搜索 + 定时任务
+ * 论文收集与订阅管理（现代精致版）
  * @author Bamzc
  */
 import { useState, useEffect, useCallback } from "react";
-import { cn } from "@/lib/utils";
+import { Button, Empty, Spinner } from "@/components/ui";
 import {
   Search,
   Download,
@@ -11,16 +11,18 @@ import {
   Plus,
   Trash2,
   CheckCircle2,
-  Loader2,
   AlertTriangle,
   ArrowUpDown,
-  FileText,
   Power,
   PowerOff,
+  Sparkles,
   Pencil,
+  X,
+  Rss,
+  Loader2,
 } from "lucide-react";
 import { ingestApi, topicApi } from "@/services/api";
-import type { Topic, TopicCreate, TopicUpdate } from "@/types";
+import type { Topic, TopicCreate, TopicUpdate, ScheduleFrequency, KeywordSuggestion } from "@/types";
 
 type SortBy = "submittedDate" | "relevance" | "lastUpdatedDate";
 
@@ -31,8 +33,21 @@ interface SearchResult {
   time: string;
 }
 
+const FREQ_OPTIONS: { value: ScheduleFrequency; label: string }[] = [
+  { value: "daily", label: "每天" },
+  { value: "twice_daily", label: "每天两次" },
+  { value: "weekdays", label: "工作日" },
+  { value: "weekly", label: "每周" },
+];
+const FREQ_LABEL: Record<string, string> = { daily: "每天", twice_daily: "每天两次", weekdays: "工作日", weekly: "每周" };
+
+function utcToBj(utc: number): number { return (utc + 8) % 24; }
+function bjToUtc(bj: number): number { return (bj - 8 + 24) % 24; }
+function hourOptions(): { value: number; label: string }[] {
+  return Array.from({ length: 24 }, (_, i) => ({ value: i, label: `${String(i).padStart(2, "0")}:00` }));
+}
+
 export default function Collect() {
-  /* ========== 搜索状态 ========== */
   const [query, setQuery] = useState("");
   const [maxResults, setMaxResults] = useState(20);
   const [sortBy, setSortBy] = useState<SortBy>("submittedDate");
@@ -40,185 +55,294 @@ export default function Collect() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [error, setError] = useState("");
 
-  /* ========== 订阅状态 ========== */
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAdd, setShowAdd] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newQuery, setNewQuery] = useState("");
-  const [newMax, setNewMax] = useState(20);
-  const [saving, setSaving] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
 
-  /* 加载订阅列表 */
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [formName, setFormName] = useState("");
+  const [formQuery, setFormQuery] = useState("");
+  const [formMax, setFormMax] = useState(20);
+  const [formFreq, setFormFreq] = useState<ScheduleFrequency>("daily");
+  const [formTimeBj, setFormTimeBj] = useState(5);
+  const [saving, setSaving] = useState(false);
+
+  const [aiDesc, setAiDesc] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
+
   useEffect(() => {
     topicApi.list(false).then((r) => { setTopics(r.items); setLoading(false); }).catch(() => setLoading(false));
   }, []);
 
-  /* ========== 搜索 ========== */
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
-    setSearching(true);
-    setError("");
+    setSearching(true); setError("");
     try {
       const res = await ingestApi.arxiv(query.trim(), maxResults);
       setResults((prev) => [{ ingested: res.ingested, query: query.trim(), sortBy, time: new Date().toLocaleTimeString("zh-CN") }, ...prev]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "搜索失败");
-    } finally {
-      setSearching(false);
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : "搜索失败"); } finally { setSearching(false); }
   }, [query, maxResults, sortBy]);
 
-  /* ========== 订阅 CRUD ========== */
-  const handleAddTopic = useCallback(async () => {
-    if (!newName.trim() || !newQuery.trim()) return;
+  const handleAiSuggest = useCallback(async () => {
+    const desc = aiDesc.trim() || formQuery.trim() || query.trim();
+    if (!desc) return;
+    setAiLoading(true); setSuggestions([]);
+    try { const res = await topicApi.suggestKeywords(desc); setSuggestions(res.suggestions); }
+    catch { setError("AI 建议失败"); } finally { setAiLoading(false); }
+  }, [aiDesc, formQuery, query]);
+
+  const applySuggestion = useCallback((s: KeywordSuggestion) => { setFormName(s.name); setFormQuery(s.query); setSuggestions([]); setAiDesc(""); }, []);
+
+  const resetForm = useCallback(() => { setShowForm(false); setEditId(null); setFormName(""); setFormQuery(""); setFormMax(20); setFormFreq("daily"); setFormTimeBj(5); setSuggestions([]); setAiDesc(""); }, []);
+  const openAdd = useCallback(() => { resetForm(); setShowForm(true); }, [resetForm]);
+  const openEdit = useCallback((t: Topic) => {
+    setEditId(t.id); setFormName(t.name); setFormQuery(t.query); setFormMax(t.max_results_per_run);
+    setFormFreq(t.schedule_frequency || "daily"); setFormTimeBj(utcToBj(t.schedule_time_utc ?? 21));
+    setSuggestions([]); setAiDesc(""); setShowForm(true);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (!formName.trim() || !formQuery.trim()) return;
     setSaving(true);
     try {
-      const data: TopicCreate = { name: newName.trim(), query: newQuery.trim(), enabled: true, max_results_per_run: newMax };
-      const topic = await topicApi.create(data);
-      setTopics((prev) => [topic, ...prev]);
-      setNewName(""); setNewQuery(""); setShowAdd(false);
-    } catch (err) { setError(err instanceof Error ? err.message : "添加失败"); }
-    finally { setSaving(false); }
-  }, [newName, newQuery, newMax]);
+      const utcHour = bjToUtc(formTimeBj);
+      if (editId) {
+        const updated = await topicApi.update(editId, { query: formQuery.trim(), max_results_per_run: formMax, schedule_frequency: formFreq, schedule_time_utc: utcHour });
+        setTopics((prev) => prev.map((x) => (x.id === editId ? updated : x)));
+      } else {
+        const topic = await topicApi.create({ name: formName.trim(), query: formQuery.trim(), enabled: true, max_results_per_run: formMax, schedule_frequency: formFreq, schedule_time_utc: utcHour });
+        setTopics((prev) => [topic, ...prev]);
+      }
+      resetForm();
+    } catch (err) { setError(err instanceof Error ? err.message : "保存失败"); } finally { setSaving(false); }
+  }, [formName, formQuery, formMax, formFreq, formTimeBj, editId, resetForm]);
 
   const handleToggle = useCallback(async (t: Topic) => {
-    try {
-      const data: TopicUpdate = { enabled: !t.enabled };
-      await topicApi.update(t.id, data);
-      setTopics((prev) => prev.map((x) => x.id === t.id ? { ...x, enabled: !x.enabled } : x));
-    } catch { /* ignore */ }
+    try { await topicApi.update(t.id, { enabled: !t.enabled }); setTopics((prev) => prev.map((x) => (x.id === t.id ? { ...x, enabled: !x.enabled } : x))); } catch {}
   }, []);
-
   const handleDelete = useCallback(async (id: string) => {
-    try { await topicApi.delete(id); setTopics((prev) => prev.filter((t) => t.id !== id)); } catch { /* ignore */ }
+    try { await topicApi.delete(id); setTopics((prev) => prev.filter((t) => t.id !== id)); } catch {}
   }, []);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter") handleSearch(); };
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-ink">论文收集与订阅</h1>
-        <p className="mt-1 text-sm text-ink-secondary">从 arXiv 搜索论文，或创建订阅自动定时收集</p>
+    <div className="animate-fade-in space-y-8">
+      {/* 页面头 */}
+      <div className="page-hero rounded-2xl p-6">
+        <h1 className="text-2xl font-bold text-ink">论文收集</h1>
+        <p className="mt-1 text-sm text-ink-secondary">从 arXiv 搜索下载论文，或创建订阅自动定时收集</p>
       </div>
 
-      {/* ========== 搜索区 ========== */}
-      <section className="rounded-2xl border border-border bg-surface p-6">
-        <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-ink">
-          <Search className="h-5 w-5 text-primary" />
-          搜索并下载
-        </h2>
-        <div className="space-y-4">
-          <div className="flex gap-3">
-            <input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={handleKeyDown} placeholder="输入关键词：3D reconstruction, NeRF, LLM..." className="flex-1 rounded-xl border border-border bg-page px-4 py-2.5 text-sm text-ink placeholder:text-ink-placeholder focus:border-primary/40 focus:outline-none" />
-            <button onClick={handleSearch} disabled={!query.trim() || searching} className={cn("flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium transition-all", query.trim() && !searching ? "bg-primary text-white shadow-sm hover:bg-primary-hover" : "bg-hover text-ink-tertiary")}>
-              {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {searching ? "下载中..." : "搜索下载"}
-            </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-ink-secondary">数量:</label>
-              <select value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))} className="rounded-lg border border-border bg-page px-2 py-1 text-xs text-ink">
-                {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n} 篇</option>)}
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <ArrowUpDown className="h-3.5 w-3.5 text-ink-tertiary" />
-              <label className="text-xs text-ink-secondary">排序:</label>
-              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)} className="rounded-lg border border-border bg-page px-2 py-1 text-xs text-ink">
-                <option value="submittedDate">最新提交</option>
-                <option value="relevance">相关性</option>
-                <option value="lastUpdatedDate">最近更新</option>
-              </select>
-            </div>
-            {query.trim() && (
-              <button onClick={() => { setNewName(query.trim()); setNewQuery(query.trim()); setNewMax(maxResults); setShowAdd(true); }} className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1 text-xs text-ink-secondary transition-colors hover:bg-hover hover:text-ink">
-                <Clock className="h-3 w-3" />
-                加为订阅
-              </button>
-            )}
+      {/* 错误 */}
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl border border-error/20 bg-error-light px-4 py-3">
+          <AlertTriangle className="h-4 w-4 text-error" />
+          <p className="flex-1 text-sm text-error">{error}</p>
+          <button onClick={() => setError("")} className="text-error/60 hover:text-error"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
+      {/* 搜索区 */}
+      <div className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+        <div className="mb-5 flex items-center gap-2">
+          <div className="rounded-xl bg-primary/8 p-2"><Search className="h-4 w-4 text-primary" /></div>
+          <div>
+            <h2 className="text-sm font-semibold text-ink">即时搜索</h2>
+            <p className="text-xs text-ink-tertiary">搜索并下载论文到本地库</p>
           </div>
         </div>
-        {error && <div className="mt-4 flex items-center gap-2 rounded-lg bg-error-light px-3 py-2 text-xs text-error"><AlertTriangle className="h-3.5 w-3.5" />{error}</div>}
+
+        <div className="flex gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
+              placeholder="3D reconstruction, NeRF, LLM alignment..."
+              className="h-11 w-full rounded-xl border border-border bg-page pl-10 pr-4 text-sm text-ink placeholder:text-ink-placeholder focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+          <Button icon={<Download className="h-4 w-4" />} onClick={handleSearch} loading={searching} disabled={!query.trim()}>
+            搜索下载
+          </Button>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 text-xs text-ink-secondary">
+            数量
+            <select value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))} className="h-7 rounded-lg border border-border bg-surface px-2 text-xs text-ink">
+              {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-ink-secondary">
+            <ArrowUpDown className="h-3 w-3" /> 排序
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)} className="h-7 rounded-lg border border-border bg-surface px-2 text-xs text-ink">
+              <option value="submittedDate">最新提交</option>
+              <option value="relevance">相关性</option>
+              <option value="lastUpdatedDate">最近更新</option>
+            </select>
+          </label>
+          {query.trim() && (
+            <Button variant="secondary" size="sm" icon={<Clock className="h-3 w-3" />}
+              onClick={() => { setFormName(query.trim()); setFormQuery(query.trim()); setFormMax(maxResults); setShowForm(true); }}>
+              加为订阅
+            </Button>
+          )}
+        </div>
+
+        {/* 结果 */}
         {results.length > 0 && (
           <div className="mt-4 space-y-2">
-            {results.map((r, idx) => (
-              <div key={idx} className="flex items-center gap-3 rounded-xl bg-page px-4 py-2.5">
+            {results.map((r, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-xl bg-success-light/50 px-4 py-2.5">
                 <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
-                <div className="min-w-0 flex-1">
-                  <span className="text-sm text-ink">"{r.query}" — <strong>{r.ingested}</strong> 篇</span>
-                  <span className="ml-2 text-xs text-ink-tertiary">{r.time}</span>
-                </div>
+                <span className="text-sm text-ink">&quot;{r.query}&quot; — <strong>{r.ingested}</strong> 篇</span>
+                <span className="ml-auto text-xs text-ink-tertiary">{r.time}</span>
               </div>
             ))}
           </div>
         )}
-      </section>
+      </div>
 
-      {/* ========== 订阅管理 ========== */}
-      <section className="rounded-2xl border border-border bg-surface p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
-            <Clock className="h-5 w-5 text-primary" />
-            自动订阅
-          </h2>
-          <button onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover">
-            <Plus className="h-3.5 w-3.5" />
-            新建订阅
-          </button>
+      {/* 订阅管理 */}
+      <div className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+        <div className="mb-5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="rounded-xl bg-info/8 p-2"><Rss className="h-4 w-4 text-info" /></div>
+            <div>
+              <h2 className="text-sm font-semibold text-ink">自动订阅</h2>
+              <p className="text-xs text-ink-tertiary">系统定期自动收集新论文</p>
+            </div>
+          </div>
+          <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={openAdd}>新建</Button>
         </div>
 
-        {/* 新建表单 */}
-        {showAdd && (
-          <div className="mb-4 space-y-3 rounded-xl border border-border-light bg-page p-4">
-            <div className="grid grid-cols-3 gap-3">
-              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="订阅名称" className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-placeholder focus:border-primary/40 focus:outline-none" />
-              <input value={newQuery} onChange={(e) => setNewQuery(e.target.value)} placeholder="arXiv 搜索关键词" className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-placeholder focus:border-primary/40 focus:outline-none" />
-              <select value={newMax} onChange={(e) => setNewMax(Number(e.target.value))} className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink">
-                {[10, 20, 50].map((n) => <option key={n} value={n}>每次 {n} 篇</option>)}
-              </select>
+        {/* 表单 */}
+        {showForm && (
+          <div className="mb-5 rounded-2xl border border-border-light bg-page p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-ink">{editId ? "编辑订阅" : "新建订阅"}</h3>
+              <button onClick={resetForm} className="rounded-lg p-1 text-ink-tertiary hover:bg-hover"><X className="h-4 w-4" /></button>
             </div>
-            <div className="flex gap-2">
-              <button onClick={handleAddTopic} disabled={!newName.trim() || !newQuery.trim() || saving} className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50">
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                创建
-              </button>
-              <button onClick={() => setShowAdd(false)} className="rounded-lg border border-border px-4 py-1.5 text-sm text-ink-secondary hover:bg-hover">取消</button>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <FormField label="订阅名称">
+                  <input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="3D 重建" disabled={!!editId}
+                    className="form-input" />
+                </FormField>
+                <FormField label="arXiv 关键词">
+                  <input value={formQuery} onChange={(e) => setFormQuery(e.target.value)} placeholder="all:NeRF AND all:3D"
+                    className="form-input" />
+                </FormField>
+                <FormField label="每次数量">
+                  <select value={formMax} onChange={(e) => setFormMax(Number(e.target.value))} className="form-input">
+                    {[10, 20, 50].map((n) => <option key={n} value={n}>{n} 篇</option>)}
+                  </select>
+                </FormField>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <FormField label="频率">
+                  <select value={formFreq} onChange={(e) => setFormFreq(e.target.value as ScheduleFrequency)} className="form-input">
+                    {FREQ_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </FormField>
+                <FormField label="执行时间（北京）">
+                  <select value={formTimeBj} onChange={(e) => setFormTimeBj(Number(e.target.value))} className="form-input">
+                    {hourOptions().map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </FormField>
+              </div>
+
+              {/* AI 建议 */}
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-ink-secondary">AI 关键词建议</label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Sparkles className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-primary/40" />
+                    <input value={aiDesc} onChange={(e) => setAiDesc(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAiSuggest(); }}
+                      placeholder="描述研究兴趣，AI 生成搜索词..."
+                      className="form-input pl-9" />
+                  </div>
+                  <Button variant="secondary" size="sm" icon={aiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                    onClick={handleAiSuggest} disabled={aiLoading || (!aiDesc.trim() && !formQuery.trim() && !query.trim())}>
+                    AI 建议
+                  </Button>
+                </div>
+                {suggestions.length > 0 && (
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {suggestions.map((s, i) => (
+                      <button key={i} onClick={() => applySuggestion(s)}
+                        className="flex items-start gap-2 rounded-xl border border-border-light bg-surface p-3 text-left transition-all hover:border-primary/30 hover:shadow-sm">
+                        <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-ink">{s.name}</p>
+                          <p className="mt-0.5 font-mono text-[10px] text-ink-tertiary">{s.query}</p>
+                          <p className="mt-0.5 text-[10px] text-ink-secondary">{s.reason}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button icon={editId ? <Pencil className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                  onClick={handleSave} loading={saving} disabled={!formName.trim() || !formQuery.trim()}>
+                  {editId ? "保存" : "创建"}
+                </Button>
+                <Button variant="secondary" onClick={resetForm}>取消</Button>
+              </div>
             </div>
           </div>
         )}
 
         {/* 订阅列表 */}
         {loading ? (
-          <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-ink-tertiary" /></div>
+          <Spinner text="加载订阅列表..." />
         ) : topics.length === 0 ? (
-          <p className="py-8 text-center text-sm text-ink-tertiary">暂无订阅。创建订阅后系统会定期自动收集论文。</p>
+          <Empty icon={<Rss className="h-12 w-12" />} title="暂无订阅" description="创建订阅后系统会定期自动收集论文" action={<Button size="sm" onClick={openAdd}>创建第一个订阅</Button>} />
         ) : (
           <div className="space-y-2">
-            {topics.map((t) => (
-              <div key={t.id} className="flex items-center gap-3 rounded-xl bg-page px-4 py-3 transition-colors hover:bg-hover">
-                <div className={cn("h-2 w-2 shrink-0 rounded-full", t.enabled ? "bg-success" : "bg-ink-tertiary")} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-ink">{t.name}</p>
-                  <p className="text-xs text-ink-tertiary">
-                    {t.query} · 每次 {t.max_results_per_run} 篇 · 重试 {t.retry_limit} 次
-                  </p>
+            {topics.map((t) => {
+              const bjHour = utcToBj(t.schedule_time_utc ?? 21);
+              const freqLabel = FREQ_LABEL[t.schedule_frequency] || "每天";
+              return (
+                <div key={t.id} className="group flex items-center gap-3 rounded-xl border border-transparent bg-page px-4 py-3 transition-all hover:border-border hover:shadow-sm">
+                  <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${t.enabled ? "bg-success" : "bg-ink-tertiary"} ${t.enabled ? "status-running" : ""}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink">{t.name}</p>
+                    <p className="text-xs text-ink-tertiary">{t.query}</p>
+                  </div>
+                  <div className="hidden shrink-0 text-right sm:block">
+                    <p className="text-xs font-medium text-ink-secondary">{freqLabel} {String(bjHour).padStart(2, "0")}:00</p>
+                    <p className="text-[10px] text-ink-tertiary">每次 {t.max_results_per_run} 篇</p>
+                  </div>
+                  <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button onClick={() => openEdit(t)} className="rounded-lg p-1.5 text-ink-tertiary hover:bg-hover hover:text-ink"><Pencil className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => handleToggle(t)} className={`rounded-lg p-1.5 ${t.enabled ? "text-success hover:bg-success-light" : "text-ink-tertiary hover:bg-hover"}`}>
+                      {t.enabled ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
+                    </button>
+                    <button onClick={() => handleDelete(t.id)} className="rounded-lg p-1.5 text-ink-tertiary hover:bg-error-light hover:text-error"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
                 </div>
-                <button onClick={() => handleToggle(t)} className={cn("flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium transition-colors", t.enabled ? "text-success hover:bg-success-light" : "text-ink-tertiary hover:bg-hover")} title={t.enabled ? "暂停" : "启用"}>
-                  {t.enabled ? <Power className="h-3 w-3" /> : <PowerOff className="h-3 w-3" />}
-                  {t.enabled ? "运行中" : "已暂停"}
-                </button>
-                <button onClick={() => handleDelete(t.id)} className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-tertiary transition-colors hover:bg-error-light hover:text-error">
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
-      </section>
+      </div>
+    </div>
+  );
+}
+
+function FormField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-xs font-medium text-ink-secondary">{label}</label>
+      {children}
     </div>
   );
 }
