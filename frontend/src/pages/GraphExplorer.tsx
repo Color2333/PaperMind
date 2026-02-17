@@ -5,11 +5,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Button, Badge, Spinner } from "@/components/ui";
 import { graphApi, topicApi, todayApi, type TodaySummary } from "@/services/api";
-import type { Topic, CitationTree, TimelineResponse, GraphQuality, EvolutionResponse, SurveyResponse } from "@/types";
+import type { Topic, CitationTree, TimelineResponse, GraphQuality, EvolutionResponse, SurveyResponse, ResearchGapsResponse } from "@/types";
+import Markdown from "@/components/Markdown";
 import {
   Search, Network, Clock, BarChart3, TrendingUp, BookOpen, Star, ArrowRight,
   ArrowDown, ArrowUp, Layers, Compass, FileText, Lightbulb, HelpCircle,
-  Tag, Rss, Flame,
+  Tag, Rss, Flame, Target, AlertTriangle, Zap, ChevronDown, ChevronRight,
 } from "lucide-react";
 
 const TABS = [
@@ -18,6 +19,7 @@ const TABS = [
   { id: "quality", label: "质量分析", icon: BarChart3 },
   { id: "evolution", label: "演化趋势", icon: TrendingUp },
   { id: "survey", label: "综述生成", icon: FileText },
+  { id: "gaps", label: "研究空白", icon: Target },
 ] as const;
 
 export default function GraphExplorer() {
@@ -29,6 +31,7 @@ export default function GraphExplorer() {
   const [qualityData, setQualityData] = useState<GraphQuality | null>(null);
   const [evolutionData, setEvolutionData] = useState<EvolutionResponse | null>(null);
   const [surveyData, setSurveyData] = useState<SurveyResponse | null>(null);
+  const [gapsData, setGapsData] = useState<ResearchGapsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
   /* 推荐数据 */
@@ -74,6 +77,7 @@ export default function GraphExplorer() {
         case "quality": setQualityData(await graphApi.quality(kw)); break;
         case "evolution": setEvolutionData(await graphApi.evolution(kw)); break;
         case "survey": setSurveyData(await graphApi.survey(kw)); break;
+        case "gaps": setGapsData(await graphApi.researchGaps(kw)); break;
         default: setTimelineData(await graphApi.timeline(kw)); setActiveTab("timeline"); break;
       }
     } catch {} finally { setLoading(false); }
@@ -89,6 +93,7 @@ export default function GraphExplorer() {
         case "quality": if (keyword.trim()) setQualityData(await graphApi.quality(keyword)); break;
         case "evolution": if (keyword.trim()) setEvolutionData(await graphApi.evolution(keyword)); break;
         case "survey": if (keyword.trim()) setSurveyData(await graphApi.survey(keyword)); break;
+        case "gaps": if (keyword.trim()) setGapsData(await graphApi.researchGaps(keyword)); break;
       }
     } catch {} finally { setLoading(false); }
   }, [activeTab, keyword, paperId]);
@@ -110,7 +115,8 @@ export default function GraphExplorer() {
     (activeTab === "citation" && citationData) ||
     (activeTab === "quality" && qualityData) ||
     (activeTab === "evolution" && evolutionData) ||
-    (activeTab === "survey" && surveyData);
+    (activeTab === "survey" && surveyData) ||
+    (activeTab === "gaps" && gapsData);
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -232,6 +238,7 @@ export default function GraphExplorer() {
       {!loading && activeTab === "quality" && qualityData && <QualityView data={qualityData} />}
       {!loading && activeTab === "evolution" && evolutionData && <EvolutionView data={evolutionData} />}
       {!loading && activeTab === "survey" && surveyData && <SurveyView data={surveyData} />}
+      {!loading && activeTab === "gaps" && gapsData && <ResearchGapsView data={gapsData} />}
     </div>
   );
 }
@@ -474,6 +481,184 @@ function SurveyView({ data }: { data: SurveyResponse }) {
       )}
     </div>
   );
+}
+
+/* ========== 研究空白 ========== */
+function ResearchGapsView({ data }: { data: ResearchGapsResponse }) {
+  const { network_stats, analysis } = data;
+  const { research_gaps, method_comparison, trend_analysis, overall_summary } = analysis;
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* 网络统计概览 */}
+      <Section title="引用网络概况" icon={<Network className="h-4 w-4 text-primary" />}>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <NetStat label="总论文" value={network_stats.total_papers} />
+          <NetStat label="引用边" value={network_stats.edge_count} />
+          <NetStat label="密度" value={network_stats.density.toFixed(4)} />
+          <NetStat label="连通率" value={`${(network_stats.connected_ratio * 100).toFixed(1)}%`} />
+          <NetStat label="孤立论文" value={network_stats.isolated_count} highlight />
+        </div>
+      </Section>
+
+      {/* 总结 */}
+      {overall_summary && (
+        <Section title="分析总结" icon={<Target className="h-4 w-4 text-primary" />}>
+          <div className="rounded-xl bg-page p-5">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-secondary">{overall_summary}</p>
+          </div>
+        </Section>
+      )}
+
+      {/* 研究空白列表 */}
+      {research_gaps.length > 0 && (
+        <Section title={`识别到 ${research_gaps.length} 个研究空白`} icon={<AlertTriangle className="h-4 w-4 text-warning" />}>
+          <div className="space-y-3">
+            {research_gaps.map((gap, i) => (
+              <GapCard key={i} gap={gap} index={i} />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* 方法对比矩阵 */}
+      {method_comparison.methods.length > 0 && (
+        <Section title="方法对比矩阵" icon={<Layers className="h-4 w-4 text-info" />}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="px-3 py-2 text-left font-medium text-ink-tertiary">方法</th>
+                  {method_comparison.dimensions.map((dim) => (
+                    <th key={dim} className="px-3 py-2 text-center font-medium text-ink-tertiary">{dim}</th>
+                  ))}
+                  <th className="px-3 py-2 text-left font-medium text-ink-tertiary">来源</th>
+                </tr>
+              </thead>
+              <tbody>
+                {method_comparison.methods.map((m, i) => (
+                  <tr key={i} className="border-b border-border/50 transition-colors hover:bg-hover">
+                    <td className="px-3 py-2 font-medium text-ink">{m.name}</td>
+                    {method_comparison.dimensions.map((dim) => (
+                      <td key={dim} className="px-3 py-2 text-center">
+                        <StrengthBadge value={m.scores[dim]} />
+                      </td>
+                    ))}
+                    <td className="px-3 py-2 text-xs text-ink-tertiary">{m.papers.join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {method_comparison.underexplored_combinations.length > 0 && (
+            <div className="mt-4 rounded-xl bg-warning/5 p-4">
+              <p className="mb-2 text-xs font-semibold text-warning">未被探索的方法组合</p>
+              <ul className="space-y-1">
+                {method_comparison.underexplored_combinations.map((c, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-ink-secondary">
+                    <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />{c}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* 趋势分析 */}
+      <Section title="趋势分析" icon={<TrendingUp className="h-4 w-4 text-success" />}>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {trend_analysis.hot_directions.length > 0 && (
+            <div className="rounded-xl bg-error/5 p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-error">
+                <Flame className="h-3.5 w-3.5" /> 热门方向
+              </p>
+              <ul className="space-y-1">
+                {trend_analysis.hot_directions.map((d, i) => (
+                  <li key={i} className="text-sm text-ink-secondary">• {d}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {trend_analysis.declining_areas.length > 0 && (
+            <div className="rounded-xl bg-page p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-ink-tertiary">
+                <ArrowDown className="h-3.5 w-3.5" /> 式微方向
+              </p>
+              <ul className="space-y-1">
+                {trend_analysis.declining_areas.map((d, i) => (
+                  <li key={i} className="text-sm text-ink-secondary">• {d}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {trend_analysis.emerging_opportunities.length > 0 && (
+            <div className="rounded-xl bg-success/5 p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-success">
+                <Zap className="h-3.5 w-3.5" /> 新兴机会
+              </p>
+              <ul className="space-y-1">
+                {trend_analysis.emerging_opportunities.map((d, i) => (
+                  <li key={i} className="text-sm text-ink-secondary">• {d}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function GapCard({ gap, index }: { gap: ResearchGapsResponse["analysis"]["research_gaps"][0]; index: number }) {
+  const [open, setOpen] = useState(index < 2);
+  const diffColors = { easy: "text-success bg-success/10", medium: "text-warning bg-warning/10", hard: "text-error bg-error/10" };
+  const diffLabel = { easy: "低", medium: "中", hard: "高" };
+
+  return (
+    <div className="rounded-xl border border-border bg-page/50 transition-all">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-warning/10 text-xs font-bold text-warning">
+          {index + 1}
+        </div>
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-medium text-ink">{gap.gap_title}</span>
+          <div className="mt-1 flex items-center gap-2">
+            <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${diffColors[gap.difficulty]}`}>
+              难度: {diffLabel[gap.difficulty]}
+            </span>
+            <span className="text-[10px] text-ink-tertiary">置信度: {(gap.confidence * 100).toFixed(0)}%</span>
+          </div>
+        </div>
+        {open ? <ChevronDown className="h-4 w-4 text-ink-tertiary" /> : <ChevronRight className="h-4 w-4 text-ink-tertiary" />}
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-border px-4 py-3">
+          <div><p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">描述</p><p className="text-sm leading-relaxed text-ink-secondary">{gap.description}</p></div>
+          {gap.evidence && <div><p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">证据</p><p className="text-sm leading-relaxed text-ink-secondary">{gap.evidence}</p></div>}
+          {gap.potential_impact && <div className="rounded-lg bg-primary/5 px-3 py-2"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary">潜在影响</p><p className="text-sm leading-relaxed text-ink-secondary">{gap.potential_impact}</p></div>}
+          {gap.suggested_approach && <div className="rounded-lg bg-success/5 px-3 py-2"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-success">建议方向</p><p className="text-sm leading-relaxed text-ink-secondary">{gap.suggested_approach}</p></div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NetStat({ label, value, highlight }: { label: string; value: string | number; highlight?: boolean }) {
+  return (
+    <div className={`rounded-xl border border-border p-3 text-center ${highlight ? "bg-warning/5" : "bg-page"}`}>
+      <p className={`text-lg font-bold ${highlight ? "text-warning" : "text-ink"}`}>{value}</p>
+      <p className="text-[10px] text-ink-tertiary">{label}</p>
+    </div>
+  );
+}
+
+function StrengthBadge({ value }: { value: string | undefined }) {
+  if (!value) return <span className="text-ink-tertiary">-</span>;
+  const v = value.toLowerCase();
+  if (v.includes("强") || v === "strong" || v === "high") return <span className="rounded-md bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">{value}</span>;
+  if (v.includes("弱") || v === "weak" || v === "low") return <span className="rounded-md bg-error/10 px-2 py-0.5 text-[10px] font-medium text-error">{value}</span>;
+  return <span className="rounded-md bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">{value}</span>;
 }
 
 /* ========== 通用 Section ========== */

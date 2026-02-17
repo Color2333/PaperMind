@@ -63,6 +63,7 @@ class KeywordService:
         result = self.llm.summarize_text(
             prompt, stage="deep", max_tokens=4096,
         )
+        self.llm.trace_result(result, stage="keyword_suggest", prompt_digest=f"suggest:{description[:80]}")
 
         # 尝试从返回文本中提取 JSON
         text = result.content.strip()

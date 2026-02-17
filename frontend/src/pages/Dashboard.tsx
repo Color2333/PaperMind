@@ -26,6 +26,24 @@ import {
   BookOpen,
 } from "lucide-react";
 
+const STAGE_LABELS: Record<string, string> = {
+  skim: "粗读分析",
+  deep_dive: "深度精读",
+  rag: "RAG 问答",
+  reasoning_chain: "推理链分析",
+  vision_figure: "图表解读",
+  agent_chat: "Agent 对话",
+  embed: "向量化",
+  graph_evolution: "演化分析",
+  graph_survey: "综述生成",
+  graph_research_gaps: "研究空白",
+  wiki_paper: "论文 Wiki",
+  wiki_outline: "Wiki 大纲",
+  wiki_section: "Wiki 章节",
+  wiki_overview: "Wiki 概述",
+  keyword_suggest: "关键词建议",
+};
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<SystemStatus | null>(null);
@@ -77,13 +95,16 @@ export default function Dashboard() {
   const totalPapers = today?.total_papers ?? (status?.counts?.papers_latest_200 ?? 0);
 
   return (
-    <div className="animate-fade-in space-y-8">
+    <div className="animate-fade-in space-y-6">
       {/* Hero 区域 */}
       <div className="page-hero rounded-2xl p-6">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-ink">Dashboard</h1>
-            <p className="mt-1 text-sm text-ink-secondary">系统总览与运行状态</p>
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-primary/10 p-2.5"><Activity className="h-5 w-5 text-primary" /></div>
+            <div>
+              <h1 className="text-2xl font-bold text-ink">Dashboard</h1>
+              <p className="mt-0.5 text-sm text-ink-secondary">系统总览与运行状态</p>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <div className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium ${
@@ -156,7 +177,7 @@ export default function Dashboard() {
                         <div className="mb-1 flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Zap className="h-3 w-3 text-warning" />
-                            <span className="text-sm text-ink">{s.stage}</span>
+                            <span className="text-sm text-ink">{STAGE_LABELS[s.stage] || s.stage}</span>
                           </div>
                           <div className="flex items-baseline gap-2">
                             <span className="text-sm font-semibold text-ink">{formatUSD(s.total_cost_usd)}</span>

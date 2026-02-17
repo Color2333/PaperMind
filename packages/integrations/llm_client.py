@@ -190,6 +190,39 @@ class LLMClient:
             return cfg.model_skim
         return cfg.model_deep
 
+    # ---------- 便捷追踪 ----------
+
+    def trace_result(
+        self,
+        result: LLMResult,
+        *,
+        stage: str,
+        model: str | None = None,
+        prompt_digest: str = "",
+        paper_id: str | None = None,
+    ) -> None:
+        """将 LLM 调用结果写入 PromptTrace（便捷方法）"""
+        try:
+            from packages.storage.db import session_scope
+            from packages.storage.repositories import PromptTraceRepository
+
+            resolved_model = model or self._resolve_model(stage, None)
+            with session_scope() as session:
+                PromptTraceRepository(session).create(
+                    stage=stage,
+                    provider=self.provider,
+                    model=resolved_model,
+                    prompt_digest=prompt_digest[:500],
+                    paper_id=paper_id,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    input_cost_usd=result.input_cost_usd,
+                    output_cost_usd=result.output_cost_usd,
+                    total_cost_usd=result.total_cost_usd,
+                )
+        except Exception as exc:
+            logger.debug("trace_result failed: %s", exc)
+
     # ---------- 公开 API ----------
 
     def summarize_text(
@@ -242,6 +275,64 @@ class LLMClient:
             output_cost_usd=result.output_cost_usd,
             total_cost_usd=result.total_cost_usd,
         )
+
+    def vision_analyze(
+        self,
+        image_base64: str,
+        prompt: str,
+        stage: str = "vision",
+        max_tokens: int = 1024,
+    ) -> LLMResult:
+        """发送图片 + 文本给 Vision 模型（GLM-4.6V 等）"""
+        cfg = self._config()
+        model = cfg.model_vision or cfg.model_deep
+        if cfg.provider in ("openai", "zhipu") and cfg.api_key:
+            try:
+                base_url = self._resolve_base_url(cfg)
+                client = _get_openai_client(cfg.api_key or "", base_url)
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{image_base64}",
+                                },
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ]
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                )
+                vmsg = response.choices[0].message
+                content = vmsg.content or ""
+                if not content:
+                    rc = getattr(vmsg, "reasoning_content", None)
+                    if rc and isinstance(rc, str):
+                        content = rc
+                usage = response.usage
+                in_tokens = usage.prompt_tokens if usage else None
+                out_tokens = usage.completion_tokens if usage else None
+                in_cost, out_cost = self._estimate_cost(
+                    model=model, input_tokens=in_tokens, output_tokens=out_tokens,
+                )
+                return LLMResult(
+                    content=content,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                    input_cost_usd=in_cost,
+                    output_cost_usd=out_cost,
+                    total_cost_usd=in_cost + out_cost,
+                )
+            except Exception as exc:
+                logger.warning("Vision call failed: %s", exc)
+                return LLMResult(content=f"[vision fallback] {prompt[:200]}")
+        return LLMResult(content=f"[vision unavailable] {prompt[:200]}")
 
     def embed_text(
         self, text: str, dimensions: int = 1536
@@ -411,7 +502,13 @@ class LLMClient:
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
             response = client.chat.completions.create(**kwargs)
-            content = response.choices[0].message.content or ""
+            msg = response.choices[0].message
+            content = msg.content or ""
+            # GLM-4.7 等模型可能把输出放在 reasoning_content 中
+            if not content:
+                rc = getattr(msg, "reasoning_content", None)
+                if rc and isinstance(rc, str):
+                    content = rc
             usage = response.usage
             in_tokens = (
                 usage.prompt_tokens if usage else None
@@ -452,6 +549,27 @@ class LLMClient:
                 model=cfg.model_embedding, input=text
             )
             vector = response.data[0].embedding
+            # 追踪 embedding token
+            usage = response.usage
+            in_tokens = getattr(usage, "total_tokens", None) or getattr(usage, "prompt_tokens", None)
+            in_cost, _ = self._estimate_cost(
+                model=cfg.model_embedding,
+                input_tokens=in_tokens,
+                output_tokens=0,
+            )
+            self.trace_result(
+                LLMResult(
+                    content="",
+                    input_tokens=in_tokens,
+                    output_tokens=0,
+                    input_cost_usd=in_cost,
+                    output_cost_usd=0.0,
+                    total_cost_usd=in_cost,
+                ),
+                stage="embed",
+                model=cfg.model_embedding,
+                prompt_digest=f"embed:{text[:80]}",
+            )
             return [float(v) for v in vector]
         except Exception as exc:
             logger.warning("Embedding call failed: %s", exc)

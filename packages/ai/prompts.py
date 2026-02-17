@@ -211,6 +211,137 @@ def build_paper_wiki_prompt(
     )
 
 
+def build_reasoning_prompt(
+    title: str,
+    abstract: str,
+    extracted_text: str,
+    analysis_context: str = "",
+) -> str:
+    """构建推理链深度分析 prompt，引导 LLM 分步推理"""
+    return (
+        "你是一位顶级论文审稿专家和方法论分析师。请对以下论文进行深度推理链分析。\n\n"
+        "## 分析方法\n"
+        "请按照以下推理步骤，逐步深入分析。每一步都需要展示你的思考过程。\n\n"
+        "## 输出要求\n"
+        "请输出严格的 JSON 对象：\n"
+        "```json\n"
+        "{\n"
+        '  "reasoning_steps": [\n'
+        "    {\n"
+        '      "step": "步骤名称",\n'
+        '      "thinking": "推理思考过程（详细展开）",\n'
+        '      "conclusion": "该步骤的结论"\n'
+        "    }\n"
+        "  ],\n"
+        '  "method_chain": {\n'
+        '    "problem_definition": "问题定义与动机分析",\n'
+        '    "core_hypothesis": "核心假设",\n'
+        '    "method_derivation": "方法推导过程（为什么选择这种方法）",\n'
+        '    "theoretical_basis": "理论基础",\n'
+        '    "innovation_analysis": "创新性多维评估"\n'
+        "  },\n"
+        '  "experiment_chain": {\n'
+        '    "experimental_design": "实验设计合理性评估",\n'
+        '    "baseline_fairness": "基线对比公平性分析",\n'
+        '    "result_validation": "结果可靠性验证",\n'
+        '    "ablation_insights": "消融实验洞察"\n'
+        "  },\n"
+        '  "impact_assessment": {\n'
+        '    "novelty_score": 0.0,\n'
+        '    "rigor_score": 0.0,\n'
+        '    "impact_score": 0.0,\n'
+        '    "overall_assessment": "综合评估（200-400字）",\n'
+        '    "strengths": ["优势1", "优势2"],\n'
+        '    "weaknesses": ["不足1", "不足2"],\n'
+        '    "future_suggestions": ["建议1", "建议2"]\n'
+        "  }\n"
+        "}\n```\n\n"
+        "## 推理步骤要求\n"
+        "reasoning_steps 至少包含以下 5 个步骤：\n"
+        "1. **问题理解** — 这篇论文要解决什么问题？为什么重要？\n"
+        "2. **方法推导** — 作者的方法是如何一步步推导出来的？核心创新在哪？\n"
+        "3. **理论验证** — 方法的理论基础是否扎实？有无逻辑漏洞？\n"
+        "4. **实验评估** — 实验设计是否合理？结果是否令人信服？\n"
+        "5. **影响预测** — 这篇论文对领域的潜在影响和后续可能的研究方向\n\n"
+        "## 评分标准\n"
+        "novelty_score / rigor_score / impact_score 均为 0-1 之间的浮点数：\n"
+        "- 0.0-0.3: 低（常规/已有工作的小改进）\n"
+        "- 0.3-0.6: 中等（有一定新意/较好的实验）\n"
+        "- 0.6-0.8: 高（显著创新/严格的验证）\n"
+        "- 0.8-1.0: 极高（突破性工作/领域里程碑）\n\n"
+        "请用中文回答，展示完整推理过程。\n\n"
+        f"## 论文标题: {title}\n\n"
+        f"## 摘要:\n{abstract}\n\n"
+        f"## 全文摘录:\n{extracted_text[:6000]}\n\n"
+        + (f"## 已有分析:\n{analysis_context[:2000]}\n" if analysis_context else "")
+    )
+
+
+def build_research_gaps_prompt(
+    keyword: str,
+    papers_data: list[dict],
+    network_stats: dict,
+) -> str:
+    """构建研究空白识别 prompt"""
+    paper_lines = []
+    for i, p in enumerate(papers_data[:30], 1):
+        paper_lines.append(
+            f"[P{i}] {p.get('title', 'N/A')} ({p.get('year', '?')})\n"
+            f"  Keywords: {', '.join(p.get('keywords', []))}\n"
+            f"  Abstract: {p.get('abstract', '')[:300]}\n"
+            f"  indegree={p.get('indegree', 0)}, outdegree={p.get('outdegree', 0)}"
+        )
+    papers_text = "\n".join(paper_lines)
+
+    return (
+        "你是一位资深的学术研究战略分析师。请基于以下领域论文数据和引用网络统计，"
+        "识别该领域中尚未被充分探索的研究空白和潜在机会。\n\n"
+        "## 输出要求\n"
+        "请输出严格的 JSON 对象：\n"
+        "```json\n"
+        "{\n"
+        '  "research_gaps": [\n'
+        "    {\n"
+        '      "gap_title": "研究空白标题",\n'
+        '      "description": "详细描述（200-400字）",\n'
+        '      "evidence": "为什么认为这是空白（引用论文数据）",\n'
+        '      "potential_impact": "填补该空白的潜在影响",\n'
+        '      "suggested_approach": "建议的研究方向",\n'
+        '      "difficulty": "easy/medium/hard",\n'
+        '      "confidence": 0.0\n'
+        "    }\n"
+        "  ],\n"
+        '  "method_comparison": {\n'
+        '    "dimensions": ["维度1", "维度2"],\n'
+        '    "methods": [\n'
+        '      {"name": "方法名", "scores": {"维度1": "强/中/弱"}, "papers": ["P1"]}\n'
+        "    ],\n"
+        '    "underexplored_combinations": ["未被探索的方法组合"]\n'
+        "  },\n"
+        '  "trend_analysis": {\n'
+        '    "hot_directions": ["热门方向"],\n'
+        '    "declining_areas": ["式微方向"],\n'
+        '    "emerging_opportunities": ["新兴机会"]\n'
+        "  },\n"
+        '  "overall_summary": "领域研究空白总结（300-500字）"\n'
+        "}\n```\n\n"
+        "## 分析要求\n"
+        "1. research_gaps 至少识别 3-5 个研究空白\n"
+        "2. confidence 为 0-1，表示你对该空白判断的置信度\n"
+        "3. method_comparison 构建跨论文的方法对比矩阵\n"
+        "4. 基于引用网络的稀疏区域来发现空白\n"
+        "5. 用中文回答\n\n"
+        f"## 领域关键词: {keyword}\n\n"
+        f"## 引用网络统计:\n"
+        f"- 总论文数: {network_stats.get('total_papers', 0)}\n"
+        f"- 引用边数: {network_stats.get('edge_count', 0)}\n"
+        f"- 网络密度: {network_stats.get('density', 0):.4f}\n"
+        f"- 连通比例: {network_stats.get('connected_ratio', 0):.1%}\n"
+        f"- 孤立论文数: {network_stats.get('isolated_count', 0)}\n\n"
+        f"## 论文数据:\n{papers_text}\n"
+    )
+
+
 def build_evolution_prompt(
     keyword: str, year_buckets: list[dict]
 ) -> str:

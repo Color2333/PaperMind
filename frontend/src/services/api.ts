@@ -26,6 +26,8 @@ import type {
   CitationSyncResult,
   IngestResult,
   KeywordSuggestion,
+  ReasoningAnalysisResponse,
+  ResearchGapsResponse,
 } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
@@ -106,15 +108,34 @@ export interface FolderStats {
   unclassified: number;
   by_topic: { topic_id: string; topic_name: string; count: number }[];
   by_status: Record<string, number>;
+  by_date: { date: string; count: number }[];
+}
+
+export interface PaperListResponse {
+  items: Paper[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 export const paperApi = {
-  latest: (limit = 50, status?: string, topicId?: string, folder?: string) => {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (status) params.append("status", status);
-    if (topicId) params.append("topic_id", topicId);
-    if (folder) params.append("folder", folder);
-    return get<{ items: Paper[] }>(`/papers/latest?${params}`);
+  latest: (opts: {
+    page?: number;
+    pageSize?: number;
+    status?: string;
+    topicId?: string;
+    folder?: string;
+    date?: string;
+  } = {}) => {
+    const params = new URLSearchParams();
+    params.set("page", String(opts.page || 1));
+    params.set("page_size", String(opts.pageSize || 20));
+    if (opts.status) params.append("status", opts.status);
+    if (opts.topicId) params.append("topic_id", opts.topicId);
+    if (opts.folder) params.append("folder", opts.folder);
+    if (opts.date) params.append("date", opts.date);
+    return get<PaperListResponse>(`/papers/latest?${params}`);
   },
   folderStats: () => get<FolderStats>("/papers/folder-stats"),
   detail: (id: string) => get<Paper>(`/papers/${id}`),
@@ -122,7 +143,28 @@ export const paperApi = {
     get<{ paper_id: string; similar_ids: string[] }>(`/papers/${id}/similar?top_k=${topK}`),
   toggleFavorite: (id: string) =>
     patch<{ id: string; favorited: boolean }>(`/papers/${id}/favorite`),
+  getFigures: (id: string) =>
+    get<{ items: FigureAnalysisItem[] }>(`/papers/${id}/figures`),
+  analyzeFigures: (id: string, maxFigures = 10) =>
+    post<{ paper_id: string; count: number; items: FigureAnalysisItem[] }>(
+      `/papers/${id}/figures/analyze?max_figures=${maxFigures}`,
+    ),
+  reasoningAnalysis: (id: string) =>
+    post<ReasoningAnalysisResponse>(`/papers/${id}/reasoning`),
+  pdfUrl: (id: string) =>
+    `${API_BASE.replace(/\/+$/, "")}/papers/${id}/pdf`,
+  aiExplain: (id: string, text: string, action: "explain" | "translate" | "summarize") =>
+    post<{ action: string; result: string }>(`/papers/${id}/ai/explain`, { text, action }),
 };
+
+export interface FigureAnalysisItem {
+  id?: string;
+  page_number: number;
+  image_index?: number;
+  image_type: string;
+  caption: string;
+  description: string;
+}
 
 /* ========== 摄入 ========== */
 export const ingestApi = {
@@ -168,6 +210,8 @@ export const graphApi = {
     get<EvolutionResponse>(`/graph/evolution/weekly?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
   survey: (keyword: string, limit = 120) =>
     get<SurveyResponse>(`/graph/survey?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
+  researchGaps: (keyword: string, limit = 120) =>
+    get<ResearchGapsResponse>(`/graph/research-gaps?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
 };
 
 /* ========== Wiki ========== */

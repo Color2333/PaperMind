@@ -1,6 +1,6 @@
 # PaperMind - AI 研究工作流平台
 
-**版本:** 2.1  
+**版本:** 2.5  
 **日期:** 2026-02-17  
 **作者:** Bamzc  
 **核心愿景:** 从"搜索论文"进化为"理解领域"。通过自动化 Agent 和 LLM，将海量文献转化为结构化的知识图谱，辅助研究者完成从"每日追踪"到"深度调研"的全过程。
@@ -90,14 +90,44 @@
 | 页面 | 功能 |
 |------|------|
 | Agent（主页） | AI 对话，Manus 风格工具调用 UI，今日研究速览 |
-| Papers | 论文列表，主题/关键词/状态筛选，批量粗读/嵌入 |
-| Paper Detail | 详情 + 粗读/精读/嵌入/相似论文，含中文翻译 |
+| Papers | **分页 + 文件夹分类导航**：按主题/收藏/最近7天/收录日期/未分类分组，双栏布局 |
+| Paper Detail | 详情 + 粗读/精读/嵌入/相似论文 + **图表解读** + **PDF 阅读器** + 中文翻译 |
 | Wiki | 主题/论文 Wiki 生成，Canvas 侧面板 |
 | Daily Brief | 每日简报生成与历史 |
 | Collect | 论文收集 + 主题订阅管理（频率/时间/AI关键词建议） |
-| Graph Explorer | 引用图谱、时间线、演化分析 |
-| Dashboard | 系统看板 |
+| Graph Explorer | 引用图谱、时间线、演化分析，**自动加载推荐关键词** |
+| Dashboard | 系统看板 + **全覆盖 LLM 成本追踪**（含阶段中文标签） |
 | Settings | LLM 配置统一管理 |
+
+### 模块 I: 沉浸式 PDF 阅读器 ✅ 已实现
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 连续滚动阅读 | ✅ | react-pdf v10 全页渲染，IntersectionObserver 检测当前页码 |
+| 缩放/全屏 | ✅ | 50%~300% 缩放，浏览器全屏，键盘快捷键 (Ctrl+/-/0) |
+| 页码跳转 | ✅ | 工具栏输入页码跳转，底部进度条实时显示 |
+| AI 解释 | ✅ | 选中文本 → AI 解释术语、公式含义 |
+| AI 翻译 | ✅ | 选中文本 → 中文翻译（保留术语原文） |
+| AI 总结 | ✅ | 选中文本 → 提炼核心观点 |
+| AI 侧边栏 | ✅ | 右侧可收起面板，结果历史，Markdown + LaTeX 渲染，复制 |
+| 深色主题 | ✅ | 专属深色背景 UI，PDF 页面阴影，工具栏半透明毛玻璃 |
+
+### 模块 H: 多模态深度理解 ✅ 已实现（Phase 5 完整）
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| PDF 图表提取 | ✅ | PyMuPDF 自动提取 Figure/Table 区域，过滤小图标 |
+| Vision 模型解读 | ✅ | 图片 base64 + 专业 prompt → GLM-4.6V 生成中文解读 |
+| 图表类型推断 | ✅ | 自动识别 figure/table/algorithm/equation |
+| Caption 提取 | ✅ | 正则匹配 Figure/Table/Algorithm 标题 |
+| 整页渲染回退 | ✅ | 内嵌图片提取不足时，对含图表页面做 2x 高分辨率渲染 |
+| 解读结果持久化 | ✅ | ImageAnalysis 数据模型，按论文存储 |
+| Agent 工具集成 | ✅ | `analyze_figures` 工具，需用户确认后执行 |
+| 前端展示 | ✅ | PaperDetail 图表解读标签页，折叠卡片 + Markdown 渲染 |
+| 推理链深度分析 | ✅ | 5步推理（问题→方法→理论→实验→影响），创新性/严谨性/影响力评分 |
+| 推理链前端 | ✅ | 折叠面板展示推理过程、方法链、实验链、评分仪表盘、优劣势对比 |
+| 研究空白识别 | ✅ | 引用网络稀疏区域分析 + LLM 推理，3-5 个空白 + 方法矩阵 + 趋势 |
+| 研究空白前端 | ✅ | GraphExplorer 新标签页，空白卡片、方法对比表、趋势三栏布局 |
 
 ### 技术栈
 
@@ -109,20 +139,21 @@
 | 调度 | APScheduler（按主题独立调度） |
 | 外部 API | ArXiv API, Semantic Scholar API |
 
-### 性能优化（v2.1）
+### 性能优化（v2.5）
 
 | 领域 | 优化项 |
 |------|--------|
 | 前端 | 路由懒加载（React.lazy + Suspense），首屏只加载 Agent 页 |
 | 前端 | Vite manualChunks 分割 react-vendor / markdown / icons |
 | 前端 | AgentSessionContext value useMemo 防止不必要的全局重渲染 |
-| 前端 | Papers 列表 filtered useMemo + 回调 useCallback |
+| 前端 | Papers 列表 **后端分页**（page + page_size），前端不再全量加载 |
 | 前端 | Sidebar groupByDate useMemo |
 | 后端 | LLM 配置 30s TTL 缓存，避免每次调用查库 |
 | 后端 | OpenAI 客户端连接复用（按 key+url 缓存），设置 120s timeout |
 | 后端 | SQLite PRAGMA synchronous=NORMAL + cache_size=64MB + temp_store=MEMORY |
 | 后端 | 关键列索引：papers.created_at, prompt_traces.created_at, pipeline_runs.created_at, papers.read_status |
 | 后端 | 向量检索候选池限制 500 条，避免全表加载 |
+| 后端 | **LLM 成本追踪全覆盖**：`trace_result` 集中式追踪，覆盖 completion/embedding/vision 全链路 |
 
 ---
 
@@ -130,33 +161,39 @@
 
 ### Phase 5: 多模态深度理解（第一梯队）
 
-#### 5.1 图表/公式智能识别
+#### 5.1 图表/公式智能识别 ✅ 已完成
 
 - **目标**：从 PDF 中自动提取 Figure/Table/公式，逐个送 Vision 模型解读
-- **产出**：图表说明卡片、LaTeX 公式还原、架构图模块化描述
-- **实现路径**：
-  - `pipelines.py` 的 `deep_dive` 增加图表检测步骤
-  - 用 PyMuPDF 提取图片区域坐标，截取后送 GLM-4.6V
-  - 新增 `ImageAnalysis` 数据模型存储图表解读结果
-  - 前端 PaperDetail 增加"图表解读"标签页
+- **产出**：图表说明卡片、类型推断、Caption 提取、中文解读
+- **实现文件**：
+  - `packages/ai/figure_service.py` — 图表提取与 Vision 解读核心服务
+  - `packages/storage/models.py` — `ImageAnalysis` 数据模型
+  - `packages/integrations/llm_client.py` — `vision_analyze()` 多模态调用
+  - `apps/api/main.py` — `GET/POST /papers/{id}/figures` 接口
+  - `packages/ai/agent_tools.py` — `analyze_figures` Agent 工具
+  - `frontend/src/pages/PaperDetail.tsx` — 图表解读标签页 + FigureCard 组件
 
-#### 5.2 推理链深度分析 (Reasoning Chain)
+#### 5.2 推理链深度分析 (Reasoning Chain) ✅ 已完成
 
 - **目标**：引入类 o1/DeepSeek-R1 的分步推理，提升论文分析深度
-- **产出**：方法论推导链、实验结果验证链、创新性多维评估
-- **实现路径**：
-  - `prompts.py` 新增 `build_reasoning_prompt()`
-  - 用 `<thinking>` 标签引导 LLM 分步推理
-  - 推理过程以折叠面板形式展示在前端
+- **产出**：方法论推导链、实验结果验证链、创新性多维评估、优劣势分析、未来建议
+- **实现文件**：
+  - `packages/ai/prompts.py` — `build_reasoning_prompt()` 多步推理 prompt
+  - `packages/ai/reasoning_service.py` — 推理链核心服务（上下文收集、PDF 文本、LLM 调用、结果持久化）
+  - `apps/api/main.py` — `POST /papers/{id}/reasoning` 接口
+  - `packages/ai/agent_tools.py` — `reasoning_analysis` Agent 工具
+  - `frontend/src/pages/PaperDetail.tsx` — 推理链折叠面板（评分概览、推理步骤、方法链、实验链、优劣势、建议）
 
-#### 5.3 研究空白识别 (Research Gap Detection)
+#### 5.3 研究空白识别 (Research Gap Detection) ✅ 已完成
 
 - **目标**：分析引用网络的稀疏区域，发现未被充分探索的研究方向
-- **产出**：跨论文方法对比矩阵、引用稀疏方向检测、研究建议报告
-- **实现路径**：
-  - `graph_service.py` 新增 `detect_research_gaps()`
-  - 结合引用网络拓扑分析 + LLM 推理
-  - Agent 工具链增加 `identify_research_gaps` 工具
+- **产出**：跨论文方法对比矩阵、引用稀疏方向检测、趋势分析、研究建议报告
+- **实现文件**：
+  - `packages/ai/prompts.py` — `build_research_gaps_prompt()` 研究空白识别 prompt
+  - `packages/ai/graph_service.py` — `detect_research_gaps()` 引用网络稀疏区域分析
+  - `apps/api/main.py` — `GET /graph/research-gaps` 接口
+  - `packages/ai/agent_tools.py` — `identify_research_gaps` Agent 工具
+  - `frontend/src/pages/GraphExplorer.tsx` — 研究空白标签页（空白卡片、方法矩阵、趋势三栏、网络统计）
 
 ---
 
@@ -250,11 +287,14 @@ Phase 3: 知识图谱与脉络            ✅ 引用树、时间线、Wiki 生�
 Phase 4: AI Agent + 前端重构       ✅ SSE 流式对话、工具链、Claude 风格 UI
 Phase 4.5: 个性化推荐 + 调度增强   ✅ 推荐引擎、热点趋势、按主题独立调度、AI 关键词
 Phase 4.6: 性能优化                ✅ 路由懒加载、LLM 客户端复用、SQLite 调优、索引
+Phase 4.7: UI 大改 + 文件夹导航    ✅ 6页完全重构、文件夹分类、图谱自动加载、LaTeX、收藏
+Phase 5.1: 图表/公式智能识别       ✅ PyMuPDF 提取 + Vision 解读 + 持久化 + 前端展示
+Phase 5.2: 推理链深度分析          ✅ 5步推理链 + 3维评分 + 方法/实验验证链 + 折叠面板
+Phase 5.3: 研究空白识别            ✅ 引用网络稀疏区域 + 方法矩阵 + 趋势分析 + Agent工具
+Phase 5.4: PDF 沉浸式阅读器        ✅ react-pdf 连续滚动 + AI 解释/翻译/总结侧栏
+Phase 5.5: 论文库分页 + 日期分类   ✅ 后端分页 API + 按收录日期分组 + LLM 成本全覆盖
 
 下阶段 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Phase 5: 多模态深度理解（1-2周）
-  → 图表/公式识别 + 推理链 + 研究空白识别
-
 Phase 6: 知识增强检索（2-3周）
   → GraphRAG + 多智能体协作 + 自动综述 + 代码关联
 

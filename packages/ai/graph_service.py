@@ -11,6 +11,7 @@ from datetime import date
 from packages.ai.prompts import (
     build_evolution_prompt,
     build_paper_wiki_prompt,
+    build_research_gaps_prompt,
     build_survey_prompt,
     build_topic_wiki_prompt,
     build_wiki_outline_prompt,
@@ -372,6 +373,7 @@ class GraphService:
             stage="rag",
             model_override=self.settings.llm_model_skim,
         )
+        self.llm.trace_result(llm_result, stage="graph_evolution", prompt_digest=f"evolution:{keyword}")
         summary = llm_result.parsed_json or {
             "trend_summary": "数据样本不足，建议增加领域样本后重试。",
             "phase_shift_signals": [],
@@ -393,6 +395,7 @@ class GraphService:
             stage="rag",
             model_override=self.settings.llm_model_skim,
         )
+        self.llm.trace_result(result, stage="graph_survey", prompt_digest=f"survey:{keyword}")
         survey_obj = result.parsed_json or {
             "overview": "当前样本不足以生成高质量综述。",
             "stages": [],
@@ -406,6 +409,77 @@ class GraphService:
             "summary": survey_obj,
             "milestones": base["milestones"],
             "seminal": base["seminal"],
+        }
+
+    def detect_research_gaps(
+        self, keyword: str, limit: int = 120,
+    ) -> dict:
+        """分析引用网络的稀疏区域，识别研究空白"""
+        tl = self.timeline(keyword=keyword, limit=limit)
+        quality = self.quality_metrics(keyword=keyword, limit=limit)
+
+        # 构造论文数据（含 indegree/outdegree/keywords）
+        papers_data = []
+        for item in tl["timeline"]:
+            papers_data.append({
+                "title": item["title"],
+                "year": item["year"],
+                "indegree": item["indegree"],
+                "outdegree": item["outdegree"],
+                "seminal_score": item["seminal_score"],
+                "keywords": [],
+                "abstract": "",
+            })
+
+        # 补充 abstract 和 keywords
+        with session_scope() as session:
+            repo = PaperRepository(session)
+            candidates = repo.full_text_candidates(keyword, limit=limit)
+            paper_map = {p.title: p for p in candidates}
+            for pd in papers_data:
+                p = paper_map.get(pd["title"])
+                if p:
+                    pd["abstract"] = p.abstract[:400]
+                    pd["keywords"] = (p.metadata_json or {}).get("keywords", [])
+
+        # 计算孤立论文数（入度+出度=0）
+        isolated = sum(
+            1 for item in tl["timeline"]
+            if item["indegree"] == 0 and item["outdegree"] == 0
+        )
+
+        network_stats = {
+            "total_papers": quality["node_count"],
+            "edge_count": quality["edge_count"],
+            "density": quality["density"],
+            "connected_ratio": quality["connected_node_ratio"],
+            "isolated_count": isolated,
+        }
+
+        prompt = build_research_gaps_prompt(
+            keyword=keyword,
+            papers_data=papers_data,
+            network_stats=network_stats,
+        )
+        result = self.llm.complete_json(
+            prompt,
+            stage="deep",
+            model_override=self.settings.llm_model_deep,
+            max_tokens=4096,
+        )
+        self.llm.trace_result(result, stage="graph_research_gaps", prompt_digest=f"gaps:{keyword}")
+
+        parsed = result.parsed_json or {
+            "research_gaps": [],
+            "method_comparison": {"dimensions": [], "methods": [], "underexplored_combinations": []},
+            "trend_analysis": {"hot_directions": [], "declining_areas": [], "emerging_opportunities": []},
+            "overall_summary": "数据不足，无法完成分析。",
+        }
+
+        return {
+            "keyword": keyword,
+            "network_stats": network_stats,
+            "analysis": parsed,
         }
 
     def paper_wiki(self, paper_id: str) -> dict:
@@ -453,6 +527,7 @@ class GraphService:
             model_override=self.settings.llm_model_deep,
             max_tokens=4096,
         )
+        self.llm.trace_result(result, stage="wiki_paper", paper_id=paper_id, prompt_digest=f"paper_wiki:{p_title[:60]}")
         wiki_content = result.parsed_json or {
             "summary": analysis or "暂无分析。",
             "contributions": [],
@@ -541,6 +616,7 @@ class GraphService:
             model_override=self.settings.llm_model_deep,
             max_tokens=2048,
         )
+        self.llm.trace_result(outline_result, stage="wiki_outline", prompt_digest=f"outline:{keyword}")
         outline = outline_result.parsed_json or {
             "title": keyword,
             "outline": [],
@@ -569,6 +645,7 @@ class GraphService:
                 model_override=self.settings.llm_model_deep,
                 max_tokens=2048,
             )
+            self.llm.trace_result(sec_result, stage="wiki_section", prompt_digest=f"section:{sec_plan.get('section_title','')[:60]}")
             sec_content = sec_result.parsed_json or {
                 "title": sec_plan.get("section_title", ""),
                 "content": "",
@@ -590,6 +667,7 @@ class GraphService:
             model_override=self.settings.llm_model_deep,
             max_tokens=4096,
         )
+        self.llm.trace_result(overview_result, stage="wiki_overview", prompt_digest=f"overview:{keyword}")
         overview_data = overview_result.parsed_json or {}
 
         # 组装最终 wiki_content

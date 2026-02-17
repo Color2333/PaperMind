@@ -304,6 +304,52 @@ TOOL_REGISTRY: list[ToolDef] = [
         },
         requires_confirm=False,
     ),
+    ToolDef(
+        name="reasoning_analysis",
+        description="对论文进行推理链深度分析：方法推导链、实验验证链、创新性多维评估",
+        parameters={
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "string", "description": "论文 UUID"},
+            },
+            "required": ["paper_id"],
+        },
+        requires_confirm=True,
+    ),
+    ToolDef(
+        name="identify_research_gaps",
+        description="分析领域引用网络的稀疏区域，识别研究空白和未探索方向",
+        parameters={
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string", "description": "领域关键词"},
+                "limit": {
+                    "type": "integer",
+                    "description": "分析论文数量",
+                    "default": 100,
+                },
+            },
+            "required": ["keyword"],
+        },
+        requires_confirm=False,
+    ),
+    ToolDef(
+        name="analyze_figures",
+        description="提取并解读论文 PDF 中的图表和公式，用 Vision 模型生成解读报告",
+        parameters={
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "string", "description": "论文 UUID"},
+                "max_figures": {
+                    "type": "integer",
+                    "description": "最大提取图表数量",
+                    "default": 10,
+                },
+            },
+            "required": ["paper_id"],
+        },
+        requires_confirm=True,
+    ),
 ]
 
 
@@ -343,6 +389,9 @@ def _get_tool_handlers() -> dict:
         "generate_daily_brief": _generate_daily_brief,
         "manage_subscription": _manage_subscription,
         "suggest_keywords": _suggest_keywords,
+        "analyze_figures": _analyze_figures,
+        "reasoning_analysis": _reasoning_analysis,
+        "identify_research_gaps": _identify_research_gaps,
     }
 
 
@@ -1079,4 +1128,143 @@ def _generate_daily_brief(recipient: str = "") -> ToolResult:
             "title": f"Daily Brief: {ts_label}",
         },
         summary="简报已生成" + ("并发送" if email_sent else ""),
+    )
+
+
+def _reasoning_analysis(paper_id: str) -> ToolResult:
+    """推理链深度分析"""
+    from packages.ai.reasoning_service import ReasoningService
+
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            paper = repo.get_by_id(UUID(paper_id))
+        except (ValueError, Exception) as exc:
+            return ToolResult(success=False, summary=f"论文不存在: {exc}")
+        title = paper.title
+
+    svc = ReasoningService()
+    try:
+        result = svc.analyze(UUID(paper_id))
+    except Exception as exc:
+        return ToolResult(success=False, summary=f"推理链分析失败: {exc}")
+
+    reasoning = result.get("reasoning", {})
+    steps = reasoning.get("reasoning_steps", [])
+    impact = reasoning.get("impact_assessment", {})
+
+    step_lines = []
+    for s in steps[:6]:
+        step_lines.append(f"**{s.get('step', '')}**: {s.get('conclusion', '')}")
+
+    scores_text = (
+        f"创新性={impact.get('novelty_score', 0):.1f} "
+        f"严谨性={impact.get('rigor_score', 0):.1f} "
+        f"影响力={impact.get('impact_score', 0):.1f}"
+    )
+
+    summary = (
+        f"「{title}」推理链分析完成\n\n"
+        + "\n".join(step_lines)
+        + f"\n\n**评分**: {scores_text}\n\n"
+        + f"**综合评估**: {impact.get('overall_assessment', '')[:500]}"
+    )
+
+    return ToolResult(
+        success=True,
+        data=reasoning,
+        summary=summary,
+    )
+
+
+def _identify_research_gaps(keyword: str, limit: int = 100) -> ToolResult:
+    """识别研究空白"""
+    from packages.ai.graph_service import GraphService
+
+    svc = GraphService()
+    try:
+        result = svc.detect_research_gaps(keyword=keyword, limit=limit)
+    except Exception as exc:
+        return ToolResult(success=False, summary=f"研究空白分析失败: {exc}")
+
+    analysis = result.get("analysis", {})
+    gaps = analysis.get("research_gaps", [])
+    trend = analysis.get("trend_analysis", {})
+    network = result.get("network_stats", {})
+
+    gap_lines = []
+    for i, g in enumerate(gaps[:5], 1):
+        conf = g.get("confidence", 0)
+        diff = g.get("difficulty", "?")
+        gap_lines.append(
+            f"{i}. **{g.get('gap_title', '')}** (置信度={conf:.0%}, 难度={diff})\n"
+            f"   {g.get('description', '')[:200]}"
+        )
+
+    hot = ", ".join(trend.get("hot_directions", [])[:5])
+    emerging = ", ".join(trend.get("emerging_opportunities", [])[:5])
+
+    summary = (
+        f"「{keyword}」领域研究空白分析\n\n"
+        f"**网络规模**: {network.get('total_papers', 0)} 论文, "
+        f"{network.get('edge_count', 0)} 引用边, "
+        f"密度={network.get('density', 0):.4f}\n\n"
+        f"**识别到 {len(gaps)} 个研究空白**:\n"
+        + "\n".join(gap_lines)
+        + f"\n\n**热门方向**: {hot}\n"
+        + f"**新兴机会**: {emerging}\n\n"
+        + f"**总结**: {analysis.get('overall_summary', '')[:500]}"
+    )
+
+    return ToolResult(
+        success=True,
+        data={"network_stats": network, "analysis": analysis},
+        summary=summary,
+    )
+
+
+def _analyze_figures(paper_id: str, max_figures: int = 10) -> ToolResult:
+    """提取并解读论文图表"""
+    from packages.ai.figure_service import FigureService
+
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            paper = repo.get_by_id(UUID(paper_id))
+        except (ValueError, Exception) as exc:
+            return ToolResult(success=False, summary=f"论文不存在: {exc}")
+        if not paper.pdf_path:
+            return ToolResult(success=False, summary="论文没有 PDF 文件，无法提取图表")
+        pdf_path = paper.pdf_path
+        title = paper.title
+
+    svc = FigureService()
+    try:
+        results = svc.analyze_paper_figures(
+            UUID(paper_id), pdf_path, max_figures=max_figures,
+        )
+    except Exception as exc:
+        return ToolResult(success=False, summary=f"图表解读失败: {exc}")
+
+    if not results:
+        return ToolResult(
+            success=True,
+            data={"count": 0, "figures": []},
+            summary=f"论文「{title}」中未检测到可解读的图表",
+        )
+
+    figures_data = [
+        {
+            "page": r.page_number,
+            "type": r.image_type,
+            "caption": r.caption,
+            "description": r.description[:500],
+        }
+        for r in results
+    ]
+
+    return ToolResult(
+        success=True,
+        data={"count": len(results), "figures": figures_data},
+        summary=f"已解读「{title}」中的 {len(results)} 张图表",
     )

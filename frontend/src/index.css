@@ -342,3 +342,166 @@ html.dark .hover-lift:hover {
 html.dark .form-input:focus {
   box-shadow: 0 0 0 3px rgba(212, 130, 94, 0.15);
 }
+
+/* ========== PDF Reader ========== */
+.pdf-page-shadow {
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.pdf-page-shadow canvas {
+  display: block;
+}
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  color: rgba(255,255,255,0.6);
+  transition: background-color 0.15s, color 0.15s;
+}
+.toolbar-btn:hover:not(:disabled) {
+  background-color: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.9);
+}
+.toolbar-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.toolbar-btn-text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.5rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: rgba(255,255,255,0.6);
+  transition: background-color 0.15s, color 0.15s;
+}
+.toolbar-btn-text:hover {
+  background-color: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.9);
+}
+.ai-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  transition: background-color 0.15s;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* PDF AI 助手 Markdown 渲染 - 深色主题 */
+.pdf-ai-markdown {
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.82);
+}
+.pdf-ai-markdown p {
+  margin-bottom: 0.6em;
+}
+.pdf-ai-markdown p:last-child {
+  margin-bottom: 0;
+}
+.pdf-ai-markdown strong {
+  color: rgba(255,255,255,0.95);
+  font-weight: 600;
+}
+.pdf-ai-markdown em {
+  color: rgba(255,255,255,0.7);
+  font-style: italic;
+}
+.pdf-ai-markdown h1, .pdf-ai-markdown h2, .pdf-ai-markdown h3,
+.pdf-ai-markdown h4, .pdf-ai-markdown h5, .pdf-ai-markdown h6 {
+  color: rgba(255,255,255,0.92);
+  font-weight: 600;
+  margin: 0.8em 0 0.4em;
+  line-height: 1.4;
+}
+.pdf-ai-markdown h1 { font-size: 1rem; }
+.pdf-ai-markdown h2 { font-size: 0.9375rem; }
+.pdf-ai-markdown h3 { font-size: 0.875rem; }
+.pdf-ai-markdown ul, .pdf-ai-markdown ol {
+  padding-left: 1.4em;
+  margin-bottom: 0.6em;
+}
+.pdf-ai-markdown li {
+  margin-bottom: 0.25em;
+}
+.pdf-ai-markdown li::marker {
+  color: rgba(255,255,255,0.3);
+}
+.pdf-ai-markdown code {
+  background: rgba(255,255,255,0.08);
+  color: #f0a67a;
+  padding: 0.15em 0.4em;
+  border-radius: 0.3em;
+  font-size: 0.85em;
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+.pdf-ai-markdown pre {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin: 0.6em 0;
+  overflow-x: auto;
+}
+.pdf-ai-markdown pre code {
+  background: none;
+  color: rgba(255,255,255,0.8);
+  padding: 0;
+  font-size: 0.8em;
+}
+.pdf-ai-markdown blockquote {
+  border-left: 3px solid rgba(196,102,60,0.5);
+  padding-left: 0.8em;
+  margin: 0.6em 0;
+  color: rgba(255,255,255,0.6);
+  font-style: italic;
+}
+.pdf-ai-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.8em;
+}
+.pdf-ai-markdown th {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.8);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.4em 0.6em;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.pdf-ai-markdown td {
+  padding: 0.35em 0.6em;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: rgba(255,255,255,0.7);
+}
+.pdf-ai-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  margin: 0.8em 0;
+}
+.pdf-ai-markdown a {
+  color: #f0a67a;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.pdf-ai-markdown a:hover {
+  color: #f5c4a1;
+}
+/* KaTeX 公式在深色背景下的颜色适配 */
+.pdf-ai-markdown .katex {
+  color: rgba(255,255,255,0.9);
+}

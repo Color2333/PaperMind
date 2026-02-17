@@ -1,5 +1,5 @@
 /**
- * Papers - 论文库（文件夹分类导航版）
+ * Papers - 论文库（分页 + 文件夹/日期分类导航）
  * @author Bamzc
  */
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -18,6 +18,7 @@ import {
   Eye,
   BookMarked,
   ChevronRight,
+  ChevronLeft,
   Cpu,
   Zap,
   CheckCircle2,
@@ -27,20 +28,24 @@ import {
   Folder,
   FolderOpen,
   Clock,
-  Star,
   Inbox,
   Library,
   Tag,
+  Calendar,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 
 /* ========== 类型 ========== */
 interface FolderItem {
   id: string;
-  type: "special" | "topic";
+  type: "special" | "topic" | "date";
   name: string;
   icon: React.ReactNode;
   count: number;
   color: string;
+  /** 日期筛选用 */
+  dateStr?: string;
 }
 
 const statusBadge: Record<string, { label: string; variant: "default" | "warning" | "success" }> = {
@@ -48,6 +53,22 @@ const statusBadge: Record<string, { label: string; variant: "default" | "warning
   skimmed: { label: "已粗读", variant: "warning" },
   deep_read: { label: "已精读", variant: "success" },
 };
+
+/**
+ * 格式化日期为中文标签
+ */
+function formatDateLabel(dateStr: string): string {
+  const today = new Date();
+  const d = new Date(dateStr + "T00:00:00");
+  const diffMs = today.getTime() - d.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffDays === 0) return "今天";
+  if (diffDays === 1) return "昨天";
+  if (diffDays === 2) return "前天";
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  return `${m}月${day}日`;
+}
 
 export default function Papers() {
   const navigate = useNavigate();
@@ -60,10 +81,18 @@ export default function Papers() {
   const [batchProgress, setBatchProgress] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
 
+  /* 分页 */
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   /* 文件夹相关 */
   const [folderStats, setFolderStats] = useState<FolderStats | null>(null);
   const [activeFolder, setActiveFolder] = useState("all");
+  const [activeDate, setActiveDate] = useState<string | undefined>();
   const [statsLoading, setStatsLoading] = useState(true);
+  const [dateSectionOpen, setDateSectionOpen] = useState(false);
 
   /* 加载文件夹统计 */
   const loadFolderStats = useCallback(async () => {
@@ -85,15 +114,23 @@ export default function Papers() {
         // 默认
       } else if (activeFolder === "favorites" || activeFolder === "recent" || activeFolder === "unclassified") {
         folder = activeFolder;
-      } else {
+      } else if (!activeFolder.startsWith("date:")) {
         topicId = activeFolder;
       }
 
-      const res = await paperApi.latest(200, undefined, topicId, folder);
+      const res = await paperApi.latest({
+        page,
+        pageSize,
+        topicId,
+        folder,
+        date: activeDate,
+      });
       setPapers(res.items);
+      setTotal(res.total);
+      setTotalPages(res.total_pages);
       setSelected(new Set());
     } catch {} finally { setLoading(false); }
-  }, [activeFolder]);
+  }, [activeFolder, activeDate, page, pageSize]);
 
   useEffect(() => { loadFolderStats(); }, [loadFolderStats]);
   useEffect(() => { loadPapers(); }, [loadPapers]);
@@ -122,7 +159,17 @@ export default function Papers() {
     return items;
   }, [folderStats]);
 
-  /* 搜索过滤 */
+  /* 日期条目 */
+  const dateEntries = useMemo(() => {
+    if (!folderStats?.by_date) return [];
+    return folderStats.by_date.map((d) => ({
+      dateStr: d.date,
+      label: formatDateLabel(d.date),
+      count: d.count,
+    }));
+  }, [folderStats]);
+
+  /* 搜索过滤（前端补充过滤，分页已在后端完成） */
   const filtered = useMemo(() => papers.filter((p) => {
     const term = searchTerm.toLowerCase();
     if (!term) return true;
@@ -170,14 +217,31 @@ export default function Papers() {
 
   const handleFolderClick = useCallback((folderId: string) => {
     setActiveFolder(folderId);
+    setActiveDate(undefined);
     setSearchTerm("");
+    setPage(1);
   }, []);
 
-  const activeFolderName = folders.find((f) => f.id === activeFolder)?.name || "全部论文";
+  const handleDateClick = useCallback((dateStr: string) => {
+    setActiveFolder("date:" + dateStr);
+    setActiveDate(dateStr);
+    setSearchTerm("");
+    setPage(1);
+  }, []);
+
+  const activeFolderName = useMemo(() => {
+    if (activeDate) return formatDateLabel(activeDate) + " 收录";
+    return folders.find((f) => f.id === activeFolder)?.name || "全部论文";
+  }, [activeFolder, activeDate, folders]);
 
   const refresh = useCallback(async () => {
     await Promise.all([loadFolderStats(), loadPapers()]);
   }, [loadFolderStats, loadPapers]);
+
+  /* 分页导航 */
+  const goPage = useCallback((p: number) => {
+    setPage(Math.max(1, Math.min(p, totalPages)));
+  }, [totalPages]);
 
   return (
     <div className="animate-fade-in flex h-full gap-0">
@@ -200,7 +264,7 @@ export default function Papers() {
           ) : (
             <div className="space-y-0.5">
               {folders.map((folder, idx) => {
-                const isActive = activeFolder === folder.id;
+                const isActive = activeFolder === folder.id && !activeDate;
                 const showDivider = (
                   (idx > 0 && folder.type !== folders[idx - 1].type) ||
                   (folder.id === "unclassified" && folders[idx - 1]?.type === "topic")
@@ -210,7 +274,7 @@ export default function Papers() {
                     {showDivider && <div className="my-2 border-t border-border-light" />}
                     {idx === 3 && folders.some((f) => f.type === "topic") && (
                       <p className="mb-1 mt-3 px-2 text-[10px] font-medium uppercase tracking-widest text-ink-tertiary">
-                        主题
+                        订阅主题
                       </p>
                     )}
                     <button
@@ -238,6 +302,51 @@ export default function Papers() {
                   </div>
                 );
               })}
+
+              {/* ========== 按日期收录 ========== */}
+              {dateEntries.length > 0 && (
+                <>
+                  <div className="my-2 border-t border-border-light" />
+                  <button
+                    onClick={() => setDateSectionOpen(!dateSectionOpen)}
+                    className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
+                  >
+                    <Calendar className="h-3.5 w-3.5 text-ink-tertiary" />
+                    <span className="flex-1 text-[10px] font-medium uppercase tracking-widest text-ink-tertiary">
+                      按收录日期
+                    </span>
+                    <ChevronRight className={`h-3 w-3 text-ink-tertiary transition-transform ${dateSectionOpen ? "rotate-90" : ""}`} />
+                  </button>
+                  {dateSectionOpen && (
+                    <div className="space-y-0.5 pl-1">
+                      {dateEntries.map((entry) => {
+                        const isActive = activeDate === entry.dateStr;
+                        return (
+                          <button
+                            key={entry.dateStr}
+                            onClick={() => handleDateClick(entry.dateStr)}
+                            className={`group flex w-full items-center gap-2.5 rounded-xl px-3 py-1.5 text-left text-[13px] transition-all ${
+                              isActive
+                                ? "bg-primary/10 font-medium text-primary"
+                                : "text-ink-secondary hover:bg-hover hover:text-ink"
+                            }`}
+                          >
+                            <span className={`text-[11px] ${isActive ? "text-primary" : "text-ink-tertiary"}`}>
+                              {entry.dateStr.slice(5)}
+                            </span>
+                            <span className="flex-1 truncate">{entry.label}</span>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                              isActive ? "bg-primary/15 text-primary" : "bg-page text-ink-tertiary"
+                            }`}>
+                              {entry.count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </nav>
@@ -262,7 +371,7 @@ export default function Papers() {
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-bold text-ink">{activeFolderName}</h1>
             <span className="rounded-full bg-page px-2.5 py-0.5 text-xs font-medium text-ink-secondary">
-              {filtered.length} 篇
+              {total} 篇
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -282,7 +391,6 @@ export default function Papers() {
               </button>
             </div>
             <Button variant="secondary" size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={refresh}>刷新</Button>
-            {/* 移动端入口 */}
             <Button size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setIngestOpen(true)} className="lg:hidden">摄入</Button>
           </div>
         </div>
@@ -337,7 +445,9 @@ export default function Papers() {
                   onChange={toggleSelectAll}
                   className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/30"
                 />
-                <span className="text-[11px] text-ink-tertiary">全选 / {filtered.length} 篇</span>
+                <span className="text-[11px] text-ink-tertiary">
+                  全选 / 第 {page} 页，共 {total} 篇
+                </span>
               </div>
 
               {viewMode === "list" ? (
@@ -368,6 +478,81 @@ export default function Papers() {
             </div>
           )}
         </div>
+
+        {/* ========== 分页 ========== */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between border-t border-border px-5 py-3">
+            <span className="text-xs text-ink-tertiary">
+              共 {total} 篇，第 {page}/{totalPages} 页
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => goPage(1)}
+                disabled={page <= 1}
+                className="rounded-lg p-1.5 text-ink-secondary transition-colors hover:bg-hover disabled:opacity-30"
+                title="首页"
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => goPage(page - 1)}
+                disabled={page <= 1}
+                className="rounded-lg p-1.5 text-ink-secondary transition-colors hover:bg-hover disabled:opacity-30"
+                title="上一页"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+
+              {/* 页码按钮 */}
+              {(() => {
+                const pages: number[] = [];
+                const start = Math.max(1, page - 2);
+                const end = Math.min(totalPages, page + 2);
+                for (let i = start; i <= end; i++) pages.push(i);
+                if (start > 1) pages.unshift(-1);
+                if (end < totalPages) pages.push(-2);
+                if (start > 2) pages.unshift(1);
+                if (end < totalPages - 1) pages.push(totalPages);
+
+                return pages.map((p, idx) => {
+                  if (p < 0) {
+                    return <span key={`dots-${idx}`} className="px-1 text-xs text-ink-tertiary">...</span>;
+                  }
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => goPage(p)}
+                      className={`min-w-[2rem] rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+                        p === page
+                          ? "bg-primary text-white"
+                          : "text-ink-secondary hover:bg-hover"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                });
+              })()}
+
+              <button
+                onClick={() => goPage(page + 1)}
+                disabled={page >= totalPages}
+                className="rounded-lg p-1.5 text-ink-secondary transition-colors hover:bg-hover disabled:opacity-30"
+                title="下一页"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => goPage(totalPages)}
+                disabled={page >= totalPages}
+                className="rounded-lg p-1.5 text-ink-secondary transition-colors hover:bg-hover disabled:opacity-30"
+                title="末页"
+              >
+                <ChevronsRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       <IngestModal open={ingestOpen} onClose={() => setIngestOpen(false)} onDone={() => { loadPapers(); loadFolderStats(); }} />

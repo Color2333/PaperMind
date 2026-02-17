@@ -196,6 +196,21 @@ class PaperRepository:
         status_rows = self.session.execute(status_q).all()
         by_status = {r[0].value: r[1] for r in status_rows}
 
+        # 按日期分组（最近 30 天，每天的论文数）
+        date_expr = func.date(Paper.created_at)
+        since_30d = now - timedelta(days=30)
+        date_q = (
+            select(date_expr.label("d"), func.count().label("c"))
+            .where(Paper.created_at >= since_30d)
+            .group_by(date_expr)
+            .order_by(date_expr.desc())
+        )
+        date_rows = self.session.execute(date_q).all()
+        by_date = [
+            {"date": str(r[0]), "count": r[1]}
+            for r in date_rows
+        ]
+
         return {
             "total": total,
             "favorites": favorites,
@@ -203,7 +218,67 @@ class PaperRepository:
             "unclassified": unclassified,
             "by_topic": by_topic,
             "by_status": by_status,
+            "by_date": by_date,
         }
+
+    def list_paginated(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        folder: str | None = None,
+        topic_id: str | None = None,
+        status: str | None = None,
+        date_str: str | None = None,
+    ) -> tuple[list[Paper], int]:
+        """分页查询论文，返回 (papers, total_count)"""
+        base_q = select(Paper)
+        count_q = select(func.count()).select_from(Paper)
+
+        # 筛选条件
+        if folder == "favorites":
+            base_q = base_q.where(Paper.favorited == True)  # noqa: E712
+            count_q = count_q.where(Paper.favorited == True)  # noqa: E712
+        elif folder == "recent":
+            since = datetime.now(UTC) - timedelta(days=7)
+            base_q = base_q.where(Paper.created_at >= since)
+            count_q = count_q.where(Paper.created_at >= since)
+        elif folder == "unclassified":
+            subq = select(PaperTopic.paper_id).distinct()
+            base_q = base_q.where(Paper.id.notin_(subq))
+            count_q = count_q.where(Paper.id.notin_(subq))
+        elif topic_id:
+            base_q = base_q.join(PaperTopic, Paper.id == PaperTopic.paper_id).where(
+                PaperTopic.topic_id == topic_id
+            )
+            count_q = (
+                select(func.count())
+                .select_from(Paper)
+                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
+                .where(PaperTopic.topic_id == topic_id)
+            )
+
+        if status and status in ("unread", "skimmed", "deep_read"):
+            base_q = base_q.where(Paper.read_status == ReadStatus(status))
+            count_q = count_q.where(Paper.read_status == ReadStatus(status))
+
+        if date_str:
+            try:
+                d = date.fromisoformat(date_str)
+                day_start = datetime(d.year, d.month, d.day, tzinfo=UTC)
+                day_end = day_start + timedelta(days=1)
+                base_q = base_q.where(Paper.created_at >= day_start, Paper.created_at < day_end)
+                count_q = count_q.where(Paper.created_at >= day_start, Paper.created_at < day_end)
+            except ValueError:
+                pass
+
+        total = self.session.execute(count_q).scalar() or 0
+        offset = (max(1, page) - 1) * page_size
+        papers = list(
+            self.session.execute(
+                base_q.order_by(Paper.created_at.desc()).offset(offset).limit(page_size)
+            ).scalars()
+        )
+        return papers, total
 
     def list_unclassified(self, limit: int = 200) -> list[Paper]:
         """查询没有关联任何主题的论文"""

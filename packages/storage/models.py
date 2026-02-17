@@ -86,6 +86,33 @@ class AnalysisReport(Base):
     )
 
 
+class ImageAnalysis(Base):
+    """论文图表/公式解读结果"""
+
+    __tablename__ = "image_analyses"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    paper_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("papers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    page_number: Mapped[int] = mapped_column(nullable=False)
+    image_index: Mapped[int] = mapped_column(nullable=False, default=0)
+    image_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="figure"
+    )
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    bbox_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False
+    )
+
+
 class Citation(Base):
     __tablename__ = "citations"
     __table_args__ = (

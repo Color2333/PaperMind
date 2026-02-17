@@ -126,11 +126,16 @@ export default function Collect() {
   }, []);
 
   return (
-    <div className="animate-fade-in space-y-8">
+    <div className="animate-fade-in space-y-6">
       {/* 页面头 */}
       <div className="page-hero rounded-2xl p-6">
-        <h1 className="text-2xl font-bold text-ink">论文收集</h1>
-        <p className="mt-1 text-sm text-ink-secondary">从 arXiv 搜索下载论文，或创建订阅自动定时收集</p>
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-primary/10 p-2.5"><Download className="h-5 w-5 text-primary" /></div>
+          <div>
+            <h1 className="text-2xl font-bold text-ink">论文收集</h1>
+            <p className="mt-0.5 text-sm text-ink-secondary">从 arXiv 搜索下载论文，或创建订阅自动定时收集</p>
+          </div>
+        </div>
       </div>
 
       {/* 错误 */}

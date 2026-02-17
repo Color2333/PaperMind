@@ -280,6 +280,99 @@ export interface TopicWiki {
   content_id?: string;
 }
 
+/* ========== 推理链分析 ========== */
+export interface ReasoningStep {
+  step: string;
+  thinking: string;
+  conclusion: string;
+}
+
+export interface MethodChain {
+  problem_definition: string;
+  core_hypothesis: string;
+  method_derivation: string;
+  theoretical_basis: string;
+  innovation_analysis: string;
+}
+
+export interface ExperimentChain {
+  experimental_design: string;
+  baseline_fairness: string;
+  result_validation: string;
+  ablation_insights: string;
+}
+
+export interface ImpactAssessment {
+  novelty_score: number;
+  rigor_score: number;
+  impact_score: number;
+  overall_assessment: string;
+  strengths: string[];
+  weaknesses: string[];
+  future_suggestions: string[];
+}
+
+export interface ReasoningChainResult {
+  reasoning_steps: ReasoningStep[];
+  method_chain: MethodChain;
+  experiment_chain: ExperimentChain;
+  impact_assessment: ImpactAssessment;
+}
+
+export interface ReasoningAnalysisResponse {
+  paper_id: string;
+  title: string;
+  reasoning: ReasoningChainResult;
+}
+
+/* ========== 研究空白识别 ========== */
+export interface ResearchGap {
+  gap_title: string;
+  description: string;
+  evidence: string;
+  potential_impact: string;
+  suggested_approach: string;
+  difficulty: "easy" | "medium" | "hard";
+  confidence: number;
+}
+
+export interface MethodComparisonEntry {
+  name: string;
+  scores: Record<string, string>;
+  papers: string[];
+}
+
+export interface MethodComparison {
+  dimensions: string[];
+  methods: MethodComparisonEntry[];
+  underexplored_combinations: string[];
+}
+
+export interface TrendAnalysis {
+  hot_directions: string[];
+  declining_areas: string[];
+  emerging_opportunities: string[];
+}
+
+export interface ResearchGapsAnalysis {
+  research_gaps: ResearchGap[];
+  method_comparison: MethodComparison;
+  trend_analysis: TrendAnalysis;
+  overall_summary: string;
+}
+
+export interface ResearchGapsResponse {
+  keyword: string;
+  network_stats: {
+    total_papers: number;
+    edge_count: number;
+    density: number;
+    connected_ratio: number;
+    isolated_count: number;
+  };
+  analysis: ResearchGapsAnalysis;
+}
+
 /* ========== 简报 ========== */
 export interface DailyBriefRequest {
   date?: string;

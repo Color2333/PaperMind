@@ -6,9 +6,11 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from packages.ai.agent_service import (
     confirm_action,
@@ -312,6 +314,27 @@ def graph_survey(
     return graph_service.survey(keyword=keyword, limit=limit)
 
 
+@app.get("/graph/research-gaps")
+def graph_research_gaps(
+    keyword: str,
+    limit: int = Query(default=120, ge=1, le=500),
+) -> dict:
+    return graph_service.detect_research_gaps(keyword=keyword, limit=limit)
+
+
+@app.post("/papers/{paper_id}/reasoning")
+def paper_reasoning(paper_id: UUID) -> dict:
+    """推理链深度分析"""
+    from packages.ai.reasoning_service import ReasoningService
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            repo.get_by_id(paper_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ReasoningService().analyze(paper_id)
+
+
 # ---------- Wiki ----------
 
 
@@ -462,27 +485,29 @@ def _paper_list_response(papers: list, repo: "PaperRepository") -> dict:
 @app.get("/papers/latest")
 def latest(
     limit: int = Query(default=50, ge=1, le=500),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     status: str | None = Query(default=None),
     topic_id: str | None = Query(default=None),
     folder: str | None = Query(default=None),
+    date: str | None = Query(default=None),
 ) -> dict:
     with session_scope() as session:
         repo = PaperRepository(session)
-        if folder == "favorites":
-            papers = repo.list_favorited(limit=limit)
-        elif folder == "recent":
-            papers = repo.list_recent(days=7, limit=limit)
-        elif folder == "unclassified":
-            papers = repo.list_unclassified(limit=limit)
-        elif topic_id:
-            papers = repo.list_by_topic(topic_id, limit=limit)
-        elif status and status in ("unread", "skimmed", "deep_read"):
-            papers = repo.list_by_read_status(
-                ReadStatus(status), limit=limit
-            )
-        else:
-            papers = repo.list_latest(limit=limit)
-        return _paper_list_response(papers, repo)
+        papers, total = repo.list_paginated(
+            page=page,
+            page_size=page_size,
+            folder=folder,
+            topic_id=topic_id,
+            status=status,
+            date_str=date,
+        )
+        resp = _paper_list_response(papers, repo)
+        resp["total"] = total
+        resp["page"] = page
+        resp["page_size"] = page_size
+        resp["total_pages"] = max(1, (total + page_size - 1) // page_size)
+        return resp
 
 
 @app.get("/papers/recommended")
@@ -557,6 +582,109 @@ def toggle_favorite(paper_id: UUID) -> dict:
         p.favorited = not current
         session.commit()
         return {"id": str(p.id), "favorited": p.favorited}
+
+
+# ---------- PDF 服务 ----------
+
+
+@app.get("/papers/{paper_id}/pdf")
+def serve_paper_pdf(paper_id: UUID) -> FileResponse:
+    """提供论文 PDF 文件下载/预览"""
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            paper = repo.get_by_id(paper_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        pdf_path = paper.pdf_path
+    if not pdf_path:
+        raise HTTPException(status_code=404, detail="论文没有 PDF 文件")
+    full_path = Path(pdf_path)
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="PDF 文件不存在")
+    return FileResponse(
+        path=str(full_path),
+        media_type="application/pdf",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+@app.post("/papers/{paper_id}/ai/explain")
+def ai_explain_text(paper_id: UUID, body: dict) -> dict:
+    """AI 解释/翻译选中文本"""
+    text = body.get("text", "").strip()
+    action = body.get("action", "explain")  # explain | translate | summarize
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    prompts = {
+        "explain": (
+            f"你是学术论文解读专家。请用中文简洁解释以下学术文本的含义，"
+            f"包括专业术语解释和核心意思。如果是公式，解释公式的含义和各变量。\n\n"
+            f"文本：{text[:2000]}"
+        ),
+        "translate": (
+            f"请将以下学术文本翻译为流畅的中文，保留专业术语的英文原文（括号标注）。\n\n"
+            f"文本：{text[:2000]}"
+        ),
+        "summarize": (
+            f"请用中文简要总结以下内容的核心观点（3-5 句话）：\n\n{text[:3000]}"
+        ),
+    }
+    prompt = prompts.get(action, prompts["explain"])
+
+    from packages.integrations.llm_client import LLMClient
+    llm = LLMClient()
+    result = llm.summarize_text(prompt, stage="rag", max_tokens=1024)
+    llm.trace_result(result, stage="pdf_reader_ai", prompt_digest=f"{action}:{text[:80]}", paper_id=str(paper_id))
+    return {"action": action, "result": result.content}
+
+
+# ---------- 图表解读 ----------
+
+
+@app.get("/papers/{paper_id}/figures")
+def get_paper_figures(paper_id: UUID) -> dict:
+    """获取论文已有的图表解读"""
+    from packages.ai.figure_service import FigureService
+    items = FigureService.get_paper_analyses(paper_id)
+    return {"items": items}
+
+
+@app.post("/papers/{paper_id}/figures/analyze")
+def analyze_paper_figures(
+    paper_id: UUID,
+    max_figures: int = Query(default=10, ge=1, le=30),
+) -> dict:
+    """提取并解读论文中的图表"""
+    from packages.ai.figure_service import FigureService
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            paper = repo.get_by_id(paper_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not paper.pdf_path:
+            raise HTTPException(status_code=400, detail="论文没有 PDF 文件")
+        pdf_path = paper.pdf_path  # 在 session 内取出
+    svc = FigureService()
+    try:
+        results = svc.analyze_paper_figures(paper_id, pdf_path, max_figures)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"图表解读失败: {exc}") from exc
+    return {
+        "paper_id": str(paper_id),
+        "count": len(results),
+        "items": [
+            {
+                "page_number": r.page_number,
+                "image_type": r.image_type,
+                "caption": r.caption,
+                "description": r.description,
+            }
+            for r in results
+        ],
+    }
 
 
 # ---------- 简报 ----------

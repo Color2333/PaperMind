@@ -3,7 +3,7 @@
  * @author Bamzc
  */
 import { useState, useEffect, useCallback } from "react";
-import { Card, CardHeader, Button, Input, Tabs, Spinner, Empty } from "@/components/ui";
+import { Card, CardHeader, Button, Tabs, Spinner, Empty } from "@/components/ui";
 import { wikiApi, generatedApi } from "@/services/api";
 import type {
   PaperWiki,
@@ -130,12 +130,15 @@ export default function Wiki() {
 
   return (
     <div className="animate-fade-in space-y-6">
-      {/* 标题 */}
-      <div>
-        <h1 className="text-2xl font-bold text-ink">Wiki</h1>
-        <p className="mt-1 text-sm text-ink-secondary">
-          AI 驱动的结构化知识百科，基于真实论文数据生成
-        </p>
+      {/* 页面头 */}
+      <div className="page-hero rounded-2xl p-6">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-primary/10 p-2.5"><GraduationCap className="h-5 w-5 text-primary" /></div>
+          <div>
+            <h1 className="text-2xl font-bold text-ink">Wiki</h1>
+            <p className="mt-0.5 text-sm text-ink-secondary">AI 驱动的结构化知识百科，基于真实论文数据生成</p>
+          </div>
+        </div>
       </div>
 
       <Tabs tabs={wikiTabs} active={activeTab} onChange={(t) => {
@@ -146,30 +149,33 @@ export default function Wiki() {
       }} />
 
       {/* 搜索 */}
-      <Card>
+      <div className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
         <div className="flex gap-3">
-          <div className="flex-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
             {activeTab === "topic" ? (
-              <Input
-                placeholder="输入主题关键词，如: attention mechanism, transformer, diffusion model..."
+              <input
+                placeholder="输入主题关键词，如: attention mechanism, transformer..."
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleQuery()}
+                className="h-11 w-full rounded-xl border border-border bg-page pl-10 pr-4 text-sm text-ink placeholder:text-ink-placeholder focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
               />
             ) : (
-              <Input
+              <input
                 placeholder="输入论文 ID..."
                 value={paperId}
                 onChange={(e) => setPaperId(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleQuery()}
+                className="h-11 w-full rounded-xl border border-border bg-page pl-10 pr-4 text-sm text-ink placeholder:text-ink-placeholder focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
               />
             )}
           </div>
-          <Button icon={<Search className="h-4 w-4" />} onClick={handleQuery} loading={loading}>
+          <Button icon={<BookOpen className="h-4 w-4" />} onClick={handleQuery} loading={loading}>
             生成 Wiki
           </Button>
         </div>
-      </Card>
+      </div>
 
       {/* 生成中 */}
       {loading && (

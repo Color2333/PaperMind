@@ -115,3 +115,26 @@ def run_migrations() -> None:
         _safe_create_index(conn, "ix_prompt_traces_created_at", "prompt_traces", "created_at")
         _safe_create_index(conn, "ix_pipeline_runs_created_at", "pipeline_runs", "created_at")
         _safe_create_index(conn, "ix_papers_read_status", "papers", "read_status")
+
+        # image_analyses 表（如果不存在则创建）
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS image_analyses (
+                    id VARCHAR(36) PRIMARY KEY,
+                    paper_id VARCHAR(36) NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                    page_number INTEGER NOT NULL,
+                    image_index INTEGER NOT NULL DEFAULT 0,
+                    image_type VARCHAR(32) NOT NULL DEFAULT 'figure',
+                    caption TEXT,
+                    description TEXT NOT NULL DEFAULT '',
+                    bbox_json JSON,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_image_analyses_paper_id "
+                "ON image_analyses (paper_id)"
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()
