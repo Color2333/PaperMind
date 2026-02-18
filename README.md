@@ -141,6 +141,61 @@
 
 ---
 
+## 📸 界面预览
+
+<table>
+<tr>
+<td align="center" width="50%">
+<strong>🤖 AI Agent 对话主页</strong><br/><br/>
+<img src="scripts/screenshots/full/01-01-agent-home.png" alt="Agent Home" width="100%"/>
+<br/><sub>智能 Agent 对话 · 论文推荐 · 热点追踪 · 一站式研究入口</sub>
+</td>
+<td align="center" width="50%">
+<strong>📄 论文库管理</strong><br/><br/>
+<img src="scripts/screenshots/full/03-03-papers-list.png" alt="Papers List" width="100%"/>
+<br/><sub>主题分类 · 按日期分组 · 阅读状态 · 批量操作</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<strong>📋 论文详情 & 分析</strong><br/><br/>
+<img src="scripts/screenshots/full/20-paper-detail-direct.png" alt="Paper Detail" width="100%"/>
+<br/><sub>粗读 / 精读 / 图表解读 / 推理链 · 一键多维分析</sub>
+</td>
+<td align="center" width="50%">
+<strong>📖 沉浸式 PDF 阅读器</strong><br/><br/>
+<img src="scripts/screenshots/full/21-pdf-reader.png" alt="PDF Reader" width="100%"/>
+<br/><sub>连续滚动 · 缩放全屏 · 选中文本 AI 解释</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<strong>🕸️ 知识图谱 & 引文分析</strong><br/><br/>
+<img src="scripts/screenshots/full/08-09-graph.png" alt="Graph Explorer" width="100%"/>
+<br/><sub>领域时间线 · 引用树 · 质量评估 · 演化趋势 · 研究空白</sub>
+</td>
+<td align="center" width="50%">
+<strong>📊 Dashboard 系统看板</strong><br/><br/>
+<img src="scripts/screenshots/full/13-14-dashboard.png" alt="Dashboard" width="100%"/>
+<br/><sub>论文统计 · 成本分析 · Pipeline 活动 · 系统健康</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<strong>📚 Wiki 自动生成</strong><br/><br/>
+<img src="scripts/screenshots/full/11-12-wiki.png" alt="Wiki" width="100%"/>
+<br/><sub>主题 Wiki / 论文 Wiki · LLM 多轮生成 · 历史回溯</sub>
+</td>
+<td align="center" width="50%">
+<strong>🌙 暗色主题</strong><br/><br/>
+<img src="scripts/screenshots/full/16-17-dark-theme.png" alt="Dark Theme" width="100%"/>
+<br/><sub>全局暗色模式 · 护眼阅读 · 一键切换</sub>
+</td>
+</tr>
+</table>
+
+---
+
 ## 🏗️ 架构总览
 
 ```
