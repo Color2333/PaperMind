@@ -22,6 +22,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { ingestApi, topicApi } from "@/services/api";
+import { useToast } from "@/contexts/ToastContext";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import type { Topic, TopicCreate, TopicUpdate, ScheduleFrequency, KeywordSuggestion } from "@/types";
 
 type SortBy = "submittedDate" | "relevance" | "lastUpdatedDate";
@@ -48,6 +50,7 @@ function hourOptions(): { value: number; label: string }[] {
 }
 
 export default function Collect() {
+  const { toast } = useToast();
   const [query, setQuery] = useState("");
   const [maxResults, setMaxResults] = useState(20);
   const [sortBy, setSortBy] = useState<SortBy>("submittedDate");
@@ -70,6 +73,7 @@ export default function Collect() {
   const [aiDesc, setAiDesc] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     topicApi.list(false).then((r) => { setTopics(r.items); setLoading(false); }).catch(() => setLoading(false));
@@ -82,7 +86,7 @@ export default function Collect() {
       const res = await ingestApi.arxiv(query.trim(), maxResults);
       setResults((prev) => [{ ingested: res.ingested, query: query.trim(), sortBy, time: new Date().toLocaleTimeString("zh-CN") }, ...prev]);
     } catch (err) { setError(err instanceof Error ? err.message : "搜索失败"); } finally { setSearching(false); }
-  }, [query, maxResults, sortBy]);
+  }, [query, maxResults, sortBy, toast]);
 
   const handleAiSuggest = useCallback(async () => {
     const desc = aiDesc.trim() || formQuery.trim() || query.trim();
@@ -143,7 +147,7 @@ export default function Collect() {
         <div className="flex items-center gap-2 rounded-xl border border-error/20 bg-error-light px-4 py-3">
           <AlertTriangle className="h-4 w-4 text-error" />
           <p className="flex-1 text-sm text-error">{error}</p>
-          <button onClick={() => setError("")} className="text-error/60 hover:text-error"><X className="h-4 w-4" /></button>
+          <button aria-label="关闭" onClick={() => setError("")} className="text-error/60 hover:text-error"><X className="h-4 w-4" /></button>
         </div>
       )}
 
@@ -228,7 +232,7 @@ export default function Collect() {
           <div className="mb-5 rounded-2xl border border-border-light bg-page p-5">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-ink">{editId ? "编辑订阅" : "新建订阅"}</h3>
-              <button onClick={resetForm} className="rounded-lg p-1 text-ink-tertiary hover:bg-hover"><X className="h-4 w-4" /></button>
+              <button aria-label="关闭" onClick={resetForm} className="rounded-lg p-1 text-ink-tertiary hover:bg-hover"><X className="h-4 w-4" /></button>
             </div>
 
             <div className="space-y-4">
@@ -327,11 +331,11 @@ export default function Collect() {
                     <p className="text-[10px] text-ink-tertiary">每次 {t.max_results_per_run} 篇</p>
                   </div>
                   <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                    <button onClick={() => openEdit(t)} className="rounded-lg p-1.5 text-ink-tertiary hover:bg-hover hover:text-ink"><Pencil className="h-3.5 w-3.5" /></button>
-                    <button onClick={() => handleToggle(t)} className={`rounded-lg p-1.5 ${t.enabled ? "text-success hover:bg-success-light" : "text-ink-tertiary hover:bg-hover"}`}>
+                    <button aria-label="编辑" onClick={() => openEdit(t)} className="rounded-lg p-1.5 text-ink-tertiary hover:bg-hover hover:text-ink"><Pencil className="h-3.5 w-3.5" /></button>
+                    <button aria-label={t.enabled ? "禁用订阅" : "启用订阅"} onClick={() => handleToggle(t)} className={`rounded-lg p-1.5 ${t.enabled ? "text-success hover:bg-success-light" : "text-ink-tertiary hover:bg-hover"}`}>
                       {t.enabled ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
                     </button>
-                    <button onClick={() => handleDelete(t.id)} className="rounded-lg p-1.5 text-ink-tertiary hover:bg-error-light hover:text-error"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button aria-label="删除" onClick={() => setConfirmDeleteId(t.id)} className="rounded-lg p-1.5 text-ink-tertiary hover:bg-error-light hover:text-error"><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
                 </div>
               );
@@ -339,6 +343,16 @@ export default function Collect() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        title="删除订阅"
+        description="删除后将停止自动收集该主题的论文，确定要删除吗？"
+        variant="danger"
+        confirmLabel="删除"
+        onConfirm={async () => { if (confirmDeleteId) { await handleDelete(confirmDeleteId); setConfirmDeleteId(null); } }}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
     </div>
   );
 }

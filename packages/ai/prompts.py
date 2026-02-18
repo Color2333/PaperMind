@@ -440,7 +440,7 @@ def build_wiki_section_prompt(
     source_refs: list[str],
     all_sources_text: str,
 ) -> str:
-    """构建 Wiki 单章节生成 prompt，输出一个章节的完整内容"""
+    """构建 Wiki 单章节生成 prompt，直接输出 markdown 文本"""
     points_text = "\n".join(f"- {p}" for p in key_points)
     refs_text = ", ".join(source_refs) if source_refs else "无"
 
@@ -448,18 +448,14 @@ def build_wiki_section_prompt(
         "你是一位世界顶级的学术综述作者和知识百科编辑。"
         f"请基于以下资料，为「{keyword}」主题的百科文章撰写「{section_title}」章节。\n\n"
         "## 输出要求\n"
-        "请输出严格的 JSON 对象，结构如下：\n"
-        "```json\n"
-        "{\n"
-        '  "title": "章节标题",\n'
-        '  "content": "章节内容（1500-3000字，引用[P1]等标记，深度分析不是罗列）",\n'
-        '  "key_insight": "本章节核心洞见（一句话）"\n'
-        "}\n```\n\n"
+        "直接输出章节内容的 Markdown 文本，不要输出 JSON，不要输出代码块包裹。\n"
+        "- 不要重复章节标题（标题会自动添加）\n"
+        "- 直接从正文开始写\n\n"
         "## 写作要求\n"
-        "1. content 必须 1500-3000 字，深度分析，不要简单罗列\n"
-        "2. 必须引用 source_refs 中的来源（用[P1][P2]等标记）\n"
+        "1. 内容 800-1500 字，深度分析，不要简单罗列\n"
+        "2. 引用来源（用[P1][P2]等标记）\n"
         "3. 用学术但易懂的中文撰写\n"
-        "4. key_insight 用一句话概括本章节核心洞见\n\n"
+        "4. 最后用一句话总结本章核心洞见（加粗标注）\n\n"
         f"## 主题关键词: {keyword}\n\n"
         f"## 本章节标题: {section_title}\n\n"
         f"## 本章节要点:\n{points_text}\n\n"

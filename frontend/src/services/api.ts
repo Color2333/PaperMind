@@ -28,6 +28,12 @@ import type {
   KeywordSuggestion,
   ReasoningAnalysisResponse,
   ResearchGapsResponse,
+  CitationDetail,
+  TopicCitationNetwork,
+  LibraryOverview,
+  BridgesResponse,
+  FrontierResponse,
+  CocitationResponse,
 } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
@@ -45,20 +51,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return resp.json();
 }
 
-function get<T>(path: string) {
-  return request<T>(path);
+function get<T>(path: string, opts?: { signal?: AbortSignal }) {
+  return request<T>(path, { signal: opts?.signal });
 }
 
-function post<T>(path: string, body?: unknown) {
-  return request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+function post<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) {
+  return request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}), signal: opts?.signal });
 }
 
-function patch<T>(path: string, body?: unknown) {
-  return request<T>(path, { method: "PATCH", body: JSON.stringify(body ?? {}) });
+function patch<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) {
+  return request<T>(path, { method: "PATCH", body: JSON.stringify(body ?? {}), signal: opts?.signal });
 }
 
-function del<T>(path: string) {
-  return request<T>(path, { method: "DELETE" });
+function del<T>(path: string, opts?: { signal?: AbortSignal }) {
+  return request<T>(path, { method: "DELETE", signal: opts?.signal });
 }
 
 /* ========== 系统 ========== */
@@ -127,6 +133,7 @@ export const paperApi = {
     topicId?: string;
     folder?: string;
     date?: string;
+    search?: string;
   } = {}) => {
     const params = new URLSearchParams();
     params.set("page", String(opts.page || 1));
@@ -135,6 +142,7 @@ export const paperApi = {
     if (opts.topicId) params.append("topic_id", opts.topicId);
     if (opts.folder) params.append("folder", opts.folder);
     if (opts.date) params.append("date", opts.date);
+    if (opts.search) params.append("search", opts.search);
     return get<PaperListResponse>(`/papers/latest?${params}`);
   },
   folderStats: () => get<FolderStats>("/papers/folder-stats"),
@@ -167,12 +175,44 @@ export interface FigureAnalysisItem {
 }
 
 /* ========== 摄入 ========== */
+export interface ReferenceImportEntry {
+  scholar_id: string | null;
+  title: string;
+  year: number | null;
+  venue: string | null;
+  citation_count: number | null;
+  arxiv_id: string | null;
+  abstract: string | null;
+  direction?: string;
+}
+
+export interface ImportTaskStatus {
+  task_id: string;
+  status: "running" | "completed" | "failed";
+  total: number;
+  completed: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  current: string;
+  error?: string;
+  results: { title: string; status: string; reason?: string; paper_id?: string; source?: string }[];
+}
+
 export const ingestApi = {
   arxiv: (query: string, maxResults = 20, topicId?: string) => {
     const params = new URLSearchParams({ query, max_results: String(maxResults) });
     if (topicId) params.append("topic_id", topicId);
     return post<IngestResult>(`/ingest/arxiv?${params}`);
   },
+  importReferences: (data: {
+    source_paper_id: string;
+    source_paper_title: string;
+    entries: ReferenceImportEntry[];
+    topic_ids?: string[];
+  }) => post<{ task_id: string; total: number }>("/ingest/references", data),
+  importStatus: (taskId: string) =>
+    get<ImportTaskStatus>(`/ingest/references/status/${taskId}`),
 };
 
 /* ========== Pipeline ========== */
@@ -198,6 +238,33 @@ export const citationApi = {
     post<CitationSyncResult>(`/citations/sync/incremental?paper_limit=${paperLimit}&edge_limit_per_paper=${edgeLimit}`),
 };
 
+/* ========== 行动记录 ========== */
+export interface CollectionAction {
+  id: string;
+  action_type: string;
+  title: string;
+  query: string | null;
+  topic_id: string | null;
+  paper_count: number;
+  created_at: string;
+}
+
+export const actionApi = {
+  list: (opts: { actionType?: string; topicId?: string; limit?: number; offset?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (opts.actionType) params.set("action_type", opts.actionType);
+    if (opts.topicId) params.set("topic_id", opts.topicId);
+    if (opts.limit) params.set("limit", String(opts.limit));
+    if (opts.offset) params.set("offset", String(opts.offset));
+    return get<{ items: CollectionAction[]; total: number }>(`/actions?${params}`);
+  },
+  detail: (id: string) => get<CollectionAction>(`/actions/${id}`),
+  papers: (id: string, limit = 200) =>
+    get<{ action_id: string; items: { id: string; title: string; arxiv_id: string; publication_date: string | null; read_status: string }[] }>(
+      `/actions/${id}/papers?limit=${limit}`
+    ),
+};
+
 /* ========== 图谱 ========== */
 export const graphApi = {
   citationTree: (paperId: string, depth = 2) =>
@@ -212,6 +279,19 @@ export const graphApi = {
     get<SurveyResponse>(`/graph/survey?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
   researchGaps: (keyword: string, limit = 120) =>
     get<ResearchGapsResponse>(`/graph/research-gaps?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
+  citationDetail: (paperId: string) =>
+    get<CitationDetail>(`/graph/citation-detail/${paperId}`),
+  topicNetwork: (topicId: string) =>
+    get<TopicCitationNetwork>(`/graph/citation-network/topic/${topicId}`),
+  topicDeepTrace: (topicId: string) =>
+    post<TopicCitationNetwork>(`/graph/citation-network/topic/${topicId}/deep-trace`),
+  overview: () => get<LibraryOverview>('/graph/overview'),
+  bridges: () => get<BridgesResponse>('/graph/bridges'),
+  frontier: (days = 90) => get<FrontierResponse>(`/graph/frontier?days=${days}`),
+  cocitationClusters: (minCocite = 2) =>
+    get<CocitationResponse>(`/graph/cocitation-clusters?min_cocite=${minCocite}`),
+  autoLink: (paperIds: string[]) =>
+    post<{ papers: number; edges_linked: number; errors: number }>('/graph/auto-link', paperIds),
 };
 
 /* ========== Wiki ========== */
@@ -265,6 +345,17 @@ export const llmConfigApi = {
   active: () => get<ActiveLLMConfig>("/settings/llm-providers/active"),
 };
 
+/* ========== 写作助手 ========== */
+import type { WritingTemplate, WritingResult, WritingRefineMessage, WritingRefineResult } from "@/types";
+
+export const writingApi = {
+  templates: () => get<{ items: WritingTemplate[] }>("/writing/templates"),
+  process: (action: string, text: string, maxTokens = 4096) =>
+    post<WritingResult>("/writing/process", { action, text, max_tokens: maxTokens }),
+  refine: (messages: WritingRefineMessage[], maxTokens = 4096) =>
+    post<WritingRefineResult>("/writing/refine", { messages, max_tokens: maxTokens }),
+};
+
 /* ========== Agent ========== */
 import type { AgentMessage } from "@/types";
 
@@ -292,4 +383,33 @@ export const agentApi = {
     const url = `${API_BASE.replace(/\/+$/, "")}/agent/reject/${actionId}`;
     return fetch(url, { method: "POST" });
   },
+};
+
+/* ========== 后台任务 ========== */
+export interface TaskStatus {
+  task_id: string;
+  task_type: string;
+  title: string;
+  status: "pending" | "running" | "completed" | "failed";
+  progress: number;
+  message: string;
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+  has_result: boolean;
+}
+
+export const tasksApi = {
+  startTopicWiki: (keyword: string, limit = 120) =>
+    post<{ task_id: string; status: string }>(
+      `/tasks/wiki/topic?keyword=${encodeURIComponent(keyword)}&limit=${limit}`
+    ),
+  getStatus: (taskId: string) =>
+    get<TaskStatus>(`/tasks/${taskId}`),
+  getResult: (taskId: string) =>
+    get<Record<string, unknown>>(`/tasks/${taskId}/result`),
+  list: (taskType?: string, limit = 20) =>
+    get<{ tasks: TaskStatus[] }>(
+      `/tasks?${taskType ? `task_type=${taskType}&` : ""}limit=${limit}`
+    ),
 };

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from collections.abc import Iterator
 from uuid import uuid4
 
@@ -108,6 +110,22 @@ _CONFIRM_TOOLS = {t.name for t in TOOL_REGISTRY if t.requires_confirm}
 
 # 待确认操作（含对话上下文，用于恢复执行）
 _pending_actions: dict[str, dict] = {}
+_pending_lock = threading.Lock()
+_ACTION_TTL = 600  # 10 分钟过期
+
+
+def _cleanup_expired_actions():
+    """清理过期的 pending actions"""
+    cutoff = time.time() - _ACTION_TTL
+    with _pending_lock:
+        expired = [
+            k for k, v in _pending_actions.items()
+            if v.get("created_at", 0) < cutoff
+        ]
+        for k in expired:
+            del _pending_actions[k]
+        if expired:
+            logger.info("清理 %d 个过期 pending_actions", len(expired))
 
 
 def _record_agent_usage(
@@ -304,12 +322,15 @@ def _llm_loop(
                 "确认操作挂起: %s [%s] args=%s",
                 action_id, tc.tool_name, args,
             )
-            _pending_actions[action_id] = {
-                "tool": tc.tool_name,
-                "args": args,
-                "tool_call_id": tc.tool_call_id,
-                "conversation": conversation,
-            }
+            with _pending_lock:
+                _cleanup_expired_actions()
+                _pending_actions[action_id] = {
+                    "tool": tc.tool_name,
+                    "args": args,
+                    "tool_call_id": tc.tool_call_id,
+                    "conversation": conversation,
+                    "created_at": time.time(),
+                }
             desc = _describe_action(tc.tool_name, args)
             yield _make_sse("action_confirm", {
                 "id": action_id,
@@ -335,7 +356,8 @@ def stream_chat(
 
     # 处理确认操作
     if confirmed_action_id:
-        action = _pending_actions.pop(confirmed_action_id, None)
+        with _pending_lock:
+            action = _pending_actions.pop(confirmed_action_id, None)
         if not action:
             yield _make_sse(
                 "error",
@@ -390,7 +412,8 @@ def stream_chat(
 def confirm_action(action_id: str) -> Iterator[str]:
     """确认执行挂起的操作并继续对话"""
     logger.info("用户确认操作: %s", action_id)
-    action = _pending_actions.pop(action_id, None)
+    with _pending_lock:
+        action = _pending_actions.pop(action_id, None)
     if not action:
         yield _make_sse(
             "error",
@@ -443,7 +466,8 @@ def confirm_action(action_id: str) -> Iterator[str]:
 def reject_action(action_id: str) -> Iterator[str]:
     """拒绝挂起的操作并让 LLM 给出替代建议"""
     logger.info("用户拒绝操作: %s", action_id)
-    action = _pending_actions.pop(action_id, None)
+    with _pending_lock:
+        action = _pending_actions.pop(action_id, None)
     yield _make_sse("action_result", {
         "id": action_id,
         "success": False,

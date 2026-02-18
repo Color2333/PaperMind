@@ -4,14 +4,14 @@
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Badge, Spinner } from "@/components/ui";
+import { Button, Badge } from "@/components/ui";
+import { StatCardSkeleton } from "@/components/Skeleton";
 import { systemApi, metricsApi, pipelineApi, todayApi, type TodaySummary } from "@/services/api";
-import { formatUSD, formatDuration, timeAgo } from "@/lib/utils";
+import { formatDuration, timeAgo } from "@/lib/utils";
 import type { SystemStatus, CostMetrics, PipelineRun } from "@/types";
 import {
   Activity,
   FileText,
-  DollarSign,
   AlertTriangle,
   CheckCircle2,
   XCircle,
@@ -29,20 +29,35 @@ import {
 const STAGE_LABELS: Record<string, string> = {
   skim: "粗读分析",
   deep_dive: "深度精读",
+  deep: "深度精读",
   rag: "RAG 问答",
   reasoning_chain: "推理链分析",
   vision_figure: "图表解读",
+  vision: "视觉模型",
   agent_chat: "Agent 对话",
   embed: "向量化",
+  embedding: "向量化",
   graph_evolution: "演化分析",
   graph_survey: "综述生成",
   graph_research_gaps: "研究空白",
+  graph_timeline: "时间线分析",
+  graph_citation_tree: "引用树分析",
+  graph_quality: "质量评估",
   wiki_paper: "论文 Wiki",
   wiki_outline: "Wiki 大纲",
   wiki_section: "Wiki 章节",
   wiki_overview: "Wiki 概述",
   keyword_suggest: "关键词建议",
+  pdf_reader_ai: "PDF 阅读助手",
+  daily_brief: "研究简报",
+  translate: "标题翻译",
 };
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -76,7 +91,7 @@ export default function Dashboard() {
 
   useEffect(() => { loadData(); }, []);
 
-  if (loading) return <Spinner text="加载系统状态..." />;
+  if (loading) return <StatCardSkeleton />;
   if (error) {
     return (
       <div className="flex flex-col items-center py-20">
@@ -152,9 +167,9 @@ export default function Dashboard() {
           onClick={() => navigate("/pipelines")}
         />
         <StatCard
-          icon={<DollarSign className="h-5 w-5" />}
-          label="7日成本"
-          value={formatUSD(costs?.total_cost_usd ?? 0)}
+          icon={<Zap className="h-5 w-5" />}
+          label="7日 Token"
+          value={fmtTokens((costs?.input_tokens ?? 0) + (costs?.output_tokens ?? 0))}
           sub={`${costs?.calls ?? 0} 次调用`}
           color="success"
         />
@@ -164,14 +179,32 @@ export default function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-5">
         {/* 成本分析 - 更宽 */}
         <div className="space-y-6 lg:col-span-3">
-          <SectionCard title="成本分析" icon={<BarChart3 className="h-4 w-4 text-primary" />}>
+          <SectionCard title="Token 用量分析" icon={<BarChart3 className="h-4 w-4 text-primary" />}>
             {costs && costs.by_stage.length > 0 ? (
               <div className="space-y-5">
+                {/* 总量概览 */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-xl bg-page p-3 text-center">
+                    <p className="text-lg font-bold text-ink">{fmtTokens((costs.input_tokens ?? 0) + (costs.output_tokens ?? 0))}</p>
+                    <p className="text-[10px] text-ink-tertiary">总 Token</p>
+                  </div>
+                  <div className="rounded-xl bg-page p-3 text-center">
+                    <p className="text-lg font-bold text-info">{fmtTokens(costs.input_tokens ?? 0)}</p>
+                    <p className="text-[10px] text-ink-tertiary">输入</p>
+                  </div>
+                  <div className="rounded-xl bg-page p-3 text-center">
+                    <p className="text-lg font-bold text-warning">{fmtTokens(costs.output_tokens ?? 0)}</p>
+                    <p className="text-[10px] text-ink-tertiary">输出</p>
+                  </div>
+                </div>
+
+                {/* 按阶段 */}
                 <div className="space-y-3">
                   <p className="text-xs font-medium uppercase tracking-widest text-ink-tertiary">按阶段</p>
                   {costs.by_stage.map((s) => {
-                    const maxCost = Math.max(...costs.by_stage.map((x) => x.total_cost_usd), 0.001);
-                    const pct = Math.max((s.total_cost_usd / maxCost) * 100, 3);
+                    const stageTotal = (s.input_tokens ?? 0) + (s.output_tokens ?? 0);
+                    const maxTokens = Math.max(...costs.by_stage.map((x) => (x.input_tokens ?? 0) + (x.output_tokens ?? 0)), 1);
+                    const pct = Math.max((stageTotal / maxTokens) * 100, 3);
                     return (
                       <div key={s.stage} className="group">
                         <div className="mb-1 flex items-center justify-between">
@@ -179,28 +212,38 @@ export default function Dashboard() {
                             <Zap className="h-3 w-3 text-warning" />
                             <span className="text-sm text-ink">{STAGE_LABELS[s.stage] || s.stage}</span>
                           </div>
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-sm font-semibold text-ink">{formatUSD(s.total_cost_usd)}</span>
-                            <span className="text-xs text-ink-tertiary">{s.calls}次</span>
+                          <div className="flex items-baseline gap-3">
+                            <span className="text-sm font-semibold text-ink">{fmtTokens(stageTotal)}</span>
+                            <span className="text-[10px] text-ink-tertiary">{s.calls}次</span>
                           </div>
                         </div>
-                        <div className="h-2 w-full overflow-hidden rounded-full bg-page">
+                        <div className="flex h-2 w-full overflow-hidden rounded-full bg-page">
                           <div
-                            className="bar-animate h-full rounded-full bg-gradient-to-r from-warning to-warning/60"
-                            style={{ width: `${pct}%` }}
+                            className="bar-animate h-full rounded-l-full bg-info/70"
+                            style={{ width: `${maxTokens > 0 ? Math.max(((s.input_tokens ?? 0) / maxTokens) * 100, 1) : 1}%` }}
+                          />
+                          <div
+                            className="bar-animate h-full rounded-r-full bg-warning/70"
+                            style={{ width: `${maxTokens > 0 ? Math.max(((s.output_tokens ?? 0) / maxTokens) * 100, 1) : 1}%` }}
                           />
                         </div>
                       </div>
                     );
                   })}
+                  <div className="flex items-center gap-4 text-[10px] text-ink-tertiary">
+                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-info/70" />输入</span>
+                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-warning/70" />输出</span>
+                  </div>
                 </div>
 
+                {/* 按模型 */}
                 {costs.by_model.length > 0 && (
                   <div className="space-y-3">
                     <p className="text-xs font-medium uppercase tracking-widest text-ink-tertiary">按模型</p>
                     {costs.by_model.map((m) => {
-                      const maxCost = Math.max(...costs.by_model.map((x) => x.total_cost_usd), 0.001);
-                      const pct = Math.max((m.total_cost_usd / maxCost) * 100, 3);
+                      const modelTotal = (m.input_tokens ?? 0) + (m.output_tokens ?? 0);
+                      const maxTokens = Math.max(...costs.by_model.map((x) => (x.input_tokens ?? 0) + (x.output_tokens ?? 0)), 1);
+                      const pct = Math.max((modelTotal / maxTokens) * 100, 3);
                       return (
                         <div key={`${m.provider}-${m.model}`} className="group">
                           <div className="mb-1 flex items-center justify-between">
@@ -208,7 +251,12 @@ export default function Dashboard() {
                               <TrendingUp className="h-3 w-3 text-info" />
                               <span className="text-sm text-ink">{m.provider}/{m.model}</span>
                             </div>
-                            <span className="text-sm font-semibold text-ink">{formatUSD(m.total_cost_usd)}</span>
+                            <div className="flex items-baseline gap-2">
+                              <span className="text-sm font-semibold text-ink">{fmtTokens(modelTotal)}</span>
+                              <span className="text-[10px] text-ink-tertiary">
+                                入{fmtTokens(m.input_tokens ?? 0)} / 出{fmtTokens(m.output_tokens ?? 0)}
+                              </span>
+                            </div>
                           </div>
                           <div className="h-2 w-full overflow-hidden rounded-full bg-page">
                             <div
@@ -221,21 +269,9 @@ export default function Dashboard() {
                     })}
                   </div>
                 )}
-
-                <div className="flex items-center justify-between rounded-xl bg-page px-4 py-3">
-                  <span className="text-sm text-ink-secondary">Token 用量</span>
-                  <div className="flex gap-4 text-xs">
-                    <span className="text-ink-tertiary">
-                      输入 <strong className="text-ink">{(costs.input_tokens ?? 0).toLocaleString()}</strong>
-                    </span>
-                    <span className="text-ink-tertiary">
-                      输出 <strong className="text-ink">{(costs.output_tokens ?? 0).toLocaleString()}</strong>
-                    </span>
-                  </div>
-                </div>
               </div>
             ) : (
-              <div className="py-8 text-center text-sm text-ink-tertiary">暂无成本数据</div>
+              <div className="py-8 text-center text-sm text-ink-tertiary">暂无 Token 数据</div>
             )}
           </SectionCard>
         </div>

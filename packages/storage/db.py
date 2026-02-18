@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import uuid as _uuid
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -115,6 +116,8 @@ def run_migrations() -> None:
         _safe_create_index(conn, "ix_prompt_traces_created_at", "prompt_traces", "created_at")
         _safe_create_index(conn, "ix_pipeline_runs_created_at", "pipeline_runs", "created_at")
         _safe_create_index(conn, "ix_papers_read_status", "papers", "read_status")
+        _safe_create_index(conn, "ix_papers_favorited", "papers", "favorited")
+        _safe_create_index(conn, "ix_generated_contents_created_at", "generated_contents", "created_at")
 
         # image_analyses 表（如果不存在则创建）
         try:
@@ -138,3 +141,66 @@ def run_migrations() -> None:
             conn.commit()
         except Exception:
             conn.rollback()
+
+        # collection_actions + action_papers 表
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS collection_actions (
+                    id VARCHAR(36) PRIMARY KEY,
+                    action_type VARCHAR(32) NOT NULL,
+                    title VARCHAR(512) NOT NULL,
+                    query VARCHAR(1024),
+                    topic_id VARCHAR(36) REFERENCES topic_subscriptions(id) ON DELETE SET NULL,
+                    paper_count INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS action_papers (
+                    id VARCHAR(36) PRIMARY KEY,
+                    action_id VARCHAR(36) NOT NULL REFERENCES collection_actions(id) ON DELETE CASCADE,
+                    paper_id VARCHAR(36) NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                    UNIQUE(action_id, paper_id)
+                )
+            """))
+            _safe_create_index(conn, "ix_collection_actions_type", "collection_actions", "action_type")
+            _safe_create_index(conn, "ix_collection_actions_created_at", "collection_actions", "created_at")
+            _safe_create_index(conn, "ix_collection_actions_topic_id", "collection_actions", "topic_id")
+            _safe_create_index(conn, "ix_action_papers_action_id", "action_papers", "action_id")
+            _safe_create_index(conn, "ix_action_papers_paper_id", "action_papers", "paper_id")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        # 初始化：给没有 action 的已有论文创建 initial_import 记录
+        _init_existing_papers_action(conn)
+
+
+def _init_existing_papers_action(conn) -> None:
+    """为没有行动记录的已有论文创建 initial_import 记录（只执行一次）"""
+    try:
+        orphan_rows = conn.execute(text(
+            "SELECT p.id, p.created_at FROM papers p "
+            "WHERE p.id NOT IN (SELECT paper_id FROM action_papers)"
+        )).fetchall()
+        if not orphan_rows:
+            return
+
+        action_id = _uuid.uuid4().hex[:36]
+        conn.execute(text(
+            "INSERT INTO collection_actions (id, action_type, title, paper_count, created_at) "
+            "VALUES (:id, 'initial_import', :title, :cnt, CURRENT_TIMESTAMP)"
+        ), {"id": action_id, "title": f"初始导入（{len(orphan_rows)} 篇）", "cnt": len(orphan_rows)})
+
+        for row in orphan_rows:
+            ap_id = _uuid.uuid4().hex[:36]
+            conn.execute(text(
+                "INSERT INTO action_papers (id, action_id, paper_id) "
+                "VALUES (:id, :action_id, :paper_id)"
+            ), {"id": ap_id, "action_id": action_id, "paper_id": row[0]})
+
+        conn.commit()
+        logger.info("Initialized %d orphan papers into initial_import action %s", len(orphan_rows), action_id)
+    except Exception:
+        conn.rollback()
+        logger.debug("init_existing_papers_action skipped (already done or error)")

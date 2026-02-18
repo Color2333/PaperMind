@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
+import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
@@ -13,6 +15,25 @@ from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
 
 logger = logging.getLogger(__name__)
+
+# 简单的 TTL 内存缓存
+_ttl_cache: dict[str, tuple[float, object]] = {}
+_ttl_lock = threading.Lock()
+_DEFAULT_TTL = 300  # 5 分钟
+
+
+def _cached(key: str, ttl: float = _DEFAULT_TTL):
+    """读取缓存，命中返回值，未命中返回 None"""
+    with _ttl_lock:
+        entry = _ttl_cache.get(key)
+        if entry and time.monotonic() - entry[0] < ttl:
+            return entry[1]
+    return None
+
+
+def _set_cache(key: str, value: object):
+    with _ttl_lock:
+        _ttl_cache[key] = (time.monotonic(), value)
 
 
 def _cosine_sim(a: list[float], b: list[float]) -> float:
@@ -114,7 +135,11 @@ class TrendService:
     def detect_hot_keywords(
         self, days: int = 7, top_k: int = 15
     ) -> list[dict]:
-        """分析近 N 天论文的关键词频率"""
+        """分析近 N 天论文的关键词频率（5 分钟缓存）"""
+        cache_key = f"hot_keywords:{days}:{top_k}"
+        hit = _cached(cache_key)
+        if hit is not None:
+            return hit
         cutoff = datetime.now(UTC) - timedelta(days=days)
         with session_scope() as session:
             repo = PaperRepository(session)
@@ -128,10 +153,12 @@ class TrendService:
             for cat in meta.get("categories", []):
                 keyword_counter[cat] += 1
 
-        return [
+        result = [
             {"keyword": kw, "count": count}
             for kw, count in keyword_counter.most_common(top_k)
         ]
+        _set_cache(cache_key, result)
+        return result
 
     def detect_trends(self, days: int = 14) -> dict:
         """对比近期 vs 更早期的关键词变化"""
@@ -191,7 +218,10 @@ class TrendService:
         }
 
     def get_today_summary(self) -> dict:
-        """今日研究速览"""
+        """今日研究速览（5 分钟缓存）"""
+        hit = _cached("today_summary")
+        if hit is not None:
+            return hit
         now = datetime.now(UTC)
         today_start = now.replace(
             hour=0, minute=0, second=0, microsecond=0
@@ -211,10 +241,12 @@ class TrendService:
         recommendations = RecommendationService().recommend(top_k=5)
         hot_keywords = self.detect_hot_keywords(days=7, top_k=8)
 
-        return {
+        result = {
             "today_new": today_count,
             "week_new": week_count,
             "total_papers": total_count,
             "recommendations": recommendations,
             "hot_keywords": hot_keywords,
         }
+        _set_cache("today_summary", result)
+        return result

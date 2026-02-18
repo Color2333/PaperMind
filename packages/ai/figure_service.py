@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -296,18 +297,33 @@ class FigureService:
             logger.info("No figures found in %s", pdf_path)
             return []
 
-        results: list[FigureAnalysis] = []
-        for fig in figures:
+        def _analyze_one(fig: ExtractedFigure) -> FigureAnalysis | None:
             try:
                 analysis = self.analyze_figure(fig)
-                results.append(analysis)
                 logger.info(
                     "Analyzed %s on page %d: %s",
                     fig.image_type, fig.page_number,
                     analysis.description[:80],
                 )
+                return analysis
             except Exception as exc:
-                logger.warning("Failed to analyze figure on page %d: %s", fig.page_number, exc)
+                logger.warning(
+                    "Failed to analyze figure on page %d: %s",
+                    fig.page_number, exc,
+                )
+                return None
+
+        results: list[FigureAnalysis] = []
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = {
+                pool.submit(_analyze_one, fig): fig
+                for fig in figures
+            }
+            for future in as_completed(futures):
+                r = future.result()
+                if r is not None:
+                    results.append(r)
+        results.sort(key=lambda a: (a.page_number, a.image_index))
 
         # 存入数据库
         self._save_analyses(paper_id, results)

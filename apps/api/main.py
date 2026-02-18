@@ -3,14 +3,46 @@ PaperMind API - FastAPI 入口
 @author Bamzc
 """
 import logging
+import time
+import uuid as _uuid
 from datetime import UTC, datetime
 from uuid import UUID
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel
+
+
+class ReferenceImportReq(BaseModel):
+    source_paper_id: str
+    source_paper_title: str = ""
+    entries: list[dict]
+    topic_ids: list[str] = []
+
+
+class SuggestKeywordsReq(BaseModel):
+    description: str
+
+
+class AIExplainReq(BaseModel):
+    text: str
+    action: str = "explain"
+
+
+class WritingProcessReq(BaseModel):
+    action: str
+    topic: str = ""
+    style: str = ""
+    content: str = ""
+    template_type: str = ""
+
+
+class WritingRefineReq(BaseModel):
+    messages: list[dict] = []
 
 from packages.ai.agent_service import (
     confirm_action,
@@ -25,6 +57,7 @@ from packages.ai.daily_runner import (
 )
 from packages.ai.graph_service import GraphService
 from packages.ai.pipelines import PaperPipelines
+from packages.ai.task_manager import TaskManager
 from packages.ai.rag_service import RAGService
 from packages.config import get_settings
 from packages.domain.enums import ReadStatus
@@ -63,8 +96,30 @@ def _iso(dt: datetime | None) -> str | None:
         dt = dt.replace(tzinfo=UTC)
     return dt.isoformat()
 
+api_logger = logging.getLogger("papermind.api")
+
+
+class RequestLogMiddleware(BaseHTTPMiddleware):
+    """记录每个请求的方法、路径、状态码、耗时"""
+
+    async def dispatch(self, request: Request, call_next):
+        req_id = _uuid.uuid4().hex[:8]
+        request.state.request_id = req_id
+        start = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        api_logger.info(
+            "[%s] %s %s → %d (%.0fms)",
+            req_id, request.method, request.url.path,
+            response.status_code, elapsed_ms,
+        )
+        response.headers["X-Request-Id"] = req_id
+        return response
+
+
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
+app.add_middleware(RequestLogMiddleware)
 origins = [
     x.strip()
     for x in settings.cors_allow_origins.split(",")
@@ -86,6 +141,7 @@ pipelines = PaperPipelines()
 rag_service = RAGService()
 brief_service = DailyBriefService()
 graph_service = GraphService()
+task_manager = TaskManager()
 
 
 def _brief_date() -> str:
@@ -150,6 +206,30 @@ def ingest_arxiv(
         query=query, max_results=max_results, topic_id=topic_id
     )
     return {"ingested": count}
+
+
+@app.post("/ingest/references")
+def ingest_references(body: ReferenceImportReq) -> dict:
+    """一键导入参考文献 — 返回 task_id 用于轮询进度"""
+    from packages.ai.pipelines import ReferenceImporter
+    importer = ReferenceImporter()
+    task_id = importer.start_import(
+        source_paper_id=body.source_paper_id,
+        source_paper_title=body.source_paper_title,
+        entries=[dict(e) for e in body.entries],
+        topic_ids=body.topic_ids,
+    )
+    return {"task_id": task_id, "total": len(body.entries)}
+
+
+@app.get("/ingest/references/status/{task_id}")
+def ingest_references_status(task_id: str) -> dict:
+    """查询参考文献导入任务进度"""
+    from packages.ai.pipelines import get_import_task
+    task = get_import_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    return task
 
 
 # ---------- 主题 ----------
@@ -220,9 +300,9 @@ def delete_topic(topic_id: str) -> dict:
 
 
 @app.post("/topics/suggest-keywords")
-def suggest_keywords(req: dict) -> dict:
+def suggest_keywords(req: SuggestKeywordsReq) -> dict:
     from packages.ai.keyword_service import KeywordService
-    description = req.get("description", "")
+    description = req.description
     if not description.strip():
         raise HTTPException(400, "description is required")
     suggestions = KeywordService().suggest(description.strip())
@@ -280,6 +360,58 @@ def citation_tree(
     return graph_service.citation_tree(
         root_paper_id=paper_id, depth=depth
     )
+
+
+@app.get("/graph/citation-detail/{paper_id}")
+def citation_detail(paper_id: str) -> dict:
+    """获取单篇论文的丰富引用详情（含参考文献和被引列表）"""
+    return graph_service.citation_detail(paper_id=paper_id)
+
+
+@app.get("/graph/citation-network/topic/{topic_id}")
+def topic_citation_network(topic_id: str) -> dict:
+    """获取主题内论文的互引网络"""
+    return graph_service.topic_citation_network(topic_id=topic_id)
+
+
+@app.post("/graph/citation-network/topic/{topic_id}/deep-trace")
+def topic_deep_trace(topic_id: str) -> dict:
+    """对主题内论文执行深度溯源，拉取外部引用并进行共引分析"""
+    return graph_service.topic_deep_trace(topic_id=topic_id)
+
+
+@app.get("/graph/overview")
+def graph_overview() -> dict:
+    """全库引用概览 — 节点 + 边 + PageRank + 统计"""
+    return graph_service.library_overview()
+
+
+@app.get("/graph/bridges")
+def graph_bridges() -> dict:
+    """跨主题桥接论文"""
+    return graph_service.cross_topic_bridges()
+
+
+@app.get("/graph/frontier")
+def graph_frontier(
+    days: int = Query(default=90, ge=7, le=365),
+) -> dict:
+    """研究前沿检测"""
+    return graph_service.research_frontier(days=days)
+
+
+@app.get("/graph/cocitation-clusters")
+def graph_cocitation_clusters(
+    min_cocite: int = Query(default=2, ge=1, le=10),
+) -> dict:
+    """共引聚类分析"""
+    return graph_service.cocitation_clusters(min_cocite=min_cocite)
+
+
+@app.post("/graph/auto-link")
+def graph_auto_link(paper_ids: list[str]) -> dict:
+    """手动触发引用自动关联"""
+    return graph_service.auto_link_citations(paper_ids)
 
 
 @app.get("/graph/timeline")
@@ -375,6 +507,80 @@ def wiki_topic(
         )
         result["content_id"] = gc.id
     return result
+
+
+# ---------- 异步任务 API ----------
+
+
+def _run_topic_wiki_task(
+    keyword: str,
+    limit: int,
+    progress_callback=None,
+) -> dict:
+    """后台执行 topic wiki 生成"""
+    result = graph_service.topic_wiki(
+        keyword=keyword, limit=limit,
+        progress_callback=progress_callback,
+    )
+    with session_scope() as session:
+        repo = GeneratedContentRepository(session)
+        gc = repo.create(
+            content_type="topic_wiki",
+            title=f"Topic Wiki: {keyword}",
+            markdown=result.get("markdown", ""),
+            keyword=keyword,
+            metadata_json={
+                k: v for k, v in result.items() if k != "markdown"
+            },
+        )
+        result["content_id"] = gc.id
+    return result
+
+
+@app.post("/tasks/wiki/topic")
+def start_topic_wiki_task(
+    keyword: str,
+    limit: int = Query(default=120, ge=1, le=500),
+) -> dict:
+    """提交后台 wiki 生成任务"""
+    task_id = task_manager.submit(
+        task_type="topic_wiki",
+        title=f"Wiki: {keyword}",
+        fn=_run_topic_wiki_task,
+        keyword=keyword,
+        limit=limit,
+    )
+    return {"task_id": task_id, "status": "pending"}
+
+
+@app.get("/tasks/{task_id}")
+def get_task_status(task_id: str) -> dict:
+    """查询任务进度"""
+    status = task_manager.get_status(task_id)
+    if not status:
+        raise HTTPException(404, f"Task {task_id} not found")
+    return status
+
+
+@app.get("/tasks/{task_id}/result")
+def get_task_result(task_id: str) -> dict:
+    """获取已完成任务的结果"""
+    status = task_manager.get_status(task_id)
+    if not status:
+        raise HTTPException(404, f"Task {task_id} not found")
+    if status["status"] != "completed":
+        raise HTTPException(400, f"Task not completed: {status['status']}")
+    result = task_manager.get_result(task_id)
+    return result or {}
+
+
+@app.get("/tasks")
+def list_tasks(
+    task_type: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict:
+    """列出任务"""
+    return {"tasks": task_manager.list_tasks(task_type=task_type, limit=limit)}
 
 
 # ---------- Pipeline ----------
@@ -491,6 +697,7 @@ def latest(
     topic_id: str | None = Query(default=None),
     folder: str | None = Query(default=None),
     date: str | None = Query(default=None),
+    search: str | None = Query(default=None),
 ) -> dict:
     with session_scope() as session:
         repo = PaperRepository(session)
@@ -501,6 +708,7 @@ def latest(
             topic_id=topic_id,
             status=status,
             date_str=date,
+            search=search.strip() if search else None,
         )
         resp = _paper_list_response(papers, repo)
         resp["total"] = total
@@ -610,10 +818,10 @@ def serve_paper_pdf(paper_id: UUID) -> FileResponse:
 
 
 @app.post("/papers/{paper_id}/ai/explain")
-def ai_explain_text(paper_id: UUID, body: dict) -> dict:
+def ai_explain_text(paper_id: UUID, body: AIExplainReq) -> dict:
     """AI 解释/翻译选中文本"""
-    text = body.get("text", "").strip()
-    action = body.get("action", "explain")  # explain | translate | summarize
+    text = body.text.strip()
+    action = body.action
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
@@ -782,6 +990,86 @@ def run_daily_once() -> dict:
 def run_weekly_graph_once() -> dict:
     logger.info("Manual weekly graph job triggered")
     return run_weekly_graph_maintenance()
+
+
+# ---------- 行动记录 ----------
+
+
+@app.get("/actions")
+def list_actions(
+    action_type: str | None = None,
+    topic_id: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    """列出论文入库行动记录"""
+    from packages.storage.repositories import ActionRepository
+    with session_scope() as session:
+        repo = ActionRepository(session)
+        actions, total = repo.list_actions(
+            action_type=action_type, topic_id=topic_id,
+            limit=limit, offset=offset,
+        )
+        return {
+            "items": [
+                {
+                    "id": a.id,
+                    "action_type": a.action_type,
+                    "title": a.title,
+                    "query": a.query,
+                    "topic_id": a.topic_id,
+                    "paper_count": a.paper_count,
+                    "created_at": a.created_at.isoformat() if a.created_at else None,
+                }
+                for a in actions
+            ],
+            "total": total,
+        }
+
+
+@app.get("/actions/{action_id}")
+def get_action_detail(action_id: str) -> dict:
+    """获取行动详情"""
+    from packages.storage.repositories import ActionRepository
+    with session_scope() as session:
+        repo = ActionRepository(session)
+        action = repo.get_action(action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="行动记录不存在")
+        return {
+            "id": action.id,
+            "action_type": action.action_type,
+            "title": action.title,
+            "query": action.query,
+            "topic_id": action.topic_id,
+            "paper_count": action.paper_count,
+            "created_at": action.created_at.isoformat() if action.created_at else None,
+        }
+
+
+@app.get("/actions/{action_id}/papers")
+def get_action_papers(
+    action_id: str,
+    limit: int = Query(default=200, ge=1, le=500),
+) -> dict:
+    """获取某次行动关联的论文列表"""
+    from packages.storage.repositories import ActionRepository
+    with session_scope() as session:
+        repo = ActionRepository(session)
+        papers = repo.get_papers_by_action(action_id, limit=limit)
+        return {
+            "action_id": action_id,
+            "items": [
+                {
+                    "id": p.id,
+                    "title": p.title,
+                    "arxiv_id": p.arxiv_id,
+                    "publication_date": p.publication_date.isoformat() if p.publication_date else None,
+                    "read_status": p.read_status,
+                }
+                for p in papers
+            ],
+        }
 
 
 # ---------- 推荐 & 趋势 ----------
@@ -953,6 +1241,45 @@ def activate_llm_provider(config_id: str) -> dict:
             ) from exc
         invalidate_llm_config_cache()
         return _cfg_to_out(cfg)
+
+
+# ---------- 写作助手 ----------
+
+
+@app.get("/writing/templates")
+def writing_templates() -> dict:
+    """获取所有写作模板列表"""
+    from packages.ai.writing_service import WritingService
+    return {"items": WritingService.list_templates()}
+
+
+@app.post("/writing/process")
+def writing_process(body: WritingProcessReq) -> dict:
+    """执行写作操作"""
+    from packages.ai.writing_service import WritingService
+    action = body.action
+    text = body.content.strip() or body.topic.strip()
+    if not action:
+        raise HTTPException(status_code=400, detail="action is required")
+    if not text:
+        raise HTTPException(status_code=400, detail="text/content is required")
+    try:
+        return WritingService().process(action, text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/writing/refine")
+def writing_refine(body: WritingRefineReq) -> dict:
+    """基于对话历史多轮微调"""
+    from packages.ai.writing_service import WritingService
+    messages = body.messages
+    if not messages:
+        raise HTTPException(status_code=400, detail="messages is required")
+    try:
+        return WritingService().refine(messages)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 # ---------- Agent ----------

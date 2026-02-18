@@ -11,6 +11,8 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "claude-skills-frontend": "^1.4.0"
+    "@playwright/test": "^1.58.2",
+    "claude-skills-frontend": "^1.4.0",
+    "playwright": "^1.58.2"
   }
 }

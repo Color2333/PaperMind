@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict, deque
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
 from packages.ai.prompts import (
@@ -22,9 +25,11 @@ from packages.config import get_settings
 from packages.domain.schemas import PaperCreate
 from packages.integrations.llm_client import LLMClient
 from packages.integrations.semantic_scholar_client import (
+    RichCitationInfo,
     SemanticScholarClient,
 )
 from packages.storage.db import session_scope
+from packages.storage.models import PaperTopic
 from packages.storage.repositories import (
     CitationRepository,
     PaperRepository,
@@ -110,6 +115,311 @@ class GraphService:
             "topic_id": topic_id,
             "papers_processed": paper_count,
             "edges_inserted": total_edges,
+        }
+
+    def auto_link_citations(self, paper_ids: list[str]) -> dict:
+        """入库后自动关联引用 — 轻量版，只匹配已在库的论文"""
+        norm = self._normalize_arxiv_id
+        linked = 0
+        errors = 0
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            cit_repo = CitationRepository(session)
+            all_papers = paper_repo.list_all(limit=50000)
+            lib_norm: dict[str, str] = {}
+            for p in all_papers:
+                pn = norm(p.arxiv_id)
+                if pn:
+                    lib_norm[pn] = p.id
+
+        for pid in paper_ids:
+            try:
+                with session_scope() as session:
+                    paper = PaperRepository(session).get_by_id(pid)
+                    if not paper:
+                        continue
+                    title = paper.title
+
+                rich = self.scholar.fetch_rich_citations(
+                    title, ref_limit=30, cite_limit=30,
+                )
+                with session_scope() as session:
+                    cit_repo = CitationRepository(session)
+                    for info in rich:
+                        info_n = norm(info.arxiv_id)
+                        if info_n and info_n in lib_norm:
+                            target_id = lib_norm[info_n]
+                            if target_id == pid:
+                                continue
+                            if info.direction == "reference":
+                                cit_repo.upsert_edge(
+                                    pid, target_id, context="auto-ingest",
+                                )
+                            else:
+                                cit_repo.upsert_edge(
+                                    target_id, pid, context="auto-ingest",
+                                )
+                            linked += 1
+            except Exception as exc:
+                logger.warning("auto_link_citations error for %s: %s", pid, exc)
+                errors += 1
+
+        logger.info("auto_link_citations: %d edges, %d errors", linked, errors)
+        return {"papers": len(paper_ids), "edges_linked": linked, "errors": errors}
+
+    def library_overview(self) -> dict:
+        """全库概览 — 节点 + 引用边 + PageRank + 统计"""
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            cit_repo = CitationRepository(session)
+            topic_repo = TopicRepository(session)
+
+            papers = paper_repo.list_all(limit=50000)
+            edges = cit_repo.list_all()
+            topics = topic_repo.list_topics()
+            topic_map = {t.id: t.name for t in topics}
+
+            paper_ids = {p.id for p in papers}
+            valid_edges = [
+                e for e in edges
+                if e.source_paper_id in paper_ids
+                and e.target_paper_id in paper_ids
+            ]
+
+            in_deg: dict[str, int] = defaultdict(int)
+            out_deg: dict[str, int] = defaultdict(int)
+            for e in valid_edges:
+                out_deg[e.source_paper_id] += 1
+                in_deg[e.target_paper_id] += 1
+
+            pagerank = self._pagerank(list(paper_ids), valid_edges)
+
+            from sqlalchemy import select as sa_select
+            pt_rows = session.execute(sa_select(PaperTopic)).scalars().all()
+            paper_topics: dict[str, list[str]] = defaultdict(list)
+            for pt in pt_rows:
+                tn = topic_map.get(pt.topic_id, "未分配")
+                paper_topics[pt.paper_id].append(tn)
+
+            nodes = []
+            for p in papers:
+                yr = (
+                    p.publication_date.year
+                    if isinstance(p.publication_date, date) else None
+                )
+                nodes.append({
+                    "id": p.id,
+                    "title": p.title,
+                    "arxiv_id": p.arxiv_id,
+                    "year": yr,
+                    "in_degree": in_deg.get(p.id, 0),
+                    "out_degree": out_deg.get(p.id, 0),
+                    "pagerank": round(pagerank.get(p.id, 0), 6),
+                    "topics": paper_topics.get(p.id, []),
+                    "read_status": p.read_status.value if p.read_status else "unread",
+                })
+
+            edge_list = [
+                {"source": e.source_paper_id, "target": e.target_paper_id}
+                for e in valid_edges
+            ]
+
+            pr_sorted = sorted(nodes, key=lambda n: n["pagerank"], reverse=True)
+            top_papers = pr_sorted[:10]
+
+            topic_stats = defaultdict(lambda: {"count": 0, "edges": 0})
+            for n in nodes:
+                for t in n["topics"]:
+                    topic_stats[t]["count"] += 1
+
+            n_papers = len(nodes)
+            max_e = n_papers * (n_papers - 1) if n_papers > 1 else 1
+
+        return {
+            "total_papers": n_papers,
+            "total_edges": len(edge_list),
+            "density": round(len(edge_list) / max_e, 6) if max_e else 0,
+            "nodes": nodes,
+            "edges": edge_list,
+            "top_papers": top_papers,
+            "topic_stats": dict(topic_stats),
+        }
+
+    def cross_topic_bridges(self) -> dict:
+        """跨主题桥接论文 — 被多个主题的论文引用的关键论文"""
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            cit_repo = CitationRepository(session)
+            topic_repo = TopicRepository(session)
+
+            papers = paper_repo.list_all(limit=50000)
+            edges = cit_repo.list_all()
+            topics = topic_repo.list_topics()
+            topic_map = {t.id: t.name for t in topics}
+
+            from sqlalchemy import select as sa_select
+            pt_rows = session.execute(sa_select(PaperTopic)).scalars().all()
+            paper_topic: dict[str, set[str]] = defaultdict(set)
+            for pt in pt_rows:
+                paper_topic[pt.paper_id].add(pt.topic_id)
+
+            paper_ids = {p.id for p in papers}
+            cited_by_topics: dict[str, set[str]] = defaultdict(set)
+            for e in edges:
+                if e.source_paper_id not in paper_ids:
+                    continue
+                if e.target_paper_id not in paper_ids:
+                    continue
+                src_topics = paper_topic.get(e.source_paper_id, set())
+                for tid in src_topics:
+                    cited_by_topics[e.target_paper_id].add(tid)
+
+            bridges = []
+            paper_map = {p.id: p for p in papers}
+            for pid, tids in cited_by_topics.items():
+                if len(tids) >= 2:
+                    p = paper_map.get(pid)
+                    if not p:
+                        continue
+                    bridges.append({
+                        "id": pid,
+                        "title": p.title,
+                        "arxiv_id": p.arxiv_id,
+                        "topics_citing": [
+                            topic_map.get(t, t) for t in tids
+                        ],
+                        "cross_topic_count": len(tids),
+                        "own_topics": [
+                            topic_map.get(t, t)
+                            for t in paper_topic.get(pid, set())
+                        ],
+                    })
+
+            bridges.sort(key=lambda b: b["cross_topic_count"], reverse=True)
+
+        return {"bridges": bridges[:30], "total": len(bridges)}
+
+    def research_frontier(self, days: int = 90) -> dict:
+        """研究前沿检测 — 近期高被引 + 引用速度快的论文"""
+        from datetime import timedelta
+        cutoff = date.today() - timedelta(days=days)
+
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            cit_repo = CitationRepository(session)
+
+            papers = paper_repo.list_all(limit=50000)
+            edges = cit_repo.list_all()
+            paper_ids = {p.id for p in papers}
+
+            in_deg: dict[str, int] = defaultdict(int)
+            for e in edges:
+                if e.target_paper_id in paper_ids:
+                    in_deg[e.target_paper_id] += 1
+
+            recent = [
+                p for p in papers
+                if isinstance(p.publication_date, date)
+                and p.publication_date >= cutoff
+            ]
+
+            frontier = []
+            for p in recent:
+                age_days = max((date.today() - p.publication_date).days, 1)
+                citations = in_deg.get(p.id, 0)
+                velocity = round(citations / age_days * 30, 2)
+                frontier.append({
+                    "id": p.id,
+                    "title": p.title,
+                    "arxiv_id": p.arxiv_id,
+                    "year": p.publication_date.year,
+                    "publication_date": p.publication_date.isoformat(),
+                    "citations_in_library": citations,
+                    "citation_velocity": velocity,
+                    "read_status": p.read_status.value if p.read_status else "unread",
+                })
+
+            frontier.sort(key=lambda f: f["citation_velocity"], reverse=True)
+
+        return {
+            "period_days": days,
+            "total_recent": len(recent),
+            "frontier": frontier[:30],
+        }
+
+    def cocitation_clusters(self, min_cocite: int = 2) -> dict:
+        """共引聚类 — 被同一批论文引用的论文会聚在一起"""
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            cit_repo = CitationRepository(session)
+
+            papers = paper_repo.list_all(limit=50000)
+            edges = cit_repo.list_all()
+            paper_ids = {p.id for p in papers}
+            paper_map = {p.id: p for p in papers}
+
+            cited_by_map: dict[str, set[str]] = defaultdict(set)
+            for e in edges:
+                if (
+                    e.source_paper_id in paper_ids
+                    and e.target_paper_id in paper_ids
+                ):
+                    cited_by_map[e.target_paper_id].add(e.source_paper_id)
+
+            target_ids = list(cited_by_map.keys())
+            cocite_pairs: dict[tuple[str, str], int] = defaultdict(int)
+
+            for i, a in enumerate(target_ids):
+                citers_a = cited_by_map[a]
+                for b in target_ids[i + 1:]:
+                    citers_b = cited_by_map[b]
+                    overlap = len(citers_a & citers_b)
+                    if overlap >= min_cocite:
+                        cocite_pairs[(a, b)] = overlap
+
+            clusters: list[set[str]] = []
+            assigned: set[str] = set()
+            sorted_pairs = sorted(
+                cocite_pairs.items(), key=lambda x: x[1], reverse=True,
+            )
+            for (a, b), strength in sorted_pairs:
+                found = None
+                for cl in clusters:
+                    if a in cl or b in cl:
+                        found = cl
+                        break
+                if found:
+                    found.add(a)
+                    found.add(b)
+                else:
+                    clusters.append({a, b})
+                assigned.add(a)
+                assigned.add(b)
+
+            result_clusters = []
+            for cl in clusters:
+                members = []
+                for pid in cl:
+                    p = paper_map.get(pid)
+                    if not p:
+                        continue
+                    members.append({
+                        "id": pid,
+                        "title": p.title,
+                        "arxiv_id": p.arxiv_id,
+                    })
+                if len(members) >= 2:
+                    result_clusters.append({
+                        "size": len(members),
+                        "papers": members,
+                    })
+
+            result_clusters.sort(key=lambda c: c["size"], reverse=True)
+
+        return {
+            "total_clusters": len(result_clusters),
+            "clusters": result_clusters[:20],
+            "cocitation_pairs": len(cocite_pairs),
         }
 
     def sync_incremental(
@@ -226,6 +536,330 @@ class GraphService:
             "descendants": descendants,
             "nodes": nodes,
             "edge_count": len(ancestors) + len(descendants),
+        }
+
+    def citation_detail(self, paper_id: str) -> dict:
+        """获取单篇论文的丰富引用详情"""
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            cit_repo = CitationRepository(session)
+            source = paper_repo.get_by_id(paper_id)
+            if source is None:
+                return {
+                    "paper_id": paper_id, "paper_title": "",
+                    "references": [], "cited_by": [],
+                    "stats": {
+                        "total_references": 0, "total_cited_by": 0,
+                        "in_library_references": 0, "in_library_cited_by": 0,
+                    },
+                }
+            source_title = source.title
+            source_arxiv_id = source.arxiv_id
+
+            try:
+                rich_list = self.scholar.fetch_rich_citations(
+                    source_title, ref_limit=50, cite_limit=50,
+                    arxiv_id=source_arxiv_id,
+                )
+            except Exception as exc:
+                logger.warning("fetch_rich_citations failed: %s", exc)
+                rich_list = []
+
+            norm = self._normalize_arxiv_id
+            ext_normed = {
+                norm(r.arxiv_id): r.arxiv_id
+                for r in rich_list if r.arxiv_id
+            }
+            lib_norm_map: dict[str, str] = {}
+            if ext_normed:
+                for p in paper_repo.list_all(limit=50000):
+                    pn = norm(p.arxiv_id)
+                    if pn and pn in ext_normed:
+                        lib_norm_map[pn] = p.id
+
+            references: list[dict] = []
+            cited_by: list[dict] = []
+
+            for info in rich_list:
+                info_norm = norm(info.arxiv_id)
+                in_library = info_norm is not None and info_norm in lib_norm_map
+                library_paper_id = lib_norm_map.get(info_norm) if in_library else None
+                entry = {
+                    "scholar_id": info.scholar_id,
+                    "title": info.title,
+                    "year": info.year,
+                    "venue": info.venue,
+                    "citation_count": info.citation_count,
+                    "arxiv_id": info.arxiv_id,
+                    "abstract": info.abstract,
+                    "in_library": in_library,
+                    "library_paper_id": library_paper_id,
+                }
+                if info.direction == "reference":
+                    references.append(entry)
+                    if in_library and library_paper_id:
+                        cit_repo.upsert_edge(
+                            paper_id, library_paper_id,
+                            context="reference",
+                        )
+                else:
+                    cited_by.append(entry)
+                    if in_library and library_paper_id:
+                        cit_repo.upsert_edge(
+                            library_paper_id, paper_id,
+                            context="citation",
+                        )
+
+        return {
+            "paper_id": paper_id,
+            "paper_title": source_title,
+            "references": references,
+            "cited_by": cited_by,
+            "stats": {
+                "total_references": len(references),
+                "total_cited_by": len(cited_by),
+                "in_library_references": sum(
+                    1 for r in references if r["in_library"]
+                ),
+                "in_library_cited_by": sum(
+                    1 for c in cited_by if c["in_library"]
+                ),
+            },
+        }
+
+    def topic_citation_network(self, topic_id: str) -> dict:
+        """获取主题内论文的互引网络"""
+        with session_scope() as session:
+            topic_repo = TopicRepository(session)
+            paper_repo = PaperRepository(session)
+            cit_repo = CitationRepository(session)
+
+            topic = topic_repo.get_by_id(topic_id)
+            if topic is None:
+                raise ValueError(f"topic {topic_id} not found")
+            topic_name = topic.name
+
+            papers = paper_repo.list_by_topic(topic_id, limit=500)
+            paper_ids = {p.id for p in papers}
+
+            all_edges = cit_repo.list_for_paper_ids(list(paper_ids))
+            internal_edges = [
+                e for e in all_edges
+                if e.source_paper_id in paper_ids
+                and e.target_paper_id in paper_ids
+            ]
+
+            in_degree: dict[str, int] = defaultdict(int)
+            out_degree: dict[str, int] = defaultdict(int)
+            for e in internal_edges:
+                out_degree[e.source_paper_id] += 1
+                in_degree[e.target_paper_id] += 1
+
+            degrees = [
+                in_degree.get(pid, 0) for pid in paper_ids
+            ]
+            median_deg = sorted(degrees)[len(degrees) // 2] if degrees else 0
+            hub_threshold = max(median_deg * 2, 2)
+
+            nodes = []
+            for p in papers:
+                ind = in_degree.get(p.id, 0)
+                outd = out_degree.get(p.id, 0)
+                nodes.append({
+                    "id": p.id,
+                    "title": p.title,
+                    "year": (
+                        p.publication_date.year
+                        if isinstance(p.publication_date, date)
+                        else None
+                    ),
+                    "arxiv_id": p.arxiv_id,
+                    "in_degree": ind,
+                    "out_degree": outd,
+                    "is_hub": ind >= hub_threshold,
+                    "is_external": False,
+                })
+
+            edges = [
+                {
+                    "source": e.source_paper_id,
+                    "target": e.target_paper_id,
+                }
+                for e in internal_edges
+            ]
+
+            hub_count = sum(1 for n in nodes if n["is_hub"])
+            n_papers = len(nodes)
+            max_edges = n_papers * (n_papers - 1) if n_papers > 1 else 1
+            density = round(len(edges) / max_edges, 4) if max_edges else 0
+
+        return {
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "nodes": nodes,
+            "edges": edges,
+            "stats": {
+                "total_papers": n_papers,
+                "total_edges": len(edges),
+                "density": density,
+                "hub_papers": hub_count,
+            },
+        }
+
+    def topic_deep_trace(self, topic_id: str, max_concurrency: int = 3) -> dict:
+        """对主题内论文执行深度溯源，拉取外部引用并进行共引分析"""
+        with session_scope() as session:
+            papers = PaperRepository(session).list_by_topic(
+                topic_id, limit=500,
+            )
+            paper_ids = [p.id for p in papers]
+            topic = TopicRepository(session).get_by_id(topic_id)
+            if topic is None:
+                raise ValueError(f"topic {topic_id} not found")
+            topic_name = topic.name
+
+        synced = 0
+        with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+            futures = {
+                pool.submit(self.citation_detail, pid): pid
+                for pid in paper_ids
+            }
+            for fut in as_completed(futures):
+                try:
+                    result = fut.result()
+                    synced += (
+                        result["stats"]["total_references"]
+                        + result["stats"]["total_cited_by"]
+                    )
+                except Exception as exc:
+                    logger.warning("deep-trace sync error: %s", exc)
+
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            cit_repo = CitationRepository(session)
+
+            topic_papers = paper_repo.list_by_topic(topic_id, limit=500)
+            topic_ids_set = {p.id for p in topic_papers}
+            all_edges = cit_repo.list_for_paper_ids(list(topic_ids_set))
+
+            external_ref_count: dict[str, int] = defaultdict(int)
+            internal_edges = []
+            external_edges = []
+
+            for e in all_edges:
+                src_in = e.source_paper_id in topic_ids_set
+                tgt_in = e.target_paper_id in topic_ids_set
+                if src_in and tgt_in:
+                    internal_edges.append(e)
+                elif src_in and not tgt_in:
+                    external_edges.append(e)
+                    external_ref_count[e.target_paper_id] += 1
+                elif not src_in and tgt_in:
+                    external_edges.append(e)
+                    external_ref_count[e.source_paper_id] += 1
+
+            co_cited = sorted(
+                external_ref_count.items(),
+                key=lambda x: x[1],
+                reverse=True,
+            )[:30]
+            co_cited_ids = [pid for pid, _ in co_cited]
+            co_cited_papers = {
+                p.id: p
+                for p in paper_repo.list_by_ids(co_cited_ids)
+            }
+
+            in_degree: dict[str, int] = defaultdict(int)
+            out_degree: dict[str, int] = defaultdict(int)
+            for e in internal_edges:
+                out_degree[e.source_paper_id] += 1
+                in_degree[e.target_paper_id] += 1
+
+            all_node_ids = set(topic_ids_set)
+            topic_paper_map = {p.id: p for p in topic_papers}
+
+            nodes = []
+            for p in topic_papers:
+                nodes.append({
+                    "id": p.id,
+                    "title": p.title,
+                    "year": (
+                        p.publication_date.year
+                        if isinstance(p.publication_date, date)
+                        else None
+                    ),
+                    "arxiv_id": p.arxiv_id,
+                    "in_degree": in_degree.get(p.id, 0),
+                    "out_degree": out_degree.get(p.id, 0),
+                    "is_hub": in_degree.get(p.id, 0) >= 2,
+                    "is_external": False,
+                })
+
+            for pid, count in co_cited:
+                p = co_cited_papers.get(pid)
+                nodes.append({
+                    "id": pid,
+                    "title": p.title if p else f"external-{pid[:8]}",
+                    "year": (
+                        p.publication_date.year
+                        if p and isinstance(p.publication_date, date)
+                        else None
+                    ),
+                    "arxiv_id": p.arxiv_id if p else None,
+                    "in_degree": 0,
+                    "out_degree": 0,
+                    "is_hub": False,
+                    "is_external": True,
+                    "co_citation_count": count,
+                })
+                all_node_ids.add(pid)
+
+            edges = [
+                {"source": e.source_paper_id, "target": e.target_paper_id}
+                for e in internal_edges
+            ]
+            for e in external_edges:
+                if (
+                    e.source_paper_id in all_node_ids
+                    and e.target_paper_id in all_node_ids
+                ):
+                    edges.append({
+                        "source": e.source_paper_id,
+                        "target": e.target_paper_id,
+                    })
+
+            n_papers = len(nodes)
+            max_edges = n_papers * (n_papers - 1) if n_papers > 1 else 1
+            density = round(len(edges) / max_edges, 4) if max_edges else 0
+
+            key_external = [
+                {
+                    "id": pid,
+                    "title": (
+                        co_cited_papers[pid].title
+                        if pid in co_cited_papers
+                        else f"external-{pid[:8]}"
+                    ),
+                    "co_citation_count": count,
+                }
+                for pid, count in co_cited
+            ]
+
+        return {
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "nodes": nodes,
+            "edges": edges,
+            "stats": {
+                "total_papers": n_papers,
+                "internal_papers": len(topic_ids_set),
+                "external_papers": len(co_cited),
+                "total_edges": len(edges),
+                "internal_edges": len(internal_edges),
+                "density": density,
+                "new_edges_synced": synced,
+            },
+            "key_external_papers": key_external,
         }
 
     def timeline(self, keyword: str, limit: int = 100) -> dict:
@@ -465,7 +1099,7 @@ class GraphService:
             prompt,
             stage="deep",
             model_override=self.settings.llm_model_deep,
-            max_tokens=4096,
+            max_tokens=8192,
         )
         self.llm.trace_result(result, stage="graph_research_gaps", prompt_digest=f"gaps:{keyword}")
 
@@ -525,7 +1159,7 @@ class GraphService:
             full_prompt,
             stage="rag",
             model_override=self.settings.llm_model_deep,
-            max_tokens=4096,
+            max_tokens=8192,
         )
         self.llm.trace_result(result, stage="wiki_paper", paper_id=paper_id, prompt_digest=f"paper_wiki:{p_title[:60]}")
         wiki_content = result.parsed_json or {
@@ -574,12 +1208,21 @@ class GraphService:
         }
 
     def topic_wiki(
-        self, keyword: str, limit: int = 120
+        self,
+        keyword: str,
+        limit: int = 120,
+        progress_callback: Callable[[float, str], None] | None = None,
     ) -> dict:
+        def _progress(pct: float, msg: str):
+            if progress_callback:
+                progress_callback(pct, msg)
+
         # Phase 0: 并行收集数据
+        _progress(0.05, "收集时间线和综述数据...")
         tl = self.timeline(keyword=keyword, limit=limit)
         survey_data = self.survey(keyword=keyword, limit=limit)
 
+        _progress(0.15, "收集论文上下文和引用关系...")
         # Phase 1: 富化上下文（向量搜索 + 引用上下文 + PDF）
         ctx = self.context_gatherer.gather_topic_context(
             keyword, limit=limit
@@ -602,6 +1245,7 @@ class GraphService:
         except Exception as exc:
             logger.warning("Scholar metadata fetch failed: %s", exc)
 
+        _progress(0.25, "生成文章大纲...")
         # Phase 3: 多轮生成 — 先生成大纲
         outline_prompt = build_wiki_outline_prompt(
             keyword=keyword,
@@ -614,7 +1258,7 @@ class GraphService:
             outline_prompt,
             stage="rag",
             model_override=self.settings.llm_model_deep,
-            max_tokens=2048,
+            max_tokens=8192,
         )
         self.llm.trace_result(outline_result, stage="wiki_outline", prompt_digest=f"outline:{keyword}")
         outline = outline_result.parsed_json or {
@@ -623,69 +1267,85 @@ class GraphService:
             "total_sections": 0,
         }
 
-        # Phase 4: 逐章节生成
+        # Phase 4: 并行章节生成（直接输出 markdown 文本）
         all_sources_text = self._build_all_sources_text(
             paper_contexts,
             citation_contexts,
             scholar_meta,
             pdf_excerpts,
         )
-        sections: list[dict] = []
-        for sec_plan in outline.get("outline", [])[:8]:
-            sec_prompt = build_wiki_section_prompt(
-                keyword=keyword,
-                section_title=sec_plan.get("section_title", ""),
-                key_points=sec_plan.get("key_points", []),
-                source_refs=sec_plan.get("source_refs", []),
-                all_sources_text=all_sources_text,
-            )
-            sec_result = self.llm.complete_json(
-                sec_prompt,
-                stage="rag",
-                model_override=self.settings.llm_model_deep,
-                max_tokens=2048,
-            )
-            self.llm.trace_result(sec_result, stage="wiki_section", prompt_digest=f"section:{sec_plan.get('section_title','')[:60]}")
-            sec_content = sec_result.parsed_json or {
-                "title": sec_plan.get("section_title", ""),
-                "content": "",
-                "key_insight": "",
-            }
-            sections.append(sec_content)
+        sec_plans = outline.get("outline", [])[:5]
+        _progress(0.35, f"并行生成 {len(sec_plans)} 个章节...")
+        sections = self._generate_sections_parallel(
+            keyword, sec_plans, all_sources_text,
+        )
 
-        # Phase 5: 生成概述 + 汇总（使用旧 prompt 作为补充）
-        overview_prompt = build_topic_wiki_prompt(
-            keyword=keyword,
-            paper_contexts=paper_contexts,
-            milestones=tl["milestones"],
-            seminal=tl["seminal"],
-            survey_summary=survey_data.get("summary"),
+        _progress(0.75, "生成概述和总结...")
+        # Phase 5: 生成概述（直接输出文本）+ 结构化汇总（JSON）
+        # 5a: 文本概述
+        section_titles = ", ".join(
+            s.get("title", "") for s in sections
         )
-        overview_result = self.llm.complete_json(
+        survey_overview = (
+            survey_data.get("summary", {}).get("overview", "")[:600]
+        )
+        overview_prompt = (
+            "你是世界顶级学术综述作者。"
+            f"请为「{keyword}」主题撰写一段 300-500 字的概述，"
+            "涵盖该主题的定义、重要性、核心思想和发展脉络。\n"
+            "直接输出文本，不要用 JSON 或代码块包裹。\n\n"
+            f"已有章节: {section_titles}\n"
+            f"参考综述: {survey_overview}\n"
+        )
+        overview_result = self.llm.summarize_text(
             overview_prompt,
-            stage="rag",
+            stage="wiki_overview",
             model_override=self.settings.llm_model_deep,
-            max_tokens=4096,
+            max_tokens=2048,
         )
-        self.llm.trace_result(overview_result, stage="wiki_overview", prompt_digest=f"overview:{keyword}")
-        overview_data = overview_result.parsed_json or {}
+        self.llm.trace_result(
+            overview_result, stage="wiki_overview",
+            prompt_digest=f"overview:{keyword}",
+        )
+        overview_text = (overview_result.content or "").strip()
+        overview_text = re.sub(
+            r'^```(?:markdown)?\s*\n?', '', overview_text
+        )
+        overview_text = re.sub(r'\n?```\s*$', '', overview_text)
+
+        # 5b: 结构化汇总（key_findings + future_directions）
+        summary_prompt = (
+            "请只输出单个 JSON 对象，不要代码块。\n"
+            f"根据以下「{keyword}」综述内容，提取关键发现和未来方向：\n"
+            f"概述: {overview_text[:300]}\n"
+            f"章节: {section_titles}\n"
+            f"参考: {survey_overview[:300]}\n\n"
+            '输出: {"key_findings": ["发现1","发现2","发现3"],'
+            ' "future_directions": ["方向1","方向2","方向3"],'
+            ' "reading_list": ["论文1","论文2"]}'
+        )
+        summary_result = self.llm.complete_json(
+            summary_prompt,
+            stage="wiki_summary",
+            model_override=self.settings.llm_model_deep,
+            max_tokens=2048,
+        )
+        self.llm.trace_result(
+            summary_result, stage="wiki_summary",
+            prompt_digest=f"summary:{keyword}",
+        )
+        summary_data = summary_result.parsed_json or {}
 
         # 组装最终 wiki_content
         wiki_content: dict = {
-            "overview": overview_data.get("overview", ""),
+            "overview": overview_text,
             "sections": sections,
-            "key_findings": overview_data.get(
-                "key_findings", []
-            ),
-            "methodology_evolution": overview_data.get(
-                "methodology_evolution", ""
-            ),
-            "future_directions": overview_data.get(
+            "key_findings": summary_data.get("key_findings", []),
+            "methodology_evolution": "",
+            "future_directions": summary_data.get(
                 "future_directions", []
             ),
-            "reading_list": overview_data.get(
-                "reading_list", []
-            ),
+            "reading_list": summary_data.get("reading_list", []),
             "citation_contexts": citation_contexts[:20],
             "pdf_excerpts": pdf_excerpts,
             "scholar_metadata": scholar_meta,
@@ -707,6 +1367,7 @@ class GraphService:
             )
         markdown = "\n".join(md_parts)
 
+        _progress(1.0, "Wiki 生成完成")
         return {
             "keyword": keyword,
             "markdown": markdown,
@@ -746,6 +1407,76 @@ class GraphService:
                     parts.append(f"  TLDR: {s['tldr'][:200]}")
         return "\n".join(parts)
 
+    def _generate_one_section(
+        self, keyword: str, sec_plan: dict, all_sources_text: str,
+    ) -> dict:
+        """生成单个 wiki 章节"""
+        sec_title = sec_plan.get("section_title", "")
+        sec_prompt = build_wiki_section_prompt(
+            keyword=keyword,
+            section_title=sec_title,
+            key_points=sec_plan.get("key_points", []),
+            source_refs=sec_plan.get("source_refs", []),
+            all_sources_text=all_sources_text,
+        )
+        sec_result = self.llm.summarize_text(
+            sec_prompt,
+            stage="wiki_section",
+            model_override=self.settings.llm_model_deep,
+            max_tokens=4096,
+        )
+        self.llm.trace_result(
+            sec_result, stage="wiki_section",
+            prompt_digest=f"section:{sec_title[:60]}",
+        )
+        content = sec_result.content or ""
+        content = re.sub(
+            r'^```(?:markdown)?\s*\n?', '', content.strip()
+        )
+        content = re.sub(r'\n?```\s*$', '', content.strip())
+        return {
+            "title": sec_title,
+            "content": content,
+            "key_insight": "",
+        }
+
+    def _generate_sections_parallel(
+        self,
+        keyword: str,
+        sec_plans: list[dict],
+        all_sources_text: str,
+        max_workers: int = 3,
+    ) -> list[dict]:
+        """并行生成多个 wiki 章节"""
+        if not sec_plans:
+            return []
+        sections: list[dict] = [{}] * len(sec_plans)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_idx = {
+                pool.submit(
+                    self._generate_one_section,
+                    keyword, plan, all_sources_text,
+                ): idx
+                for idx, plan in enumerate(sec_plans)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    sections[idx] = future.result()
+                    logger.info(
+                        "wiki section %d/%d 完成: %s",
+                        idx + 1, len(sec_plans),
+                        sections[idx].get("title", "")[:40],
+                    )
+                except Exception as exc:
+                    logger.warning("wiki section %d 失败: %s", idx, exc)
+                    sections[idx] = {
+                        "title": sec_plans[idx].get("section_title", ""),
+                        "content": "",
+                        "key_insight": "",
+                    }
+        return sections
+
     @staticmethod
     def _build_all_sources_text(
         paper_contexts: list[dict],
@@ -779,6 +1510,13 @@ class GraphService:
                 f"Excerpt: {ex.get('excerpt', '')[:500]}"
             )
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _normalize_arxiv_id(arxiv_id: str | None) -> str | None:
+        """去版本号归一化: '2502.12082v2' -> '2502.12082'"""
+        if not arxiv_id:
+            return None
+        return re.sub(r"v\d+$", "", arxiv_id.strip())
 
     @staticmethod
     def _title_to_id(title: str) -> str:

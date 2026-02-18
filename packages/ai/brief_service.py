@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from jinja2 import Template
@@ -169,11 +170,15 @@ class DailyBriefService:
             TrendService,
         )
 
-        # 获取推荐和趋势
-        recommendations = RecommendationService().recommend(top_k=5)
+        # 并行获取推荐、热点、摘要
         trend_svc = TrendService()
-        hot_keywords = trend_svc.detect_hot_keywords(days=7, top_k=10)
-        summary = trend_svc.get_today_summary()
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            f_rec = pool.submit(RecommendationService().recommend, top_k=5)
+            f_hot = pool.submit(trend_svc.detect_hot_keywords, days=7, top_k=10)
+            f_sum = pool.submit(trend_svc.get_today_summary)
+        recommendations = f_rec.result()
+        hot_keywords = f_hot.result()
+        summary = f_sum.result()
 
         # 获取论文列表（按主题分组）
         with session_scope() as session:

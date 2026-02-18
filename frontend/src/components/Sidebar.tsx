@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useConversationCtx } from "@/contexts/ConversationContext";
 import { groupByDate } from "@/hooks/useConversations";
 import { SettingsDialog } from "./SettingsDialog";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   FileText,
   Network,
@@ -22,6 +23,9 @@ import {
   LayoutDashboard,
   Settings,
   Search,
+  Menu,
+  X,
+  PenTool,
 } from "lucide-react";
 
 /* 工具网格定义 */
@@ -29,7 +33,8 @@ const TOOLS = [
   { to: "/collect", icon: Search, label: "论文收集", accent: true },
   { to: "/papers", icon: FileText, label: "论文库", accent: false },
   { to: "/graph", icon: Network, label: "引用图谱", accent: false },
-  { to: "/wiki", icon: BookOpen, label: "Wiki", accent: true },
+  { to: "/writing", icon: PenTool, label: "写作助手", accent: true },
+  { to: "/wiki", icon: BookOpen, label: "Wiki", accent: false },
   { to: "/brief", icon: Newspaper, label: "研究简报", accent: false },
   { to: "/dashboard", icon: LayoutDashboard, label: "看板", accent: false },
 ];
@@ -55,6 +60,8 @@ function useDarkMode() {
 export default function Sidebar() {
   const [dark, toggleDark] = useDarkMode();
   const [showSettings, setShowSettings] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const {
@@ -66,19 +73,52 @@ export default function Sidebar() {
   } = useConversationCtx();
   const groups = useMemo(() => groupByDate(metas), [metas]);
 
+  /* 路由变化时关闭移动端侧边栏 */
+  useEffect(() => { setMobileOpen(false); }, [location.pathname]);
+
   const handleNewChat = useCallback(() => {
     createConversation();
     if (location.pathname !== "/") navigate("/");
+    setMobileOpen(false);
   }, [createConversation, location.pathname, navigate]);
 
   const handleSelectChat = useCallback((id: string) => {
     switchConversation(id);
     if (location.pathname !== "/") navigate("/");
+    setMobileOpen(false);
   }, [switchConversation, location.pathname, navigate]);
 
   return (
     <>
-      <aside className="fixed left-0 top-0 z-30 flex h-screen w-[240px] flex-col border-r border-border bg-sidebar">
+      {/* 移动端汉堡菜单 */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="fixed left-3 top-3 z-40 rounded-lg bg-surface p-2 shadow-md lg:hidden"
+        aria-label="打开菜单"
+      >
+        <Menu className="h-5 w-5 text-ink" />
+      </button>
+
+      {/* 移动端遮罩 */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      <aside className={cn(
+        "fixed left-0 top-0 z-50 flex h-screen w-[240px] flex-col border-r border-border bg-sidebar transition-transform duration-200",
+        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      )}>
+        {/* 移动端关闭按钮 */}
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="absolute right-2 top-3 rounded-lg p-1.5 text-ink-tertiary hover:bg-hover lg:hidden"
+          aria-label="关闭菜单"
+        >
+          <X className="h-4 w-4" />
+        </button>
         {/* Logo + 新建对话 */}
         <div className="px-3 pt-4 pb-2">
           <div className="mb-3 flex items-center gap-2.5 px-2">
@@ -160,7 +200,7 @@ export default function Sidebar() {
                       <span
                         onClick={(e) => {
                           e.stopPropagation();
-                          deleteConversation(meta.id);
+                          setDeleteId(meta.id);
                         }}
                         className="hidden shrink-0 rounded p-0.5 text-ink-tertiary hover:bg-error-light hover:text-error group-hover:block"
                       >
@@ -206,6 +246,16 @@ export default function Sidebar() {
       {showSettings && (
         <SettingsDialog onClose={() => setShowSettings(false)} />
       )}
+
+      <ConfirmDialog
+        open={!!deleteId}
+        title="删除对话"
+        description="删除后无法恢复，确定要删除这个对话吗？"
+        variant="danger"
+        confirmLabel="删除"
+        onConfirm={() => { if (deleteId) { deleteConversation(deleteId); setDeleteId(null); } }}
+        onCancel={() => setDeleteId(null)}
+      />
     </>
   );
 }

@@ -3,9 +3,12 @@
  * @author Bamzc
  */
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "@/components/Layout";
-import { Loader2 } from "lucide-react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ToastProvider } from "@/contexts/ToastContext";
+import ToastContainer from "@/components/Toast";
+import { Loader2, FileQuestion } from "lucide-react";
 
 /* Agent 作为首页，不做懒加载，保证首屏速度 */
 import AgentPage from "@/pages/Agent";
@@ -21,6 +24,7 @@ const DailyBrief = lazy(() => import("@/pages/DailyBrief"));
 const Pipelines = lazy(() => import("@/pages/Pipelines"));
 const Operations = lazy(() => import("@/pages/Operations"));
 const Settings = lazy(() => import("@/pages/Settings"));
+const Writing = lazy(() => import("@/pages/Writing"));
 
 function PageFallback() {
   return (
@@ -30,9 +34,25 @@ function PageFallback() {
   );
 }
 
+function NotFound() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+      <FileQuestion className="h-16 w-16 text-ink-tertiary" />
+      <h1 className="text-2xl font-semibold text-ink">404 - 页面不存在</h1>
+      <p className="text-sm text-ink-secondary">你访问的页面不存在或已被移除</p>
+      <a href="/" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover">
+        返回首页
+      </a>
+    </div>
+  );
+}
+
 export default function App() {
   return (
+    <ErrorBoundary>
+    <ToastProvider>
     <BrowserRouter>
+      <ToastContainer />
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<AgentPage />} />
@@ -46,8 +66,17 @@ export default function App() {
           <Route path="/pipelines" element={<Suspense fallback={<PageFallback />}><Pipelines /></Suspense>} />
           <Route path="/operations" element={<Suspense fallback={<PageFallback />}><Operations /></Suspense>} />
           <Route path="/settings" element={<Suspense fallback={<PageFallback />}><Settings /></Suspense>} />
+          <Route path="/writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
+
+          {/* 常见拼写重定向 */}
+          <Route path="/briefs" element={<Navigate to="/brief" replace />} />
+
+          {/* 404 */}
+          <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
     </BrowserRouter>
+    </ToastProvider>
+    </ErrorBoundary>
   );
 }

@@ -5,8 +5,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardHeader, Button, Badge, Spinner, Empty } from "@/components/ui";
+import { PaperDetailSkeleton } from "@/components/Skeleton";
 import Markdown from "@/components/Markdown";
 import PdfReader from "@/components/PdfReader";
+import { useToast } from "@/contexts/ToastContext";
 import { paperApi, pipelineApi, type FigureAnalysisItem } from "@/services/api";
 import type { Paper, SkimReport, DeepDiveReport, ReasoningChainResult } from "@/types";
 import {
@@ -45,6 +47,7 @@ import {
 export default function PaperDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [paper, setPaper] = useState<Paper | null>(null);
   const [loading, setLoading] = useState(true);
   const [skimReport, setSkimReport] = useState<SkimReport | null>(null);
@@ -86,9 +89,9 @@ export default function PaperDetail() {
         const rc = p.metadata?.reasoning_chain as ReasoningChainResult | undefined;
         if (rc) setReasoning(rc);
       })
-      .catch(() => {})
+      .catch(() => { toast("error", "加载论文详情失败"); })
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, toast]);
 
   const handleSkim = async () => {
     if (!id) return;
@@ -96,7 +99,8 @@ export default function PaperDetail() {
     try {
       const report = await pipelineApi.skim(id);
       setSkimReport(report);
-    } catch {} finally { setSkimLoading(false); }
+      toast("success", "粗读完成");
+    } catch { toast("error", "粗读失败"); } finally { setSkimLoading(false); }
   };
 
   const handleDeep = async () => {
@@ -105,7 +109,8 @@ export default function PaperDetail() {
     try {
       const report = await pipelineApi.deep(id);
       setDeepReport(report);
-    } catch {} finally { setDeepLoading(false); }
+      toast("success", "精读完成");
+    } catch { toast("error", "精读失败"); } finally { setDeepLoading(false); }
   };
 
   const handleEmbed = async () => {
@@ -114,7 +119,8 @@ export default function PaperDetail() {
     try {
       await pipelineApi.embed(id);
       setEmbedDone(true);
-    } catch {} finally { setEmbedLoading(false); }
+      toast("success", "嵌入完成");
+    } catch { toast("error", "嵌入失败"); } finally { setEmbedLoading(false); }
   };
 
   const handleSimilar = async () => {
@@ -123,7 +129,7 @@ export default function PaperDetail() {
     try {
       const res = await paperApi.similar(id);
       setSimilarIds(res.similar_ids);
-    } catch {} finally { setSimilarLoading(false); }
+    } catch { toast("error", "获取相似论文失败"); } finally { setSimilarLoading(false); }
   };
 
   const handleAnalyzeFigures = async () => {
@@ -132,7 +138,7 @@ export default function PaperDetail() {
     try {
       const res = await paperApi.analyzeFigures(id, 10);
       setFigures(res.items);
-    } catch {} finally { setFiguresAnalyzing(false); }
+    } catch { toast("error", "图表分析失败"); } finally { setFiguresAnalyzing(false); }
   };
 
   const handleReasoning = async () => {
@@ -141,18 +147,22 @@ export default function PaperDetail() {
     try {
       const res = await paperApi.reasoningAnalysis(id);
       setReasoning(res.reasoning);
-    } catch {} finally { setReasoningLoading(false); }
+    } catch { toast("error", "推理链分析失败"); } finally { setReasoningLoading(false); }
   };
 
   const handleToggleFavorite = useCallback(async () => {
     if (!id || !paper) return;
+    const prevFavorited = paper.favorited;
     try {
       const res = await paperApi.toggleFavorite(id);
       setPaper((prev) => prev ? { ...prev, favorited: res.favorited } : prev);
-    } catch {}
-  }, [id, paper]);
+    } catch {
+      toast("error", "收藏操作失败");
+      setPaper((prev) => prev ? { ...prev, favorited: prevFavorited } : prev);
+    }
+  }, [id, paper, toast]);
 
-  if (loading) return <Spinner text="加载论文详情..." />;
+  if (loading) return <PaperDetailSkeleton />;
   if (!paper) {
     return (
       <Empty
@@ -448,32 +458,43 @@ function FigureCard({ figure, index }: { figure: FigureAnalysisItem; index: numb
 
 /* ========== 推理链面板 ========== */
 function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
-  const { reasoning_steps, method_chain, experiment_chain, impact_assessment } = reasoning;
+  const steps = reasoning.reasoning_steps ?? [];
+  const mc = reasoning.method_chain ?? {} as Record<string, string>;
+  const ec = reasoning.experiment_chain ?? {} as Record<string, string>;
+  const ia = reasoning.impact_assessment ?? {} as Record<string, unknown>;
+
+  const novelty = (ia.novelty_score as number) ?? 0;
+  const rigor = (ia.rigor_score as number) ?? 0;
+  const impact = (ia.impact_score as number) ?? 0;
+  const overall = (ia.overall_assessment as string) ?? "";
+  const strengths = (ia.strengths as string[]) ?? [];
+  const weaknesses = (ia.weaknesses as string[]) ?? [];
+  const suggestions = (ia.future_suggestions as string[]) ?? [];
 
   return (
     <div className="space-y-6">
       {/* 评分概览 */}
       <div className="grid grid-cols-3 gap-4">
-        <ScoreCard label="创新性" score={impact_assessment.novelty_score} icon={<Zap className="h-4 w-4" />} color="text-purple-500" bg="bg-purple-500/10" />
-        <ScoreCard label="严谨性" score={impact_assessment.rigor_score} icon={<Target className="h-4 w-4" />} color="text-blue-500" bg="bg-blue-500/10" />
-        <ScoreCard label="影响力" score={impact_assessment.impact_score} icon={<TrendingUp className="h-4 w-4" />} color="text-orange-500" bg="bg-orange-500/10" />
+        <ScoreCard label="创新性" score={novelty} icon={<Zap className="h-4 w-4" />} color="text-purple-500" bg="bg-purple-500/10" />
+        <ScoreCard label="严谨性" score={rigor} icon={<Target className="h-4 w-4" />} color="text-blue-500" bg="bg-blue-500/10" />
+        <ScoreCard label="影响力" score={impact} icon={<TrendingUp className="h-4 w-4" />} color="text-orange-500" bg="bg-orange-500/10" />
       </div>
 
       {/* 综合评估 */}
-      {impact_assessment.overall_assessment && (
+      {overall && (
         <div className="rounded-xl bg-page p-4">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-secondary">{impact_assessment.overall_assessment}</p>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-secondary">{overall}</p>
         </div>
       )}
 
-      {/* 推理步骤（折叠面板） */}
-      {reasoning_steps.length > 0 && (
+      {/* 推理步骤 */}
+      {steps.length > 0 && (
         <div>
           <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
             <Brain className="h-4 w-4 text-purple-500" /> 推理过程
           </h4>
           <div className="space-y-2">
-            {reasoning_steps.map((step, i) => (
+            {steps.map((step, i) => (
               <ReasoningStepCard key={i} step={step} index={i} />
             ))}
           </div>
@@ -481,41 +502,45 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
       )}
 
       {/* 方法论推导链 */}
-      <div>
-        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
-          <FlaskConical className="h-4 w-4 text-info" /> 方法论推导链
-        </h4>
-        <div className="space-y-3">
-          {method_chain.problem_definition && <ChainItem label="问题定义" text={method_chain.problem_definition} />}
-          {method_chain.core_hypothesis && <ChainItem label="核心假设" text={method_chain.core_hypothesis} />}
-          {method_chain.method_derivation && <ChainItem label="方法推导" text={method_chain.method_derivation} />}
-          {method_chain.theoretical_basis && <ChainItem label="理论基础" text={method_chain.theoretical_basis} />}
-          {method_chain.innovation_analysis && <ChainItem label="创新性分析" text={method_chain.innovation_analysis} />}
+      {Object.values(mc).some(Boolean) && (
+        <div>
+          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+            <FlaskConical className="h-4 w-4 text-info" /> 方法论推导链
+          </h4>
+          <div className="space-y-3">
+            {mc.problem_definition && <ChainItem label="问题定义" text={mc.problem_definition} />}
+            {mc.core_hypothesis && <ChainItem label="核心假设" text={mc.core_hypothesis} />}
+            {mc.method_derivation && <ChainItem label="方法推导" text={mc.method_derivation} />}
+            {mc.theoretical_basis && <ChainItem label="理论基础" text={mc.theoretical_basis} />}
+            {mc.innovation_analysis && <ChainItem label="创新性分析" text={mc.innovation_analysis} />}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 实验验证链 */}
-      <div>
-        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
-          <Microscope className="h-4 w-4 text-success" /> 实验验证链
-        </h4>
-        <div className="space-y-3">
-          {experiment_chain.experimental_design && <ChainItem label="实验设计" text={experiment_chain.experimental_design} />}
-          {experiment_chain.baseline_fairness && <ChainItem label="基线公平性" text={experiment_chain.baseline_fairness} />}
-          {experiment_chain.result_validation && <ChainItem label="结果验证" text={experiment_chain.result_validation} />}
-          {experiment_chain.ablation_insights && <ChainItem label="消融洞察" text={experiment_chain.ablation_insights} />}
+      {Object.values(ec).some(Boolean) && (
+        <div>
+          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+            <Microscope className="h-4 w-4 text-success" /> 实验验证链
+          </h4>
+          <div className="space-y-3">
+            {ec.experimental_design && <ChainItem label="实验设计" text={ec.experimental_design} />}
+            {ec.baseline_fairness && <ChainItem label="基线公平性" text={ec.baseline_fairness} />}
+            {ec.result_validation && <ChainItem label="结果验证" text={ec.result_validation} />}
+            {ec.ablation_insights && <ChainItem label="消融洞察" text={ec.ablation_insights} />}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 优势与不足 */}
       <div className="grid gap-4 sm:grid-cols-2">
-        {impact_assessment.strengths.length > 0 && (
+        {strengths.length > 0 && (
           <div>
             <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink">
               <ThumbsUp className="h-4 w-4 text-success" /> 优势
             </h4>
             <ul className="space-y-1.5">
-              {impact_assessment.strengths.map((s, i) => (
+              {strengths.map((s, i) => (
                 <li key={i} className="flex items-start gap-2 rounded-lg bg-success/5 px-3 py-2 text-sm text-ink-secondary">
                   <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />{s}
                 </li>
@@ -523,13 +548,13 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
             </ul>
           </div>
         )}
-        {impact_assessment.weaknesses.length > 0 && (
+        {weaknesses.length > 0 && (
           <div>
             <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink">
               <ThumbsDown className="h-4 w-4 text-error" /> 不足
             </h4>
             <ul className="space-y-1.5">
-              {impact_assessment.weaknesses.map((w, i) => (
+              {weaknesses.map((w, i) => (
                 <li key={i} className="flex items-start gap-2 rounded-lg bg-error/5 px-3 py-2 text-sm text-ink-secondary">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-error" />{w}
                 </li>
@@ -540,13 +565,13 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
       </div>
 
       {/* 未来建议 */}
-      {impact_assessment.future_suggestions.length > 0 && (
+      {suggestions.length > 0 && (
         <div>
           <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink">
             <Lightbulb className="h-4 w-4 text-warning" /> 未来研究建议
           </h4>
           <ul className="space-y-1.5">
-            {impact_assessment.future_suggestions.map((f, i) => (
+            {suggestions.map((f, i) => (
               <li key={i} className="flex items-start gap-2 rounded-lg bg-warning/5 px-3 py-2 text-sm text-ink-secondary">
                 <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />{f}
               </li>

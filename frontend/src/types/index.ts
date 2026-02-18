@@ -373,6 +373,136 @@ export interface ResearchGapsResponse {
   analysis: ResearchGapsAnalysis;
 }
 
+/* ========== 丰富引用详情 ========== */
+export interface RichCitationEntry {
+  scholar_id: string | null;
+  title: string;
+  year: number | null;
+  venue: string | null;
+  citation_count: number | null;
+  arxiv_id: string | null;
+  abstract: string | null;
+  in_library: boolean;
+  library_paper_id: string | null;
+}
+
+export interface CitationDetail {
+  paper_id: string;
+  paper_title: string;
+  references: RichCitationEntry[];
+  cited_by: RichCitationEntry[];
+  stats: {
+    total_references: number;
+    total_cited_by: number;
+    in_library_references: number;
+    in_library_cited_by: number;
+  };
+}
+
+export interface NetworkNode {
+  id: string;
+  title: string;
+  year: number | null;
+  arxiv_id: string | null;
+  in_degree: number;
+  out_degree: number;
+  is_hub: boolean;
+  is_external: boolean;
+  co_citation_count?: number;
+}
+
+export interface NetworkEdge {
+  source: string;
+  target: string;
+}
+
+export interface TopicCitationNetwork {
+  topic_id: string;
+  topic_name: string;
+  nodes: NetworkNode[];
+  edges: NetworkEdge[];
+  stats: {
+    total_papers: number;
+    total_edges: number;
+    density: number;
+    hub_papers: number;
+    internal_papers?: number;
+    external_papers?: number;
+    internal_edges?: number;
+    new_edges_synced?: number;
+  };
+  key_external_papers?: Array<{
+    id: string;
+    title: string;
+    co_citation_count: number;
+  }>;
+}
+
+/* ========== 图谱增强 ========== */
+export interface OverviewNode {
+  id: string;
+  title: string;
+  arxiv_id: string;
+  year: number | null;
+  in_degree: number;
+  out_degree: number;
+  pagerank: number;
+  topics: string[];
+  read_status: string;
+}
+
+export interface LibraryOverview {
+  total_papers: number;
+  total_edges: number;
+  density: number;
+  nodes: OverviewNode[];
+  edges: NetworkEdge[];
+  top_papers: OverviewNode[];
+  topic_stats: Record<string, { count: number; edges: number }>;
+}
+
+export interface BridgePaper {
+  id: string;
+  title: string;
+  arxiv_id: string;
+  topics_citing: string[];
+  cross_topic_count: number;
+  own_topics: string[];
+}
+
+export interface BridgesResponse {
+  bridges: BridgePaper[];
+  total: number;
+}
+
+export interface FrontierPaper {
+  id: string;
+  title: string;
+  arxiv_id: string;
+  year: number;
+  publication_date: string;
+  citations_in_library: number;
+  citation_velocity: number;
+  read_status: string;
+}
+
+export interface FrontierResponse {
+  period_days: number;
+  total_recent: number;
+  frontier: FrontierPaper[];
+}
+
+export interface CocitationCluster {
+  size: number;
+  papers: Array<{ id: string; title: string; arxiv_id: string }>;
+}
+
+export interface CocitationResponse {
+  total_clusters: number;
+  clusters: CocitationCluster[];
+  cocitation_pairs: number;
+}
+
 /* ========== 简报 ========== */
 export interface DailyBriefRequest {
   date?: string;
@@ -411,6 +541,8 @@ export interface CostStage {
   stage: string;
   calls: number;
   total_cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
 }
 
 export interface CostModel {
@@ -418,6 +550,8 @@ export interface CostModel {
   model: string;
   calls: number;
   total_cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
 }
 
 export interface CostMetrics {
@@ -499,6 +633,42 @@ export interface LLMProviderUpdate {
 export interface ActiveLLMConfig {
   source: "database" | "env";
   config: LLMProviderConfig & { provider?: string };
+}
+
+/* ========== 写作助手 ========== */
+export type WritingAction =
+  | "zh_to_en" | "en_to_zh" | "zh_polish" | "en_polish"
+  | "compress" | "expand" | "logic_check" | "deai"
+  | "fig_caption" | "table_caption"
+  | "experiment_analysis" | "reviewer" | "chart_recommend";
+
+export interface WritingTemplate {
+  action: WritingAction;
+  label: string;
+  description: string;
+  icon: string;
+  placeholder: string;
+}
+
+export interface WritingResult {
+  action: string;
+  label: string;
+  content: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_cost_usd?: number;
+}
+
+export interface WritingRefineMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface WritingRefineResult {
+  content: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_cost_usd?: number;
 }
 
 /* ========== Agent ========== */

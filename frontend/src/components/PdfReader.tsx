@@ -184,7 +184,8 @@ export default function PdfReader({ paperId, paperTitle, onClose }: PdfReaderPro
       const res = await paperApi.aiExplain(paperId, t, action);
       setAiResults((prev) => [{ action, text: t.slice(0, 100), result: res.result }, ...prev]);
     } catch (err) {
-      setAiResults((prev) => [{ action, text: t.slice(0, 100), result: `错误: ${err}` }, ...prev]);
+      const msg = err instanceof Error ? err.message : String(err);
+      setAiResults((prev) => [{ action, text: t.slice(0, 100), result: `错误: ${msg}` }, ...prev]);
     } finally {
       setAiLoading(false);
     }
@@ -324,19 +325,22 @@ export default function PdfReader({ paperId, paperTitle, onClose }: PdfReaderPro
             }
           >
             <div className="flex flex-col items-center gap-4 py-6">
-              {pages.map((pg) => (
+              {pages.map((pg) => {
+                const isNearby = Math.abs(pg - currentPage) <= 3;
+                return (
                 <div
                   key={pg}
                   ref={(el) => setPageRef(pg, el)}
                   data-page={pg}
                   className="relative"
+                  style={!isNearby ? { minHeight: `${Math.round(792 * scale)}px`, width: `${Math.round(612 * scale)}px` } : undefined}
                 >
-                  {/* 页码标签 */}
                   <div className="absolute -top-0 left-1/2 z-10 -translate-x-1/2 -translate-y-full pb-1">
                     <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] text-white/30">
                       {pg}
                     </span>
                   </div>
+                  {isNearby ? (
                   <Page
                     pageNumber={pg}
                     scale={scale}
@@ -350,8 +354,15 @@ export default function PdfReader({ paperId, paperTitle, onClose }: PdfReaderPro
                       </div>
                     }
                   />
+                  ) : (
+                    <div
+                      className="flex items-center justify-center bg-white/5 rounded"
+                      style={{ width: Math.round(612 * scale), height: Math.round(792 * scale) }}
+                    />
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </Document>
         )}

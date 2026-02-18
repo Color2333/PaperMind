@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 _config_cache: LLMConfig | None = None
 _config_cache_ts: float = 0.0
 _CONFIG_TTL = 30.0
+_cache_lock = threading.Lock()
 
 
 @dataclass
@@ -44,6 +47,7 @@ class LLMResult:
     input_cost_usd: float | None = None
     output_cost_usd: float | None = None
     total_cost_usd: float | None = None
+    reasoning_content: str | None = None
 
 
 @dataclass
@@ -62,11 +66,12 @@ class StreamEvent:
 
 
 def _load_active_config() -> LLMConfig:
-    """从数据库加载激活的 LLM 配置，带 TTL 缓存"""
+    """从数据库加载激活的 LLM 配置，带 TTL 缓存（线程安全）"""
     global _config_cache, _config_cache_ts  # noqa: PLW0603
     now = time.monotonic()
-    if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_TTL:
-        return _config_cache
+    with _cache_lock:
+        if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_TTL:
+            return _config_cache
 
     settings = get_settings()
     cfg: LLMConfig | None = None
@@ -116,16 +121,18 @@ def _load_active_config() -> LLMConfig:
             model_fallback=settings.llm_model_fallback,
         )
 
-    _config_cache = cfg
-    _config_cache_ts = now
+    with _cache_lock:
+        _config_cache = cfg
+        _config_cache_ts = now
     return cfg
 
 
 def invalidate_llm_config_cache() -> None:
     """配置变更时调用，清除缓存"""
     global _config_cache, _config_cache_ts  # noqa: PLW0603
-    _config_cache = None
-    _config_cache_ts = 0.0
+    with _cache_lock:
+        _config_cache = None
+        _config_cache_ts = 0.0
 
 
 # 预置的 provider → base_url 映射
@@ -140,19 +147,24 @@ _LLM_TIMEOUT = 120  # LLM 请求超时秒数
 
 # OpenAI 客户端复用缓存（按 api_key + base_url 复用）
 _openai_clients: dict[str, object] = {}
+_client_lock = threading.Lock()
 
 
 def _get_openai_client(api_key: str, base_url: str | None):
-    """复用 OpenAI 客户端，避免每次调用创建新连接"""
+    """复用 OpenAI 客户端，避免每次调用创建新连接（线程安全）"""
+    import hashlib
     from openai import OpenAI
-    cache_key = f"{api_key[:8]}|{base_url}"
-    if cache_key not in _openai_clients:
-        _openai_clients[cache_key] = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=_LLM_TIMEOUT,
-        )
-    return _openai_clients[cache_key]
+    cache_key = hashlib.sha256(
+        f"{api_key}|{base_url}".encode()
+    ).hexdigest()[:16]
+    with _client_lock:
+        if cache_key not in _openai_clients:
+            _openai_clients[cache_key] = OpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=_LLM_TIMEOUT,
+            )
+        return _openai_clients[cache_key]
 
 
 class LLMClient:
@@ -253,19 +265,42 @@ class LLMClient:
         stage: str,
         model_override: str | None = None,
         max_tokens: int | None = None,
+        max_retries: int = 1,
     ) -> LLMResult:
         wrapped = (
             "请只输出单个 JSON 对象，"
-            "不要输出 markdown，不要输出额外解释。\n"
+            "不要输出 markdown 代码块包裹，不要输出额外解释。\n"
             "如果信息不足，请根据上下文给出最合理的保守估计，"
             "并保持 JSON 结构完整。\n\n"
             f"{prompt}"
         )
-        result = self.summarize_text(
-            wrapped, stage=stage, model_override=model_override,
-            max_tokens=max_tokens,
-        )
-        parsed = self._try_parse_json(result.content)
+        for attempt in range(max_retries + 1):
+            result = self.summarize_text(
+                wrapped, stage=stage, model_override=model_override,
+                max_tokens=max_tokens,
+            )
+            # 多源 JSON 提取：先从 content，再从 reasoning_content
+            parsed = self._try_parse_json(result.content)
+            if parsed is None and result.reasoning_content:
+                parsed = self._try_parse_json(result.reasoning_content)
+                if parsed:
+                    logger.info(
+                        "complete_json: JSON 从 reasoning_content 提取成功 "
+                        "(stage=%s, attempt=%d)", stage, attempt
+                    )
+            if parsed is not None:
+                break
+            if attempt < max_retries:
+                logger.warning(
+                    "complete_json: JSON 解析失败，重试 %d/%d (stage=%s)",
+                    attempt + 1, max_retries, stage,
+                )
+            else:
+                logger.warning(
+                    "complete_json: JSON 解析最终失败 (stage=%s), "
+                    "content[:300]=%s",
+                    stage, (result.content or "")[:300],
+                )
         return LLMResult(
             content=result.content,
             input_tokens=result.input_tokens,
@@ -274,6 +309,7 @@ class LLMClient:
             input_cost_usd=result.input_cost_usd,
             output_cost_usd=result.output_cost_usd,
             total_cost_usd=result.total_cost_usd,
+            reasoning_content=result.reasoning_content,
         )
 
     def vision_analyze(
@@ -504,11 +540,10 @@ class LLMClient:
             response = client.chat.completions.create(**kwargs)
             msg = response.choices[0].message
             content = msg.content or ""
-            # GLM-4.7 等模型可能把输出放在 reasoning_content 中
-            if not content:
-                rc = getattr(msg, "reasoning_content", None)
-                if rc and isinstance(rc, str):
-                    content = rc
+            rc = getattr(msg, "reasoning_content", None) or ""
+            # GLM-4.7 等推理模型可能把输出放在 reasoning_content 中
+            if not content and rc:
+                content = rc
             usage = response.usage
             in_tokens = (
                 usage.prompt_tokens if usage else None
@@ -528,6 +563,7 @@ class LLMClient:
                 input_cost_usd=in_cost,
                 output_cost_usd=out_cost,
                 total_cost_usd=in_cost + out_cost,
+                reasoning_content=rc if rc else None,
             )
         except Exception as exc:
             logger.warning(
@@ -674,22 +710,200 @@ class LLMClient:
     # ---------- 工具 ----------
 
     @staticmethod
+    def _sanitize_json_str(s: str) -> str:
+        """修复 LLM 生成 JSON 中的常见问题：未转义的换行、制表符等"""
+        # 替换字符串值内部的 literal 换行和制表符
+        # 在 JSON string 内（引号之间），将 literal \n \r \t 转为转义序列
+        result: list[str] = []
+        in_str = False
+        esc = False
+        for ch in s:
+            if esc:
+                esc = False
+                result.append(ch)
+                continue
+            if ch == "\\" and in_str:
+                esc = True
+                result.append(ch)
+                continue
+            if ch == '"':
+                in_str = not in_str
+                result.append(ch)
+                continue
+            if in_str:
+                if ch == "\n":
+                    result.append("\\n")
+                    continue
+                if ch == "\r":
+                    result.append("\\r")
+                    continue
+                if ch == "\t":
+                    result.append("\\t")
+                    continue
+                # 去掉其他控制字符 (0x00-0x1F)
+                if ord(ch) < 0x20:
+                    continue
+            result.append(ch)
+        return "".join(result)
+
+    @staticmethod
+    def _safe_loads(text: str) -> dict | None:
+        """json.loads 带净化回退"""
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        try:
+            return json.loads(LLMClient._sanitize_json_str(text))
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
     def _try_parse_json(text: str) -> dict | None:
+        """从文本中尽力提取 JSON 对象，处理 markdown 代码块和截断"""
         raw = text.strip()
         if not raw:
             return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
+
+        # 1. 直接解析（含净化回退）
+        r = LLMClient._safe_loads(raw)
+        if r is not None:
+            return r
+
+        # 2. 去除 markdown 代码块
+        fence_match = re.search(
+            r"```(?:json)?\s*\n?(.*?)```",
+            raw,
+            re.DOTALL,
+        )
+        if fence_match:
+            r = LLMClient._safe_loads(fence_match.group(1).strip())
+            if r is not None:
+                return r
+
+        # 3. 提取 {} 块
         start = raw.find("{")
         end = raw.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            return json.loads(raw[start : end + 1])
-        except json.JSONDecodeError:
-            return None
+        if start != -1 and end > start:
+            r = LLMClient._safe_loads(raw[start : end + 1])
+            if r is not None:
+                return r
+
+        # 4. 截断 JSON 修复：模型可能在输出中途停止
+        if start != -1:
+            candidate = LLMClient._sanitize_json_str(raw[start:])
+            repaired = LLMClient._repair_truncated_json(candidate)
+            if repaired is not None:
+                return repaired
+
+        return None
+
+    @staticmethod
+    def _repair_truncated_json(text: str) -> dict | None:
+        """尝试修复被截断的 JSON，补全缺失的括号"""
+        closing_map = {"{": "}", "[": "]"}
+
+        def _scan(s: str):
+            """扫描 JSON 文本，返回 (stack, in_string, escape_next)"""
+            in_str = False
+            esc = False
+            stk: list[str] = []
+            for ch in s:
+                if esc:
+                    esc = False
+                    continue
+                if ch == "\\" and in_str:
+                    esc = True
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if ch in "{[":
+                    stk.append(ch)
+                elif ch == "}" and stk and stk[-1] == "{":
+                    stk.pop()
+                elif ch == "]" and stk and stk[-1] == "[":
+                    stk.pop()
+            return stk, in_str, esc
+
+        stack, in_string, escape_pending = _scan(text)
+
+        if not stack and not in_string:
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return None
+
+        # 策略1：直接补全
+        closers = "".join(closing_map[b] for b in reversed(stack))
+        # 处理各种截断边界
+        suffixes: list[str] = []
+        if escape_pending:
+            # 截断在 \ 后面，去掉尾部 \ 再闭合
+            base = text[:-1]
+            if in_string:
+                suffixes = [f'"{closers}', f'""{closers}']
+            else:
+                suffixes = [closers]
+            for sfx in suffixes:
+                try:
+                    return json.loads(base + sfx)
+                except json.JSONDecodeError:
+                    continue
+
+        # 构造 (base_text, suffix) 候选列表
+        attempts: list[tuple[str, str]] = []
+
+        if in_string:
+            # 截断在字符串中间，去掉末尾不完整转义
+            trimmed = text
+            if trimmed.endswith("\\"):
+                trimmed = trimmed[:-1]
+            elif re.search(r'\\u[0-9a-fA-F]{0,3}$', trimmed):
+                trimmed = re.sub(r'\\u[0-9a-fA-F]{0,3}$', '', trimmed)
+            attempts = [
+                (trimmed, f'"{closers}'),
+                (trimmed, f'" {closers}'),
+            ]
+        else:
+            clean = text.rstrip().rstrip(",").rstrip()
+            attempts = [
+                (text, closers),
+                (clean, closers),
+                (text, f'""{closers}'),
+                (text, f'null{closers}'),
+            ]
+
+        for base, sfx in attempts:
+            try:
+                return json.loads(base + sfx)
+            except json.JSONDecodeError:
+                continue
+
+        # 策略2：回退到最后一个完整的值边界再闭合
+        # 找结构性断点: }, ], "后的逗号, 完整数值等
+        candidates: list[int] = []
+        for m in re.finditer(r'[}\]]\s*,', text):
+            candidates.append(m.start() + 1)
+        for m in re.finditer(r'"\s*,', text):
+            candidates.append(m.start() + 1)
+        for m in re.finditer(r'[}\]]\s*$', text):
+            candidates.append(m.start() + 1)
+
+        for pos in sorted(set(candidates), reverse=True):
+            chunk = text[:pos].rstrip().rstrip(",")
+            stk2, in_s2, _ = _scan(chunk)
+            if in_s2:
+                continue
+            cl = "".join(closing_map[b] for b in reversed(stk2))
+            try:
+                return json.loads(chunk + cl)
+            except json.JSONDecodeError:
+                continue
+
+        return None
 
     @staticmethod
     def _estimate_cost(

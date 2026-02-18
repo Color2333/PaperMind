@@ -23,6 +23,30 @@ from packages.storage.repositories import (
 logger = logging.getLogger(__name__)
 
 
+def _parse_uuid(val: str) -> UUID | None:
+    """解析 UUID 字符串，失败返回 None"""
+    try:
+        return UUID(val)
+    except ValueError:
+        return None
+
+
+def _require_paper(paper_id: str):
+    """校验 paper_id 格式 + 查库，返回 (paper, ToolResult|None)"""
+    pid = _parse_uuid(paper_id)
+    if pid is None:
+        return None, ToolResult(success=False, summary="无效的 paper_id 格式")
+    with session_scope() as session:
+        try:
+            paper = PaperRepository(session).get_by_id(pid)
+            return paper, None
+        except ValueError:
+            return None, ToolResult(
+                success=False,
+                summary=f"论文 {paper_id[:8]}... 不存在",
+            )
+
+
 @dataclass
 class ToolResult:
     success: bool
@@ -334,6 +358,31 @@ TOOL_REGISTRY: list[ToolDef] = [
         requires_confirm=False,
     ),
     ToolDef(
+        name="writing_assist",
+        description="学术写作助手：支持中转英、英转中、英文润色、中文润色、缩写、扩写、逻辑检查、去AI味、生成图/表标题、实验分析、审稿视角、图表推荐",
+        parameters={
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "zh_to_en", "en_to_zh", "zh_polish", "en_polish",
+                        "compress", "expand", "logic_check", "deai",
+                        "fig_caption", "table_caption",
+                        "experiment_analysis", "reviewer", "chart_recommend",
+                    ],
+                    "description": "写作操作类型",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "要处理的文本内容",
+                },
+            },
+            "required": ["action", "text"],
+        },
+        requires_confirm=False,
+    ),
+    ToolDef(
         name="analyze_figures",
         description="提取并解读论文 PDF 中的图表和公式，用 Vision 模型生成解读报告",
         parameters={
@@ -392,6 +441,7 @@ def _get_tool_handlers() -> dict:
         "analyze_figures": _analyze_figures,
         "reasoning_analysis": _reasoning_analysis,
         "identify_research_gaps": _identify_research_gaps,
+        "writing_assist": _writing_assist,
     }
 
 
@@ -458,18 +508,11 @@ def _search_papers(keyword: str, limit: int = 20) -> ToolResult:
 
 
 def _get_paper_detail(paper_id: str) -> ToolResult:
-    try:
-        pid = UUID(paper_id)
-    except ValueError:
-        return ToolResult(success=False, summary="无效的 paper_id 格式")
+    p, err = _require_paper(paper_id)
+    if err:
+        return err
     with session_scope() as session:
-        try:
-            p = PaperRepository(session).get_by_id(pid)
-        except ValueError:
-            return ToolResult(
-                success=False,
-                summary=f"论文 {paper_id[:8]}... 不存在",
-            )
+        p = PaperRepository(session).get_by_id(UUID(paper_id))
         title = p.title or ""
         data = {
             "id": str(p.id),
@@ -491,24 +534,15 @@ def _get_paper_detail(paper_id: str) -> ToolResult:
 
 
 def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
-    try:
-        pid = UUID(paper_id)
-    except ValueError:
-        return ToolResult(success=False, summary="无效的 paper_id 格式")
-    # 先检查论文存在和向量
-    with session_scope() as session:
-        try:
-            paper = PaperRepository(session).get_by_id(pid)
-        except ValueError:
-            return ToolResult(
-                success=False,
-                summary=f"论文 {paper_id[:8]}... 不存在",
-            )
-        if not paper.embedding:
-            return ToolResult(
-                success=False,
-                summary="该论文未向量化，请先调用 embed_paper",
-            )
+    paper, err = _require_paper(paper_id)
+    if err:
+        return err
+    pid = UUID(paper_id)
+    if not paper.embedding:
+        return ToolResult(
+            success=False,
+            summary="该论文未向量化，请先调用 embed_paper",
+        )
     ids = RAGService().similar_papers(pid, top_k=top_k)
     return ToolResult(
         success=True,
@@ -558,19 +592,9 @@ def _ask_knowledge_base(question: str, top_k: int = 5) -> ToolResult:
 
 
 def _get_citation_tree(paper_id: str, depth: int = 2) -> ToolResult:
-    try:
-        pid = UUID(paper_id)
-    except ValueError:
-        return ToolResult(success=False, summary="无效的 paper_id 格式")
-    # 先校验论文存在
-    with session_scope() as session:
-        try:
-            PaperRepository(session).get_by_id(pid)
-        except ValueError:
-            return ToolResult(
-                success=False,
-                summary=f"论文 {paper_id[:8]}... 不存在",
-            )
+    _, err = _require_paper(paper_id)
+    if err:
+        return err
     result = GraphService().citation_tree(
         root_paper_id=paper_id, depth=depth
     )
@@ -754,8 +778,10 @@ def _ingest_arxiv(
 
     with session_scope() as session:
         repo = PaperRepository(session)
-        from packages.storage.repositories import PipelineRunRepository
+        from packages.storage.repositories import PipelineRunRepository, ActionRepository
+        from packages.domain.enums import ActionType
         run_repo = PipelineRunRepository(session)
+        action_repo = ActionRepository(session)
         note = f"selected {len(arxiv_ids)} from query={query}"
         run = run_repo.start("ingest_arxiv", decision_note=note)
         try:
@@ -769,6 +795,16 @@ def _ingest_arxiv(
                     repo.set_pdf_path(saved.id, pdf_path)
                 except Exception:
                     pass
+
+            if inserted_ids:
+                action_repo.create_action(
+                    action_type=ActionType.agent_collect,
+                    title=f"Agent 收集: {query[:80]}",
+                    paper_ids=inserted_ids,
+                    query=query,
+                    topic_id=topic_id,
+                )
+
             run_repo.finish(run.id)
         except Exception as exc:
             run_repo.fail(run.id, str(exc))
@@ -938,24 +974,12 @@ def _suggest_keywords(description: str) -> ToolResult:
 
 
 def _skim_paper(paper_id: str) -> ToolResult:
-    try:
-        pid = UUID(paper_id)
-    except ValueError:
-        return ToolResult(success=False, summary="无效的 paper_id 格式")
-    # 先检查论文是否存在
-    with session_scope() as session:
-        try:
-            paper = PaperRepository(session).get_by_id(pid)
-        except ValueError:
-            return ToolResult(
-                success=False,
-                summary=f"论文 {paper_id[:8]}... 不存在",
-            )
-        if not paper.abstract:
-            return ToolResult(
-                success=False,
-                summary="该论文缺少摘要，无法执行粗读",
-            )
+    paper, err = _require_paper(paper_id)
+    if err:
+        return err
+    if not paper.abstract:
+        return ToolResult(success=False, summary="该论文缺少摘要，无法执行粗读")
+    pid = UUID(paper_id)
     report = PaperPipelines().skim(pid)
     one_liner = report.one_liner
     return ToolResult(
@@ -966,24 +990,12 @@ def _skim_paper(paper_id: str) -> ToolResult:
 
 
 def _deep_read_paper(paper_id: str) -> ToolResult:
-    try:
-        pid = UUID(paper_id)
-    except ValueError:
-        return ToolResult(success=False, summary="无效的 paper_id 格式")
-    # 先检查论文是否存在和 arxiv_id
-    with session_scope() as session:
-        try:
-            paper = PaperRepository(session).get_by_id(pid)
-        except ValueError:
-            return ToolResult(
-                success=False,
-                summary=f"论文 {paper_id[:8]}... 不存在",
-            )
-        if not paper.arxiv_id and not paper.pdf_path:
-            return ToolResult(
-                success=False,
-                summary="该论文无 arXiv ID 且无 PDF，无法精读",
-            )
+    paper, err = _require_paper(paper_id)
+    if err:
+        return err
+    if not paper.arxiv_id and not paper.pdf_path:
+        return ToolResult(success=False, summary="该论文无 arXiv ID 且无 PDF，无法精读")
+    pid = UUID(paper_id)
     report = PaperPipelines().deep_dive(pid)
     return ToolResult(
         success=True,
@@ -993,30 +1005,21 @@ def _deep_read_paper(paper_id: str) -> ToolResult:
 
 
 def _embed_paper(paper_id: str) -> ToolResult:
-    try:
-        pid = UUID(paper_id)
-    except ValueError:
-        return ToolResult(success=False, summary="无效的 paper_id 格式")
-    # 先检查论文存在性和内容
-    with session_scope() as session:
-        try:
-            paper = PaperRepository(session).get_by_id(pid)
-        except ValueError:
-            return ToolResult(
-                success=False,
-                summary=f"论文 {paper_id[:8]}... 不存在",
-            )
-        if paper.embedding:
-            return ToolResult(
-                success=True,
-                data={"paper_id": paper_id, "status": "already_embedded"},
-                summary="该论文已有向量，跳过",
-            )
-        if not paper.title and not paper.abstract:
-            return ToolResult(
-                success=False,
-                summary="该论文缺少标题和摘要，无法向量化",
-            )
+    paper, err = _require_paper(paper_id)
+    if err:
+        return err
+    pid = UUID(paper_id)
+    if paper.embedding:
+        return ToolResult(
+            success=True,
+            data={"paper_id": paper_id, "status": "already_embedded"},
+            summary="该论文已有向量，跳过",
+        )
+    if not paper.title and not paper.abstract:
+        return ToolResult(
+            success=False,
+            summary="该论文缺少标题和摘要，无法向量化",
+        )
     PaperPipelines().embed_paper(pid)
     return ToolResult(
         success=True,
@@ -1025,80 +1028,125 @@ def _embed_paper(paper_id: str) -> ToolResult:
     )
 
 
-def _generate_wiki(type: str, keyword_or_id: str) -> ToolResult:
+def _generate_wiki(type: str, keyword_or_id: str):
+    """Wiki 生成 - generator，yield 进度和最终结果"""
+    import time
+
+    from packages.ai.task_manager import TaskManager
+
     if type == "topic":
-        # 先检查是否有相关论文
         with session_scope() as session:
             papers = PaperRepository(session).full_text_candidates(
                 query=keyword_or_id, limit=3
             )
             if not papers:
-                return ToolResult(
+                yield ToolResult(
                     success=False,
                     summary=(
                         f"知识库中没有与 '{keyword_or_id}' "
                         "相关的论文，请先导入"
                     ),
                 )
-        result = GraphService().topic_wiki(
-            keyword=keyword_or_id, limit=120
+                return
+
+        # 提交后台任务
+        tm = TaskManager()
+        gs = GraphService()
+        task_id = tm.submit(
+            task_type="topic_wiki",
+            title=f"Wiki: {keyword_or_id}",
+            fn=lambda progress_callback=None: gs.topic_wiki(
+                keyword=keyword_or_id, limit=120,
+                progress_callback=progress_callback,
+            ),
         )
+        yield ToolProgress(
+            message=f"已提交后台任务，正在为「{keyword_or_id}」生成 Wiki...",
+            current=1, total=10,
+        )
+
+        # 轮询进度
+        last_msg = ""
+        while True:
+            time.sleep(3)
+            status = tm.get_status(task_id)
+            if not status:
+                break
+            s = status["status"]
+            if s == "completed":
+                break
+            if s == "failed":
+                yield ToolResult(
+                    success=False,
+                    summary=f"Wiki 生成失败: {status.get('error', '未知错误')}",
+                )
+                return
+            msg = status.get("message", "")
+            pct = status.get("progress", 0)
+            step = max(1, min(9, int(pct * 10)))
+            if msg and msg != last_msg:
+                yield ToolProgress(message=msg, current=step, total=10)
+                last_msg = msg
+
+        result = tm.get_result(task_id) or {}
+        result["title"] = f"Wiki: {keyword_or_id}"
+        yield ToolProgress(message="Wiki 生成完毕", current=10, total=10)
     elif type == "paper":
         try:
             pid = UUID(keyword_or_id)
         except ValueError:
-            return ToolResult(
-                success=False,
-                summary="无效的 paper_id 格式",
-            )
+            yield ToolResult(success=False, summary="无效的 paper_id 格式")
+            return
         with session_scope() as session:
             try:
-                PaperRepository(session).get_by_id(pid)
+                paper = PaperRepository(session).get_by_id(pid)
+                paper_title = paper.title
             except ValueError:
-                return ToolResult(
-                    success=False,
-                    summary=f"论文 {keyword_or_id[:8]}... 不存在",
-                )
+                yield ToolResult(success=False, summary=f"论文 {keyword_or_id[:8]}... 不存在")
+                return
+        yield ToolProgress(message=f"正在为论文生成 Wiki...", current=1, total=2)
         result = GraphService().paper_wiki(paper_id=keyword_or_id)
+        result["title"] = f"Wiki: {paper_title[:40]}"
+        yield ToolProgress(message="Wiki 生成完毕，正在渲染...", current=2, total=2)
     else:
-        return ToolResult(
-            success=False,
-            summary=f"无效的 type: {type}，应为 topic 或 paper",
-        )
-    return ToolResult(
+        yield ToolResult(success=False, summary=f"无效的 type: {type}，应为 topic 或 paper")
+        return
+    yield ToolResult(
         success=True,
         data=result,
         summary=f"已生成 {type} wiki",
     )
 
 
-def _generate_daily_brief(recipient: str = "") -> ToolResult:
+def _generate_daily_brief(recipient: str = ""):
+    """简报生成 - generator，yield 进度和最终结果"""
     from datetime import UTC, datetime
 
     from packages.integrations.notifier import NotificationService
     from packages.storage.repositories import GeneratedContentRepository
 
+    yield ToolProgress(message="正在收集今日论文数据...", current=1, total=4)
     svc = DailyBriefService()
-    # 只调一次 build_html，避免重复生成
+
+    yield ToolProgress(message="正在生成简报内容...", current=2, total=4)
     html_content = svc.build_html()
     ts_label = datetime.now(UTC).strftime("%Y-%m-%d")
     ts_file = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
-    # 保存文件
+    yield ToolProgress(message="正在保存简报...", current=3, total=4)
     notifier = NotificationService()
     saved_path = notifier.save_brief_html(
         f"daily_brief_{ts_file}.html", html_content
     )
 
-    # 发送邮件（可选）
     email_sent = False
     clean_recipient = recipient.strip() if recipient else ""
     if clean_recipient:
+        yield ToolProgress(message="正在发送邮件...", current=4, total=4)
         email_sent = notifier.send_email_html(
             clean_recipient, "PaperMind Daily Brief", html_content
         )
 
-    # 持久化到数据库（带重试，避免 database locked）
     db_saved = False
     for attempt in range(3):
         try:
@@ -1119,13 +1167,13 @@ def _generate_daily_brief(recipient: str = "") -> ToolResult:
     if not db_saved:
         logger.error("简报保存到数据库最终失败，但文件已保存: %s", saved_path)
 
-    return ToolResult(
+    yield ToolResult(
         success=True,
         data={
             "saved_path": saved_path,
             "email_sent": email_sent,
             "html": html_content,
-            "title": f"Daily Brief: {ts_label}",
+            "title": f"研究简报: {ts_label}",
         },
         summary="简报已生成" + ("并发送" if email_sent else ""),
     )
@@ -1267,4 +1315,36 @@ def _analyze_figures(paper_id: str, max_figures: int = 10) -> ToolResult:
         success=True,
         data={"count": len(results), "figures": figures_data},
         summary=f"已解读「{title}」中的 {len(results)} 张图表",
+    )
+
+
+def _writing_assist(action: str, text: str) -> ToolResult:
+    """学术写作助手"""
+    from packages.ai.writing_service import WritingService, TEMPLATE_MAP, WritingAction
+
+    try:
+        wa = WritingAction(action)
+    except ValueError:
+        return ToolResult(success=False, summary=f"未知的写作操作: {action}")
+
+    template = TEMPLATE_MAP.get(wa)
+    label = template.label if template else action
+
+    try:
+        result = WritingService().process(action, text)
+    except Exception as exc:
+        logger.exception("Writing assist failed: %s", exc)
+        return ToolResult(success=False, summary=f"写作助手执行失败: {exc!s}")
+
+    content = result.get("content", "")
+    return ToolResult(
+        success=True,
+        data={
+            "action": action,
+            "label": label,
+            "content": content,
+            "input_tokens": result.get("input_tokens"),
+            "output_tokens": result.get("output_tokens"),
+        },
+        summary=f"「{label}」处理完成:\n\n{content[:2000]}",
     )

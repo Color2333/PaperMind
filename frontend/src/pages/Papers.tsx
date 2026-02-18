@@ -2,10 +2,12 @@
  * Papers - 论文库（分页 + 文件夹/日期分类导航）
  * @author Bamzc
  */
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Badge, Empty, Spinner, Modal, Input } from "@/components/ui";
-import { paperApi, ingestApi, topicApi, pipelineApi, type FolderStats } from "@/services/api";
+import { PaperListSkeleton } from "@/components/Skeleton";
+import { useToast } from "@/contexts/ToastContext";
+import { paperApi, ingestApi, topicApi, pipelineApi, actionApi, type FolderStats, type CollectionAction } from "@/services/api";
 import { formatDate, truncate } from "@/lib/utils";
 import type { Paper, Topic } from "@/types";
 import {
@@ -34,6 +36,8 @@ import {
   Calendar,
   ChevronsLeft,
   ChevronsRight,
+  Bot,
+  CalendarClock,
 } from "lucide-react";
 
 /* ========== 类型 ========== */
@@ -72,6 +76,7 @@ function formatDateLabel(dateStr: string): string {
 
 export default function Papers() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [papers, setPapers] = useState<Paper[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -79,6 +84,7 @@ export default function Papers() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState("");
+  const [batchPct, setBatchPct] = useState(0);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
 
   /* 分页 */
@@ -94,19 +100,52 @@ export default function Papers() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [dateSectionOpen, setDateSectionOpen] = useState(false);
 
-  /* 加载文件夹统计 */
+  /* 行动记录 */
+  const [actionsList, setActionsList] = useState<CollectionAction[]>([]);
+  const [actionSectionOpen, setActionSectionOpen] = useState(false);
+  const [activeActionId, setActiveActionId] = useState<string | undefined>();
+
+  /* 搜索防抖 */
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => {
+    clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setDebouncedSearch(searchTerm.trim());
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(searchTimerRef.current);
+  }, [searchTerm]);
+
+  /* 加载文件夹统计 + 行动记录 */
   const loadFolderStats = useCallback(async () => {
     setStatsLoading(true);
     try {
-      const stats = await paperApi.folderStats();
+      const [stats, actionsRes] = await Promise.all([
+        paperApi.folderStats(),
+        actionApi.list({ limit: 30 }).catch(() => ({ items: [] as CollectionAction[], total: 0 })),
+      ]);
       setFolderStats(stats);
-    } catch {} finally { setStatsLoading(false); }
-  }, []);
+      setActionsList(actionsRes.items);
+    } catch { toast("error", "加载文件夹统计失败"); } finally { setStatsLoading(false); }
+  }, [toast]);
 
   /* 加载论文列表 */
   const loadPapers = useCallback(async () => {
     setLoading(true);
     try {
+      // 按行动筛选走独立接口
+      if (activeActionId) {
+        const res = await actionApi.papers(activeActionId, 200);
+        setPapers(res.items.map((p) => ({ ...p, abstract: "", metadata: {} } as unknown as Paper)));
+        setTotal(res.items.length);
+        setTotalPages(1);
+        setSelected(new Set());
+        setLoading(false);
+        return;
+      }
+
       let folder: string | undefined;
       let topicId: string | undefined;
 
@@ -124,13 +163,14 @@ export default function Papers() {
         topicId,
         folder,
         date: activeDate,
+        search: debouncedSearch || undefined,
       });
       setPapers(res.items);
       setTotal(res.total);
       setTotalPages(res.total_pages);
       setSelected(new Set());
-    } catch {} finally { setLoading(false); }
-  }, [activeFolder, activeDate, page, pageSize]);
+    } catch { toast("error", "加载论文列表失败"); } finally { setLoading(false); }
+  }, [activeFolder, activeDate, activeActionId, page, pageSize, debouncedSearch, toast]);
 
   useEffect(() => { loadFolderStats(); }, [loadFolderStats]);
   useEffect(() => { loadPapers(); }, [loadPapers]);
@@ -169,18 +209,8 @@ export default function Papers() {
     }));
   }, [folderStats]);
 
-  /* 搜索过滤（前端补充过滤，分页已在后端完成） */
-  const filtered = useMemo(() => papers.filter((p) => {
-    const term = searchTerm.toLowerCase();
-    if (!term) return true;
-    return (
-      p.title.toLowerCase().includes(term) ||
-      p.arxiv_id?.toLowerCase().includes(term) ||
-      p.title_zh?.toLowerCase().includes(term) ||
-      p.keywords?.some((kw) => kw.toLowerCase().includes(term)) ||
-      p.topics?.some((t) => t.toLowerCase().includes(term))
-    );
-  }), [papers, searchTerm]);
+  /* 搜索由后端处理，前端直接使用 papers */
+  const filtered = papers;
 
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -191,33 +221,58 @@ export default function Papers() {
 
   const handleToggleFavorite = useCallback(async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
+    /* 乐观更新 */
+    setPapers((prev) => prev.map((p) => (p.id === id ? { ...p, favorited: !p.favorited } : p)));
     try {
       const res = await paperApi.toggleFavorite(id);
       setPapers((prev) => prev.map((p) => (p.id === res.id ? { ...p, favorited: res.favorited } : p)));
       loadFolderStats();
-    } catch {}
-  }, [loadFolderStats]);
+    } catch {
+      toast("error", "收藏操作失败");
+      setPapers((prev) => prev.map((p) => (p.id === id ? { ...p, favorited: !p.favorited } : p)));
+    }
+  }, [loadFolderStats, toast]);
 
   const handleBatchSkim = async () => {
     const ids = [...selected].filter((id) => { const p = papers.find((pp) => pp.id === id); return p && p.read_status === "unread"; });
-    if (!ids.length) { setBatchProgress("没有可粗读的未读论文"); return; }
-    setBatchRunning(true);
-    let done = 0;
-    for (const id of ids) { setBatchProgress(`粗读中 ${++done}/${ids.length}...`); try { await pipelineApi.skim(id); } catch {} }
-    setBatchProgress(`完成 ${done} 篇`); setBatchRunning(false); await loadPapers();
+    if (!ids.length) { setBatchProgress("没有可粗读的未读论文"); setBatchPct(0); return; }
+    setBatchRunning(true); setBatchPct(0);
+    let done = 0, failed = 0;
+    for (const id of ids) {
+      done++;
+      setBatchProgress(`粗读中 ${done}/${ids.length}`);
+      setBatchPct(Math.round((done / ids.length) * 100));
+      try { await pipelineApi.skim(id); } catch { failed++; }
+    }
+    setBatchProgress(failed > 0 ? `完成 ${done - failed} 篇，${failed} 篇失败` : `完成 ${done} 篇`);
+    setBatchPct(100);
+    if (failed > 0) toast("warning", `${failed} 篇粗读失败`);
+    else toast("success", `粗读完成 ${done} 篇`);
+    setBatchRunning(false); await loadPapers();
   };
+
   const handleBatchEmbed = async () => {
     const ids = [...selected].filter((id) => { const p = papers.find((pp) => pp.id === id); return p && !p.has_embedding; });
-    if (!ids.length) { setBatchProgress("已全部嵌入"); return; }
-    setBatchRunning(true);
-    let done = 0;
-    for (const id of ids) { setBatchProgress(`嵌入中 ${++done}/${ids.length}...`); try { await pipelineApi.embed(id); } catch {} }
-    setBatchProgress(`完成 ${done} 篇`); setBatchRunning(false); await loadPapers();
+    if (!ids.length) { setBatchProgress("已全部嵌入"); setBatchPct(0); return; }
+    setBatchRunning(true); setBatchPct(0);
+    let done = 0, failed = 0;
+    for (const id of ids) {
+      done++;
+      setBatchProgress(`嵌入中 ${done}/${ids.length}`);
+      setBatchPct(Math.round((done / ids.length) * 100));
+      try { await pipelineApi.embed(id); } catch { failed++; }
+    }
+    setBatchProgress(failed > 0 ? `完成 ${done - failed} 篇，${failed} 篇失败` : `完成 ${done} 篇`);
+    setBatchPct(100);
+    if (failed > 0) toast("warning", `${failed} 篇嵌入失败`);
+    else toast("success", `嵌入完成 ${done} 篇`);
+    setBatchRunning(false); await loadPapers();
   };
 
   const handleFolderClick = useCallback((folderId: string) => {
     setActiveFolder(folderId);
     setActiveDate(undefined);
+    setActiveActionId(undefined);
     setSearchTerm("");
     setPage(1);
   }, []);
@@ -225,6 +280,7 @@ export default function Papers() {
   const handleDateClick = useCallback((dateStr: string) => {
     setActiveFolder("date:" + dateStr);
     setActiveDate(dateStr);
+    setActiveActionId(undefined);
     setSearchTerm("");
     setPage(1);
   }, []);
@@ -250,7 +306,7 @@ export default function Papers() {
         {/* 标题 */}
         <div className="flex items-center justify-between p-4 pb-2">
           <h2 className="text-sm font-semibold text-ink">文件夹</h2>
-          <button onClick={refresh} className="rounded-lg p-1 text-ink-tertiary transition-colors hover:bg-hover hover:text-ink" title="刷新">
+          <button aria-label="刷新" onClick={refresh} className="rounded-lg p-1 text-ink-tertiary transition-colors hover:bg-hover hover:text-ink" title="刷新">
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -347,6 +403,53 @@ export default function Papers() {
                   )}
                 </>
               )}
+
+              {/* ========== 行动记录 ========== */}
+              {actionsList.length > 0 && (
+                <>
+                  <div className="my-2 border-t border-border-light" />
+                  <button
+                    onClick={() => setActionSectionOpen(!actionSectionOpen)}
+                    className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
+                  >
+                    <Download className="h-3.5 w-3.5 text-ink-tertiary" />
+                    <span className="flex-1 text-[10px] font-medium uppercase tracking-widest text-ink-tertiary">
+                      收集记录
+                    </span>
+                    <ChevronRight className={`h-3 w-3 text-ink-tertiary transition-transform ${actionSectionOpen ? "rotate-90" : ""}`} />
+                  </button>
+                  {actionSectionOpen && (
+                    <div className="space-y-0.5 pl-1">
+                      {actionsList.map((action) => {
+                        const isActive = activeActionId === action.id;
+                        return (
+                          <button
+                            key={action.id}
+                            onClick={() => {
+                              setActiveActionId(isActive ? undefined : action.id);
+                              if (!isActive) { setActiveFolder("all"); setActiveDate(undefined); }
+                              setPage(1);
+                            }}
+                            className={`group flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left text-[13px] transition-all ${
+                              isActive
+                                ? "bg-primary/10 font-medium text-primary"
+                                : "text-ink-secondary hover:bg-hover hover:text-ink"
+                            }`}
+                          >
+                            <ActionBadge type={action.action_type} />
+                            <span className="min-w-0 flex-1 truncate">{action.title}</span>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                              isActive ? "bg-primary/15 text-primary" : "bg-page text-ink-tertiary"
+                            }`}>
+                              {action.paper_count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </nav>
@@ -378,12 +481,14 @@ export default function Papers() {
             {/* 视图切换 */}
             <div className="flex rounded-lg border border-border bg-surface p-0.5">
               <button
+                aria-label="列表视图"
                 onClick={() => setViewMode("list")}
                 className={`rounded-md p-1.5 transition-colors ${viewMode === "list" ? "bg-primary/10 text-primary" : "text-ink-tertiary hover:text-ink"}`}
               >
                 <LayoutList className="h-3.5 w-3.5" />
               </button>
               <button
+                aria-label="网格视图"
                 onClick={() => setViewMode("grid")}
                 className={`rounded-md p-1.5 transition-colors ${viewMode === "grid" ? "bg-primary/10 text-primary" : "text-ink-tertiary hover:text-ink"}`}
               >
@@ -415,7 +520,16 @@ export default function Papers() {
               <Button size="sm" variant="secondary" onClick={handleBatchSkim} disabled={batchRunning} icon={<Zap className="h-3 w-3" />}>粗读</Button>
               <Button size="sm" variant="secondary" onClick={handleBatchEmbed} disabled={batchRunning} icon={<Cpu className="h-3 w-3" />}>嵌入</Button>
               <button onClick={() => setSelected(new Set())} className="text-[10px] text-ink-tertiary hover:text-ink">取消</button>
-              {batchProgress && <span className="text-[10px] text-ink-secondary">{batchProgress}</span>}
+              {batchProgress && (
+                <div className="flex items-center gap-2">
+                  {batchRunning && (
+                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-border">
+                      <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${batchPct}%` }} />
+                    </div>
+                  )}
+                  <span className="text-[10px] text-ink-secondary">{batchProgress}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -423,8 +537,8 @@ export default function Papers() {
         {/* 论文列表 */}
         <div className="flex-1 overflow-y-auto">
           {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Spinner text="加载论文..." />
+            <div className="p-4">
+              <PaperListSkeleton />
             </div>
           ) : filtered.length === 0 ? (
             <div className="flex items-center justify-center py-16">
@@ -487,6 +601,7 @@ export default function Papers() {
             </span>
             <div className="flex items-center gap-1">
               <button
+                aria-label="首页"
                 onClick={() => goPage(1)}
                 disabled={page <= 1}
                 className="rounded-lg p-1.5 text-ink-secondary transition-colors hover:bg-hover disabled:opacity-30"
@@ -495,6 +610,7 @@ export default function Papers() {
                 <ChevronsLeft className="h-4 w-4" />
               </button>
               <button
+                aria-label="上一页"
                 onClick={() => goPage(page - 1)}
                 disabled={page <= 1}
                 className="rounded-lg p-1.5 text-ink-secondary transition-colors hover:bg-hover disabled:opacity-30"
@@ -505,36 +621,38 @@ export default function Papers() {
 
               {/* 页码按钮 */}
               {(() => {
-                const pages: number[] = [];
+                const items: (number | "dots")[] = [];
                 const start = Math.max(1, page - 2);
                 const end = Math.min(totalPages, page + 2);
-                for (let i = start; i <= end; i++) pages.push(i);
-                if (start > 1) pages.unshift(-1);
-                if (end < totalPages) pages.push(-2);
-                if (start > 2) pages.unshift(1);
-                if (end < totalPages - 1) pages.push(totalPages);
 
-                return pages.map((p, idx) => {
-                  if (p < 0) {
+                if (start > 1) items.push(1);
+                if (start > 2) items.push("dots");
+                for (let i = start; i <= end; i++) items.push(i);
+                if (end < totalPages - 1) items.push("dots");
+                if (end < totalPages) items.push(totalPages);
+
+                return items.map((item, idx) => {
+                  if (item === "dots") {
                     return <span key={`dots-${idx}`} className="px-1 text-xs text-ink-tertiary">...</span>;
                   }
                   return (
                     <button
-                      key={p}
-                      onClick={() => goPage(p)}
+                      key={item}
+                      onClick={() => goPage(item)}
                       className={`min-w-[2rem] rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
-                        p === page
+                        item === page
                           ? "bg-primary text-white"
                           : "text-ink-secondary hover:bg-hover"
                       }`}
                     >
-                      {p}
+                      {item}
                     </button>
                   );
                 });
               })()}
 
               <button
+                aria-label="下一页"
                 onClick={() => goPage(page + 1)}
                 disabled={page >= totalPages}
                 className="rounded-lg p-1.5 text-ink-secondary transition-colors hover:bg-hover disabled:opacity-30"
@@ -543,6 +661,7 @@ export default function Papers() {
                 <ChevronRight className="h-4 w-4" />
               </button>
               <button
+                aria-label="末页"
                 onClick={() => goPage(totalPages)}
                 disabled={page >= totalPages}
                 className="rounded-lg p-1.5 text-ink-secondary transition-colors hover:bg-hover disabled:opacity-30"
@@ -561,7 +680,7 @@ export default function Papers() {
 }
 
 /* ========== 论文卡片：列表模式 ========== */
-function PaperListItem({ paper, selected, onSelect, onFavorite, onClick }: {
+const PaperListItem = memo(function PaperListItem({ paper, selected, onSelect, onFavorite, onClick }: {
   paper: Paper;
   selected: boolean;
   onSelect: () => void;
@@ -631,16 +750,16 @@ function PaperListItem({ paper, selected, onSelect, onFavorite, onClick }: {
           </div>
           <ChevronRight className="mt-2 h-3.5 w-3.5 shrink-0 text-ink-tertiary opacity-0 transition-opacity group-hover:opacity-100" />
         </button>
-        <button onClick={onFavorite} className="mt-0.5 shrink-0 rounded-lg p-1 transition-colors hover:bg-error/10">
+        <button aria-label={paper.favorited ? "取消收藏" : "收藏"} onClick={onFavorite} className="mt-0.5 shrink-0 rounded-lg p-1 transition-colors hover:bg-error/10">
           <Heart className={`h-3.5 w-3.5 ${paper.favorited ? "fill-red-500 text-red-500" : "text-ink-tertiary"}`} />
         </button>
       </div>
     </div>
   );
-}
+});
 
 /* ========== 论文卡片：网格模式 ========== */
-function PaperGridItem({ paper, onFavorite, onClick }: {
+const PaperGridItem = memo(function PaperGridItem({ paper, onFavorite, onClick }: {
   paper: Paper;
   onFavorite: (e: React.MouseEvent) => void;
   onClick: () => void;
@@ -653,7 +772,7 @@ function PaperGridItem({ paper, onFavorite, onClick }: {
     >
       <div className="mb-2 flex items-center justify-between">
         <Badge variant={sc.variant}>{sc.label}</Badge>
-        <button onClick={onFavorite} className="rounded-lg p-1 transition-colors hover:bg-error/10">
+        <button aria-label={paper.favorited ? "取消收藏" : "收藏"} onClick={onFavorite} className="rounded-lg p-1 transition-colors hover:bg-error/10">
           <Heart className={`h-3.5 w-3.5 ${paper.favorited ? "fill-red-500 text-red-500" : "text-ink-tertiary"}`} />
         </button>
       </div>
@@ -677,7 +796,7 @@ function PaperGridItem({ paper, onFavorite, onClick }: {
       </div>
     </button>
   );
-}
+});
 
 /* ========== 摄入弹窗 ========== */
 function IngestModal({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
@@ -688,9 +807,10 @@ function IngestModal({ open, onClose, onDone }: { open: boolean; onClose: () => 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<number | null>(null);
 
+  const { toast } = useToast();
   useEffect(() => {
-    if (open) { topicApi.list().then((r) => setTopics(r.items)).catch(() => {}); setResult(null); }
-  }, [open]);
+    if (open) { topicApi.list().then((r) => setTopics(r.items)).catch(() => { toast("error", "加载主题列表失败"); }); setResult(null); }
+  }, [open, toast]);
 
   const handleIngest = async () => {
     if (!query.trim()) return;
@@ -728,4 +848,15 @@ function IngestModal({ open, onClose, onDone }: { open: boolean; onClose: () => 
       </div>
     </Modal>
   );
+}
+
+function ActionBadge({ type }: { type: string }) {
+  const cls = "h-3 w-3 shrink-0";
+  switch (type) {
+    case "agent_collect": return <Bot className={`${cls} text-info`} />;
+    case "auto_collect": return <CalendarClock className={`${cls} text-success`} />;
+    case "manual_collect": return <Download className={`${cls} text-primary`} />;
+    case "subscription_ingest": return <Tag className={`${cls} text-warning`} />;
+    default: return <FileText className={`${cls} text-ink-tertiary`} />;
+  }
 }

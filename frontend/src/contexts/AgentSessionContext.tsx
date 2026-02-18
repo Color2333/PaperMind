@@ -77,6 +77,18 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
 
+  /* ---- SSE 流取消控制 ---- */
+  const abortRef = useRef<AbortController | null>(null);
+
+  const cancelStream = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelStream, [cancelStream]);
+
   /* ---- 流式文本缓冲（RAF 方式，减少 setItems 调用） ---- */
   const streamBufRef = useRef("");
   const rafIdRef = useRef<number | null>(null);
@@ -385,7 +397,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
    * 启动 SSE 流并处理完成回调
    */
   const startStream = useCallback(
-    (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+    (reader: ReadableStreamDefaultReader<Uint8Array>, signal?: AbortSignal) => {
       parseSSEStream(reader, processSSE, () => {
         const pending = drainBuffer();
         if (pending) {
@@ -399,6 +411,13 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         }
         setLoading(false);
       });
+
+      if (signal) {
+        signal.addEventListener("abort", () => {
+          reader.cancel().catch(() => {});
+          setLoading(false);
+        });
+      }
     },
     [processSSE, drainBuffer],
   );
@@ -407,6 +426,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const sendMessage = useCallback(
     async (text: string) => {
       if (!text.trim() || loading || pendingActions.size > 0) return;
+      cancelStream();
       if (!activeIdRef.current) {
         justCreatedRef.current = true;
         createConversation();
@@ -418,19 +438,21 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         { role: "user" as const, content: text.trim() },
       ];
       try {
+        const ac = new AbortController();
+        abortRef.current = ac;
         const resp = await agentApi.chat(msgs);
         if (!resp.body) {
           setItems((p) => [...p, { id: `e_${Date.now()}`, type: "error" as const, content: "无响应流", timestamp: new Date() }]);
           setLoading(false);
           return;
         }
-        startStream(resp.body.getReader());
+        startStream(resp.body.getReader(), ac.signal);
       } catch (err) {
         setItems((p) => [...p, { id: `e_${Date.now()}`, type: "error" as const, content: err instanceof Error ? err.message : "请求失败", timestamp: new Date() }]);
         setLoading(false);
       }
     },
-    [items, loading, pendingActions, createConversation, startStream],
+    [items, loading, pendingActions, cancelStream, createConversation, startStream],
   );
 
   /* ---- 确认/拒绝操作 ---- */
@@ -458,8 +480,14 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       setLoading(true);
       try {
         const resp = await agentApi.reject(actionId);
-        if (resp.body) startStream(resp.body.getReader());
-      } catch { setLoading(false); }
+        if (resp.body) {
+          startStream(resp.body.getReader());
+        } else {
+          setLoading(false);
+        }
+      } catch {
+        setLoading(false);
+      }
     },
     [startStream],
   );

@@ -71,6 +71,34 @@ class ArxivClient:
                 continue
         raise last_exc or RuntimeError("ArXiv fetch failed")
 
+    def fetch_by_ids(self, arxiv_ids: list[str]) -> list[PaperCreate]:
+        """按 arXiv ID 列表批量获取论文元数据"""
+        if not arxiv_ids:
+            return []
+        clean_ids = [aid.split("v")[0] if "v" in aid else aid for aid in arxiv_ids]
+        id_list = ",".join(clean_ids)
+        params = {"id_list": id_list, "max_results": len(clean_ids)}
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=60, follow_redirects=True) as client:
+                    resp = client.get(ARXIV_API_URL, params=params)
+                    resp.raise_for_status()
+                return self._parse_atom(resp.text)
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code == 429:
+                    wait = 3 * (attempt + 1)
+                    logger.warning("ArXiv 429 限流，等待 %ds 重试...", wait)
+                    time.sleep(wait)
+                    continue
+                raise
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                logger.warning("ArXiv 请求超时 (attempt %d)", attempt + 1)
+                time.sleep(2)
+        raise last_exc or RuntimeError("ArXiv fetch_by_ids failed")
+
     def download_pdf(self, arxiv_id: str) -> str:
         url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         target = self.settings.pdf_storage_root / f"{arxiv_id}.pdf"

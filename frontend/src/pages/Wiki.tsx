@@ -4,7 +4,8 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardHeader, Button, Tabs, Spinner, Empty } from "@/components/ui";
-import { wikiApi, generatedApi } from "@/services/api";
+import { wikiApi, generatedApi, tasksApi } from "@/services/api";
+import type { TaskStatus } from "@/services/api";
 import type {
   PaperWiki,
   TopicWiki,
@@ -53,6 +54,11 @@ export default function Wiki() {
   const [paperWiki, setPaperWiki] = useState<PaperWiki | null>(null);
   const [loading, setLoading] = useState(false);
 
+  /* 后台任务状态 */
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [taskProgress, setTaskProgress] = useState(0);
+  const [taskMessage, setTaskMessage] = useState("");
+
   /* 历史记录 */
   const [history, setHistory] = useState<GeneratedContentListItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -72,14 +78,48 @@ export default function Wiki() {
 
   useEffect(() => { loadHistory(contentType); }, [contentType, loadHistory]);
 
+  const pollTask = useCallback(async (tid: string) => {
+    const poll = async (): Promise<void> => {
+      try {
+        const status: TaskStatus = await tasksApi.getStatus(tid);
+        setTaskProgress(status.progress);
+        setTaskMessage(status.message || "处理中...");
+
+        if (status.status === "completed") {
+          const result = await tasksApi.getResult(tid);
+          setTopicWiki(result as unknown as TopicWiki);
+          setPaperWiki(null);
+          setLoading(false);
+          setTaskId(null);
+          loadHistory(contentType);
+          return;
+        }
+        if (status.status === "failed") {
+          setLoading(false);
+          setTaskId(null);
+          return;
+        }
+        setTimeout(poll, 2000);
+      } catch {
+        setTimeout(poll, 5000);
+      }
+    };
+    poll();
+  }, [contentType, loadHistory]);
+
   const handleQuery = async () => {
     setLoading(true);
     setSelectedContent(null);
+    setTaskProgress(0);
+    setTaskMessage("");
     try {
       if (activeTab === "topic" && keyword.trim()) {
-        const res = await wikiApi.topic(keyword);
-        setTopicWiki(res);
-        setPaperWiki(null);
+        // 后台任务模式
+        const { task_id } = await tasksApi.startTopicWiki(keyword);
+        setTaskId(task_id);
+        setTaskMessage("任务已提交，正在初始化...");
+        pollTask(task_id);
+        return;
       } else if (activeTab === "paper" && paperId.trim()) {
         const res = await wikiApi.paper(paperId);
         setPaperWiki(res);
@@ -87,7 +127,9 @@ export default function Wiki() {
       }
       loadHistory(contentType);
     } catch { /* */ }
-    finally { setLoading(false); }
+    finally {
+      if (activeTab !== "topic") setLoading(false);
+    }
   };
 
   const handleViewHistory = async (item: GeneratedContentListItem) => {
@@ -177,18 +219,43 @@ export default function Wiki() {
         </div>
       </div>
 
-      {/* 生成中 */}
+      {/* 生成中 — 深度研究风格进度面板 */}
       {loading && (
-        <div className="flex flex-col items-center gap-4 py-16">
-          <div className="relative">
-            <div className="h-16 w-16 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
-            <BookOpen className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 text-primary" />
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-medium text-ink">正在生成 Wiki...</p>
-            <p className="mt-1 text-xs text-ink-tertiary">
-              正在收集论文数据、分析引用图谱、调用 AI 撰写文章
-            </p>
+        <div className="mx-auto max-w-lg py-16">
+          <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="relative">
+                <div className="h-12 w-12 animate-spin rounded-full border-[3px] border-primary/20 border-t-primary" />
+                <BookOpen className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-ink">
+                  {taskId ? "深度研究中..." : "正在生成..."}
+                </p>
+                <p className="text-xs text-ink-tertiary">
+                  {taskMessage || "收集论文数据、分析引用图谱、AI 撰写文章"}
+                </p>
+              </div>
+            </div>
+
+            {/* 进度条 */}
+            {taskId && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-ink-secondary">
+                  <span>{taskMessage}</span>
+                  <span className="tabular-nums">{Math.round(taskProgress * 100)}%</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-primary/10">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-primary to-primary/70 transition-all duration-700 ease-out"
+                    style={{ width: `${Math.max(2, taskProgress * 100)}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-ink-tertiary">
+                  任务在后台运行，可以切换页面稍后回来查看
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

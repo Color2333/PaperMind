@@ -11,11 +11,13 @@ from uuid import UUID
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from packages.domain.enums import PipelineStatus, ReadStatus
+from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
 from packages.domain.schemas import DeepDiveReport, PaperCreate, SkimReport
 from packages.storage.models import (
+    ActionPaper,
     AnalysisReport,
     Citation,
+    CollectionAction,
     GeneratedContent,
     LLMProviderConfig,
     Paper,
@@ -229,47 +231,53 @@ class PaperRepository:
         topic_id: str | None = None,
         status: str | None = None,
         date_str: str | None = None,
+        search: str | None = None,
     ) -> tuple[list[Paper], int]:
         """分页查询论文，返回 (papers, total_count)"""
-        base_q = select(Paper)
-        count_q = select(func.count()).select_from(Paper)
+        filters = []
+        need_join_topic = False
 
-        # 筛选条件
+        if search:
+            like_pat = f"%{search}%"
+            filters.append(
+                Paper.title.ilike(like_pat)
+                | Paper.abstract.ilike(like_pat)
+                | Paper.arxiv_id.ilike(like_pat)
+            )
+
         if folder == "favorites":
-            base_q = base_q.where(Paper.favorited == True)  # noqa: E712
-            count_q = count_q.where(Paper.favorited == True)  # noqa: E712
+            filters.append(Paper.favorited == True)  # noqa: E712
         elif folder == "recent":
             since = datetime.now(UTC) - timedelta(days=7)
-            base_q = base_q.where(Paper.created_at >= since)
-            count_q = count_q.where(Paper.created_at >= since)
+            filters.append(Paper.created_at >= since)
         elif folder == "unclassified":
             subq = select(PaperTopic.paper_id).distinct()
-            base_q = base_q.where(Paper.id.notin_(subq))
-            count_q = count_q.where(Paper.id.notin_(subq))
+            filters.append(Paper.id.notin_(subq))
         elif topic_id:
-            base_q = base_q.join(PaperTopic, Paper.id == PaperTopic.paper_id).where(
-                PaperTopic.topic_id == topic_id
-            )
-            count_q = (
-                select(func.count())
-                .select_from(Paper)
-                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
-                .where(PaperTopic.topic_id == topic_id)
-            )
+            need_join_topic = True
+            filters.append(PaperTopic.topic_id == topic_id)
 
         if status and status in ("unread", "skimmed", "deep_read"):
-            base_q = base_q.where(Paper.read_status == ReadStatus(status))
-            count_q = count_q.where(Paper.read_status == ReadStatus(status))
+            filters.append(Paper.read_status == ReadStatus(status))
 
         if date_str:
             try:
                 d = date.fromisoformat(date_str)
                 day_start = datetime(d.year, d.month, d.day, tzinfo=UTC)
                 day_end = day_start + timedelta(days=1)
-                base_q = base_q.where(Paper.created_at >= day_start, Paper.created_at < day_end)
-                count_q = count_q.where(Paper.created_at >= day_start, Paper.created_at < day_end)
+                filters.append(Paper.created_at >= day_start)
+                filters.append(Paper.created_at < day_end)
             except ValueError:
                 pass
+
+        base_q = select(Paper)
+        count_q = select(func.count()).select_from(Paper)
+        if need_join_topic:
+            base_q = base_q.join(PaperTopic, Paper.id == PaperTopic.paper_id)
+            count_q = count_q.join(PaperTopic, Paper.id == PaperTopic.paper_id)
+        for f in filters:
+            base_q = base_q.where(f)
+            count_q = count_q.where(f)
 
         total = self.session.execute(count_q).scalar() or 0
         offset = (max(1, page) - 1) * page_size
@@ -621,9 +629,9 @@ class PromptTraceRepository:
             select(
                 PromptTrace.stage,
                 func.count(PromptTrace.id),
-                func.coalesce(
-                    func.sum(PromptTrace.total_cost_usd), 0.0
-                ),
+                func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
+                func.coalesce(func.sum(PromptTrace.input_tokens), 0),
+                func.coalesce(func.sum(PromptTrace.output_tokens), 0),
             )
             .where(PromptTrace.created_at >= since)
             .group_by(PromptTrace.stage)
@@ -633,9 +641,9 @@ class PromptTraceRepository:
                 PromptTrace.provider,
                 PromptTrace.model,
                 func.count(PromptTrace.id),
-                func.coalesce(
-                    func.sum(PromptTrace.total_cost_usd), 0.0
-                ),
+                func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
+                func.coalesce(func.sum(PromptTrace.input_tokens), 0),
+                func.coalesce(func.sum(PromptTrace.output_tokens), 0),
             )
             .where(PromptTrace.created_at >= since)
             .group_by(PromptTrace.provider, PromptTrace.model)
@@ -646,8 +654,10 @@ class PromptTraceRepository:
                 "stage": stage,
                 "calls": calls,
                 "total_cost_usd": float(cost),
+                "input_tokens": int(in_t or 0),
+                "output_tokens": int(out_t or 0),
             }
-            for stage, calls, cost in self.session.execute(
+            for stage, calls, cost, in_t, out_t in self.session.execute(
                 by_stage_q
             ).all()
         ]
@@ -657,8 +667,10 @@ class PromptTraceRepository:
                 "model": mdl,
                 "calls": calls,
                 "total_cost_usd": float(cost),
+                "input_tokens": int(in_t or 0),
+                "output_tokens": int(out_t or 0),
             }
-            for prov, mdl, calls, cost in self.session.execute(
+            for prov, mdl, calls, cost, in_t, out_t in self.session.execute(
                 by_model_q
             ).all()
         ]
@@ -1003,3 +1015,86 @@ class GeneratedContentRepository:
         gc = self.session.get(GeneratedContent, content_id)
         if gc is not None:
             self.session.delete(gc)
+
+
+class ActionRepository:
+    """论文入库行动记录的数据仓储"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def create_action(
+        self,
+        action_type: ActionType,
+        title: str,
+        paper_ids: list[str],
+        query: str | None = None,
+        topic_id: str | None = None,
+    ) -> CollectionAction:
+        """创建一条行动记录并关联论文"""
+        action = CollectionAction(
+            action_type=action_type,
+            title=title,
+            query=query,
+            topic_id=topic_id,
+            paper_count=len(paper_ids),
+        )
+        self.session.add(action)
+        self.session.flush()
+
+        for pid in paper_ids:
+            self.session.add(ActionPaper(
+                action_id=action.id,
+                paper_id=pid,
+            ))
+        self.session.flush()
+        return action
+
+    def list_actions(
+        self,
+        action_type: str | None = None,
+        topic_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[CollectionAction], int]:
+        """分页列出行动记录"""
+        base = select(CollectionAction)
+        count_q = select(func.count()).select_from(CollectionAction)
+
+        if action_type:
+            base = base.where(CollectionAction.action_type == action_type)
+            count_q = count_q.where(CollectionAction.action_type == action_type)
+        if topic_id:
+            base = base.where(CollectionAction.topic_id == topic_id)
+            count_q = count_q.where(CollectionAction.topic_id == topic_id)
+
+        total = self.session.execute(count_q).scalar() or 0
+        rows = self.session.execute(
+            base.order_by(CollectionAction.created_at.desc())
+            .limit(limit).offset(offset)
+        ).scalars().all()
+        return list(rows), total
+
+    def get_action(self, action_id: str) -> CollectionAction | None:
+        return self.session.get(CollectionAction, action_id)
+
+    def get_paper_ids_by_action(self, action_id: str) -> list[str]:
+        """获取某次行动关联的所有论文 ID"""
+        rows = self.session.execute(
+            select(ActionPaper.paper_id)
+            .where(ActionPaper.action_id == action_id)
+        ).scalars().all()
+        return list(rows)
+
+    def get_papers_by_action(
+        self, action_id: str, limit: int = 200,
+    ) -> list[Paper]:
+        """获取某次行动关联的论文列表"""
+        rows = self.session.execute(
+            select(Paper)
+            .join(ActionPaper, Paper.id == ActionPaper.paper_id)
+            .where(ActionPaper.action_id == action_id)
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        ).scalars().all()
+        return list(rows)

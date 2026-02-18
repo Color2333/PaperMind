@@ -30,6 +30,10 @@ import {
   TrendingUp,
   Star,
   Hash,
+  Copy,
+  Check,
+  RotateCcw,
+  ArrowDown,
 } from "lucide-react";
 import { useAgentSession, type ChatItem, type StepItem } from "@/contexts/AgentSessionContext";
 import { todayApi, type TodaySummary } from "@/services/api";
@@ -104,11 +108,14 @@ export default function Agent() {
 
   /* ---- 滚动控制 ---- */
   const isAtBottomRef = useRef(true);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   const handleScroll = useCallback(() => {
     const el = scrollAreaRef.current;
     if (!el) return;
-    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    isAtBottomRef.current = atBottom;
+    setShowScrollBtn(!atBottom);
   }, []);
 
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -174,22 +181,33 @@ export default function Agent() {
     <div className="flex h-full">
       {/* 主对话区域 */}
       <div className={cn("flex flex-1 flex-col transition-all", canvas ? "mr-0" : "")}>
-        <div ref={scrollAreaRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+        <div ref={scrollAreaRef} onScroll={handleScroll} className="relative flex-1 overflow-y-auto">
           {items.length === 0 ? (
             <EmptyState onSelect={(p) => handleSend(p)} />
           ) : (
             <div className="mx-auto max-w-3xl px-4 py-6">
-              {items.map((item) => (
-                <ChatBlock
-                  key={item.id}
-                  item={item}
-                  isPending={item.actionId ? pendingActions.has(item.actionId) : false}
-                  isConfirming={item.actionId ? confirmingActions.has(item.actionId) : false}
-                  onConfirm={handleConfirmAction}
-                  onReject={handleReject}
-                  onOpenArtifact={(title, content, isHtml) => setCanvas({ title, markdown: content, isHtml })}
-                />
-              ))}
+              {items.map((item, idx) => {
+                const retryFn = item.type === "error" ? (() => {
+                  for (let i = idx - 1; i >= 0; i--) {
+                    if (items[i].type === "user") {
+                      handleSend(items[i].content);
+                      return;
+                    }
+                  }
+                }) : undefined;
+                return (
+                  <ChatBlock
+                    key={item.id}
+                    item={item}
+                    isPending={item.actionId ? pendingActions.has(item.actionId) : false}
+                    isConfirming={item.actionId ? confirmingActions.has(item.actionId) : false}
+                    onConfirm={handleConfirmAction}
+                    onReject={handleReject}
+                    onOpenArtifact={(title, content, isHtml) => setCanvas({ title, markdown: content, isHtml })}
+                    onRetry={retryFn}
+                  />
+                );
+              })}
               {loading && items[items.length - 1]?.type !== "action_confirm" && (
                 <div className="flex items-center gap-2 py-3 text-sm text-ink-tertiary">
                   <div className="flex gap-1">
@@ -201,6 +219,20 @@ export default function Agent() {
               )}
               <div ref={endRef} />
             </div>
+          )}
+
+          {/* 滚到底部按钮 */}
+          {showScrollBtn && items.length > 0 && (
+            <button
+              onClick={() => {
+                isAtBottomRef.current = true;
+                endRef.current?.scrollIntoView({ behavior: "smooth" });
+              }}
+              className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink-secondary shadow-lg transition-all hover:bg-hover hover:text-ink"
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+              回到底部
+            </button>
           )}
         </div>
 
@@ -265,6 +297,7 @@ export default function Agent() {
                 disabled={inputDisabled}
               />
               <button
+                aria-label="发送消息"
                 onClick={() => handleSend(input)}
                 disabled={!input.trim() || inputDisabled}
                 className={cn(
@@ -279,15 +312,15 @@ export default function Agent() {
         </div>
       </div>
 
-      {/* Canvas 侧面板 */}
+      {/* Canvas 面板 - 小屏全屏覆盖，大屏侧边 */}
       {canvas && (
-        <div className="flex h-full w-[480px] shrink-0 flex-col border-l border-border bg-surface">
+        <div className="fixed inset-0 z-50 flex flex-col bg-surface lg:static lg:inset-auto lg:z-auto lg:h-full lg:w-[480px] lg:shrink-0 lg:border-l lg:border-border">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
               <PanelRightOpen className="h-4 w-4 text-ink-tertiary" />
               <span className="text-sm font-medium text-ink">{canvas.title}</span>
             </div>
-            <button onClick={() => setCanvas(null)} className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-tertiary hover:bg-hover hover:text-ink">
+            <button aria-label="关闭面板" onClick={() => setCanvas(null)} className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-tertiary hover:bg-hover hover:text-ink">
               <X className="h-4 w-4" />
             </button>
           </div>
@@ -424,11 +457,12 @@ const EmptyState = memo(function EmptyState({ onSelect }: { onSelect: (p: string
 /* ========== 消息块 ========== */
 
 const ChatBlock = memo(function ChatBlock({
-  item, isPending, isConfirming, onConfirm, onReject, onOpenArtifact,
+  item, isPending, isConfirming, onConfirm, onReject, onOpenArtifact, onRetry,
 }: {
   item: ChatItem; isPending: boolean; isConfirming: boolean;
   onConfirm: (id: string) => void; onReject: (id: string) => void;
   onOpenArtifact: (title: string, content: string, isHtml?: boolean) => void;
+  onRetry?: () => void;
 }) {
   switch (item.type) {
     case "user": return <UserMessage content={item.content} />;
@@ -436,7 +470,7 @@ const ChatBlock = memo(function ChatBlock({
     case "step_group": return <StepGroupCard steps={item.steps || []} />;
     case "action_confirm": return <ActionConfirmCard actionId={item.actionId || ""} description={item.actionDescription || ""} tool={item.actionTool || ""} args={item.toolArgs} isPending={isPending} isConfirming={isConfirming} onConfirm={onConfirm} onReject={onReject} />;
     case "artifact": return <ArtifactCard title={item.artifactTitle || ""} content={item.artifactContent || ""} isHtml={item.artifactIsHtml} onOpen={() => onOpenArtifact(item.artifactTitle || "", item.artifactContent || "", item.artifactIsHtml)} />;
-    case "error": return <ErrorCard content={item.content} />;
+    case "error": return <ErrorCard content={item.content} onRetry={onRetry} />;
     default: return null;
   }
 });
@@ -464,17 +498,37 @@ const AssistantMessage = memo(function AssistantMessage({
   content: string;
   streaming: boolean;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [content]);
+
   return (
-    <div className="py-2">
+    <div className="group py-2">
       {streaming ? (
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
           {content}
           <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse rounded-full bg-primary" />
         </p>
       ) : (
-        <div className="prose-custom text-sm leading-relaxed text-ink">
-          <Markdown>{content}</Markdown>
-        </div>
+        <>
+          <div className="prose-custom text-sm leading-relaxed text-ink">
+            <Markdown>{content}</Markdown>
+          </div>
+          <div className="mt-1 flex opacity-0 transition-opacity group-hover:opacity-100">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-ink-tertiary transition-colors hover:bg-hover hover:text-ink-secondary"
+            >
+              {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
+              {copied ? "已复制" : "复制"}
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -647,12 +701,21 @@ const ActionConfirmCard = memo(function ActionConfirmCard({
   );
 });
 
-const ErrorCard = memo(function ErrorCard({ content }: { content: string }) {
+const ErrorCard = memo(function ErrorCard({ content, onRetry }: { content: string; onRetry?: () => void }) {
   return (
     <div className="py-2">
       <div className="flex items-start gap-2 rounded-xl border border-error/30 bg-error-light px-3.5 py-2.5">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-error" />
-        <p className="text-sm text-error">{content}</p>
+        <p className="flex-1 text-sm text-error">{content}</p>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-error transition-colors hover:bg-error/10"
+          >
+            <RotateCcw className="h-3 w-3" />
+            重试
+          </button>
+        )}
       </div>
     </div>
   );

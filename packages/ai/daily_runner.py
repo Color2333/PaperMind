@@ -10,7 +10,7 @@ from packages.ai.brief_service import DailyBriefService
 from packages.ai.graph_service import GraphService
 from packages.ai.pipelines import PaperPipelines
 from packages.config import get_settings
-from packages.domain.enums import ReadStatus
+from packages.domain.enums import ActionType, ReadStatus
 from packages.storage.db import session_scope
 from packages.storage.models import TopicSubscription
 from packages.storage.repositories import (
@@ -80,6 +80,7 @@ def run_topic_ingest(topic_id: str) -> dict:
                     query=topic.query,
                     max_results=topic.max_results_per_run,
                     topic_id=topic.id,
+                    action_type=ActionType.auto_collect,
                 )
                 last_error = None
                 break

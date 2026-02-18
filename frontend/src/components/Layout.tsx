@@ -17,12 +17,12 @@ export default function Layout() {
         <div className="min-h-screen bg-page">
           <Sidebar />
           {isFullscreen ? (
-            <main className="ml-[240px] flex h-screen flex-col">
+            <main className="flex h-screen flex-col lg:ml-[240px]">
               <Outlet />
             </main>
           ) : (
-            <main className="ml-[240px] min-h-screen">
-              <div className="mx-auto max-w-6xl px-8 py-8">
+            <main className="min-h-screen pt-14 lg:ml-[240px] lg:pt-0">
+              <div className="mx-auto max-w-6xl px-4 py-6 lg:px-8 lg:py-8">
                 <Outlet />
               </div>
             </main>

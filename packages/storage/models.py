@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
+    Integer,
     JSON,
     Boolean,
     Date,
@@ -19,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from packages.domain.enums import PipelineStatus, ReadStatus
+from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
 from packages.storage.db import Base
 
 
@@ -349,4 +350,58 @@ class GeneratedContent(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False
+    )
+
+
+class CollectionAction(Base):
+    """论文入库行动记录"""
+
+    __tablename__ = "collection_actions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    action_type: Mapped[ActionType] = mapped_column(
+        Enum(ActionType, name="action_type"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    query: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    topic_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("topic_subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    paper_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False
+    )
+
+
+class ActionPaper(Base):
+    """行动-论文关联表"""
+
+    __tablename__ = "action_papers"
+    __table_args__ = (
+        UniqueConstraint("action_id", "paper_id", name="uq_action_paper"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    action_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("collection_actions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    paper_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("papers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
