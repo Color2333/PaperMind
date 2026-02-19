@@ -38,14 +38,21 @@ class ArxivClient:
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    def fetch_latest(self, query: str, max_results: int = 20) -> list[PaperCreate]:
+    def fetch_latest(
+        self,
+        query: str,
+        max_results: int = 20,
+        sort_by: str = "submittedDate",
+        start: int = 0,
+    ) -> list[PaperCreate]:
+        """sort_by: submittedDate(最新) / relevance(相关性) / lastUpdatedDate"""
         structured_query = _build_arxiv_query(query)
-        logger.info("ArXiv search: %s → %s", query, structured_query)
+        logger.info("ArXiv search: %s → %s (sort=%s start=%d)", query, structured_query, sort_by, start)
         params = {
             "search_query": structured_query,
-            "sortBy": "submittedDate",
+            "sortBy": sort_by,
             "sortOrder": "descending",
-            "start": 0,
+            "start": start,
             "max_results": max_results,
         }
         # 自动重试（429 限流 + 网络抖动）

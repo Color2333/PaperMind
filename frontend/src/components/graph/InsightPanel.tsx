@@ -221,7 +221,7 @@ function CollapsibleSection({ title, icon, onRefresh, defaultOpen = false, child
   const handleRefresh = async () => {
     if (!onRefresh) return;
     setRefreshing(true);
-    try { await onRefresh(); } catch { /* ignore */ }
+    try { await onRefresh(); } catch { /* refresh failed silently */ }
     finally { setRefreshing(false); }
   };
 

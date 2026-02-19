@@ -1,0 +1,20 @@
+{
+  "identifier": "default",
+  "description": "PaperMind Desktop default capabilities",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "shell:allow-execute",
+    "shell:allow-spawn",
+    "shell:allow-open",
+    "shell:allow-stdin-write",
+    "shell:allow-kill",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "fs:default"
+  ]
+}

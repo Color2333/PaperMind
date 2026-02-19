@@ -47,3 +47,9 @@ frontend/package-lock.json
 
 # Egg info
 papermind.egg-info/
+
+# Tauri / Desktop build
+src-tauri/target/
+src-tauri/binaries/
+*.dmg
+*.app

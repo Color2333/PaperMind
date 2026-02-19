@@ -3,6 +3,7 @@
  * @author Bamzc
  */
 import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useToast } from "@/contexts/ToastContext";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -49,6 +50,7 @@ import {
   Link2,
   Calendar,
   AlertTriangle,
+  BookOpen,
 } from "lucide-react";
 
 type Tab = "llm" | "pipeline" | "ops";
@@ -136,6 +138,7 @@ const PROVIDER_PRESETS: Record<
 };
 
 function LLMTab() {
+  const { toast } = useToast();
   const [configs, setConfigs] = useState<LLMProviderConfig[]>([]);
   const [activeInfo, setActiveInfo] = useState<ActiveLLMConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,7 +155,7 @@ function LLMTab() {
       setConfigs(listRes.items);
       setActiveInfo(activeRes);
     } catch (err) {
-      console.error("load LLM config failed:", err);
+      toast("error", "加载 LLM 配置失败");
     } finally {
       setLoading(false);
     }
@@ -776,6 +779,29 @@ function OpsTab() {
     setResults((p) => ({ ...p, [k]: r }));
 
   const ops = [
+    {
+      key: "batchProcess",
+      label: "一键嵌入 & 粗读未读论文",
+      icon: BookOpen,
+      desc: "对所有未读论文执行向量嵌入 + AI 粗读（并行处理）",
+      action: async () => {
+        setL("batchProcess", true);
+        try {
+          const res = await jobApi.batchProcessUnread(50);
+          setR("batchProcess", {
+            success: res.failed === 0,
+            message: res.message,
+          });
+        } catch (err) {
+          setR("batchProcess", {
+            success: false,
+            message: err instanceof Error ? err.message : "失败",
+          });
+        } finally {
+          setL("batchProcess", false);
+        }
+      },
+    },
     {
       key: "syncIncremental",
       label: "增量引用同步",

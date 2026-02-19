@@ -97,7 +97,7 @@ function getToolMeta(name: string) {
 export default function Agent() {
   const {
     items, loading, pendingActions, confirmingActions, canvas,
-    hasPendingConfirm, setCanvas, sendMessage, handleConfirm, handleReject,
+    hasPendingConfirm, setCanvas, sendMessage, handleConfirm, handleReject, stopGeneration,
   } = useAgentSession();
 
   const [input, setInput] = useState("");
@@ -296,17 +296,27 @@ export default function Agent() {
                 rows={1}
                 disabled={inputDisabled}
               />
-              <button
-                aria-label="发送消息"
-                onClick={() => handleSend(input)}
-                disabled={!input.trim() || inputDisabled}
-                className={cn(
-                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all",
-                  input.trim() && !inputDisabled ? "bg-primary text-white shadow-sm hover:bg-primary-hover" : "bg-hover text-ink-tertiary",
-                )}
-              >
-                {loading ? <Square className="h-3.5 w-3.5" /> : <Send className="h-4 w-4" />}
-              </button>
+              {loading ? (
+                <button
+                  aria-label="停止生成"
+                  onClick={stopGeneration}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-error/90 text-white shadow-sm transition-all hover:bg-error"
+                >
+                  <Square className="h-3.5 w-3.5" />
+                </button>
+              ) : (
+                <button
+                  aria-label="发送消息"
+                  onClick={() => handleSend(input)}
+                  disabled={!input.trim() || inputDisabled}
+                  className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all",
+                    input.trim() && !inputDisabled ? "bg-primary text-white shadow-sm hover:bg-primary-hover" : "bg-hover text-ink-tertiary",
+                  )}
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -324,10 +334,16 @@ export default function Agent() {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div
+            className="flex-1 overflow-y-auto px-6 py-4"
+            onClick={(e) => {
+              const card = (e.target as HTMLElement).closest<HTMLElement>("[data-paper-id]");
+              if (card?.dataset.paperId) navigate(`/papers/${card.dataset.paperId}`);
+            }}
+          >
             {canvas.isHtml ? (
               <div
-                className="prose-custom brief-html-preview"
+                className="prose-custom brief-html-preview brief-content"
                 dangerouslySetInnerHTML={{ __html: canvas.markdown }}
               />
             ) : (
@@ -556,12 +572,15 @@ const StepGroupCard = memo(function StepGroupCard({ steps }: { steps: StepItem[]
 });
 
 function StepRow({ step }: { step: StepItem }) {
+  const isIngest = step.toolName === "ingest_arxiv";
+  const autoExpand = isIngest && step.status === "running";
   const [expanded, setExpanded] = useState(false);
   const meta = getToolMeta(step.toolName);
   const Icon = meta.icon;
   const hasData = step.data && Object.keys(step.data).length > 0;
   const hasProgress = step.status === "running" && step.progressTotal && step.progressTotal > 0;
   const progressPct = hasProgress ? Math.round(((step.progressCurrent || 0) / step.progressTotal!) * 100) : 0;
+  const showExpanded = expanded || autoExpand;
 
   const statusIcon =
     step.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
@@ -582,21 +601,44 @@ function StepRow({ step }: { step: StepItem }) {
             {Object.entries(step.toolArgs).slice(0, 2).map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join(" · ")}
           </span>
         )}
-        {hasProgress && (
+        {hasProgress && !isIngest && (
           <span className="truncate text-ink-secondary">{step.progressMessage}</span>
         )}
         {step.summary && <span className={cn("ml-auto shrink-0 font-medium", step.success ? "text-success" : "text-error")}>{step.summary}</span>}
-        {hasData && <span className="ml-1 shrink-0 text-ink-tertiary">{expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}</span>}
+        {hasData && <span className="ml-1 shrink-0 text-ink-tertiary">{showExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}</span>}
       </button>
-      {hasProgress && (
-        <div className="mx-3.5 mb-2 h-1.5 overflow-hidden rounded-full bg-border">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
-            style={{ width: `${progressPct}%` }}
-          />
+
+      {/* 入库进度面板 - 独立的可视化区域 */}
+      {isIngest && hasProgress && (
+        <div className="mx-3.5 mb-2.5 overflow-hidden rounded-lg border border-primary/20 bg-primary/5">
+          <div className="flex items-center gap-2 px-3 py-2">
+            <div className="relative h-8 w-8 shrink-0">
+              <svg className="h-8 w-8 -rotate-90" viewBox="0 0 32 32">
+                <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" strokeWidth="3" className="text-border" />
+                <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" strokeWidth="3" className="text-primary transition-all duration-500" strokeDasharray={`${progressPct * 0.8168} 81.68`} strokeLinecap="round" />
+              </svg>
+              <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-primary">{progressPct}%</span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[11px] font-medium text-ink">{step.progressMessage}</p>
+              <p className="text-[10px] text-ink-tertiary">{step.progressCurrent ?? 0} / {step.progressTotal ?? 0} 篇</p>
+            </div>
+            <Loader2 className="h-4 w-4 animate-spin text-primary/60" />
+          </div>
+          <div className="h-1 bg-border/50">
+            <div className="h-full bg-primary transition-all duration-500 ease-out" style={{ width: `${progressPct}%` }} />
+          </div>
         </div>
       )}
-      {expanded && step.data && (
+
+      {/* 非入库工具的简单进度条 */}
+      {!isIngest && hasProgress && (
+        <div className="mx-3.5 mb-2 h-1.5 overflow-hidden rounded-full bg-border">
+          <div className="h-full rounded-full bg-primary transition-all duration-300 ease-out" style={{ width: `${progressPct}%` }} />
+        </div>
+      )}
+
+      {showExpanded && step.data && (
         <div className="border-t border-border-light bg-page px-3.5 py-2.5">
           <StepDataView data={step.data} toolName={step.toolName} />
         </div>
@@ -605,26 +647,141 @@ function StepRow({ step }: { step: StepItem }) {
   );
 }
 
+/**
+ * 论文列表卡片（search_papers / search_arxiv 共用）
+ */
+const PaperListView = memo(function PaperListView({
+  papers, label,
+}: {
+  papers: Array<Record<string, unknown>>; label: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] font-medium text-ink-secondary">{label}</p>
+      <div className="max-h-56 space-y-1 overflow-y-auto">
+        {papers.slice(0, 30).map((p, i) => (
+          <div key={i} className="flex items-start gap-2 rounded-lg bg-surface px-2.5 py-2 text-[11px] transition-colors hover:bg-hover">
+            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{i + 1}</span>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium leading-snug text-ink">{String(p.title ?? "")}</p>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-ink-tertiary">
+                {p.arxiv_id ? <span className="font-mono">{String(p.arxiv_id)}</span> : null}
+                {p.publication_date ? <span>{String(p.publication_date)}</span> : null}
+                {p.read_status ? <span className="rounded bg-primary/10 px-1 py-0.5 text-primary">{String(p.read_status)}</span> : null}
+              </div>
+              {Array.isArray(p.authors) && (p.authors as string[]).length > 0 && (
+                <p className="mt-0.5 truncate text-[10px] text-ink-tertiary">{(p.authors as string[]).slice(0, 3).join(", ")}{(p.authors as string[]).length > 3 ? " ..." : ""}</p>
+              )}
+              {Array.isArray(p.categories) && (p.categories as string[]).length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {(p.categories as string[]).slice(0, 3).map((c) => (
+                    <span key={c} className="rounded bg-hover px-1.5 py-0.5 text-[9px] text-ink-tertiary">{c}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+/**
+ * 入库结果卡片
+ */
+const IngestResultView = memo(function IngestResultView({ data }: { data: Record<string, unknown> }) {
+  const total = Number(data.total ?? 0);
+  const embedded = Number(data.embedded ?? 0);
+  const skimmed = Number(data.skimmed ?? 0);
+  const topic = String(data.topic ?? "");
+  const ingested = Array.isArray(data.ingested) ? data.ingested as Array<Record<string, unknown>> : [];
+  const failed = Array.isArray(data.failed) ? data.failed as Array<Record<string, unknown>> : [];
+  const suggestSub = !!data.suggest_subscribe;
+
+  return (
+    <div className="space-y-2.5">
+      {/* 统计条 */}
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          { label: "入库", value: total, color: "text-primary", bg: "bg-primary/10" },
+          { label: "向量化", value: embedded, color: "text-success", bg: "bg-success/10" },
+          { label: "粗读", value: skimmed, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10" },
+          { label: "失败", value: failed.length, color: failed.length > 0 ? "text-error" : "text-ink-tertiary", bg: failed.length > 0 ? "bg-error/10" : "bg-hover" },
+        ].map((s) => (
+          <div key={s.label} className={cn("flex flex-col items-center rounded-lg py-2", s.bg)}>
+            <span className={cn("text-base font-bold", s.color)}>{s.value}</span>
+            <span className="text-[10px] text-ink-tertiary">{s.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {topic && (
+        <div className="flex items-center gap-1.5 text-[11px]">
+          <Hash className="h-3 w-3 text-primary" />
+          <span className="text-ink-secondary">主题：</span>
+          <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">{topic}</span>
+          {suggestSub && <span className="rounded bg-warning-light px-1.5 py-0.5 text-[10px] text-warning">新主题，建议订阅</span>}
+        </div>
+      )}
+
+      {/* 入库论文列表 */}
+      {ingested.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-medium text-success">已入库 ({ingested.length})</p>
+          <div className="max-h-32 space-y-0.5 overflow-y-auto">
+            {ingested.map((p, i) => (
+              <div key={i} className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px]">
+                <CheckCircle2 className="h-3 w-3 shrink-0 text-success" />
+                <span className="truncate text-ink">{String(p.title ?? p.arxiv_id ?? "")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 失败列表 */}
+      {failed.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-medium text-error">失败 ({failed.length})</p>
+          <div className="max-h-24 space-y-0.5 overflow-y-auto">
+            {failed.map((p, i) => (
+              <div key={i} className="flex items-center gap-1.5 rounded bg-error/5 px-2 py-1 text-[11px]">
+                <XCircle className="h-3 w-3 shrink-0 text-error" />
+                <span className="truncate text-ink">{String(p.title ?? p.arxiv_id ?? "")}</span>
+                {p.error ? <span className="ml-auto shrink-0 text-[10px] text-error">{String(p.error).slice(0, 40)}</span> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
 const StepDataView = memo(function StepDataView({ data, toolName }: { data: Record<string, unknown>; toolName: string }) {
   if (toolName === "search_papers" && Array.isArray(data.papers)) {
-    const papers = data.papers as Array<Record<string, unknown>>;
+    return <PaperListView papers={data.papers as Array<Record<string, unknown>>} label={`找到 ${(data.papers as unknown[]).length} 篇论文`} />;
+  }
+  if (toolName === "search_arxiv" && Array.isArray(data.candidates)) {
+    return <PaperListView papers={data.candidates as Array<Record<string, unknown>>} label={`从 arXiv 搜索到 ${(data.candidates as unknown[]).length} 篇候选`} />;
+  }
+  if (toolName === "ingest_arxiv" && data.total !== undefined) {
+    return <IngestResultView data={data} />;
+  }
+  if (toolName === "get_system_status") {
     return (
-      <div className="space-y-1.5">
-        <p className="text-[11px] font-medium text-ink-secondary">找到 {papers.length} 篇论文</p>
-        <div className="max-h-48 space-y-1 overflow-y-auto">
-          {papers.slice(0, 20).map((p, i) => (
-            <div key={i} className="flex items-start gap-1.5 rounded-lg bg-surface px-2 py-1.5 text-[11px]">
-              <span className="shrink-0 font-mono text-ink-tertiary">{i + 1}.</span>
-              <div className="min-w-0">
-                <p className="font-medium text-ink">{String(p.title ?? "")}</p>
-                <p className="text-ink-tertiary">
-                  {p.publication_date ? <span>{String(p.publication_date)} · </span> : null}
-                  <span className="rounded bg-hover px-1">{String(p.read_status ?? "")}</span>
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: "论文", value: data.paper_count, color: "text-primary" },
+          { label: "已向量化", value: data.embedded_count, color: "text-success" },
+          { label: "主题", value: data.topic_count, color: "text-blue-600 dark:text-blue-400" },
+        ].map((s) => (
+          <div key={s.label} className="flex flex-col items-center rounded-lg bg-surface py-2">
+            <span className={cn("text-base font-bold", s.color)}>{String(s.value ?? 0)}</span>
+            <span className="text-[10px] text-ink-tertiary">{s.label}</span>
+          </div>
+        ))}
       </div>
     );
   }
@@ -728,6 +885,7 @@ const ArtifactCard = memo(function ArtifactCard({
 }: {
   title: string; content: string; isHtml?: boolean; onOpen: () => void;
 }) {
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const isWiki = !isHtml;
   const iconColor = isWiki ? "text-primary" : "text-amber-500";
@@ -773,10 +931,16 @@ const ArtifactCard = memo(function ArtifactCard({
         </div>
 
         {expanded && (
-          <div className="max-h-80 overflow-y-auto border-t border-border-light px-5 py-4">
+          <div
+            className="max-h-80 overflow-y-auto border-t border-border-light px-5 py-4"
+            onClick={(e) => {
+              const card = (e.target as HTMLElement).closest<HTMLElement>("[data-paper-id]");
+              if (card?.dataset.paperId) navigate(`/papers/${card.dataset.paperId}`);
+            }}
+          >
             {isHtml ? (
               <div
-                className="prose-custom brief-html-preview text-sm"
+                className="prose-custom brief-html-preview brief-content text-sm"
                 dangerouslySetInnerHTML={{ __html: content }}
               />
             ) : (

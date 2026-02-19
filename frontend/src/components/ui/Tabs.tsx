@@ -1,12 +1,13 @@
 /**
- * Tab切换组件
+ * Tab 切换组件（支持 label 为 ReactNode，可带状态指示器）
  * @author Bamzc
  */
 import { cn } from "@/lib/utils";
+import type { ReactNode } from "react";
 
 interface Tab {
   id: string;
-  label: string;
+  label: ReactNode;
 }
 
 interface TabsProps {
@@ -24,7 +25,7 @@ export function Tabs({ tabs, active, onChange, className }: TabsProps) {
           key={tab.id}
           onClick={() => onChange(tab.id)}
           className={cn(
-            "rounded-md px-4 py-2 text-sm font-medium transition-all duration-150",
+            "inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium transition-all duration-150",
             active === tab.id
               ? "bg-surface text-ink shadow-sm"
               : "text-ink-secondary hover:text-ink"

@@ -3,6 +3,7 @@
  * @author Bamzc
  */
 import { useState, useEffect, useCallback } from "react";
+import { useToast } from "@/contexts/ToastContext";
 import { llmConfigApi } from "@/services/api";
 import type { LLMProviderConfig, LLMProviderCreate, ActiveLLMConfig } from "@/types";
 import { Card } from "@/components/ui/Card";
@@ -24,7 +25,19 @@ import {
   PowerOff,
   Server,
   Pencil,
+  FolderOpen,
+  FileText,
+  Monitor,
+  RefreshCw,
 } from "lucide-react";
+import {
+  isTauri,
+  getLauncherConfig,
+  updateConfig,
+  openFolderDialog,
+  openFileDialog,
+  type LauncherConfig,
+} from "@/lib/tauri";
 
 const PROVIDER_PRESETS: Record<string, { label: string; base_url: string; models: Partial<LLMProviderCreate> }> = {
   zhipu: {
@@ -81,6 +94,7 @@ function ProviderBadge({ provider }: { provider: string }) {
 }
 
 export default function Settings() {
+  const { toast } = useToast();
   const [configs, setConfigs] = useState<LLMProviderConfig[]>([]);
   const [activeInfo, setActiveInfo] = useState<ActiveLLMConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,7 +110,7 @@ export default function Settings() {
       setConfigs(listRes.items);
       setActiveInfo(activeRes);
     } catch (err) {
-      console.error("Failed to load LLM configs:", err);
+      toast("error", "加载 LLM 配置失败");
     } finally {
       setLoading(false);
     }
@@ -204,6 +218,9 @@ export default function Settings() {
           ))}
         </div>
       )}
+
+      {/* 桌面应用配置（仅 Tauri 模式显示） */}
+      {isTauri() && <DesktopConfigSection />}
 
       {/* 新增弹窗 */}
       {showAdd && (
@@ -582,5 +599,124 @@ function EditConfigModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+/* ---------- 桌面应用配置 ---------- */
+
+function DesktopConfigSection() {
+  const [config, setConfig] = useState<LauncherConfig | null>(null);
+  const [dataDir, setDataDir] = useState("");
+  const [envFile, setEnvFile] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getLauncherConfig().then((cfg) => {
+      if (cfg) {
+        setConfig(cfg);
+        setDataDir(cfg.data_dir);
+        setEnvFile(cfg.env_file);
+      }
+    });
+  }, []);
+
+  const selectFolder = async () => {
+    const dir = await openFolderDialog("选择数据存储目录");
+    if (dir) setDataDir(dir);
+  };
+
+  const selectFile = async () => {
+    const file = await openFileDialog("选择 .env 配置文件", [
+      { name: "Environment", extensions: ["env"] },
+      { name: "All", extensions: ["*"] },
+    ]);
+    if (file) setEnvFile(file);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaved(false);
+    try {
+      await updateConfig(dataDir.trim(), envFile.trim());
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const hasChanges = config && (dataDir !== config.data_dir || envFile !== config.env_file);
+
+  return (
+    <Card>
+      <div className="flex items-center gap-3 border-b border-border px-5 py-3.5">
+        <Monitor className="h-4.5 w-4.5 text-primary" />
+        <span className="text-sm font-medium text-ink">桌面应用配置</span>
+      </div>
+      <div className="space-y-4 px-5 py-4">
+        {/* 数据目录 */}
+        <div>
+          <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-ink-secondary">
+            <FolderOpen className="h-3.5 w-3.5" />
+            数据存储目录
+          </label>
+          <div className="flex gap-2">
+            <Input
+              value={dataDir}
+              onChange={(e) => setDataDir(e.target.value)}
+              placeholder="数据目录路径"
+              className="font-mono text-xs"
+            />
+            <Button variant="ghost" size="sm" onClick={selectFolder}>
+              浏览
+            </Button>
+          </div>
+        </div>
+
+        {/* .env 路径 */}
+        <div>
+          <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-ink-secondary">
+            <FileText className="h-3.5 w-3.5" />
+            配置文件路径
+            <span className="text-ink-tertiary">(可选)</span>
+          </label>
+          <div className="flex gap-2">
+            <Input
+              value={envFile}
+              onChange={(e) => setEnvFile(e.target.value)}
+              placeholder=".env 文件路径（可选）"
+              className="font-mono text-xs"
+            />
+            <Button variant="ghost" size="sm" onClick={selectFile}>
+              浏览
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-ink-tertiary">
+            修改后需要重启应用才能生效
+          </p>
+          <div className="flex items-center gap-2">
+            {saved && (
+              <span className="text-xs text-emerald-500">已保存</span>
+            )}
+            <Button
+              size="sm"
+              disabled={saving || !hasChanges}
+              onClick={handleSave}
+            >
+              {saving ? (
+                <Spinner className="mr-1.5 h-3.5 w-3.5" />
+              ) : (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              保存配置
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }

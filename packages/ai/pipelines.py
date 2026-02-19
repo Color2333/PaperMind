@@ -74,43 +74,24 @@ class PaperPipelines:
         max_results: int = 20,
         topic_id: str | None = None,
         action_type: ActionType = ActionType.manual_collect,
-    ) -> int:
+        sort_by: str = "submittedDate",
+    ) -> tuple[int, list[str]]:
+        """即时搜索入库：用 upsert 去重（不用 checkpoint 过滤），返回 (count, inserted_ids)"""
         papers = self.arxiv.fetch_latest(
-            query=query, max_results=max_results
+            query=query, max_results=max_results, sort_by=sort_by,
         )
         with session_scope() as session:
             repo = PaperRepository(session)
             run_repo = PipelineRunRepository(session)
-            checkpoint_repo = SourceCheckpointRepository(session)
             action_repo = ActionRepository(session)
-            checkpoint = checkpoint_repo.get("arxiv")
             run = run_repo.start("ingest_arxiv")
             count = 0
             inserted_ids: list[str] = []
             try:
-                max_published = (
-                    checkpoint.last_published_date
-                    if checkpoint
-                    else None
-                )
                 for paper in papers:
-                    if (
-                        checkpoint
-                        and checkpoint.last_published_date
-                        and paper.publication_date
-                        and paper.publication_date
-                        <= checkpoint.last_published_date
-                    ):
-                        continue
                     saved = self._save_paper(repo, paper, topic_id)
                     inserted_ids.append(saved.id)
-                    if paper.publication_date and (
-                        max_published is None
-                        or paper.publication_date > max_published
-                    ):
-                        max_published = paper.publication_date
                     count += 1
-                checkpoint_repo.upsert("arxiv", max_published)
 
                 if inserted_ids:
                     action_repo.create_action(
@@ -127,7 +108,7 @@ class PaperPipelines:
                         target=_bg_auto_link, args=(inserted_ids,),
                         daemon=True,
                     ).start()
-                return count
+                return count, inserted_ids
             except Exception as exc:
                 run_repo.fail(run.id, str(exc))
                 raise

@@ -59,6 +59,7 @@ interface AgentSessionCtx {
   sendMessage: (text: string) => Promise<void>;
   handleConfirm: (actionId: string) => Promise<void>;
   handleReject: (actionId: string) => Promise<void>;
+  stopGeneration: () => void;
 }
 
 const Ctx = createContext<AgentSessionCtx | null>(null);
@@ -494,11 +495,23 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
 
   const hasPendingConfirm = pendingActions.size > 0;
 
+  const stopGeneration = useCallback(() => {
+    cancelStream();
+    setLoading(false);
+    setItems((prev) =>
+      prev.map((item) =>
+        item.type === "assistant" && item.streaming
+          ? { ...item, streaming: false }
+          : item,
+      ),
+    );
+  }, [cancelStream]);
+
   const value: AgentSessionCtx = useMemo(() => ({
     items, loading, pendingActions, confirmingActions, canvas, hasPendingConfirm,
-    setCanvas, sendMessage, handleConfirm, handleReject,
+    setCanvas, sendMessage, handleConfirm, handleReject, stopGeneration,
   }), [items, loading, pendingActions, confirmingActions, canvas, hasPendingConfirm,
-    setCanvas, sendMessage, handleConfirm, handleReject]);
+    setCanvas, sendMessage, handleConfirm, handleReject, stopGeneration]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

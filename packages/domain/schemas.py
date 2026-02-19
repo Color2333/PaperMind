@@ -50,6 +50,7 @@ class AskResponse(BaseModel):
     answer: str
     cited_paper_ids: list[UUID]
     evidence: list[dict] = Field(default_factory=list)
+    rounds: int = 1
 
 
 class DailyBriefRequest(BaseModel):

@@ -44,6 +44,12 @@ class WritingProcessReq(BaseModel):
 class WritingRefineReq(BaseModel):
     messages: list[dict] = []
 
+
+class WritingMultimodalReq(BaseModel):
+    action: str
+    content: str = ""
+    image_base64: str
+
 from packages.ai.agent_service import (
     confirm_action,
     reject_action,
@@ -200,12 +206,29 @@ def ingest_arxiv(
     query: str,
     max_results: int = Query(default=20, ge=1, le=200),
     topic_id: str | None = None,
+    sort_by: str = Query(default="submittedDate", regex="^(submittedDate|relevance|lastUpdatedDate)$"),
 ) -> dict:
-    logger.info("ArXiv ingest: query=%r max_results=%d", query, max_results)
-    count = pipelines.ingest_arxiv(
-        query=query, max_results=max_results, topic_id=topic_id
+    logger.info("ArXiv ingest: query=%r max_results=%d sort=%s", query, max_results, sort_by)
+    count, inserted_ids = pipelines.ingest_arxiv(
+        query=query, max_results=max_results, topic_id=topic_id, sort_by=sort_by,
     )
-    return {"ingested": count}
+    # 查询插入论文的基本信息
+    papers_info: list[dict] = []
+    if inserted_ids:
+        with session_scope() as session:
+            repo = PaperRepository(session)
+            for pid in inserted_ids[:50]:
+                try:
+                    p = repo.get_by_id(pid)
+                    papers_info.append({
+                        "id": p.id,
+                        "title": p.title,
+                        "arxiv_id": p.arxiv_id,
+                        "publication_date": p.publication_date.isoformat() if p.publication_date else None,
+                    })
+                except Exception:
+                    pass
+    return {"ingested": count, "papers": papers_info}
 
 
 @app.post("/ingest/references")
@@ -235,8 +258,8 @@ def ingest_references_status(task_id: str) -> dict:
 # ---------- 主题 ----------
 
 
-def _topic_dict(t) -> dict:
-    return {
+def _topic_dict(t, session=None) -> dict:
+    d = {
         "id": t.id,
         "name": t.name,
         "query": t.query,
@@ -245,7 +268,30 @@ def _topic_dict(t) -> dict:
         "retry_limit": t.retry_limit,
         "schedule_frequency": getattr(t, "schedule_frequency", "daily"),
         "schedule_time_utc": getattr(t, "schedule_time_utc", 21),
+        "paper_count": 0,
+        "last_run_at": None,
+        "last_run_count": None,
     }
+    if session is not None:
+        from sqlalchemy import func, select
+        from packages.storage.models import PaperTopic, CollectionAction
+        # 论文计数
+        cnt = session.scalar(
+            select(func.count()).select_from(PaperTopic)
+            .where(PaperTopic.topic_id == t.id)
+        )
+        d["paper_count"] = cnt or 0
+        # 最近一次行动
+        last_action = session.execute(
+            select(CollectionAction)
+            .where(CollectionAction.topic_id == t.id)
+            .order_by(CollectionAction.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if last_action:
+            d["last_run_at"] = last_action.created_at.isoformat() if last_action.created_at else None
+            d["last_run_count"] = last_action.paper_count
+    return d
 
 
 @app.get("/topics")
@@ -254,7 +300,7 @@ def list_topics(enabled_only: bool = False) -> dict:
         topics = TopicRepository(session).list_topics(
             enabled_only=enabled_only
         )
-        return {"items": [_topic_dict(t) for t in topics]}
+        return {"items": [_topic_dict(t, session) for t in topics]}
 
 
 @app.post("/topics")
@@ -269,7 +315,7 @@ def upsert_topic(req: TopicCreate) -> dict:
             schedule_frequency=req.schedule_frequency,
             schedule_time_utc=req.schedule_time_utc,
         )
-        return _topic_dict(topic)
+        return _topic_dict(topic, session)
 
 
 @app.patch("/topics/{topic_id}")
@@ -289,7 +335,7 @@ def update_topic(topic_id: str, req: TopicUpdate) -> dict:
             raise HTTPException(
                 status_code=404, detail=str(exc)
             ) from exc
-        return _topic_dict(topic)
+        return _topic_dict(topic, session)
 
 
 @app.delete("/topics/{topic_id}")
@@ -297,6 +343,58 @@ def delete_topic(topic_id: str) -> dict:
     with session_scope() as session:
         TopicRepository(session).delete_topic(topic_id)
         return {"deleted": topic_id}
+
+
+_fetch_tasks: dict[str, dict] = {}
+
+@app.post("/topics/{topic_id}/fetch")
+def manual_fetch_topic(topic_id: str) -> dict:
+    """手动触发单个订阅的论文抓取（后台执行，立即返回）"""
+    import threading
+    from packages.ai.daily_runner import run_topic_ingest
+    from packages.storage.models import TopicSubscription
+    with session_scope() as session:
+        topic = session.get(TopicSubscription, topic_id)
+        if not topic:
+            raise HTTPException(status_code=404, detail="订阅不存在")
+        topic_name = topic.name
+
+    if _fetch_tasks.get(topic_id, {}).get("running"):
+        return {"status": "already_running", "topic_name": topic_name, "inserted": 0, "processed": 0}
+
+    def _run():
+        _fetch_tasks[topic_id] = {"running": True}
+        try:
+            result = run_topic_ingest(topic_id)
+            _fetch_tasks[topic_id] = {"running": False, **result}
+        except Exception as exc:
+            _fetch_tasks[topic_id] = {"running": False, "status": "failed", "error": str(exc)}
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    return {
+        "status": "started",
+        "topic_id": topic_id,
+        "topic_name": topic_name,
+        "inserted": 0,
+        "processed": 0,
+        "message": f"「{topic_name}」抓取已在后台启动",
+    }
+
+
+@app.get("/topics/{topic_id}/fetch-status")
+def fetch_topic_status(topic_id: str) -> dict:
+    """查询手动抓取的执行状态"""
+    task = _fetch_tasks.get(topic_id)
+    if not task:
+        return {"status": "idle"}
+    if task.get("running"):
+        return {"status": "running"}
+    with session_scope() as session:
+        from packages.storage.models import TopicSubscription
+        topic = session.get(TopicSubscription, topic_id)
+        topic_info = _topic_dict(topic, session) if topic else {}
+    return {**task, "topic": topic_info}
 
 
 @app.post("/topics/suggest-keywords")
@@ -310,15 +408,17 @@ def suggest_keywords(req: SuggestKeywordsReq) -> dict:
 
 
 # ---------- 引用同步 ----------
+# 注意：固定路径必须在 {paper_id} 动态路径之前，否则会被错误匹配
 
 
-@app.post("/citations/sync/{paper_id}")
-def sync_citations(
-    paper_id: str,
-    limit: int = Query(default=8, ge=1, le=50),
+@app.post("/citations/sync/incremental")
+def sync_citations_incremental(
+    paper_limit: int = Query(default=40, ge=1, le=200),
+    edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
 ) -> dict:
-    return graph_service.sync_citations_for_paper(
-        paper_id=paper_id, limit=limit
+    return graph_service.sync_incremental(
+        paper_limit=paper_limit,
+        edge_limit_per_paper=edge_limit_per_paper,
     )
 
 
@@ -338,18 +438,26 @@ def sync_citations_for_topic(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/citations/sync/incremental")
-def sync_citations_incremental(
-    paper_limit: int = Query(default=40, ge=1, le=200),
-    edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
+@app.post("/citations/sync/{paper_id}")
+def sync_citations(
+    paper_id: str,
+    limit: int = Query(default=8, ge=1, le=50),
 ) -> dict:
-    return graph_service.sync_incremental(
-        paper_limit=paper_limit,
-        edge_limit_per_paper=edge_limit_per_paper,
+    return graph_service.sync_citations_for_paper(
+        paper_id=paper_id, limit=limit
     )
 
 
 # ---------- 图谱 ----------
+
+
+@app.get("/graph/similarity-map")
+def similarity_map(
+    topic_id: str | None = None,
+    limit: int = Query(default=200, ge=5, le=500),
+) -> dict:
+    """论文相似度 2D 散点图（UMAP 降维）"""
+    return graph_service.similarity_map(topic_id=topic_id, limit=limit)
 
 
 @app.get("/graph/citation-tree/{paper_id}")
@@ -638,15 +746,46 @@ def ask(req: AskRequest) -> AskResponse:
     return rag_service.ask(req.question, top_k=req.top_k)
 
 
+@app.post("/rag/ask-iterative")
+def ask_iterative(
+    req: AskRequest,
+    max_rounds: int = Query(default=3, ge=1, le=5),
+) -> dict:
+    """多轮迭代 RAG"""
+    logger.info("RAG iterative ask: question=%r max_rounds=%d", req.question[:80], max_rounds)
+    resp = rag_service.ask_iterative(
+        question=req.question,
+        max_rounds=max_rounds,
+        initial_top_k=req.top_k,
+    )
+    return resp.model_dump(mode="json")
+
+
 @app.get("/papers/{paper_id}/similar")
 def similar(
     paper_id: UUID,
     top_k: int = Query(default=5, ge=1, le=20),
 ) -> dict:
     ids = rag_service.similar_papers(paper_id, top_k=top_k)
+    items = []
+    if ids:
+        with session_scope() as session:
+            repo = PaperRepository(session)
+            for pid in ids:
+                try:
+                    p = repo.get_by_id(pid)
+                    items.append({
+                        "id": str(p.id),
+                        "title": p.title,
+                        "arxiv_id": p.arxiv_id,
+                        "read_status": p.read_status.value if p.read_status else "unread",
+                    })
+                except Exception:
+                    items.append({"id": str(pid), "title": str(pid), "arxiv_id": None, "read_status": "unread"})
     return {
         "paper_id": str(paper_id),
         "similar_ids": [str(x) for x in ids],
+        "items": items,
     }
 
 
@@ -795,6 +934,28 @@ def toggle_favorite(paper_id: UUID) -> dict:
 # ---------- PDF 服务 ----------
 
 
+@app.post("/papers/{paper_id}/download-pdf")
+def download_paper_pdf(paper_id: UUID) -> dict:
+    """从 arXiv 下载论文 PDF"""
+    from packages.integrations.arxiv_client import ArxivClient
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            paper = repo.get_by_id(paper_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if paper.pdf_path and Path(paper.pdf_path).exists():
+            return {"status": "exists", "pdf_path": paper.pdf_path}
+        if not paper.arxiv_id or paper.arxiv_id.startswith("ss-"):
+            raise HTTPException(status_code=400, detail="该论文没有有效的 arXiv ID，无法下载 PDF")
+        try:
+            pdf_path = ArxivClient().download_pdf(paper.arxiv_id)
+            repo.set_pdf_path(paper_id, pdf_path)
+            return {"status": "downloaded", "pdf_path": pdf_path}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"PDF 下载失败: {exc}") from exc
+
+
 @app.get("/papers/{paper_id}/pdf")
 def serve_paper_pdf(paper_id: UUID) -> FileResponse:
     """提供论文 PDF 文件下载/预览"""
@@ -856,7 +1017,37 @@ def get_paper_figures(paper_id: UUID) -> dict:
     """获取论文已有的图表解读"""
     from packages.ai.figure_service import FigureService
     items = FigureService.get_paper_analyses(paper_id)
+    for item in items:
+        if item.get("has_image"):
+            item["image_url"] = f"/papers/{paper_id}/figures/{item['id']}/image"
+        else:
+            item["image_url"] = None
     return {"items": items}
+
+
+@app.get("/papers/{paper_id}/figures/{figure_id}/image")
+def get_figure_image(paper_id: UUID, figure_id: str):
+    """返回图表原始图片文件"""
+    from packages.storage.db import session_scope
+    from packages.storage.models import ImageAnalysis
+    from sqlalchemy import select
+
+    with session_scope() as session:
+        row = session.execute(
+            select(ImageAnalysis).where(
+                ImageAnalysis.id == figure_id,
+                ImageAnalysis.paper_id == str(paper_id),
+            )
+        ).scalar_one_or_none()
+
+        if not row or not row.image_path:
+            raise HTTPException(status_code=404, detail="图片不存在")
+
+        img_path = Path(row.image_path)
+        if not img_path.exists():
+            raise HTTPException(status_code=404, detail="图片文件丢失")
+
+        return FileResponse(img_path, media_type="image/png")
 
 
 @app.post("/papers/{paper_id}/figures/analyze")
@@ -880,18 +1071,18 @@ def analyze_paper_figures(
         results = svc.analyze_paper_figures(paper_id, pdf_path, max_figures)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"图表解读失败: {exc}") from exc
+    # 分析完成后，从 DB 获取带 id 的完整结果（含 image_url）
+    from packages.ai.figure_service import FigureService as FS2
+    items = FS2.get_paper_analyses(paper_id)
+    for item in items:
+        if item.get("has_image"):
+            item["image_url"] = f"/papers/{paper_id}/figures/{item['id']}/image"
+        else:
+            item["image_url"] = None
     return {
         "paper_id": str(paper_id),
-        "count": len(results),
-        "items": [
-            {
-                "page_number": r.page_number,
-                "image_type": r.image_type,
-                "caption": r.caption,
-                "description": r.description,
-            }
-            for r in results
-        ],
+        "count": len(items),
+        "items": items,
     }
 
 
@@ -990,6 +1181,49 @@ def run_daily_once() -> dict:
 def run_weekly_graph_once() -> dict:
     logger.info("Manual weekly graph job triggered")
     return run_weekly_graph_maintenance()
+
+
+@app.post("/jobs/batch-process-unread")
+def batch_process_unread(
+    max_papers: int = Query(default=50, ge=1, le=200),
+) -> dict:
+    """一键对未读论文执行 embed + skim（并行）"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from packages.ai.daily_runner import _process_paper, PAPER_CONCURRENCY
+
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        unread = repo.list_by_read_status(ReadStatus.unread, limit=max_papers)
+        # 过滤掉已经有 embedding 且已粗读的
+        target_ids = []
+        for p in unread:
+            needs_embed = p.embedding is None
+            needs_skim = p.read_status == ReadStatus.unread
+            if needs_embed or needs_skim:
+                target_ids.append(p.id)
+
+    if not target_ids:
+        return {"processed": 0, "total_unread": 0, "message": "没有需要处理的未读论文"}
+
+    processed = 0
+    failed = 0
+    with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
+        futs = {pool.submit(_process_paper, pid): pid for pid in target_ids}
+        for fut in as_completed(futs):
+            try:
+                fut.result()
+                processed += 1
+            except Exception as exc:
+                failed += 1
+                pid = futs[fut]
+                logger.warning("batch process %s failed: %s", str(pid)[:8], exc)
+
+    return {
+        "processed": processed,
+        "failed": failed,
+        "total": len(target_ids),
+        "message": f"处理完成：{processed} 成功，{failed} 失败",
+    }
 
 
 # ---------- 行动记录 ----------
@@ -1278,6 +1512,22 @@ def writing_refine(body: WritingRefineReq) -> dict:
         raise HTTPException(status_code=400, detail="messages is required")
     try:
         return WritingService().refine(messages)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/writing/process-multimodal")
+def writing_process_multimodal(body: WritingMultimodalReq) -> dict:
+    """多模态写作操作（图片 + 文本）"""
+    from packages.ai.writing_service import WritingService
+    if not body.image_base64:
+        raise HTTPException(status_code=400, detail="image_base64 is required")
+    try:
+        return WritingService().process_with_image(
+            action=body.action,
+            text=body.content.strip(),
+            image_base64=body.image_base64,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

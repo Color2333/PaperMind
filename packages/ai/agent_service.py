@@ -159,10 +159,46 @@ def _record_agent_usage(
         logger.warning("Failed to record agent usage: %s", exc)
 
 
+def _build_user_profile() -> str:
+    """从数据库提取用户画像：阅读历史、关注领域、最近活动"""
+    try:
+        from packages.storage.repositories import PaperRepository, TopicRepository
+        from packages.domain.enums import ReadStatus
+        parts: list[str] = []
+
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            topic_repo = TopicRepository(session)
+
+            # 订阅主题
+            topics = topic_repo.list_topics(enabled_only=True)
+            if topics:
+                topic_names = [t.name for t in topics[:8]]
+                parts.append(f"关注领域：{', '.join(topic_names)}")
+
+            # 精读过的论文
+            deep_read = paper_repo.list_by_read_status(ReadStatus.deep_read, limit=5)
+            if deep_read:
+                titles = [p.title[:60] for p in deep_read]
+                parts.append(f"最近精读：{'; '.join(titles)}")
+
+            # 粗读过的论文数量
+            skimmed = paper_repo.list_by_read_status(ReadStatus.skimmed, limit=200)
+            unread = paper_repo.list_by_read_status(ReadStatus.unread, limit=200)
+            parts.append(f"论文库状态：{len(deep_read)} 篇精读、{len(skimmed)} 篇粗读、{len(unread)} 篇未读")
+
+        if parts:
+            return "\n\n## 用户画像\n" + "\n".join(f"- {p}" for p in parts)
+    except Exception as exc:
+        logger.warning("Failed to build user profile: %s", exc)
+    return ""
+
+
 def _build_messages(user_messages: list[dict]) -> list[dict]:
-    """组装发送给 LLM 的 messages，插入 system prompt"""
+    """组装发送给 LLM 的 messages，插入 system prompt + 用户画像"""
+    profile = _build_user_profile()
     openai_msgs: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT}
+        {"role": "system", "content": SYSTEM_PROMPT + profile}
     ]
     for m in user_messages:
         role = m.get("role", "user")

@@ -23,11 +23,9 @@ from packages.ai.prompts import (
 from packages.ai.wiki_context import WikiContextGatherer
 from packages.config import get_settings
 from packages.domain.schemas import PaperCreate
+from packages.integrations.citation_provider import CitationProvider
 from packages.integrations.llm_client import LLMClient
-from packages.integrations.semantic_scholar_client import (
-    RichCitationInfo,
-    SemanticScholarClient,
-)
+from packages.integrations.semantic_scholar_client import RichCitationInfo
 from packages.storage.db import session_scope
 from packages.storage.models import PaperTopic
 from packages.storage.repositories import (
@@ -42,9 +40,12 @@ logger = logging.getLogger(__name__)
 class GraphService:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.scholar = SemanticScholarClient(
-            api_key=self.settings.semantic_scholar_api_key
+        self.citations = CitationProvider(
+            openalex_email=self.settings.openalex_email,
+            scholar_api_key=self.settings.semantic_scholar_api_key,
         )
+        # 保留 self.scholar 兼容别名
+        self.scholar = self.citations
         self.llm = LLMClient()
         self.context_gatherer = WikiContextGatherer()
 
@@ -436,22 +437,84 @@ class GraphService:
             for e in edges:
                 touched.add(e.source_paper_id)
                 touched.add(e.target_paper_id)
-            targets = [
-                p for p in papers if p.id not in touched
+            # 在 session 内提取 id，避免 DetachedInstanceError
+            target_ids = [
+                p.id for p in papers if p.id not in touched
             ][:paper_limit]
         processed = 0
         inserted = 0
-        for p in targets:
-            out = self.sync_citations_for_paper(
-                p.id, limit=edge_limit_per_paper
-            )
-            processed += 1
-            inserted += int(out.get("edges_inserted", 0))
+        for pid in target_ids:
+            try:
+                out = self.sync_citations_for_paper(
+                    pid, limit=edge_limit_per_paper
+                )
+                processed += 1
+                inserted += int(out.get("edges_inserted", 0))
+            except Exception as exc:
+                logger.warning("sync_incremental skip %s: %s", pid[:8], exc)
         return {
             "processed_papers": processed,
             "edges_inserted": inserted,
             "strategy": "papers_without_existing_citation_edges",
         }
+
+    def similarity_map(
+        self, topic_id: str | None = None, limit: int = 200,
+    ) -> dict:
+        """用 UMAP 将论文 embedding 降维到 2D，返回散点图数据"""
+        import numpy as np
+
+        with session_scope() as session:
+            repo = PaperRepository(session)
+            papers = repo.list_with_embedding(topic_id=topic_id, limit=limit)
+            if len(papers) < 5:
+                return {"points": [], "message": "论文数量不足（至少需要 5 篇有向量的论文）"}
+
+            topic_map = repo.get_topic_names_for_papers([str(p.id) for p in papers])
+
+            # 提取 embedding 矩阵
+            dim = len(papers[0].embedding)
+            vectors = []
+            valid_papers = []
+            for p in papers:
+                if p.embedding and len(p.embedding) == dim:
+                    vectors.append(p.embedding)
+                    valid_papers.append(p)
+
+            if len(valid_papers) < 5:
+                return {"points": [], "message": "有效向量不足"}
+
+            mat = np.array(vectors, dtype=np.float64)
+
+            # UMAP 降维
+            try:
+                from umap import UMAP
+                n_neighbors = min(15, len(valid_papers) - 1)
+                reducer = UMAP(n_components=2, random_state=42, n_neighbors=n_neighbors, min_dist=0.1)
+                coords = reducer.fit_transform(mat)
+            except Exception as exc:
+                logger.warning("UMAP failed: %s, falling back to PCA", exc)
+                from sklearn.decomposition import PCA
+                coords = PCA(n_components=2, random_state=42).fit_transform(mat)
+
+            points = []
+            for i, p in enumerate(valid_papers):
+                meta = p.metadata_json or {}
+                topics = topic_map.get(str(p.id), [])
+                points.append({
+                    "id": str(p.id),
+                    "title": p.title,
+                    "x": float(coords[i][0]),
+                    "y": float(coords[i][1]),
+                    "year": p.publication_date.year if p.publication_date else None,
+                    "read_status": p.read_status.value if p.read_status else "unread",
+                    "topics": topics,
+                    "topic": topics[0] if topics else "未分类",
+                    "arxiv_id": p.arxiv_id,
+                    "title_zh": meta.get("title_zh", ""),
+                })
+
+        return {"points": points, "total": len(points)}
 
     def citation_tree(
         self, root_paper_id: str, depth: int = 2

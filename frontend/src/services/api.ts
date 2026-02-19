@@ -31,15 +31,20 @@ import type {
   CitationDetail,
   TopicCitationNetwork,
   LibraryOverview,
+  SimilarityMapData,
   BridgesResponse,
   FrontierResponse,
   CocitationResponse,
 } from "@/types";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+import { resolveApiBase } from "@/lib/tauri";
+
+function getApiBase(): string {
+  return resolveApiBase();
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE.replace(/\/+$/, "")}${path}`;
+  const url = `${getApiBase().replace(/\/+$/, "")}${path}`;
   const resp = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(options.headers as Record<string, string> || {}) },
     ...options,
@@ -102,9 +107,24 @@ export const topicApi = {
   create: (data: TopicCreate) => post<Topic>("/topics", data),
   update: (id: string, data: TopicUpdate) => patch<Topic>(`/topics/${id}`, data),
   delete: (id: string) => del<{ deleted: string }>(`/topics/${id}`),
+  fetch: (id: string) =>
+    post<TopicFetchResult>(`/topics/${id}/fetch`),
+  fetchStatus: (id: string) =>
+    get<TopicFetchResult>(`/topics/${id}/fetch-status`),
   suggestKeywords: (description: string) =>
     post<{ suggestions: KeywordSuggestion[] }>("/topics/suggest-keywords", { description }),
 };
+
+export interface TopicFetchResult {
+  topic_id: string;
+  topic_name?: string;
+  status: string;
+  inserted: number;
+  processed?: number;
+  attempts?: number;
+  error?: string;
+  topic?: Topic;
+}
 
 /* ========== 论文 ========== */
 export interface FolderStats {
@@ -148,7 +168,7 @@ export const paperApi = {
   folderStats: () => get<FolderStats>("/papers/folder-stats"),
   detail: (id: string) => get<Paper>(`/papers/${id}`),
   similar: (id: string, topK = 5) =>
-    get<{ paper_id: string; similar_ids: string[] }>(`/papers/${id}/similar?top_k=${topK}`),
+    get<{ paper_id: string; similar_ids: string[]; items?: { id: string; title: string; arxiv_id?: string; read_status?: string }[] }>(`/papers/${id}/similar?top_k=${topK}`),
   toggleFavorite: (id: string) =>
     patch<{ id: string; favorited: boolean }>(`/papers/${id}/favorite`),
   getFigures: (id: string) =>
@@ -160,7 +180,11 @@ export const paperApi = {
   reasoningAnalysis: (id: string) =>
     post<ReasoningAnalysisResponse>(`/papers/${id}/reasoning`),
   pdfUrl: (id: string) =>
-    `${API_BASE.replace(/\/+$/, "")}/papers/${id}/pdf`,
+    `${getApiBase().replace(/\/+$/, "")}/papers/${id}/pdf`,
+  downloadPdf: (id: string) =>
+    post<{ status: string; pdf_path: string }>(`/papers/${id}/download-pdf`),
+  figureImageUrl: (paperId: string, figureId: string) =>
+    `${getApiBase().replace(/\/+$/, "")}/papers/${paperId}/figures/${figureId}/image`,
   aiExplain: (id: string, text: string, action: "explain" | "translate" | "summarize") =>
     post<{ action: string; result: string }>(`/papers/${id}/ai/explain`, { text, action }),
 };
@@ -172,6 +196,8 @@ export interface FigureAnalysisItem {
   image_type: string;
   caption: string;
   description: string;
+  image_url?: string | null;
+  has_image?: boolean;
 }
 
 /* ========== 摄入 ========== */
@@ -200,8 +226,8 @@ export interface ImportTaskStatus {
 }
 
 export const ingestApi = {
-  arxiv: (query: string, maxResults = 20, topicId?: string) => {
-    const params = new URLSearchParams({ query, max_results: String(maxResults) });
+  arxiv: (query: string, maxResults = 20, topicId?: string, sortBy = "submittedDate") => {
+    const params = new URLSearchParams({ query, max_results: String(maxResults), sort_by: sortBy });
     if (topicId) params.append("topic_id", topicId);
     return post<IngestResult>(`/ingest/arxiv?${params}`);
   },
@@ -292,6 +318,8 @@ export const graphApi = {
     get<CocitationResponse>(`/graph/cocitation-clusters?min_cocite=${minCocite}`),
   autoLink: (paperIds: string[]) =>
     post<{ papers: number; edges_linked: number; errors: number }>('/graph/auto-link', paperIds),
+  similarityMap: (topicId?: string, limit = 200) =>
+    get<SimilarityMapData>(`/graph/similarity-map?topic_id=${topicId || ""}&limit=${limit}`),
 };
 
 /* ========== Wiki ========== */
@@ -320,6 +348,10 @@ export const generatedApi = {
 export const jobApi = {
   dailyRun: () => post<Record<string, unknown>>("/jobs/daily/run-once"),
   weeklyGraphRun: () => post<Record<string, unknown>>("/jobs/graph/weekly-run-once"),
+  batchProcessUnread: (maxPapers = 50) =>
+    post<{ processed: number; failed: number; total: number; message: string }>(
+      `/jobs/batch-process-unread?max_papers=${maxPapers}`,
+    ),
 };
 
 /* ========== 指标 ========== */
@@ -351,7 +383,9 @@ import type { WritingTemplate, WritingResult, WritingRefineMessage, WritingRefin
 export const writingApi = {
   templates: () => get<{ items: WritingTemplate[] }>("/writing/templates"),
   process: (action: string, text: string, maxTokens = 4096) =>
-    post<WritingResult>("/writing/process", { action, text, max_tokens: maxTokens }),
+    post<WritingResult>("/writing/process", { action, content: text, max_tokens: maxTokens }),
+  processMultimodal: (action: string, content: string, imageBase64: string) =>
+    post<WritingResult>("/writing/process-multimodal", { action, content, image_base64: imageBase64 }),
   refine: (messages: WritingRefineMessage[], maxTokens = 4096) =>
     post<WritingRefineResult>("/writing/refine", { messages, max_tokens: maxTokens }),
 };
@@ -365,7 +399,7 @@ export const agentApi = {
    * 返回 Response 对象，调用方自行读取 body stream
    */
   chat: async (messages: AgentMessage[], confirmedActionId?: string): Promise<Response> => {
-    const url = `${API_BASE.replace(/\/+$/, "")}/agent/chat`;
+    const url = `${getApiBase().replace(/\/+$/, "")}/agent/chat`;
     return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -376,11 +410,11 @@ export const agentApi = {
     });
   },
   confirm: async (actionId: string): Promise<Response> => {
-    const url = `${API_BASE.replace(/\/+$/, "")}/agent/confirm/${actionId}`;
+    const url = `${getApiBase().replace(/\/+$/, "")}/agent/confirm/${actionId}`;
     return fetch(url, { method: "POST" });
   },
   reject: async (actionId: string): Promise<Response> => {
-    const url = `${API_BASE.replace(/\/+$/, "")}/agent/reject/${actionId}`;
+    const url = `${getApiBase().replace(/\/+$/, "")}/agent/reject/${actionId}`;
     return fetch(url, { method: "POST" });
   },
 };

@@ -98,17 +98,8 @@ def run_topic_ingest(topic_id: str) -> dict:
             }
 
         repo = PaperRepository(session)
-        all_papers = (
-            repo.list_by_ids(ids)
-            + repo.list_by_read_status(ReadStatus.unread, limit=50)
-        )
-        seen: set[str] = set()
-        unique = []
-        for p in all_papers:
-            pid = str(p.id)
-            if pid not in seen:
-                seen.add(pid)
-                unique.append(p)
+        # 只处理这次新入库的论文，不拖入全部未读论文
+        unique = repo.list_by_ids(ids) if ids else []
 
     processed = 0
     with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:

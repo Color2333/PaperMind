@@ -33,13 +33,16 @@ import {
   MessageCircle,
   User,
   Bot,
+  ScanText,
+  ImagePlus,
   type LucideIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import ImageUploader from "@/components/ImageUploader";
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Languages, BookOpen, PenLine, Sparkles, Minimize2, Maximize2,
-  ShieldCheck, Eraser, Image, Table, BarChart3, Eye, PieChart,
+  ShieldCheck, Eraser, Image, Table, BarChart3, Eye, PieChart, ScanText,
 };
 
 interface HistoryItem {
@@ -61,11 +64,15 @@ export default function Writing() {
   const [copied, setCopied] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
 
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
+
   // 多轮微调对话
   const [refineMsgs, setRefineMsgs] = useState<WritingRefineMessage[]>([]);
   const [refineInput, setRefineInput] = useState("");
   const [refining, setRefining] = useState(false);
   const refineEndRef = useRef<HTMLDivElement>(null);
+
+  const supportsImage = selected?.supports_image ?? false;
 
   useEffect(() => {
     writingApi.templates().then((res) => {
@@ -80,16 +87,25 @@ export default function Writing() {
   }, [refineMsgs]);
 
   const handleProcess = useCallback(async () => {
-    if (!selected || !inputText.trim()) return;
+    if (!selected) return;
+    const hasText = !!inputText.trim();
+    const hasImage = !!imageBase64;
+    if (!hasText && !hasImage) return;
+
     setLoading(true);
     setResult(null);
     setRefineMsgs([]);
     try {
-      const res = await writingApi.process(selected.action, inputText.trim());
+      let res: WritingResult;
+      if (hasImage) {
+        res = await writingApi.processMultimodal(selected.action, inputText.trim(), imageBase64!);
+      } else {
+        res = await writingApi.process(selected.action, inputText.trim());
+      }
       setResult(res);
-      // 初始化对话链：用户原始输入 + AI 首次结果
+      const inputSummary = hasImage ? `[图片] ${inputText.trim() || "(无附加文字)"}` : inputText.trim();
       setRefineMsgs([
-        { role: "user", content: `[${res.label}] ${inputText.trim()}` },
+        { role: "user", content: `[${res.label}] ${inputSummary}` },
         { role: "assistant", content: res.content },
       ]);
       setHistory((prev) => [
@@ -97,7 +113,7 @@ export default function Writing() {
           id: crypto.randomUUID(),
           action: res.action,
           label: res.label,
-          inputPreview: inputText.trim().slice(0, 60),
+          inputPreview: inputSummary.slice(0, 60),
           content: res.content,
           timestamp: new Date(),
         },
@@ -109,7 +125,7 @@ export default function Writing() {
     } finally {
       setLoading(false);
     }
-  }, [selected, inputText, toast]);
+  }, [selected, inputText, imageBase64, toast]);
 
   const handleRefine = useCallback(async () => {
     if (!refineInput.trim() || refineMsgs.length < 2) return;
@@ -160,6 +176,7 @@ export default function Writing() {
 
   const handleReset = useCallback(() => {
     setInputText("");
+    setImageBase64(null);
     setResult(null);
     setRefineMsgs([]);
     setRefineInput("");
@@ -181,11 +198,13 @@ export default function Writing() {
     const polish = templates.filter((t) => ["zh_polish", "en_polish", "compress", "expand"].includes(t.action));
     const check = templates.filter((t) => ["logic_check", "deai"].includes(t.action));
     const gen = templates.filter((t) => ["fig_caption", "table_caption", "experiment_analysis", "reviewer", "chart_recommend"].includes(t.action));
+    const vision = templates.filter((t) => ["ocr_extract"].includes(t.action));
     return [
       { label: "翻译", items: trans },
       { label: "润色与调整", items: polish },
       { label: "检查与优化", items: check },
       { label: "生成与分析", items: gen },
+      { label: "图像工具", items: vision },
     ].filter((c) => c.items.length > 0);
   }, [templates]);
 
@@ -238,7 +257,7 @@ export default function Writing() {
                       return (
                         <button
                           key={tpl.action}
-                          onClick={() => { setSelected(tpl); setResult(null); setRefineMsgs([]); }}
+                          onClick={() => { setSelected(tpl); setResult(null); setRefineMsgs([]); setImageBase64(null); }}
                           className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-all ${
                             isActive
                               ? "bg-primary/8 text-primary shadow-sm"
@@ -249,6 +268,9 @@ export default function Writing() {
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium">{tpl.label}</p>
                           </div>
+                          {tpl.supports_image && (
+                            <ImagePlus className="h-3 w-3 shrink-0 text-ink-tertiary/50" title="支持图片输入" />
+                          )}
                         </button>
                       );
                     })}
@@ -297,11 +319,21 @@ export default function Writing() {
                 </span>
               </div>
 
+              {supportsImage && (
+                <div className="mb-3">
+                  <ImageUploader
+                    value={imageBase64}
+                    onChange={setImageBase64}
+                    hint={`支持 Ctrl+V 粘贴截图 · 拖拽上传 · ${selected.label}将基于图片 + 文字分析`}
+                  />
+                </div>
+              )}
+
               <textarea
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder={selected.placeholder}
-                rows={8}
+                placeholder={supportsImage && imageBase64 ? "可补充文字说明（可选）" : selected.placeholder}
+                rows={supportsImage ? 4 : 8}
                 className="w-full rounded-xl border border-border bg-page p-4 text-sm text-ink placeholder:text-ink-tertiary/50 focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/10 transition-all resize-y"
               />
 
@@ -323,7 +355,7 @@ export default function Writing() {
                     icon={<Send className="h-4 w-4" />}
                     onClick={handleProcess}
                     loading={loading}
-                    disabled={!inputText.trim()}
+                    disabled={!inputText.trim() && !imageBase64}
                   >
                     {loading ? "处理中..." : `执行${selected.label}`}
                   </Button>

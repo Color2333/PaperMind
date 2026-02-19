@@ -28,6 +28,17 @@ class WritingAction(str, Enum):
     EXPERIMENT_ANALYSIS = "experiment_analysis"
     REVIEWER = "reviewer"
     CHART_RECOMMEND = "chart_recommend"
+    OCR_EXTRACT = "ocr_extract"
+
+
+VISION_ACTIONS: set[WritingAction] = {
+    WritingAction.FIG_CAPTION,
+    WritingAction.TABLE_CAPTION,
+    WritingAction.EXPERIMENT_ANALYSIS,
+    WritingAction.CHART_RECOMMEND,
+    WritingAction.REVIEWER,
+    WritingAction.OCR_EXTRACT,
+}
 
 
 @dataclass
@@ -37,6 +48,7 @@ class WritingTemplate:
     description: str
     icon: str
     placeholder: str
+    supports_image: bool = False
 
 
 WRITING_TEMPLATES: list[WritingTemplate] = [
@@ -99,37 +111,50 @@ WRITING_TEMPLATES: list[WritingTemplate] = [
     WritingTemplate(
         action=WritingAction.FIG_CAPTION,
         label="图标题",
-        description="将中文描述转化为符合顶会规范的英文图标题",
+        description="上传论文图片或描述，生成顶会规范英文图标题",
         icon="Image",
-        placeholder="在此处粘贴你的中文描述...",
+        placeholder="上传图片后可补充描述，或直接输入中文描述...",
+        supports_image=True,
     ),
     WritingTemplate(
         action=WritingAction.TABLE_CAPTION,
         label="表标题",
-        description="将中文描述转化为符合顶会规范的英文表标题",
+        description="上传表格截图或描述，生成顶会规范英文表标题",
         icon="Table",
-        placeholder="在此处粘贴你的中文描述...",
+        placeholder="上传表格截图后可补充描述，或直接输入中文描述...",
+        supports_image=True,
     ),
     WritingTemplate(
         action=WritingAction.EXPERIMENT_ANALYSIS,
         label="实验分析",
-        description="从实验数据中挖掘关键特征和趋势，生成 LaTeX 分析段落",
+        description="上传实验表格/图表截图，挖掘数据特征和趋势",
         icon="BarChart3",
-        placeholder="在此处粘贴你的实验数据（Excel/CSV 原始表格）...",
+        placeholder="上传实验截图后可补充说明，或直接粘贴数据...",
+        supports_image=True,
     ),
     WritingTemplate(
         action=WritingAction.REVIEWER,
         label="审稿视角",
-        description="以顶会审稿人视角严苛审视论文，发现致命问题",
+        description="上传论文页面截图或粘贴内容，以审稿人视角审视",
         icon="Eye",
-        placeholder="在此处粘贴你的论文内容（摘要+方法+实验）...",
+        placeholder="上传论文截图后可指定审查重点，或直接粘贴内容...",
+        supports_image=True,
     ),
     WritingTemplate(
         action=WritingAction.CHART_RECOMMEND,
         label="图表推荐",
-        description="分析实验数据，推荐最佳学术绘图方案",
+        description="上传数据截图或描述，推荐最佳可视化方案",
         icon="PieChart",
-        placeholder="在此处粘贴你的实验数据，并简述想强调的核心结论...",
+        placeholder="上传数据截图后简述想强调的结论，或直接粘贴数据...",
+        supports_image=True,
+    ),
+    WritingTemplate(
+        action=WritingAction.OCR_EXTRACT,
+        label="OCR 提取",
+        description="上传图片提取文字，支持论文、公式、表格截图",
+        icon="ScanText",
+        placeholder="上传图片后可指定提取格式（如 LaTeX / Markdown / 纯文本）...",
+        supports_image=True,
     ),
 ]
 
@@ -370,6 +395,23 @@ def _build_chart_recommend(text: str) -> str:
     )
 
 
+def _build_ocr_extract(text: str) -> str:
+    fmt_hint = text.strip() if text.strip() else "保持原始格式"
+    return (
+        "# Role\n"
+        "你是一位精通学术文献的 OCR 专家。\n\n"
+        "# Task\n"
+        "请仔细识别图片中的所有文字内容，包括公式、表格、代码等。\n\n"
+        "# Constraints\n"
+        "1. 数学公式用 LaTeX 语法输出。\n"
+        "2. 表格用 Markdown 表格格式输出。\n"
+        "3. 保持原文的结构和层次。\n"
+        "4. 如果有手写内容，尽力识别并标注不确定之处。\n"
+        f"5. 用户格式要求：{fmt_hint}\n\n"
+        "请直接输出识别结果。"
+    )
+
+
 _PROMPT_BUILDERS: dict[WritingAction, callable] = {
     WritingAction.ZH_TO_EN: _build_zh_to_en,
     WritingAction.EN_TO_ZH: _build_en_to_zh,
@@ -384,6 +426,7 @@ _PROMPT_BUILDERS: dict[WritingAction, callable] = {
     WritingAction.EXPERIMENT_ANALYSIS: _build_experiment_analysis,
     WritingAction.REVIEWER: _build_reviewer,
     WritingAction.CHART_RECOMMEND: _build_chart_recommend,
+    WritingAction.OCR_EXTRACT: _build_ocr_extract,
 }
 
 
@@ -403,6 +446,7 @@ class WritingService:
                 "description": t.description,
                 "icon": t.icon,
                 "placeholder": t.placeholder,
+                "supports_image": t.supports_image,
             }
             for t in WRITING_TEMPLATES
         ]
@@ -432,6 +476,50 @@ class WritingService:
             result,
             stage="writing",
             prompt_digest=f"{action}:{text[:80]}",
+        )
+
+        template = TEMPLATE_MAP[writing_action]
+        return {
+            "action": action,
+            "label": template.label,
+            "content": result.content,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "total_cost_usd": result.total_cost_usd,
+        }
+
+    def process_with_image(
+        self,
+        action: str,
+        text: str,
+        image_base64: str,
+        *,
+        max_tokens: int = 4096,
+    ) -> dict:
+        """多模态写作操作（图片 + 文本）"""
+        try:
+            writing_action = WritingAction(action)
+        except ValueError:
+            raise ValueError(f"未知的写作操作: {action}")
+
+        if writing_action not in VISION_ACTIONS:
+            raise ValueError(f"写作操作 {action} 不支持图片输入")
+
+        builder = _PROMPT_BUILDERS.get(writing_action)
+        if not builder:
+            raise ValueError(f"写作操作 {action} 没有对应的 Prompt 构建器")
+
+        prompt = builder(text)
+        result: LLMResult = self.llm.vision_analyze(
+            image_base64=image_base64,
+            prompt=prompt,
+            stage="writing_vision",
+            max_tokens=max_tokens,
+        )
+        self.llm.trace_result(
+            result,
+            stage="writing_vision",
+            prompt_digest=f"{action}:image+{text[:60]}",
         )
 
         template = TEMPLATE_MAP[writing_action]

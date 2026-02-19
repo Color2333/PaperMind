@@ -27,6 +27,7 @@ import {
   X,
   PenTool,
 } from "lucide-react";
+import { paperApi } from "@/services/api";
 
 /* 工具网格定义 */
 const TOOLS = [
@@ -62,8 +63,15 @@ export default function Sidebar() {
   const [showSettings, setShowSettings] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    paperApi.folderStats().then((s: any) => {
+      setUnreadCount(s.by_status?.unread ?? 0);
+    }).catch(() => {});
+  }, [location.pathname]);
   const {
     metas,
     activeId,
@@ -150,7 +158,7 @@ export default function Sidebar() {
                 to={tool.to}
                 className={({ isActive }) =>
                   cn(
-                    "flex flex-col items-center gap-1 rounded-xl px-1 py-2.5 text-center transition-all",
+                    "relative flex flex-col items-center gap-1 rounded-xl px-1 py-2.5 text-center transition-all",
                     isActive
                       ? "bg-primary-light text-primary shadow-sm"
                       : tool.accent
@@ -163,6 +171,11 @@ export default function Sidebar() {
                 <span className="text-[10px] font-medium leading-tight">
                   {tool.label}
                 </span>
+                {tool.to === "/papers" && unreadCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-white">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
               </NavLink>
             ))}
           </div>

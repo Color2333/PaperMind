@@ -7,16 +7,16 @@ LLM Prompt 模板
 def build_skim_prompt(title: str, abstract: str) -> str:
     return (
         "你是科研助手。请根据标题和摘要输出严格 JSON：\n"
-        '{"one_liner":"...", '
-        '"innovations":["...","...","..."], '
+        '{"one_liner":"一句话中文总结", '
+        '"innovations":["创新点1","创新点2","创新点3"], '
         '"keywords":["keyword1","keyword2","keyword3","keyword4","keyword5"], '
         '"title_zh":"中文标题翻译", '
         '"abstract_zh":"中文摘要翻译（完整翻译，不要缩写）", '
         '"relevance_score":0.0}\n'
         "要求：\n"
+        "- one_liner、innovations、title_zh、abstract_zh 必须使用中文\n"
         "- relevance_score 在 0 到 1 之间\n"
         "- keywords 提取 3~8 个最具代表性的英文学术关键词\n"
-        "- title_zh 和 abstract_zh 为高质量中文翻译\n"
         f"标题: {title}\n摘要: {abstract}\n"
     )
 
@@ -25,11 +25,12 @@ def build_deep_prompt(
     title: str, extracted_pages: str
 ) -> str:
     return (
-        "你是审稿专家。请输出严格 JSON：\n"
-        '{"method_summary":"...", '
-        '"experiments_summary":"...", '
-        '"ablation_summary":"...", '
-        '"reviewer_risks":["...","..."]}\n'
+        "你是审稿专家。请用中文输出严格 JSON：\n"
+        '{"method_summary":"方法总结", '
+        '"experiments_summary":"实验总结", '
+        '"ablation_summary":"消融实验总结", '
+        '"reviewer_risks":["风险点1","风险点2"]}\n'
+        "要求：所有字段必须使用中文回答。\n"
         f"论文标题: {title}\n"
         f"页面内容摘要: {extracted_pages}\n"
     )

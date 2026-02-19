@@ -34,6 +34,9 @@ export interface Topic {
   retry_limit: number;
   schedule_frequency: ScheduleFrequency;
   schedule_time_utc: number;
+  paper_count?: number;
+  last_run_at?: string | null;
+  last_run_count?: number | null;
 }
 
 export interface TopicCreate {
@@ -451,6 +454,25 @@ export interface OverviewNode {
   read_status: string;
 }
 
+export interface SimilarityMapPoint {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+  year: number | null;
+  read_status: string;
+  topics: string[];
+  topic: string;
+  arxiv_id: string;
+  title_zh?: string;
+}
+
+export interface SimilarityMapData {
+  points: SimilarityMapPoint[];
+  total?: number;
+  message?: string;
+}
+
 export interface LibraryOverview {
   total_papers: number;
   total_edges: number;
@@ -575,8 +597,16 @@ export interface CitationSyncResult {
 }
 
 /* ========== 摄入 ========== */
+export interface IngestPaper {
+  id: string;
+  title: string;
+  arxiv_id?: string;
+  publication_date?: string | null;
+}
+
 export interface IngestResult {
   ingested: number;
+  papers?: IngestPaper[];
 }
 
 /* ========== 聊天消息 ========== */
@@ -640,7 +670,8 @@ export type WritingAction =
   | "zh_to_en" | "en_to_zh" | "zh_polish" | "en_polish"
   | "compress" | "expand" | "logic_check" | "deai"
   | "fig_caption" | "table_caption"
-  | "experiment_analysis" | "reviewer" | "chart_recommend";
+  | "experiment_analysis" | "reviewer" | "chart_recommend"
+  | "ocr_extract";
 
 export interface WritingTemplate {
   action: WritingAction;
@@ -648,6 +679,7 @@ export interface WritingTemplate {
   description: string;
   icon: string;
   placeholder: string;
+  supports_image?: boolean;
 }
 
 export interface WritingResult {

@@ -554,40 +554,60 @@ def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
     )
 
 
-def _ask_knowledge_base(question: str, top_k: int = 5) -> ToolResult:
-    # 先检查知识库是否有论文
+def _ask_knowledge_base(
+    question: str, top_k: int = 5,
+) -> Iterator[ToolProgress | ToolResult]:
+    """迭代 RAG：多轮检索 + 自动评估答案质量"""
     with session_scope() as session:
         repo = PaperRepository(session)
         sample = repo.list_latest(limit=1)
         if not sample:
-            return ToolResult(
+            yield ToolResult(
                 success=False,
                 summary="知识库为空，请先用 ingest_arxiv 导入论文",
             )
+            return
+
+    progress_msgs: list[str] = []
+
+    def on_progress(msg: str) -> None:
+        progress_msgs.append(msg)
+
     try:
-        resp = RAGService().ask(question, top_k=top_k)
-    except Exception as exc:
-        logger.exception("RAG ask failed: %s", exc)
-        return ToolResult(
-            success=False,
-            summary=f"知识问答失败: {exc!s}",
+        yield ToolProgress(message=f"开始迭代 RAG 检索：{question[:50]}...")
+        resp = RAGService().ask_iterative(
+            question=question,
+            max_rounds=3,
+            initial_top_k=top_k,
+            on_progress=on_progress,
         )
+        # 逐条发送进度
+        for msg in progress_msgs:
+            yield ToolProgress(message=msg)
+    except Exception as exc:
+        logger.exception("RAG iterative failed: %s", exc)
+        yield ToolResult(success=False, summary=f"知识问答失败: {exc!s}")
+        return
+
     evidence = getattr(resp, "evidence", []) or []
-    # 构建可保存的 markdown 报告
+    rounds = getattr(resp, "rounds", 1)
     md_parts = [f"# 知识问答：{question}\n", resp.answer, "\n\n---\n## 引用来源\n"]
     for ev in evidence[:8]:
         md_parts.append(f"- **{ev.get('title', '未知')}**\n  {ev.get('snippet', '')[:200]}\n")
+    if rounds > 1:
+        md_parts.append(f"\n> 经过 {rounds} 轮迭代检索优化答案\n")
     markdown = "\n".join(md_parts)
-    return ToolResult(
+    yield ToolResult(
         success=True,
         data={
             "answer": resp.answer,
             "cited_paper_ids": [str(x) for x in resp.cited_paper_ids],
             "evidence": evidence[:5],
+            "rounds": rounds,
             "title": f"知识问答：{question[:40]}",
             "markdown": markdown,
         },
-        summary=f"已回答，引用 {len(resp.cited_paper_ids)} 篇论文",
+        summary=f"已回答，引用 {len(resp.cited_paper_ids)} 篇论文（{rounds} 轮检索）",
     )
 
 
@@ -776,6 +796,9 @@ def _ingest_arxiv(
         except Exception:
             logger.warning("Failed to fetch arxiv paper %s", mid)
 
+    failed_papers: list[dict] = []
+    ingested_papers: list[dict] = []
+
     with session_scope() as session:
         repo = PaperRepository(session)
         from packages.storage.repositories import PipelineRunRepository, ActionRepository
@@ -785,16 +808,34 @@ def _ingest_arxiv(
         note = f"selected {len(arxiv_ids)} from query={query}"
         run = run_repo.start("ingest_arxiv", decision_note=note)
         try:
-            for paper in selected_papers:
-                saved = repo.upsert_paper(paper)
-                if topic_id:
-                    repo.link_to_topic(saved.id, topic_id)
-                inserted_ids.append(saved.id)
+            for idx, paper in enumerate(selected_papers, 1):
                 try:
-                    pdf_path = arxiv_client.download_pdf(paper.arxiv_id)
-                    repo.set_pdf_path(saved.id, pdf_path)
-                except Exception:
-                    pass
+                    saved = repo.upsert_paper(paper)
+                    if topic_id:
+                        repo.link_to_topic(saved.id, topic_id)
+                    inserted_ids.append(saved.id)
+                    try:
+                        pdf_path = arxiv_client.download_pdf(paper.arxiv_id)
+                        repo.set_pdf_path(saved.id, pdf_path)
+                    except Exception:
+                        pass
+                    ingested_papers.append({
+                        "arxiv_id": paper.arxiv_id,
+                        "title": (paper.title or "")[:80],
+                        "status": "ok",
+                    })
+                except Exception as exc:
+                    logger.warning("Ingest paper %s failed: %s", paper.arxiv_id, exc)
+                    failed_papers.append({
+                        "arxiv_id": paper.arxiv_id,
+                        "title": (paper.title or "")[:80],
+                        "error": str(exc)[:120],
+                        "status": "failed",
+                    })
+                yield ToolProgress(
+                    message=f"入库 {idx}/{len(selected_papers)}: {(paper.title or '')[:40]}",
+                    current=idx, total=len(selected_papers),
+                )
 
             if inserted_ids:
                 action_repo.create_action(
@@ -812,9 +853,12 @@ def _ingest_arxiv(
 
     if not inserted_ids:
         yield ToolResult(
-            success=True,
-            data={"ingested": 0, "query": query, "suggest_subscribe": False},
-            summary="未能入库任何论文",
+            success=len(failed_papers) == 0,
+            data={
+                "ingested": 0, "query": query, "suggest_subscribe": False,
+                "failed": failed_papers,
+            },
+            summary=f"未能入库任何论文" + (f"，{len(failed_papers)} 篇失败" if failed_papers else ""),
         )
         return
 
@@ -895,10 +939,13 @@ def _ingest_arxiv(
             "topic": topic_name,
             "paper_ids": inserted_ids[:10],
             "suggest_subscribe": is_new_topic,
+            "ingested": ingested_papers,
+            "failed": failed_papers,
         },
         summary=(
             f"入库 {total} 篇 → 主题「{topic_name}」，"
             f"向量化 {embed_ok}，粗读 {skim_ok}"
+            + (f"，{len(failed_papers)} 篇失败已跳过" if failed_papers else "")
         ),
     )
 

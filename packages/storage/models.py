@@ -108,6 +108,7 @@ class ImageAnalysis(Base):
     )
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    image_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     bbox_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False

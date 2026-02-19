@@ -112,7 +112,7 @@ export default function CitationPanel() {
         const res = await paperApi.latest({ search: q.trim(), pageSize: 10 });
         setPaperResults(res.items);
         setShowPaperDropdown(true);
-      } catch { /* ignore */ }
+      } catch { setPaperResults([]); }
       finally { setPaperSearching(false); }
     }, 300);
   }, []);

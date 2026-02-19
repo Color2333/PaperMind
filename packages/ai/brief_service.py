@@ -39,6 +39,8 @@ border-radius: 8px; padding: 16px; flex: 1; text-align: center; }
   .section-title { font-size: 18px; font-weight: 600; \
 margin-bottom: 12px; padding-bottom: 6px; \
 border-bottom: 2px solid #6366f1; }
+  .rec-card, .paper-item { cursor: pointer; transition: box-shadow 0.15s; }
+  .rec-card:hover, .paper-item:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   .rec-card { background: #f0f0ff; border-radius: 8px; \
 padding: 14px; margin-bottom: 10px; }
   .rec-title { font-weight: 600; font-size: 14px; color: #1a1a2e; }
@@ -84,7 +86,7 @@ border-top: 1px solid #e2e8f0; }
 <div class="section">
   <div class="section-title">🎯 为你推荐</div>
   {% for r in recommendations %}
-  <div class="rec-card">
+  <div class="rec-card" data-paper-id="{{ r.id }}" data-arxiv-id="{{ r.arxiv_id }}">
     <div class="rec-title">{{ r.title }}</div>
     <div class="rec-meta">arXiv: {{ r.arxiv_id }} · \
 相似度: {{ r.similarity }}</div>
@@ -115,7 +117,7 @@ border-top: 1px solid #e2e8f0; }
     <div class="topic-name">📁 {{ topic_name }} \
 （{{ papers|length }} 篇）</div>
     {% for p in papers %}
-    <div class="paper-item">
+    <div class="paper-item" data-paper-id="{{ p.id }}" data-arxiv-id="{{ p.arxiv_id }}">
       <div class="paper-title">{{ p.title }}</div>
       <div class="paper-id">arXiv: {{ p.arxiv_id }} · \
 {{ p.read_status }}</div>
@@ -133,7 +135,7 @@ border-top: 1px solid #e2e8f0; }
 <div class="section">
   <div class="section-title">📄 其他论文</div>
   {% for p in uncategorized %}
-  <div class="paper-item">
+  <div class="paper-item" data-paper-id="{{ p.id }}" data-arxiv-id="{{ p.arxiv_id }}">
     <div class="paper-title">{{ p.title }}</div>
     <div class="paper-id">arXiv: {{ p.arxiv_id }} · \
 {{ p.read_status }}</div>
@@ -211,6 +213,7 @@ class DailyBriefService:
                     p.read_status.value, p.read_status.value
                 )
                 item = {
+                    "id": str(p.id),
                     "title": p.title,
                     "arxiv_id": p.arxiv_id,
                     "read_status": status_label,

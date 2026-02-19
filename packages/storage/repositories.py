@@ -126,6 +126,30 @@ class PaperRepository:
         )
         return list(self.session.execute(q).scalars())
 
+    def list_with_embedding(
+        self, topic_id: str | None = None, limit: int = 200,
+    ) -> list[Paper]:
+        """查询有 embedding 的论文，可选按 topic 过滤"""
+        if topic_id:
+            q = (
+                select(Paper)
+                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
+                .where(
+                    PaperTopic.topic_id == topic_id,
+                    Paper.embedding.is_not(None),
+                )
+                .order_by(Paper.created_at.desc())
+                .limit(limit)
+            )
+        else:
+            q = (
+                select(Paper)
+                .where(Paper.embedding.is_not(None))
+                .order_by(Paper.created_at.desc())
+                .limit(limit)
+            )
+        return list(self.session.execute(q).scalars())
+
     def list_recent_since(
         self, since: datetime, limit: int = 500
     ) -> list[Paper]:

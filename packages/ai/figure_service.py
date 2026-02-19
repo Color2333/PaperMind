@@ -68,6 +68,7 @@ class FigureAnalysis:
     caption: str
     description: str
     bbox: dict | None
+    image_path: str | None = None
 
 
 class FigureService:
@@ -297,9 +298,18 @@ class FigureService:
             logger.info("No figures found in %s", pdf_path)
             return []
 
+        # 先把原图保存到磁盘
+        fig_dir = self._ensure_figure_dir(paper_id)
+        for fig in figures:
+            img_filename = f"p{fig.page_number}_i{fig.image_index}.png"
+            img_path = fig_dir / img_filename
+            img_path.write_bytes(fig.image_bytes)
+
         def _analyze_one(fig: ExtractedFigure) -> FigureAnalysis | None:
             try:
                 analysis = self.analyze_figure(fig)
+                img_filename = f"p{fig.page_number}_i{fig.image_index}.png"
+                analysis.image_path = str(fig_dir / img_filename)
                 logger.info(
                     "Analyzed %s on page %d: %s",
                     fig.image_type, fig.page_number,
@@ -325,15 +335,21 @@ class FigureService:
                     results.append(r)
         results.sort(key=lambda a: (a.page_number, a.image_index))
 
-        # 存入数据库
         self._save_analyses(paper_id, results)
         return results
+
+    @staticmethod
+    def _ensure_figure_dir(paper_id: UUID) -> Path:
+        """创建论文图表存储目录"""
+        from packages.config import get_settings
+        base = get_settings().pdf_storage_root.parent / "figures" / str(paper_id)
+        base.mkdir(parents=True, exist_ok=True)
+        return base
 
     @staticmethod
     def _save_analyses(paper_id: UUID, analyses: list[FigureAnalysis]) -> None:
         """将解读结果持久化"""
         with session_scope() as session:
-            # 清除该论文旧的解读
             session.execute(
                 ImageAnalysis.__table__.delete().where(
                     ImageAnalysis.paper_id == str(paper_id)
@@ -348,6 +364,7 @@ class FigureService:
                     image_type=a.image_type,
                     caption=a.caption,
                     description=a.description,
+                    image_path=a.image_path,
                     bbox_json=a.bbox,
                 ))
 
@@ -370,6 +387,7 @@ class FigureService:
                     "image_type": r.image_type,
                     "caption": r.caption,
                     "description": cls._clean_markdown_fences(r.description or ""),
+                    "has_image": bool(r.image_path and Path(r.image_path).exists()),
                 }
                 for r in rows
             ]

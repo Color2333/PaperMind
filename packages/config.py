@@ -1,11 +1,18 @@
 """
 应用配置 - Pydantic Settings
+支持桌面模式通过 PAPERMIND_ENV_FILE / PAPERMIND_DATA_DIR 环境变量注入路径。
 @author Bamzc
 """
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _resolve_env_file() -> str:
+    """优先使用 PAPERMIND_ENV_FILE 环境变量指定的路径"""
+    return os.environ.get("PAPERMIND_ENV_FILE", ".env")
 
 
 class Settings(BaseSettings):
@@ -36,6 +43,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     zhipu_api_key: str | None = None
     semantic_scholar_api_key: str | None = None
+    openalex_email: str | None = None
 
     cost_guard_enabled: bool = True
     per_call_budget_usd: float = 0.05
@@ -49,7 +57,7 @@ class Settings(BaseSettings):
     notify_default_to: str | None = None
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_resolve_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -58,11 +66,8 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     settings = Settings()
-    Path("./data").mkdir(parents=True, exist_ok=True)
-    settings.pdf_storage_root.mkdir(
-        parents=True, exist_ok=True
-    )
-    settings.brief_output_root.mkdir(
-        parents=True, exist_ok=True
-    )
+    settings.pdf_storage_root.mkdir(parents=True, exist_ok=True)
+    settings.brief_output_root.mkdir(parents=True, exist_ok=True)
+    db_parent = Path(settings.database_url.replace("sqlite:///", "")).parent
+    db_parent.mkdir(parents=True, exist_ok=True)
     return settings

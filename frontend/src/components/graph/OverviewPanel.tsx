@@ -14,9 +14,10 @@ import {
 } from "lucide-react";
 import type {
   LibraryOverview, OverviewNode, BridgesResponse,
-  FrontierResponse, CocitationResponse,
+  FrontierResponse, CocitationResponse, SimilarityMapData,
 } from "@/types";
 import { Section, StatCard } from "./shared";
+import SimilarityMap from "./SimilarityMap";
 
 export default function OverviewPanel() {
   const { toast } = useToast();
@@ -24,22 +25,25 @@ export default function OverviewPanel() {
   const [bridges, setBridges] = useState<BridgesResponse | null>(null);
   const [frontier, setFrontier] = useState<FrontierResponse | null>(null);
   const [cocitation, setCocitation] = useState<CocitationResponse | null>(null);
+  const [simMap, setSimMap] = useState<SimilarityMapData | null>(null);
   const [loading, setLoading] = useState(true);
   const loaded = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ov, br, fr, co] = await Promise.all([
+      const [ov, br, fr, co, sm] = await Promise.all([
         graphApi.overview().catch(() => null),
         graphApi.bridges().catch(() => null),
         graphApi.frontier().catch(() => null),
         graphApi.cocitationClusters().catch(() => null),
+        graphApi.similarityMap().catch(() => null),
       ]);
       if (ov) setOverview(ov);
       if (br) setBridges(br);
       if (fr) setFrontier(fr);
       if (co) setCocitation(co);
+      if (sm) setSimMap(sm);
     } catch { toast("error", "加载概览数据失败"); }
     finally { setLoading(false); }
   }, [toast]);
@@ -64,17 +68,18 @@ export default function OverviewPanel() {
     </div>
   );
 
-  return <OverviewContent overview={overview} bridges={bridges} frontier={frontier} cocitation={cocitation} onRefresh={load} />;
+  return <OverviewContent overview={overview} bridges={bridges} frontier={frontier} cocitation={cocitation} simMap={simMap} onRefresh={load} />;
 }
 
 /* ---- 内部内容组件 ---- */
 function OverviewContent({
-  overview, bridges, frontier, cocitation, onRefresh,
+  overview, bridges, frontier, cocitation, simMap, onRefresh,
 }: {
   overview: LibraryOverview;
   bridges: BridgesResponse | null;
   frontier: FrontierResponse | null;
   cocitation: CocitationResponse | null;
+  simMap: SimilarityMapData | null;
   onRefresh: () => void;
 }) {
   const graphRef = useRef<HTMLDivElement>(null);
@@ -195,6 +200,13 @@ function OverviewContent({
               </div>
             ))}
           </div>
+        </Section>
+      )}
+
+      {/* 论文相似度地图 */}
+      {simMap && simMap.points.length > 0 && (
+        <Section title="论文地图" icon={<Compass className="h-4 w-4 text-primary" />} desc={`基于语义相似度的 2D 分布，共 ${simMap.points.length} 篇（点击论文跳转详情）`}>
+          <SimilarityMap points={simMap.points} height={420} />
         </Section>
       )}
 

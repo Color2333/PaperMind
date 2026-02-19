@@ -766,9 +766,12 @@ const PaperGridItem = memo(function PaperGridItem({ paper, onFavorite, onClick }
 }) {
   const sc = statusBadge[paper.read_status] || statusBadge.unread;
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className="group flex flex-col rounded-xl border border-border/60 bg-surface p-3.5 text-left transition-all hover:shadow-sm"
+      onKeyDown={(e) => e.key === "Enter" && onClick()}
+      className="group flex cursor-pointer flex-col rounded-xl border border-border/60 bg-surface p-3.5 text-left transition-all hover:shadow-sm"
     >
       <div className="mb-2 flex items-center justify-between">
         <Badge variant={sc.variant}>{sc.label}</Badge>
@@ -794,7 +797,7 @@ const PaperGridItem = memo(function PaperGridItem({ paper, onFavorite, onClick }
           <span>{paper.publication_date && formatDate(paper.publication_date)}</span>
         </div>
       </div>
-    </button>
+    </div>
   );
 });
 
