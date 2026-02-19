@@ -3,8 +3,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from packages.domain.enums import ReadStatus
-
 
 class PaperCreate(BaseModel):
     arxiv_id: str
@@ -12,17 +10,6 @@ class PaperCreate(BaseModel):
     abstract: str
     publication_date: date | None = None
     metadata: dict = Field(default_factory=dict)
-
-
-class PaperOut(BaseModel):
-    id: UUID
-    arxiv_id: str
-    title: str
-    abstract: str
-    publication_date: date | None
-    read_status: ReadStatus
-    pdf_path: str | None
-    metadata: dict
 
 
 class SkimReport(BaseModel):
@@ -104,20 +91,6 @@ class LLMProviderUpdate(BaseModel):
     model_fallback: str | None = None
 
 
-class LLMProviderOut(BaseModel):
-    id: str
-    name: str
-    provider: str
-    api_key_masked: str
-    api_base_url: str | None
-    model_skim: str
-    model_deep: str
-    model_vision: str | None
-    model_embedding: str
-    model_fallback: str
-    is_active: bool
-
-
 # ---------- Agent ----------
 
 
@@ -139,10 +112,38 @@ class AgentChatRequest(BaseModel):
     confirmed_action_id: str | None = None
 
 
-class PendingAction(BaseModel):
-    """等待用户确认的操作"""
+# ---------- API Request Bodies ----------
 
-    id: str
-    tool: str
-    args: dict
+
+class ReferenceImportReq(BaseModel):
+    source_paper_id: str
+    source_paper_title: str = ""
+    entries: list[dict]
+    topic_ids: list[str] = []
+
+
+class SuggestKeywordsReq(BaseModel):
     description: str
+
+
+class AIExplainReq(BaseModel):
+    text: str
+    action: str = "explain"
+
+
+class WritingProcessReq(BaseModel):
+    action: str
+    topic: str = ""
+    style: str = ""
+    content: str = ""
+    template_type: str = ""
+
+
+class WritingRefineReq(BaseModel):
+    messages: list[dict] = []
+
+
+class WritingMultimodalReq(BaseModel):
+    action: str
+    content: str = ""
+    image_base64: str

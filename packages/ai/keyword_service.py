@@ -4,9 +4,7 @@ AI 关键词建议服务 - 自然语言 → arXiv 搜索关键词
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
 
 from packages.integrations.llm_client import LLMClient
 
@@ -60,25 +58,14 @@ class KeywordService:
     def suggest(self, description: str) -> list[dict]:
         """生成关键词建议"""
         prompt = SUGGEST_PROMPT.format(description=description)
-        result = self.llm.summarize_text(
-            prompt, stage="deep", max_tokens=4096,
+        result = self.llm.complete_json(
+            prompt, stage="keyword_suggest", max_tokens=4096,
         )
         self.llm.trace_result(result, stage="keyword_suggest", prompt_digest=f"suggest:{description[:80]}")
 
-        # 尝试从返回文本中提取 JSON
-        text = result.content.strip()
-        # 去掉 ```json ... ``` 包裹
-        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-        if m:
-            text = m.group(1).strip()
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            logger.warning(
-                "AI keyword suggestion JSON parse failed: %s",
-                text[:200],
-            )
+        parsed = result.parsed_json
+        if parsed is None:
+            logger.warning("AI keyword suggestion JSON parse failed")
             return []
 
         return _extract_items(parsed)

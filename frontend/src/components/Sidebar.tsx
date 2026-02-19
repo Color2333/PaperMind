@@ -68,9 +68,14 @@ export default function Sidebar() {
   const location = useLocation();
 
   useEffect(() => {
-    paperApi.folderStats().then((s: any) => {
-      setUnreadCount(s.by_status?.unread ?? 0);
-    }).catch(() => {});
+    const fetchUnread = () => {
+      paperApi.folderStats().then((s: any) => {
+        setUnreadCount(s.by_status?.unread ?? 0);
+      }).catch(() => {});
+    };
+    fetchUnread();
+    const timer = setInterval(fetchUnread, 30000);
+    return () => clearInterval(timer);
   }, [location.pathname]);
   const {
     metas,

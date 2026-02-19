@@ -177,10 +177,13 @@ export default function DailyBrief() {
               {history.map((item) => {
                 const active = selectedContent?.id === item.id;
                 return (
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     key={item.id}
                     onClick={() => handleView(item)}
-                    className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all ${
+                    onKeyDown={(e) => { if (e.key === "Enter") handleView(item); }}
+                    className={`group flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all ${
                       active
                         ? "bg-primary/10 text-primary"
                         : "text-ink hover:bg-surface"
@@ -198,7 +201,7 @@ export default function DailyBrief() {
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
-                  </button>
+                  </div>
                 );
               })}
             </div>

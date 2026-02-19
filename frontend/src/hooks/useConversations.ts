@@ -6,6 +6,7 @@ import { useState, useCallback, useEffect } from "react";
 import { uid } from "@/lib/utils";
 
 const STORAGE_KEY = "papermind_conversations";
+const ACTIVE_KEY = "papermind_active_conversation";
 const MAX_CONVERSATIONS = 100;
 
 export interface ConversationMeta {
@@ -100,12 +101,29 @@ function autoTitle(messages: ConversationMessage[]): string {
  */
 export function useConversations() {
   const [metas, setMetas] = useState<ConversationMeta[]>(loadMetas);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveIdRaw] = useState<string | null>(
+    () => localStorage.getItem(ACTIVE_KEY),
+  );
   const [activeConv, setActiveConv] = useState<Conversation | null>(null);
 
-  // 加载 metas 初始化
+  const setActiveId = useCallback((id: string | null) => {
+    setActiveIdRaw(id);
+    if (id) localStorage.setItem(ACTIVE_KEY, id);
+    else localStorage.removeItem(ACTIVE_KEY);
+  }, []);
+
   useEffect(() => {
     setMetas(loadMetas());
+    const savedId = localStorage.getItem(ACTIVE_KEY);
+    if (savedId) {
+      const conv = loadConversation(savedId);
+      if (conv) {
+        setActiveIdRaw(savedId);
+        setActiveConv(conv);
+      } else {
+        localStorage.removeItem(ACTIVE_KEY);
+      }
+    }
   }, []);
 
   /**

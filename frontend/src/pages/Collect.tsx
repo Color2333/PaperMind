@@ -2,7 +2,7 @@
  * 论文收集与订阅管理（重构版：手动抓取 + 丰富结果展示）
  * @author Bamzc
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Empty, Spinner } from "@/components/ui";
 import {
@@ -91,6 +91,11 @@ export default function Collect() {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchingTopicId, setFetchingTopicId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
 
   // ========== 表单 ==========
   const [showForm, setShowForm] = useState(false);
@@ -141,11 +146,12 @@ export default function Collect() {
       if (res.status === "started" || res.status === "already_running") {
         toast({ type: "info", message: res.message || "抓取已在后台启动..." });
         // 轮询状态
-        const poll = setInterval(async () => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = setInterval(async () => {
           try {
             const status = await topicApi.fetchStatus(topicId);
             if (status.status === "running") return;
-            clearInterval(poll);
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
             setFetchingTopicId(null);
             if (status.status === "ok") {
               toast({ type: "success", message: `抓取完成：${status.inserted} 篇入库，${status.processed || 0} 篇处理` });
@@ -155,10 +161,12 @@ export default function Collect() {
             } else if (status.status === "failed") {
               toast({ type: "error", message: `抓取失败：${status.error || "未知错误"}` });
             }
-            // 刷新列表
             const list = await topicApi.list(false);
             setTopics(list.items);
-          } catch { clearInterval(poll); setFetchingTopicId(null); }
+          } catch {
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            setFetchingTopicId(null);
+          }
         }, 3000);
         return;
       }

@@ -29,14 +29,7 @@ from packages.storage.models import (
 )
 
 
-def _cosine_distance(a: list[float], b: list[float]) -> float:
-    """计算两个向量的余弦距离"""
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na == 0 or nb == 0:
-        return 1.0
-    return 1.0 - (dot / (na * nb))
+from packages.domain.math_utils import cosine_distance as _cosine_distance
 
 
 class PaperRepository:
@@ -73,10 +66,7 @@ class PaperRepository:
         return list(self.session.execute(q).scalars())
 
     def list_all(self, limit: int = 10000) -> list[Paper]:
-        q: Select[tuple[Paper]] = (
-            select(Paper).order_by(Paper.created_at.desc()).limit(limit)
-        )
-        return list(self.session.execute(q).scalars())
+        return self.list_latest(limit=limit)
 
     def list_by_ids(self, paper_ids: list[str]) -> list[Paper]:
         if not paper_ids:
@@ -311,38 +301,6 @@ class PaperRepository:
             ).scalars()
         )
         return papers, total
-
-    def list_unclassified(self, limit: int = 200) -> list[Paper]:
-        """查询没有关联任何主题的论文"""
-        subq = select(PaperTopic.paper_id).distinct()
-        q = (
-            select(Paper)
-            .where(Paper.id.notin_(subq))
-            .order_by(Paper.created_at.desc())
-            .limit(limit)
-        )
-        return list(self.session.execute(q).scalars())
-
-    def list_recent(self, days: int = 7, limit: int = 200) -> list[Paper]:
-        """查询最近 N 天入库的论文"""
-        since = datetime.now(UTC) - timedelta(days=days)
-        q = (
-            select(Paper)
-            .where(Paper.created_at >= since)
-            .order_by(Paper.created_at.desc())
-            .limit(limit)
-        )
-        return list(self.session.execute(q).scalars())
-
-    def list_favorited(self, limit: int = 200) -> list[Paper]:
-        """查询收藏的论文"""
-        q = (
-            select(Paper)
-            .where(Paper.favorited == True)  # noqa: E712
-            .order_by(Paper.created_at.desc())
-            .limit(limit)
-        )
-        return list(self.session.execute(q).scalars())
 
     def list_by_topic(
         self, topic_id: str, limit: int = 200
@@ -1030,10 +988,11 @@ class GeneratedContentRepository:
         )
         return list(self.session.execute(q).scalars())
 
-    def get_by_id(
-        self, content_id: str
-    ) -> GeneratedContent | None:
-        return self.session.get(GeneratedContent, content_id)
+    def get_by_id(self, content_id: str) -> GeneratedContent:
+        gc = self.session.get(GeneratedContent, content_id)
+        if gc is None:
+            raise ValueError(f"generated_content {content_id} not found")
+        return gc
 
     def delete(self, content_id: str) -> None:
         gc = self.session.get(GeneratedContent, content_id)

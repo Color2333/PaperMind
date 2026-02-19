@@ -445,24 +445,6 @@ def _get_tool_handlers() -> dict:
     }
 
 
-def execute_tool(name: str, arguments: dict) -> ToolResult:
-    """同步执行工具（忽略中间进度）"""
-    fn = _get_tool_handlers().get(name)
-    if not fn:
-        return ToolResult(success=False, summary=f"未知工具: {name}")
-    try:
-        result = fn(**arguments)
-        if hasattr(result, "__next__"):
-            final = ToolResult(success=False, summary="工具未返回结果")
-            for item in result:
-                if isinstance(item, ToolResult):
-                    final = item
-            return final
-        return result
-    except Exception as exc:
-        logger.exception("Tool %s failed: %s", name, exc)
-        return ToolResult(success=False, summary=str(exc))
-
 
 def execute_tool_stream(
     name: str, arguments: dict
@@ -484,27 +466,31 @@ def execute_tool_stream(
 
 
 def _search_papers(keyword: str, limit: int = 20) -> ToolResult:
-    with session_scope() as session:
-        papers = PaperRepository(session).full_text_candidates(
-            query=keyword, limit=limit
+    try:
+        with session_scope() as session:
+            papers = PaperRepository(session).full_text_candidates(
+                query=keyword, limit=limit
+            )
+            items = [
+                {
+                    "id": str(p.id),
+                    "title": p.title,
+                    "arxiv_id": p.arxiv_id,
+                    "abstract": (p.abstract or "")[:500],
+                    "publication_date": str(p.publication_date) if p.publication_date else None,
+                    "read_status": p.read_status.value,
+                    "categories": (p.metadata_json or {}).get("categories", []),
+                }
+                for p in papers
+            ]
+        return ToolResult(
+            success=True,
+            data={"papers": items, "count": len(items)},
+            summary=f"搜索到 {len(items)} 篇论文",
         )
-        items = [
-            {
-                "id": str(p.id),
-                "title": p.title,
-                "arxiv_id": p.arxiv_id,
-                "abstract": (p.abstract or "")[:500],
-                "publication_date": str(p.publication_date) if p.publication_date else None,
-                "read_status": p.read_status.value,
-                "categories": (p.metadata_json or {}).get("categories", []),
-            }
-            for p in papers
-        ]
-    return ToolResult(
-        success=True,
-        data={"papers": items, "count": len(items)},
-        summary=f"搜索到 {len(items)} 篇论文",
-    )
+    except Exception as exc:
+        logger.exception("search_papers failed: %s", exc)
+        return ToolResult(success=False, summary=f"搜索论文失败: {exc!s}")
 
 
 def _get_paper_detail(paper_id: str) -> ToolResult:
@@ -543,15 +529,34 @@ def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
             success=False,
             summary="该论文未向量化，请先调用 embed_paper",
         )
-    ids = RAGService().similar_papers(pid, top_k=top_k)
-    return ToolResult(
-        success=True,
-        data={
-            "paper_id": paper_id,
-            "similar_ids": [str(x) for x in ids],
-        },
-        summary=f"找到 {len(ids)} 篇相似论文",
-    )
+    try:
+        ids = RAGService().similar_papers(pid, top_k=top_k)
+        items = []
+        with session_scope() as session:
+            repo = PaperRepository(session)
+            for sid in ids:
+                try:
+                    sp = repo.get_by_id(sid)
+                    items.append({
+                        "id": str(sp.id), "title": sp.title,
+                        "arxiv_id": sp.arxiv_id,
+                        "read_status": sp.read_status.value,
+                    })
+                except Exception:
+                    items.append({"id": str(sid), "title": "未知论文"})
+        titles = ", ".join(it["title"][:30] for it in items[:3])
+        return ToolResult(
+            success=True,
+            data={
+                "paper_id": paper_id,
+                "similar_ids": [str(x) for x in ids],
+                "items": items,
+            },
+            summary=f"找到 {len(ids)} 篇相似论文: {titles}{'...' if len(ids) > 3 else ''}",
+        )
+    except Exception as exc:
+        logger.exception("get_similar_papers failed: %s", exc)
+        return ToolResult(success=False, summary=f"查找相似论文失败: {exc!s}")
 
 
 def _ask_knowledge_base(
@@ -615,91 +620,115 @@ def _get_citation_tree(paper_id: str, depth: int = 2) -> ToolResult:
     _, err = _require_paper(paper_id)
     if err:
         return err
-    result = GraphService().citation_tree(
-        root_paper_id=paper_id, depth=depth
-    )
-    node_count = len(result.get("nodes", []))
-    return ToolResult(
-        success=True,
-        data=result,
-        summary=f"引用树含 {node_count} 个节点",
-    )
+    try:
+        result = GraphService().citation_tree(
+            root_paper_id=paper_id, depth=depth
+        )
+        node_count = len(result.get("nodes", []))
+        edge_count = len(result.get("edges", []))
+        return ToolResult(
+            success=True,
+            data=result,
+            summary=f"引用树含 {node_count} 个节点、{edge_count} 条边",
+        )
+    except Exception as exc:
+        logger.exception("get_citation_tree failed: %s", exc)
+        return ToolResult(success=False, summary=f"引用树获取失败: {exc!s}")
 
 
 def _get_timeline(keyword: str, limit: int = 100) -> ToolResult:
-    result = GraphService().timeline(keyword=keyword, limit=limit)
-    return ToolResult(
-        success=True,
-        data=result,
-        summary="已获取时间线",
-    )
+    try:
+        result = GraphService().timeline(keyword=keyword, limit=limit)
+        tl = result.get("timeline", [])
+        years = sorted(set(p.get("year") for p in tl if p.get("year")))
+        year_range = f"{years[0]}-{years[-1]}" if len(years) >= 2 else (str(years[0]) if years else "无")
+        return ToolResult(
+            success=True,
+            data=result,
+            summary=f"时间线: {len(tl)} 篇论文，覆盖 {year_range}",
+        )
+    except Exception as exc:
+        logger.exception("get_timeline failed: %s", exc)
+        return ToolResult(success=False, summary=f"时间线获取失败: {exc!s}")
 
 
 def _list_topics() -> ToolResult:
-    with session_scope() as session:
-        topics = TopicRepository(session).list_topics(enabled_only=False)
-        items = [
-            {
-                "id": str(t.id),
-                "name": t.name,
-                "query": t.query,
-                "enabled": t.enabled,
-                "max_results_per_run": t.max_results_per_run,
-                "retry_limit": t.retry_limit,
-            }
-            for t in topics
-        ]
-    return ToolResult(
-        success=True,
-        data={"topics": items, "count": len(items)},
-        summary=f"共 {len(items)} 个主题",
-    )
+    try:
+        with session_scope() as session:
+            topics = TopicRepository(session).list_topics(enabled_only=False)
+            items = [
+                {
+                    "id": str(t.id),
+                    "name": t.name,
+                    "query": t.query,
+                    "enabled": t.enabled,
+                    "paper_count": getattr(t, "paper_count", None),
+                    "max_results_per_run": t.max_results_per_run,
+                    "retry_limit": t.retry_limit,
+                }
+                for t in topics
+            ]
+        enabled = sum(1 for t in items if t["enabled"])
+        names = ", ".join(t["name"] for t in items[:5])
+        suffix = f"..." if len(items) > 5 else ""
+        return ToolResult(
+            success=True,
+            data={"topics": items, "count": len(items)},
+            summary=f"共 {len(items)} 个主题（{enabled} 个已订阅）: {names}{suffix}",
+        )
+    except Exception as exc:
+        logger.exception("list_topics failed: %s", exc)
+        return ToolResult(success=False, summary=f"列出主题失败: {exc!s}")
 
 
 def _get_system_status() -> ToolResult:
-    from sqlalchemy import func
-    from sqlalchemy import select as sa_select
+    try:
+        from sqlalchemy import func
+        from sqlalchemy import select as sa_select
 
-    from packages.storage.models import Paper, TopicSubscription
+        from packages.storage.models import Paper, TopicSubscription
 
-    db_ok = check_db_connection()
-    with session_scope() as session:
-        paper_count = session.execute(
-            sa_select(func.count()).select_from(Paper)
-        ).scalar() or 0
-        embedded_count = session.execute(
-            sa_select(func.count()).select_from(Paper).where(
-                Paper.embedding.is_not(None)
-            )
-        ).scalar() or 0
-        topic_count = session.execute(
-            sa_select(func.count()).select_from(TopicSubscription)
-        ).scalar() or 0
-        run_repo = PipelineRunRepository(session)
-        runs = run_repo.list_latest(limit=10)
-    return ToolResult(
-        success=True,
-        data={
-            "db_connected": db_ok,
-            "paper_count": paper_count,
-            "embedded_count": embedded_count,
-            "topic_count": topic_count,
-            "recent_runs_count": len(runs),
-            "recent_runs": [
-                {
-                    "pipeline": r.pipeline_name,
-                    "status": r.status.value if hasattr(r.status, "value") else str(r.status),
-                    "created_at": str(r.created_at) if r.created_at else None,
-                }
-                for r in runs[:5]
-            ],
-        },
-        summary=(
-            f"论文 {paper_count} 篇（{embedded_count} 已向量化），"
-            f"主题 {topic_count} 个"
-            + ("" if db_ok else " ⚠️数据库异常")
-        ),
-    )
+        db_ok = check_db_connection()
+        with session_scope() as session:
+            paper_count = session.execute(
+                sa_select(func.count()).select_from(Paper)
+            ).scalar() or 0
+            embedded_count = session.execute(
+                sa_select(func.count()).select_from(Paper).where(
+                    Paper.embedding.is_not(None)
+                )
+            ).scalar() or 0
+            topic_count = session.execute(
+                sa_select(func.count()).select_from(TopicSubscription)
+            ).scalar() or 0
+            run_repo = PipelineRunRepository(session)
+            runs = run_repo.list_latest(limit=10)
+        return ToolResult(
+            success=True,
+            data={
+                "db_connected": db_ok,
+                "paper_count": paper_count,
+                "embedded_count": embedded_count,
+                "topic_count": topic_count,
+                "recent_runs_count": len(runs),
+                "recent_runs": [
+                    {
+                        "pipeline": r.pipeline_name,
+                        "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+                        "created_at": str(r.created_at) if r.created_at else None,
+                    }
+                    for r in runs[:5]
+                ],
+            },
+            summary=(
+                f"论文 {paper_count} 篇（{embedded_count} 已向量化），"
+                f"主题 {topic_count} 个"
+                + ("" if db_ok else " ⚠️数据库异常")
+            ),
+        )
+    except Exception as exc:
+        logger.exception("get_system_status failed: %s", exc)
+        return ToolResult(success=False, summary=f"获取系统状态失败: {exc!s}")
 
 
 def _search_arxiv(query: str, max_results: int = 20) -> ToolResult:
@@ -743,9 +772,11 @@ def _ingest_arxiv(
 ) -> Iterator[ToolProgress | ToolResult]:
     """将用户选定的论文入库 → 自动分配主题 → 自动向量化 → 自动粗读"""
     from packages.integrations.arxiv_client import ArxivClient
+    from packages.domain.task_tracker import global_tracker
 
     pipelines = PaperPipelines()
     topic_name = query.strip()
+    _task_id = f"ingest_{uuid4().hex[:8]}"
 
     if not arxiv_ids:
         yield ToolResult(
@@ -777,6 +808,11 @@ def _ingest_arxiv(
     selected_set = set(arxiv_ids)
     inserted_ids: list[str] = []
 
+    global_tracker.start(
+        _task_id, "ingest",
+        f"入库论文: {topic_name[:30]}",
+        total=len(selected_set),
+    )
     yield ToolProgress(
         message=f"正在下载 {len(selected_set)} 篇选中论文...",
         current=0, total=len(selected_set),
@@ -832,6 +868,10 @@ def _ingest_arxiv(
                         "error": str(exc)[:120],
                         "status": "failed",
                     })
+                global_tracker.update(
+                    _task_id, current=idx,
+                    message=f"入库 {idx}/{len(selected_papers)}: {(paper.title or '')[:40]}",
+                )
                 yield ToolProgress(
                     message=f"入库 {idx}/{len(selected_papers)}: {(paper.title or '')[:40]}",
                     current=idx, total=len(selected_papers),
@@ -852,6 +892,7 @@ def _ingest_arxiv(
             raise
 
     if not inserted_ids:
+        global_tracker.finish(_task_id, success=False, error="未能入库任何论文")
         yield ToolResult(
             success=len(failed_papers) == 0,
             data={
@@ -863,6 +904,10 @@ def _ingest_arxiv(
         return
 
     total = len(inserted_ids)
+    global_tracker.update(
+        _task_id, current=0, total=total,
+        message=f"入库 {total} 篇，开始向量化和粗读...",
+    )
     yield ToolProgress(
         message=f"入库 {total} 篇，开始向量化和粗读...",
         current=0, total=total,
@@ -924,10 +969,16 @@ def _ingest_arxiv(
                 logger.warning(
                     "paper %s failed: %s", pid_str[:8], exc
                 )
+            global_tracker.update(
+                _task_id, current=done,
+                message=f"嵌入+粗读 {done}/{total}: {title}",
+            )
             yield ToolProgress(
                 message=f"完成 {done}/{total}: {title}",
                 current=done, total=total,
             )
+
+    global_tracker.finish(_task_id, success=True)
 
     yield ToolResult(
         success=True,
@@ -1020,59 +1071,83 @@ def _suggest_keywords(description: str) -> ToolResult:
     )
 
 
-def _skim_paper(paper_id: str) -> ToolResult:
+def _skim_paper(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     paper, err = _require_paper(paper_id)
     if err:
-        return err
+        yield err
+        return
     if not paper.abstract:
-        return ToolResult(success=False, summary="该论文缺少摘要，无法执行粗读")
+        yield ToolResult(success=False, summary="该论文缺少摘要，无法执行粗读")
+        return
     pid = UUID(paper_id)
-    report = PaperPipelines().skim(pid)
-    one_liner = report.one_liner
-    return ToolResult(
-        success=True,
-        data=report.model_dump(),
-        summary=f"粗读完成: {one_liner[:80]}" + ("..." if len(one_liner) > 80 else ""),
-    )
+    title = (paper.title or "")[:40]
+    yield ToolProgress(message=f"正在粗读「{title}」...", current=1, total=2)
+    try:
+        report = PaperPipelines().skim(pid)
+        one_liner = report.one_liner
+        yield ToolResult(
+            success=True,
+            data=report.model_dump(),
+            summary=f"粗读完成: {one_liner[:80]}" + ("..." if len(one_liner) > 80 else ""),
+        )
+    except Exception as exc:
+        logger.exception("skim_paper failed: %s", exc)
+        yield ToolResult(success=False, summary=f"粗读失败: {exc!s}")
 
 
-def _deep_read_paper(paper_id: str) -> ToolResult:
+def _deep_read_paper(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     paper, err = _require_paper(paper_id)
     if err:
-        return err
+        yield err
+        return
     if not paper.arxiv_id and not paper.pdf_path:
-        return ToolResult(success=False, summary="该论文无 arXiv ID 且无 PDF，无法精读")
+        yield ToolResult(success=False, summary="该论文无 arXiv ID 且无 PDF，无法精读")
+        return
     pid = UUID(paper_id)
-    report = PaperPipelines().deep_dive(pid)
-    return ToolResult(
-        success=True,
-        data=report.model_dump(),
-        summary="精读完成",
-    )
+    title = (paper.title or "")[:40]
+    yield ToolProgress(message=f"正在精读「{title}」，预计 30-60 秒...", current=1, total=3)
+    try:
+        report = PaperPipelines().deep_dive(pid)
+        yield ToolResult(
+            success=True,
+            data=report.model_dump(),
+            summary=f"精读完成: {(paper.title or '')[:60]}",
+        )
+    except Exception as exc:
+        logger.exception("deep_read_paper failed: %s", exc)
+        yield ToolResult(success=False, summary=f"精读失败: {exc!s}")
 
 
-def _embed_paper(paper_id: str) -> ToolResult:
+def _embed_paper(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     paper, err = _require_paper(paper_id)
     if err:
-        return err
+        yield err
+        return
     pid = UUID(paper_id)
     if paper.embedding:
-        return ToolResult(
+        yield ToolResult(
             success=True,
             data={"paper_id": paper_id, "status": "already_embedded"},
             summary="该论文已有向量，跳过",
         )
+        return
     if not paper.title and not paper.abstract:
-        return ToolResult(
+        yield ToolResult(
             success=False,
             summary="该论文缺少标题和摘要，无法向量化",
         )
-    PaperPipelines().embed_paper(pid)
-    return ToolResult(
-        success=True,
-        data={"paper_id": paper_id, "status": "embedded"},
-        summary="向量化完成",
-    )
+        return
+    yield ToolProgress(message="正在向量化...", current=1, total=2)
+    try:
+        PaperPipelines().embed_paper(pid)
+        yield ToolResult(
+            success=True,
+            data={"paper_id": paper_id, "status": "embedded"},
+            summary="向量化完成",
+        )
+    except Exception as exc:
+        logger.exception("embed_paper failed: %s", exc)
+        yield ToolResult(success=False, summary=f"向量化失败: {exc!s}")
 
 
 def _generate_wiki(type: str, keyword_or_id: str):
@@ -1226,7 +1301,7 @@ def _generate_daily_brief(recipient: str = ""):
     )
 
 
-def _reasoning_analysis(paper_id: str) -> ToolResult:
+def _reasoning_analysis(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     """推理链深度分析"""
     from packages.ai.reasoning_service import ReasoningService
 
@@ -1235,14 +1310,17 @@ def _reasoning_analysis(paper_id: str) -> ToolResult:
         try:
             paper = repo.get_by_id(UUID(paper_id))
         except (ValueError, Exception) as exc:
-            return ToolResult(success=False, summary=f"论文不存在: {exc}")
+            yield ToolResult(success=False, summary=f"论文不存在: {exc}")
+            return
         title = paper.title
 
+    yield ToolProgress(message=f"正在分析「{(title or '')[:30]}」的推理链...", current=1, total=2)
     svc = ReasoningService()
     try:
         result = svc.analyze(UUID(paper_id))
     except Exception as exc:
-        return ToolResult(success=False, summary=f"推理链分析失败: {exc}")
+        yield ToolResult(success=False, summary=f"推理链分析失败: {exc}")
+        return
 
     reasoning = result.get("reasoning", {})
     steps = reasoning.get("reasoning_steps", [])
@@ -1265,7 +1343,7 @@ def _reasoning_analysis(paper_id: str) -> ToolResult:
         + f"**综合评估**: {impact.get('overall_assessment', '')[:500]}"
     )
 
-    return ToolResult(
+    yield ToolResult(
         success=True,
         data=reasoning,
         summary=summary,
@@ -1318,7 +1396,7 @@ def _identify_research_gaps(keyword: str, limit: int = 100) -> ToolResult:
     )
 
 
-def _analyze_figures(paper_id: str, max_figures: int = 10) -> ToolResult:
+def _analyze_figures(paper_id: str, max_figures: int = 10) -> Iterator[ToolProgress | ToolResult]:
     """提取并解读论文图表"""
     from packages.ai.figure_service import FigureService
 
@@ -1327,26 +1405,31 @@ def _analyze_figures(paper_id: str, max_figures: int = 10) -> ToolResult:
         try:
             paper = repo.get_by_id(UUID(paper_id))
         except (ValueError, Exception) as exc:
-            return ToolResult(success=False, summary=f"论文不存在: {exc}")
+            yield ToolResult(success=False, summary=f"论文不存在: {exc}")
+            return
         if not paper.pdf_path:
-            return ToolResult(success=False, summary="论文没有 PDF 文件，无法提取图表")
+            yield ToolResult(success=False, summary="论文没有 PDF 文件，无法提取图表")
+            return
         pdf_path = paper.pdf_path
         title = paper.title
 
+    yield ToolProgress(message=f"正在提取「{(title or '')[:30]}」中的图表...", current=1, total=3)
     svc = FigureService()
     try:
         results = svc.analyze_paper_figures(
             UUID(paper_id), pdf_path, max_figures=max_figures,
         )
     except Exception as exc:
-        return ToolResult(success=False, summary=f"图表解读失败: {exc}")
+        yield ToolResult(success=False, summary=f"图表解读失败: {exc}")
+        return
 
     if not results:
-        return ToolResult(
+        yield ToolResult(
             success=True,
             data={"count": 0, "figures": []},
             summary=f"论文「{title}」中未检测到可解读的图表",
         )
+        return
 
     figures_data = [
         {
@@ -1354,11 +1437,13 @@ def _analyze_figures(paper_id: str, max_figures: int = 10) -> ToolResult:
             "type": r.image_type,
             "caption": r.caption,
             "description": r.description[:500],
+            "figure_type": getattr(r, "figure_type", r.image_type),
+            "analysis": getattr(r, "analysis", r.description[:500]),
         }
         for r in results
     ]
 
-    return ToolResult(
+    yield ToolResult(
         success=True,
         data={"count": len(results), "figures": figures_data},
         summary=f"已解读「{title}」中的 {len(results)} 张图表",

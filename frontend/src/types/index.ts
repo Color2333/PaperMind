@@ -767,8 +767,8 @@ export function parseSSEStream(
         try {
           const data = JSON.parse(dataStr);
           onEvent({ type: currentEvent as SSEEventType, data });
-        } catch {
-          // 忽略解析失败
+        } catch (e) {
+          console.warn("[SSE] Failed to parse:", currentEvent, dataStr.slice(0, 200), e);
         }
         currentEvent = "";
       }

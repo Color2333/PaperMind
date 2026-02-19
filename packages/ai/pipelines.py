@@ -76,22 +76,20 @@ class PaperPipelines:
         action_type: ActionType = ActionType.manual_collect,
         sort_by: str = "submittedDate",
     ) -> tuple[int, list[str]]:
-        """即时搜索入库：用 upsert 去重（不用 checkpoint 过滤），返回 (count, inserted_ids)"""
+        """搜索 arXiv 并入库，upsert 去重。返回 (count, inserted_ids)"""
         papers = self.arxiv.fetch_latest(
             query=query, max_results=max_results, sort_by=sort_by,
         )
+        inserted_ids: list[str] = []
         with session_scope() as session:
             repo = PaperRepository(session)
             run_repo = PipelineRunRepository(session)
             action_repo = ActionRepository(session)
-            run = run_repo.start("ingest_arxiv")
-            count = 0
-            inserted_ids: list[str] = []
+            run = run_repo.start("ingest_arxiv", decision_note=f"query={query}")
             try:
                 for paper in papers:
                     saved = self._save_paper(repo, paper, topic_id)
                     inserted_ids.append(saved.id)
-                    count += 1
 
                 if inserted_ids:
                     action_repo.create_action(
@@ -108,7 +106,7 @@ class PaperPipelines:
                         target=_bg_auto_link, args=(inserted_ids,),
                         daemon=True,
                     ).start()
-                return count, inserted_ids
+                return len(inserted_ids), inserted_ids
             except Exception as exc:
                 run_repo.fail(run.id, str(exc))
                 raise
@@ -120,43 +118,12 @@ class PaperPipelines:
         topic_id: str | None = None,
         action_type: ActionType = ActionType.subscription_ingest,
     ) -> list[str]:
-        """Agent 调用的入库方法，不做 checkpoint 过滤，靠 upsert 去重"""
-        papers = self.arxiv.fetch_latest(
-            query=query, max_results=max_results
+        """ingest_arxiv 的别名，返回 inserted_ids"""
+        _, ids = self.ingest_arxiv(
+            query=query, max_results=max_results,
+            topic_id=topic_id, action_type=action_type,
         )
-        inserted_ids: list[str] = []
-        with session_scope() as session:
-            repo = PaperRepository(session)
-            run_repo = PipelineRunRepository(session)
-            action_repo = ActionRepository(session)
-            run = run_repo.start(
-                "ingest_arxiv",
-                decision_note=f"query={query}",
-            )
-            try:
-                for paper in papers:
-                    saved = self._save_paper(repo, paper, topic_id)
-                    inserted_ids.append(saved.id)
-
-                if inserted_ids:
-                    action_repo.create_action(
-                        action_type=action_type,
-                        title=f"收集: {query[:80]}",
-                        paper_ids=inserted_ids,
-                        query=query,
-                        topic_id=topic_id,
-                    )
-
-                run_repo.finish(run.id)
-                if inserted_ids:
-                    threading.Thread(
-                        target=_bg_auto_link, args=(inserted_ids,),
-                        daemon=True,
-                    ).start()
-                return inserted_ids
-            except Exception as exc:
-                run_repo.fail(run.id, str(exc))
-                raise
+        return ids
 
     def skim(self, paper_id: UUID) -> SkimReport:
         started = time.perf_counter()

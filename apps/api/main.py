@@ -14,42 +14,10 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import BaseModel
-
-
-class ReferenceImportReq(BaseModel):
-    source_paper_id: str
-    source_paper_title: str = ""
-    entries: list[dict]
-    topic_ids: list[str] = []
-
-
-class SuggestKeywordsReq(BaseModel):
-    description: str
-
-
-class AIExplainReq(BaseModel):
-    text: str
-    action: str = "explain"
-
-
-class WritingProcessReq(BaseModel):
-    action: str
-    topic: str = ""
-    style: str = ""
-    content: str = ""
-    template_type: str = ""
-
-
-class WritingRefineReq(BaseModel):
-    messages: list[dict] = []
-
-
-class WritingMultimodalReq(BaseModel):
-    action: str
-    content: str = ""
-    image_base64: str
-
+from packages.domain.schemas import (
+    ReferenceImportReq, SuggestKeywordsReq, AIExplainReq,
+    WritingProcessReq, WritingRefineReq, WritingMultimodalReq,
+)
 from packages.ai.agent_service import (
     confirm_action,
     reject_action,
@@ -92,6 +60,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _get_paper_title(paper_id: UUID) -> str | None:
+    """快速获取论文标题"""
+    try:
+        with session_scope() as session:
+            p = PaperRepository(session).get_by_id(paper_id)
+            return (p.title or "")[:40]
+    except Exception:
+        return None
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -363,12 +341,17 @@ def manual_fetch_topic(topic_id: str) -> dict:
         return {"status": "already_running", "topic_name": topic_name, "inserted": 0, "processed": 0}
 
     def _run():
+        from packages.domain.task_tracker import global_tracker
+        tid = f"fetch_{topic_id[:8]}"
+        global_tracker.start(tid, "fetch", f"抓取: {topic_name[:30]}")
         _fetch_tasks[topic_id] = {"running": True}
         try:
             result = run_topic_ingest(topic_id)
             _fetch_tasks[topic_id] = {"running": False, **result}
+            global_tracker.finish(tid, success=True)
         except Exception as exc:
             _fetch_tasks[topic_id] = {"running": False, "status": "failed", "error": str(exc)}
+            global_tracker.finish(tid, success=False, error=str(exc)[:100])
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -661,6 +644,42 @@ def start_topic_wiki_task(
     return {"task_id": task_id, "status": "pending"}
 
 
+@app.get("/tasks/active")
+def get_active_tasks() -> dict:
+    """获取全局进行中的任务列表（跨页面可见）"""
+    from packages.domain.task_tracker import global_tracker
+    return {"tasks": global_tracker.get_active()}
+
+
+@app.post("/tasks/track")
+def track_task(body: dict) -> dict:
+    """前端通知后端创建/更新/完成一个全局可见任务"""
+    from packages.domain.task_tracker import global_tracker
+    action = body.get("action", "start")
+    task_id = body.get("task_id", "")
+    if action == "start":
+        global_tracker.start(
+            task_id=task_id,
+            task_type=body.get("task_type", "batch"),
+            title=body.get("title", ""),
+            total=body.get("total", 0),
+        )
+    elif action == "update":
+        global_tracker.update(
+            task_id=task_id,
+            current=body.get("current", 0),
+            message=body.get("message", ""),
+            total=body.get("total"),
+        )
+    elif action == "finish":
+        global_tracker.finish(
+            task_id=task_id,
+            success=body.get("success", True),
+            error=body.get("error"),
+        )
+    return {"ok": True}
+
+
 @app.get("/tasks/{task_id}")
 def get_task_status(task_id: str) -> dict:
     """查询任务进度"""
@@ -696,22 +715,47 @@ def list_tasks(
 
 @app.post("/pipelines/skim/{paper_id}")
 def run_skim(paper_id: UUID) -> dict:
-    logger.info("Skim pipeline: paper_id=%s", paper_id)
-    skim = pipelines.skim(paper_id)
-    return skim.model_dump()
+    from packages.domain.task_tracker import global_tracker
+    tid = f"skim_{paper_id.hex[:8]}"
+    title = _get_paper_title(paper_id) or str(paper_id)[:8]
+    global_tracker.start(tid, "skim", f"粗读: {title[:30]}", total=1)
+    try:
+        skim = pipelines.skim(paper_id)
+        global_tracker.finish(tid, success=True)
+        return skim.model_dump()
+    except Exception as exc:
+        global_tracker.finish(tid, success=False, error=str(exc)[:100])
+        raise
 
 
 @app.post("/pipelines/deep/{paper_id}")
 def run_deep(paper_id: UUID) -> dict:
-    logger.info("Deep-dive pipeline: paper_id=%s", paper_id)
-    deep = pipelines.deep_dive(paper_id)
-    return deep.model_dump()
+    from packages.domain.task_tracker import global_tracker
+    tid = f"deep_{paper_id.hex[:8]}"
+    title = _get_paper_title(paper_id) or str(paper_id)[:8]
+    global_tracker.start(tid, "deep_read", f"精读: {title[:30]}", total=1)
+    try:
+        deep = pipelines.deep_dive(paper_id)
+        global_tracker.finish(tid, success=True)
+        return deep.model_dump()
+    except Exception as exc:
+        global_tracker.finish(tid, success=False, error=str(exc)[:100])
+        raise
 
 
 @app.post("/pipelines/embed/{paper_id}")
 def run_embed(paper_id: UUID) -> dict:
-    pipelines.embed_paper(paper_id)
-    return {"status": "embedded", "paper_id": str(paper_id)}
+    from packages.domain.task_tracker import global_tracker
+    tid = f"embed_{paper_id.hex[:8]}"
+    title = _get_paper_title(paper_id) or str(paper_id)[:8]
+    global_tracker.start(tid, "embed", f"嵌入: {title[:30]}", total=1)
+    try:
+        pipelines.embed_paper(paper_id)
+        global_tracker.finish(tid, success=True)
+        return {"status": "embedded", "paper_id": str(paper_id)}
+    except Exception as exc:
+        global_tracker.finish(tid, success=False, error=str(exc)[:100])
+        raise
 
 
 @app.get("/pipelines/runs")
@@ -1140,8 +1184,9 @@ def generated_list(
 def generated_detail(content_id: str) -> dict:
     with session_scope() as session:
         repo = GeneratedContentRepository(session)
-        gc = repo.get_by_id(content_id)
-        if gc is None:
+        try:
+            gc = repo.get_by_id(content_id)
+        except ValueError:
             raise HTTPException(status_code=404, detail="Content not found")
         return {
             "id": gc.id,
@@ -1159,8 +1204,9 @@ def generated_detail(content_id: str) -> dict:
 def generated_delete(content_id: str) -> dict:
     with session_scope() as session:
         repo = GeneratedContentRepository(session)
-        gc = repo.get_by_id(content_id)
-        if gc is None:
+        try:
+            repo.get_by_id(content_id)
+        except ValueError:
             raise HTTPException(status_code=404, detail="Content not found")
         repo.delete(content_id)
     return {"deleted": content_id}

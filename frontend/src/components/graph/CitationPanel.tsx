@@ -568,6 +568,17 @@ function RichCitationListView({ data }: { data: CitationDetail }) {
         </div>
       )}
 
+      {/* 空状态提示 */}
+      {data.references.length === 0 && data.cited_by.length === 0 && (
+        <div className="rounded-xl border border-dashed border-border bg-page px-5 py-6 text-center">
+          <p className="text-sm font-medium text-ink-secondary">暂无引用数据</p>
+          <p className="mt-1 text-xs text-ink-tertiary">
+            该论文可能刚发布，Semantic Scholar / OpenAlex 尚未索引其引用关系。
+            <br />通常需要数天到数周才能获取完整的引用数据。
+          </p>
+        </div>
+      )}
+
       {/* 参考文献列表 */}
       {data.references.length > 0 && (
         <Section title={`参考文献 (${data.references.length})`} icon={<ArrowDown className="h-4 w-4 text-primary" />}>
@@ -584,6 +595,13 @@ function RichCitationListView({ data }: { data: CitationDetail }) {
             ))}
           </div>
         </Section>
+      )}
+
+      {/* 参考文献为空但有被引 */}
+      {data.references.length === 0 && data.cited_by.length > 0 && (
+        <div className="rounded-lg border border-dashed border-border bg-page px-4 py-3 text-xs text-ink-tertiary">
+          参考文献数据暂缺（arXiv 预印本的参考文献解析有延迟）
+        </div>
       )}
 
       {/* 被引列表 */}

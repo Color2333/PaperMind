@@ -160,39 +160,52 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
-  /* ---- 防抖保存（保留所有类型的消息，包括工具调用） ---- */
+  /* ---- 保存对话到 localStorage ---- */
+  const buildSavePayload = useCallback((snapshot: ChatItem[]): ConversationMessage[] => {
+    return snapshot
+      .map((it) => {
+        const base: ConversationMessage = {
+          id: it.id,
+          type: it.type,
+          content: it.streaming ? it.content + streamBufRef.current : it.content,
+          timestamp: it.timestamp.toISOString(),
+        };
+        if (it.type === "step_group" && it.steps) base.steps = it.steps;
+        if (it.type === "action_confirm") {
+          base.actionId = it.actionId;
+          base.actionDescription = it.actionDescription;
+          base.actionTool = it.actionTool;
+          base.toolArgs = it.toolArgs;
+        }
+        if (it.type === "artifact") {
+          base.artifactTitle = it.artifactTitle;
+          base.artifactContent = it.artifactContent;
+          base.artifactIsHtml = it.artifactIsHtml;
+        }
+        return base;
+      });
+  }, []);
+
+  /* 防抖保存 */
   useEffect(() => {
     if (!activeId || items.length === 0) return;
     const timer = setTimeout(() => {
-      const msgs: ConversationMessage[] = items
-        .filter((it) => !it.streaming)
-        .map((it) => {
-          const base: ConversationMessage = {
-            id: it.id,
-            type: it.type,
-            content: it.content,
-            timestamp: it.timestamp.toISOString(),
-          };
-          if (it.type === "step_group" && it.steps) {
-            base.steps = it.steps;
-          }
-          if (it.type === "action_confirm") {
-            base.actionId = it.actionId;
-            base.actionDescription = it.actionDescription;
-            base.actionTool = it.actionTool;
-            base.toolArgs = it.toolArgs;
-          }
-          if (it.type === "artifact") {
-            base.artifactTitle = it.artifactTitle;
-            base.artifactContent = it.artifactContent;
-            base.artifactIsHtml = it.artifactIsHtml;
-          }
-          return base;
-        });
+      const msgs = buildSavePayload(items.filter((it) => !it.streaming));
       if (msgs.length > 0) saveMessages(msgs);
     }, 1000);
     return () => clearTimeout(timer);
-  }, [items, activeId, saveMessages]);
+  }, [items, activeId, saveMessages, buildSavePayload]);
+
+  /* 页面关闭/刷新前同步保存（包括 streaming 中的内容） */
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!activeIdRef.current || items.length === 0) return;
+      const msgs = buildSavePayload(items);
+      if (msgs.length > 0) saveMessages(msgs);
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [items, buildSavePayload, saveMessages]);
 
   /* ---- 工具函数 ---- */
   const applyPendingText = (copy: ChatItem[], pendingText: string): void => {
@@ -252,7 +265,9 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
             for (let i = copy.length - 1; i >= 0; i--) {
               if (copy[i].type === "step_group" && copy[i].steps) {
                 const steps = [...copy[i].steps!];
-                const idx = steps.findIndex((s) => s.id === progId || (s.status === "running"));
+                const idx = progId
+                  ? steps.findIndex((s) => s.id === progId)
+                  : steps.findIndex((s) => s.status === "running");
                 if (idx >= 0) {
                   steps[idx] = { ...steps[idx], progressMessage: progMsg, progressCurrent: progCur, progressTotal: progTotal };
                   copy[i] = { ...copy[i], steps };
@@ -272,7 +287,9 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
             for (let i = copy.length - 1; i >= 0; i--) {
               if (copy[i].type === "step_group" && copy[i].steps) {
                 const steps = [...copy[i].steps!];
-                const idx = steps.findIndex((s) => s.id === toolId || (s.toolName === toolName && s.status === "running"));
+                const idx = toolId
+                  ? steps.findIndex((s) => s.id === toolId)
+                  : steps.findIndex((s) => s.toolName === toolName && s.status === "running");
                 if (idx >= 0) {
                   steps[idx] = { ...steps[idx], status: (data.success as boolean) ? "done" : "error", success: data.success as boolean, summary: data.summary as string, data: data.data as Record<string, unknown> };
                   copy[i] = { ...copy[i], steps };
@@ -379,13 +396,20 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         }
         case "done": {
           const pending = drainBuffer();
-          setItems((prev) =>
-            prev.map((item) =>
-              item.type === "assistant" && item.streaming
-                ? { ...item, content: item.content + pending, streaming: false }
-                : item,
-            ),
-          );
+          setItems((prev) => {
+            const hasStreaming = prev.some((it) => it.type === "assistant" && it.streaming);
+            if (hasStreaming) {
+              return prev.map((item) =>
+                item.type === "assistant" && item.streaming
+                  ? { ...item, content: item.content + pending, streaming: false }
+                  : item,
+              );
+            }
+            if (pending) {
+              return [...prev, { id: `asst_done_${Date.now()}`, type: "assistant" as const, content: pending, streaming: false, timestamp: new Date() }];
+            }
+            return prev;
+          });
           setLoading(false);
           break;
         }
@@ -400,17 +424,26 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const startStream = useCallback(
     (reader: ReadableStreamDefaultReader<Uint8Array>, signal?: AbortSignal) => {
       parseSSEStream(reader, processSSE, () => {
-        const pending = drainBuffer();
-        if (pending) {
-          setItems((prev) =>
-            prev.map((item) =>
-              item.type === "assistant" && item.streaming
-                ? { ...item, content: item.content + pending, streaming: false }
-                : item,
-            ),
-          );
-        }
-        setLoading(false);
+        /* 兜底：仅在流异常关闭（未收到 done 事件）时清理状态 */
+        setLoading((current) => {
+          if (!current) return false;
+          const pending = drainBuffer();
+          if (pending) {
+            setItems((prev) => {
+              const hasStreaming = prev.some((it) => it.type === "assistant" && it.streaming);
+              if (hasStreaming) {
+                return prev.map((item) =>
+                  item.type === "assistant" && item.streaming
+                    ? { ...item, content: item.content + pending, streaming: false }
+                    : item,
+                );
+              }
+              if (pending) return [...prev, { id: `asst_fallback_${Date.now()}`, type: "assistant" as const, content: pending, streaming: false, timestamp: new Date() }];
+              return prev;
+            });
+          }
+          return false;
+        });
       });
 
       if (signal) {
@@ -426,7 +459,9 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   /* ---- 发送消息 ---- */
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!text.trim() || loading || pendingActions.size > 0) return;
+      if (!text.trim() || loading || pendingActions.size > 0) {
+        throw new Error("blocked");
+      }
       cancelStream();
       if (!activeIdRef.current) {
         justCreatedRef.current = true;
@@ -434,10 +469,29 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       }
       setLoading(true);
       setItems((prev) => [...prev, { id: `user_${Date.now()}`, type: "user" as const, content: text.trim(), timestamp: new Date() }]);
-      const msgs: AgentMessage[] = [
-        ...items.filter((it) => it.type === "user" || it.type === "assistant").map((it) => ({ role: it.type as "user" | "assistant", content: it.content })),
-        { role: "user" as const, content: text.trim() },
-      ];
+      const msgs: AgentMessage[] = [];
+      for (const it of items) {
+        if (it.type === "user") {
+          msgs.push({ role: "user", content: it.content });
+        } else if (it.type === "assistant") {
+          msgs.push({ role: "assistant", content: it.content });
+        } else if (it.type === "step_group" && it.steps) {
+          const summaries = it.steps
+            .filter((s) => s.status === "done" || s.status === "error")
+            .map((s) => `[工具: ${s.toolName}] ${s.success ? "成功" : "失败"}: ${s.summary || ""}`)
+            .join("\n");
+          if (summaries) {
+            msgs.push({ role: "assistant", content: `执行了以下操作:\n${summaries}` });
+          }
+        } else if (it.type === "action_confirm") {
+          msgs.push({ role: "assistant", content: `[等待确认] ${it.actionDescription || it.actionTool || ""}` });
+        } else if (it.type === "artifact") {
+          msgs.push({ role: "assistant", content: `[已生成内容: ${it.artifactTitle || "未命名"}]\n${(it.artifactContent || "").slice(0, 500)}` });
+        } else if (it.type === "error") {
+          msgs.push({ role: "assistant", content: `[错误: ${it.content}]` });
+        }
+      }
+      msgs.push({ role: "user" as const, content: text.trim() });
       try {
         const ac = new AbortController();
         abortRef.current = ac;
@@ -461,10 +515,14 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
     async (actionId: string) => {
       setConfirmingActions((prev) => new Set(prev).add(actionId));
       setPendingActions((prev) => { const n = new Set(prev); n.delete(actionId); return n; });
+      cancelStream();
       setLoading(true);
       try {
+        const ac = new AbortController();
+        abortRef.current = ac;
         const resp = await agentApi.confirm(actionId);
-        if (resp.body) startStream(resp.body.getReader());
+        if (resp.body) startStream(resp.body.getReader(), ac.signal);
+        else setLoading(false);
       } catch (err) {
         setItems((p) => [...p, { id: `e_${Date.now()}`, type: "error" as const, content: err instanceof Error ? err.message : "确认失败", timestamp: new Date() }]);
         setLoading(false);
@@ -472,40 +530,45 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         setConfirmingActions((prev) => { const n = new Set(prev); n.delete(actionId); return n; });
       }
     },
-    [startStream],
+    [startStream, cancelStream],
   );
 
   const handleReject = useCallback(
     async (actionId: string) => {
       setPendingActions((prev) => { const n = new Set(prev); n.delete(actionId); return n; });
+      cancelStream();
       setLoading(true);
       try {
+        const ac = new AbortController();
+        abortRef.current = ac;
         const resp = await agentApi.reject(actionId);
         if (resp.body) {
-          startStream(resp.body.getReader());
+          startStream(resp.body.getReader(), ac.signal);
         } else {
           setLoading(false);
         }
-      } catch {
+      } catch (err) {
+        setItems((p) => [...p, { id: `e_${Date.now()}`, type: "error" as const, content: err instanceof Error ? err.message : "拒绝操作失败", timestamp: new Date() }]);
         setLoading(false);
       }
     },
-    [startStream],
+    [startStream, cancelStream],
   );
 
   const hasPendingConfirm = pendingActions.size > 0;
 
   const stopGeneration = useCallback(() => {
     cancelStream();
+    const pending = drainBuffer();
     setLoading(false);
     setItems((prev) =>
       prev.map((item) =>
         item.type === "assistant" && item.streaming
-          ? { ...item, streaming: false }
+          ? { ...item, content: item.content + pending, streaming: false }
           : item,
       ),
     );
-  }, [cancelStream]);
+  }, [cancelStream, drainBuffer]);
 
   const value: AgentSessionCtx = useMemo(() => ({
     items, loading, pendingActions, confirmingActions, canvas, hasPendingConfirm,

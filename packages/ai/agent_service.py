@@ -25,85 +25,75 @@ from packages.storage.repositories import PromptTraceRepository
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-你是 PaperMind AI Agent，一个专业的学术论文研究助手。
+你是 PaperMind AI Agent，一个专业的学术论文研究助手。你能调用工具完成搜索、\
+下载、分析、生成等研究任务。始终使用中文。
 
-## 核心能力
+## 工具选择决策树（按优先级）
 
-你可以调用多种工具来完成研究任务。对于不同类型的用户需求，请遵循以下策略：
+收到用户消息后，按此顺序判断意图：
 
-### 知识问答（最重要！）
-当用户提出**概念性、知识性问题**时（如"什么是 attention mechanism"、\
-"NeRF 有哪些变体"、"对比一下 GAN 和 Diffusion Model"），**必须第一时间\
-调用 ask_knowledge_base 工具**进行 RAG 检索回答。这是你最核心的能力。
-- 不要自己编造答案，必须基于知识库中的论文内容回答
-- 回答后引用来源论文 ID，让用户知道依据
-- 如果知识库中没有相关内容，告知用户并建议从 arXiv 下载相关论文
+1. **知识问答**（"什么是X"、"对比X和Y"、"X有哪些方法"）
+   → 直接调 ask_knowledge_base，不要编造答案
+   → 知识库无内容时告知用户并建议下载
 
-### 搜索调研
-用户要求搜索特定领域时，先用 search_papers 搜本地库，无结果则用 search_arxiv \
-搜索 arXiv 候选论文。
+2. **搜索本地库**（"帮我找"、"搜索"、已有论文查询）
+   → 调 search_papers
+   → 无结果时自动切到 search_arxiv 搜 arXiv
 
-### 论文获取与分析（重要！必须走筛选流程）
-1. **搜索候选**：先调用 search_arxiv 搜索，获取候选论文列表
-2. **展示候选**：将候选论文以编号列表展示给用户（标题、摘要要点、日期、分类）
-3. **等待用户筛选**：明确询问"您要入库哪些论文？可以输入编号（如1,3,5）或输入'全部'"
-4. **选择性入库**：根据用户选择，调用 ingest_arxiv(query=..., arxiv_ids=[...]) 只入库选中的论文
-5. 入库后自动执行粗读 + 向量化
+3. **搜索并下载新论文**（"下载"、"收集"、"拉取"、"最新的XX论文"）
+   → 调 search_arxiv 获取候选
+   → **停下来**，等用户在前端界面勾选要入库的论文
+   → 用户确认后调 ingest_arxiv(arxiv_ids=[用户选的])
 
-**绝对禁止**：不经用户筛选就直接全部入库。必须让用户看到候选列表后再决定。
+4. **分析论文**（"粗读"、"精读"、"分析图表"）
+   → 先确认目标论文 ID，再调对应工具
 
-### Wiki 和简报
-generate_wiki 生成主题/论文综述，generate_daily_brief 生成简报。
+5. **生成内容**（"Wiki"、"综述"、"简报"）
+   → 调 generate_wiki 或 generate_daily_brief
 
-### 订阅管理
-当 ingest_arxiv 返回结果中包含 `suggest_subscribe: true` 时，\
-**必须**询问用户：「要将这个主题设为持续订阅吗？这样系统会每天自动搜集最新论文。」
-- 用户同意 → 调用 manage_subscription(topic_name=..., enabled=true)，\
-可以追问用户希望的频率（每天/每天两次/工作日/每周）和搜集时间（北京时间几点）
-- 用户拒绝 → 不调用，保持仅搜集一次
+6. **订阅管理**（"订阅"、"定时"、"每天收集"）
+   → 调 manage_subscription
 
-### AI 关键词建议
-当用户用自然语言描述研究兴趣（如"我想关注3D重建和神经辐射场"），\
-但没有给出具体搜索词时，**主动调用 suggest_keywords 工具**，\
-将 AI 生成的关键词建议展示给用户选择，然后再进行搜索或创建订阅。
+7. **模糊描述**（用户没给具体关键词，如"3D重建相关的"）
+   → 先调 suggest_keywords 获取关键词建议
+   → 展示给用户选择后再搜索
 
-## 工作流程
+## 完整工作流示例
 
-### 第一步：需求理解
-快速理解用户意图，简短确认。
+**示例 A：用户说"帮我找最新的3D重建论文并总结"**
+1. 输出：「正在搜索 arXiv...」→ 调 search_arxiv(query="3D reconstruction")
+2. 结果返回后：列出候选论文，说「请在上方勾选要入库的论文」
+3. 用户确认入库后：结果显示入库完成
+4. 自动继续：调 ask_knowledge_base(question="3D重建最新论文总结") 基于新入库的论文回答
+5. 最后总结
 
-### 第二步：制定计划
-列出将执行的步骤（编号列表），让用户心中有数。
+**示例 B：用户说"attention mechanism 是什么"**
+1. 直接调 ask_knowledge_base(question="attention mechanism 是什么")
+2. 用返回的 markdown 回答用户，引用论文来源
 
-### 第三步：逐步执行
-按计划执行，每步完成后简短汇报并**立即推进**下一步。
+**示例 C：用户说"帮我分析这篇论文 xxx"**
+1. 调 get_paper_detail(paper_id="xxx") 确认论文存在
+2. 调 skim_paper(paper_id="xxx") 粗读
+3. 汇报粗读结果，询问是否需要精读
 
-### 第四步：总结
-所有步骤完成后给出完整总结。
+## 核心规则
 
-## 关键规则
-
-1. **RAG 优先**：任何知识问答类问题，第一步就调用 ask_knowledge_base。
-2. **主动推进**：每步完成后立即进入下一步，绝不等待用户催促。
-3. **流式播报**：逐步输出文字，让用户实时看到进度。先输出一段说明文字，\
-再调用工具，不要沉默直接调工具。
-4. **结果描述**：用自然语言描述结果，不要只显示原始数据。
-5. **智能建议**：搜索结果为空时主动建议下载。
-6. **单步确认**：写操作一次只调用一个，确认后继续。
-7. **中文回答**：始终使用中文。
-8. **不重复操作**：相同工具和参数不要调用两次。
-9. **简洁高效**：不要长篇大论解释工具是什么，直接执行。
-
-## ⚠️ 严禁预测结果（极其重要！）
-
-- **绝对禁止**在调用工具之前输出假设性的结果或完成描述！
-- 错误示例：「好的，现在开始从 arXiv 下载...已成功拉取 20 篇论文...」\
-然后才调用 ingest_arxiv。
-- 正确示例：「正在搜索...」然后调用 search_papers，等返回结果后再描述。
-- 调用需要确认的工具（如 ingest_arxiv）时，只输出一句简短说明如\
-「需要从 arXiv 下载论文，请确认。」然后立即调用工具。\
-不要输出任何关于结果的预测文字。
-- 所有描述结果的文字，必须在工具返回结果之后再输出。
+1. **先输出一句话再调工具**：如「正在搜索...」，不要沉默直接调。
+2. **严禁预测结果**：工具返回之前不要编造结果。
+   - ❌「已成功找到 20 篇论文」→ 然后才调工具
+   - ✅「正在搜索...」→ 调工具 → 看到结果后再描述
+3. **主动推进**：一步完成后立即进入下一步，不要等用户催促。
+4. **每次只调一个写操作工具**（ingest/skim/deep_read/embed/wiki/brief），等确认后继续。
+   只读工具（search/ask/get_detail/timeline/list_topics）可以连续调多个。
+5. **不重复失败操作**：工具返回 success=false 时，分析 summary 中的原因，\
+   告知用户并建议替代方案，不要用相同参数重试。
+6. **参数修正后可重试**：如果失败原因是参数问题，修正后重试一次。
+7. **结果描述要简洁**：用自然语言概括工具返回的关键信息，\
+   不要重复输出工具已返回的完整数据。
+8. **订阅建议**：ingest_arxiv 返回 suggest_subscribe=true 时，\
+   询问用户是否要设为持续订阅。
+9. **空结果处理**：搜索无结果时主动建议换关键词或从 arXiv 下载。
+10. **简洁回答**：不要长篇解释工具用途，直接执行任务。
 """
 
 _CONFIRM_TOOLS = {t.name for t in TOOL_REGISTRY if t.requires_confirm}
@@ -111,7 +101,7 @@ _CONFIRM_TOOLS = {t.name for t in TOOL_REGISTRY if t.requires_confirm}
 # 待确认操作（含对话上下文，用于恢复执行）
 _pending_actions: dict[str, dict] = {}
 _pending_lock = threading.Lock()
-_ACTION_TTL = 600  # 10 分钟过期
+_ACTION_TTL = 1800  # 30 分钟过期
 
 
 def _cleanup_expired_actions():
@@ -227,11 +217,63 @@ def _make_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _execute_and_emit(
+    tool_name: str, args: dict, tool_call_id: str,
+    result_event: str = "tool_result",
+    action_id: str | None = None,
+) -> Iterator[tuple[str, ToolResult]]:
+    """执行工具并生成 SSE 事件流，返回 (sse_str, result) 的迭代器。
+    最后一个 yield 的第二个元素为最终的 ToolResult。"""
+    yield _make_sse("tool_start", {
+        "id": tool_call_id, "name": tool_name, "args": args,
+    }), ToolResult(success=False, summary="")
+
+    result = ToolResult(success=False, summary="无结果")
+    for item in execute_tool_stream(tool_name, args):
+        if isinstance(item, ToolProgress):
+            yield _make_sse("tool_progress", {
+                "id": tool_call_id,
+                "message": item.message,
+                "current": item.current,
+                "total": item.total,
+            }), result
+        elif isinstance(item, ToolResult):
+            result = item
+
+    emit_data: dict = {
+        "id": action_id or tool_call_id,
+        "success": result.success,
+        "summary": result.summary,
+        "data": result.data,
+    }
+    if result_event == "tool_result":
+        emit_data["name"] = tool_name
+    yield _make_sse(result_event, emit_data), result
+
+
+def _build_tool_message(result: ToolResult, tool_call_id: str) -> dict:
+    """构建工具结果消息（含失败提示）"""
+    tool_content: dict = {
+        "success": result.success,
+        "summary": result.summary,
+        "data": result.data,
+    }
+    if not result.success:
+        tool_content["error_hint"] = (
+            "工具执行失败。请分析原因，告知用户，并建议替代方案。不要用相同参数重试。"
+        )
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "content": json.dumps(tool_content, ensure_ascii=False),
+    }
+
+
 def _llm_loop(
     conversation: list[dict],
     llm: LLMClient,
     tools: list[dict],
-    max_rounds: int = 8,
+    max_rounds: int = 12,
 ) -> Iterator[str]:
     """
     LLM 循环核心：流式调用 LLM，处理工具调用。
@@ -308,38 +350,11 @@ def _llm_loop(
             except json.JSONDecodeError:
                 args = {}
 
-            yield _make_sse("tool_start", {
-                "id": tc.tool_call_id,
-                "name": tc.tool_name,
-                "args": args,
-            })
-            result = ToolResult(success=False, summary="无结果")
-            for item in execute_tool_stream(tc.tool_name, args):
-                if isinstance(item, ToolProgress):
-                    yield _make_sse("tool_progress", {
-                        "id": tc.tool_call_id,
-                        "message": item.message,
-                        "current": item.current,
-                        "total": item.total,
-                    })
-                elif isinstance(item, ToolResult):
-                    result = item
-            yield _make_sse("tool_result", {
-                "id": tc.tool_call_id,
-                "name": tc.tool_name,
-                "success": result.success,
-                "summary": result.summary,
-                "data": result.data,
-            })
-            conversation.append({
-                "role": "tool",
-                "tool_call_id": tc.tool_call_id,
-                "content": json.dumps({
-                    "success": result.success,
-                    "summary": result.summary,
-                    "data": result.data,
-                }, ensure_ascii=False),
-            })
+            result = ToolResult(success=False, summary="")
+            for sse, r in _execute_and_emit(tc.tool_name, args, tc.tool_call_id):
+                yield sse
+                result = r
+            conversation.append(_build_tool_message(result, tc.tool_call_id))
 
         if confirm_calls:
             # 一次只处理一个确认类工具
@@ -397,7 +412,7 @@ def stream_chat(
         if not action:
             yield _make_sse(
                 "error",
-                {"message": f"操作 {confirmed_action_id} 已过期"},
+                {"message": "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"},
             )
             yield _make_sse("done", {})
             return
@@ -453,45 +468,22 @@ def confirm_action(action_id: str) -> Iterator[str]:
     if not action:
         yield _make_sse(
             "error",
-            {"message": f"操作 {action_id} 不存在或已过期"},
+            {"message": "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"},
         )
         yield _make_sse("done", {})
         return
 
-    yield _make_sse("tool_start", {
-        "id": action["tool_call_id"],
-        "name": action["tool"],
-        "args": action["args"],
-    })
-    result = ToolResult(success=False, summary="无结果")
-    for item in execute_tool_stream(action["tool"], action["args"]):
-        if isinstance(item, ToolProgress):
-            yield _make_sse("tool_progress", {
-                "id": action["tool_call_id"],
-                "message": item.message,
-                "current": item.current,
-                "total": item.total,
-            })
-        elif isinstance(item, ToolResult):
-            result = item
-    yield _make_sse("action_result", {
-        "id": action_id,
-        "success": result.success,
-        "summary": result.summary,
-        "data": result.data,
-    })
+    result = ToolResult(success=False, summary="")
+    for sse, r in _execute_and_emit(
+        action["tool"], action["args"], action["tool_call_id"],
+        result_event="action_result", action_id=action_id,
+    ):
+        yield sse
+        result = r
 
     conversation = action.get("conversation", [])
     if conversation:
-        conversation.append({
-            "role": "tool",
-            "tool_call_id": action["tool_call_id"],
-            "content": json.dumps({
-                "success": result.success,
-                "summary": result.summary,
-                "data": result.data,
-            }, ensure_ascii=False),
-        })
+        conversation.append(_build_tool_message(result, action["tool_call_id"]))
         llm = LLMClient()
         tools = get_openai_tools()
         yield from _llm_loop(conversation, llm, tools)

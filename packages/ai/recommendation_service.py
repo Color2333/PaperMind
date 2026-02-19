@@ -36,14 +36,7 @@ def _set_cache(key: str, value: object):
         _ttl_cache[key] = (time.monotonic(), value)
 
 
-def _cosine_sim(a: list[float], b: list[float]) -> float:
-    """余弦相似度"""
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
+from packages.domain.math_utils import cosine_similarity as _cosine_sim
 
 
 def _mean_vector(vectors: list[list[float]]) -> list[float]:

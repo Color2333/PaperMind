@@ -393,14 +393,19 @@ export const writingApi = {
 /* ========== Agent ========== */
 import type { AgentMessage } from "@/types";
 
+async function fetchSSE(url: string, init?: RequestInit): Promise<Response> {
+  const resp = await fetch(url, init);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`请求失败 (${resp.status}): ${text || resp.statusText}`);
+  }
+  return resp;
+}
+
 export const agentApi = {
-  /**
-   * 发起 Agent 对话（SSE 流）
-   * 返回 Response 对象，调用方自行读取 body stream
-   */
   chat: async (messages: AgentMessage[], confirmedActionId?: string): Promise<Response> => {
     const url = `${getApiBase().replace(/\/+$/, "")}/agent/chat`;
-    return fetch(url, {
+    return fetchSSE(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -411,11 +416,11 @@ export const agentApi = {
   },
   confirm: async (actionId: string): Promise<Response> => {
     const url = `${getApiBase().replace(/\/+$/, "")}/agent/confirm/${actionId}`;
-    return fetch(url, { method: "POST" });
+    return fetchSSE(url, { method: "POST" });
   },
   reject: async (actionId: string): Promise<Response> => {
     const url = `${getApiBase().replace(/\/+$/, "")}/agent/reject/${actionId}`;
-    return fetch(url, { method: "POST" });
+    return fetchSSE(url, { method: "POST" });
   },
 };
 
@@ -446,4 +451,6 @@ export const tasksApi = {
     get<{ tasks: TaskStatus[] }>(
       `/tasks?${taskType ? `task_type=${taskType}&` : ""}limit=${limit}`
     ),
+  track: (body: { action: string; task_id: string; task_type?: string; title?: string; total?: number; current?: number; message?: string; success?: boolean; error?: string }) =>
+    post<{ ok: boolean }>("/tasks/track", body),
 };

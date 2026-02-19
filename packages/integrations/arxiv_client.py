@@ -37,6 +37,13 @@ def _build_arxiv_query(raw: str) -> str:
 class ArxivClient:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self._client: httpx.Client | None = None
+
+    @property
+    def client(self) -> httpx.Client:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.Client(timeout=60, follow_redirects=True)
+        return self._client
 
     def fetch_latest(
         self,
@@ -59,9 +66,8 @@ class ArxivClient:
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                with httpx.Client(timeout=60, follow_redirects=True) as client:
-                    response = client.get(ARXIV_API_URL, params=params)
-                    response.raise_for_status()
+                response = self.client.get(ARXIV_API_URL, params=params)
+                response.raise_for_status()
                 return self._parse_atom(response.text)
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
@@ -88,9 +94,8 @@ class ArxivClient:
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                with httpx.Client(timeout=60, follow_redirects=True) as client:
-                    resp = client.get(ARXIV_API_URL, params=params)
-                    resp.raise_for_status()
+                resp = self.client.get(ARXIV_API_URL, params=params)
+                resp.raise_for_status()
                 return self._parse_atom(resp.text)
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
@@ -110,10 +115,9 @@ class ArxivClient:
         url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         target = self.settings.pdf_storage_root / f"{arxiv_id}.pdf"
         target.parent.mkdir(parents=True, exist_ok=True)
-        with httpx.Client(timeout=90, follow_redirects=True) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            target.write_bytes(response.content)
+        response = self.client.get(url, timeout=90)
+        response.raise_for_status()
+        target.write_bytes(response.content)
         return str(target)
 
     def _parse_atom(self, payload: str) -> list[PaperCreate]:

@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { Button, Badge, Empty, Spinner, Modal, Input } from "@/components/ui";
 import { PaperListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/contexts/ToastContext";
-import { paperApi, ingestApi, topicApi, pipelineApi, actionApi, type FolderStats, type CollectionAction } from "@/services/api";
+import { paperApi, ingestApi, topicApi, pipelineApi, actionApi, tasksApi, type FolderStats, type CollectionAction } from "@/services/api";
 import { formatDate, truncate } from "@/lib/utils";
 import type { Paper, Topic } from "@/types";
 import {
@@ -237,13 +237,17 @@ export default function Papers() {
     const ids = [...selected].filter((id) => { const p = papers.find((pp) => pp.id === id); return p && p.read_status === "unread"; });
     if (!ids.length) { setBatchProgress("没有可粗读的未读论文"); setBatchPct(0); return; }
     setBatchRunning(true); setBatchPct(0);
+    const tid = `batch_skim_${Date.now()}`;
+    tasksApi.track({ action: "start", task_id: tid, task_type: "batch_skim", title: `批量粗读 ${ids.length} 篇`, total: ids.length }).catch(() => {});
     let done = 0, failed = 0;
     for (const id of ids) {
       done++;
       setBatchProgress(`粗读中 ${done}/${ids.length}`);
       setBatchPct(Math.round((done / ids.length) * 100));
+      tasksApi.track({ action: "update", task_id: tid, current: done, message: `粗读中 ${done}/${ids.length}` }).catch(() => {});
       try { await pipelineApi.skim(id); } catch { failed++; }
     }
+    tasksApi.track({ action: "finish", task_id: tid, success: failed === 0, error: failed > 0 ? `${failed} 篇失败` : undefined }).catch(() => {});
     setBatchProgress(failed > 0 ? `完成 ${done - failed} 篇，${failed} 篇失败` : `完成 ${done} 篇`);
     setBatchPct(100);
     if (failed > 0) toast("warning", `${failed} 篇粗读失败`);
@@ -255,13 +259,17 @@ export default function Papers() {
     const ids = [...selected].filter((id) => { const p = papers.find((pp) => pp.id === id); return p && !p.has_embedding; });
     if (!ids.length) { setBatchProgress("已全部嵌入"); setBatchPct(0); return; }
     setBatchRunning(true); setBatchPct(0);
+    const tid = `batch_embed_${Date.now()}`;
+    tasksApi.track({ action: "start", task_id: tid, task_type: "batch_embed", title: `批量嵌入 ${ids.length} 篇`, total: ids.length }).catch(() => {});
     let done = 0, failed = 0;
     for (const id of ids) {
       done++;
       setBatchProgress(`嵌入中 ${done}/${ids.length}`);
       setBatchPct(Math.round((done / ids.length) * 100));
+      tasksApi.track({ action: "update", task_id: tid, current: done, message: `嵌入中 ${done}/${ids.length}` }).catch(() => {});
       try { await pipelineApi.embed(id); } catch { failed++; }
     }
+    tasksApi.track({ action: "finish", task_id: tid, success: failed === 0, error: failed > 0 ? `${failed} 篇失败` : undefined }).catch(() => {});
     setBatchProgress(failed > 0 ? `完成 ${done - failed} 篇，${failed} 篇失败` : `完成 ${done} 篇`);
     setBatchPct(100);
     if (failed > 0) toast("warning", `${failed} 篇嵌入失败`);

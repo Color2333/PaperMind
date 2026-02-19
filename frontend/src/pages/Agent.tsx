@@ -118,19 +118,19 @@ export default function Agent() {
     setShowScrollBtn(!atBottom);
   }, []);
 
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scrollToBottom = useCallback(() => {
-    if (!isAtBottomRef.current) return;
-    if (scrollTimerRef.current) return;
-    scrollTimerRef.current = setTimeout(() => {
-      scrollTimerRef.current = null;
+  const scrollRafRef = useRef<number | null>(null);
+  const scrollToBottom = useCallback((force = false) => {
+    if (!force && !isAtBottomRef.current) return;
+    if (scrollRafRef.current) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
       endRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, 120);
+    });
   }, []);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [items, scrollToBottom]);
+    scrollToBottom(loading);
+  }, [items, loading, scrollToBottom]);
 
   // 有新的 pendingAction 时强制滚动到底部
   useEffect(() => {
@@ -145,7 +145,7 @@ export default function Agent() {
   const handleAbilityClick = useCallback((ability: Ability) => {
     if (ability.direct) {
       isAtBottomRef.current = true;
-      sendMessage(ability.prefix);
+      sendMessage(ability.prefix).catch(() => {});
       return;
     }
     setActiveAbility(ability);
@@ -153,11 +153,16 @@ export default function Agent() {
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, [sendMessage]);
 
-  const handleSend = useCallback((text: string) => {
+  const handleSend = useCallback(async (text: string) => {
+    const savedInput = text;
     isAtBottomRef.current = true;
-    sendMessage(text);
     setInput("");
     setActiveAbility(null);
+    try {
+      await sendMessage(text);
+    } catch {
+      setInput(savedInput);
+    }
   }, [sendMessage]);
 
   const handleConfirmAction = useCallback((actionId: string) => {
@@ -759,12 +764,179 @@ const IngestResultView = memo(function IngestResultView({ data }: { data: Record
   );
 });
 
+/* ========== arXiv 候选论文选择器 ========== */
+
+const QUERY_TO_CATEGORIES: Record<string, string[]> = {
+  "graphics": ["cs.GR"], "rendering": ["cs.GR", "cs.CV"], "vision": ["cs.CV"],
+  "nlp": ["cs.CL"], "language": ["cs.CL"], "robot": ["cs.RO"], "learning": ["cs.LG", "cs.AI"],
+  "neural": ["cs.LG", "cs.CV", "cs.AI"], "3d": ["cs.GR", "cs.CV"], "image": ["cs.CV"],
+  "audio": ["cs.SD", "eess.AS"], "speech": ["cs.CL", "cs.SD"], "security": ["cs.CR"],
+  "network": ["cs.NI"], "database": ["cs.DB"], "attention": ["cs.LG", "cs.CL"],
+  "transformer": ["cs.LG", "cs.CL"], "diffusion": ["cs.CV", "cs.LG"],
+  "gaussian": ["cs.GR", "cs.CV"], "nerf": ["cs.GR", "cs.CV"], "reconstruction": ["cs.GR", "cs.CV"],
+  "detection": ["cs.CV"], "segmentation": ["cs.CV"], "generation": ["cs.CV", "cs.LG"],
+  "llm": ["cs.CL", "cs.AI"], "agent": ["cs.AI", "cs.CL"], "rl": ["cs.LG", "cs.AI"],
+  "reinforcement": ["cs.LG", "cs.AI"], "optimization": ["math.OC", "cs.LG"],
+};
+
+function inferRelevantCategories(query: string): Set<string> {
+  const qLower = query.toLowerCase();
+  const cats = new Set<string>();
+  for (const [kw, kwCats] of Object.entries(QUERY_TO_CATEGORIES)) {
+    if (qLower.includes(kw)) kwCats.forEach(c => cats.add(c));
+  }
+  return cats;
+}
+
+function isRelevantCandidate(cats: string[], relevantCats: Set<string>): boolean {
+  if (relevantCats.size === 0) return true;
+  return cats.some(c => relevantCats.has(c));
+}
+
+function ArxivCandidateSelector({ candidates, query }: {
+  candidates: Array<Record<string, unknown>>;
+  query: string;
+}) {
+  const { sendMessage, loading } = useAgentSession();
+  const relevantCats = inferRelevantCategories(query);
+
+  const [selected, setSelected] = useState<Set<string>>(() => {
+    if (relevantCats.size === 0) return new Set(candidates.map(c => String(c.arxiv_id ?? "")));
+    const relevant = new Set<string>();
+    for (const c of candidates) {
+      const cats = Array.isArray(c.categories) ? (c.categories as string[]) : [];
+      if (isRelevantCandidate(cats, relevantCats)) relevant.add(String(c.arxiv_id ?? ""));
+    }
+    return relevant.size > 0 ? relevant : new Set(candidates.map(c => String(c.arxiv_id ?? "")));
+  });
+  const [submitted, setSubmitted] = useState(false);
+  const allSelected = selected.size === candidates.length;
+  const relevantCount = relevantCats.size > 0
+    ? candidates.filter(c => isRelevantCandidate(Array.isArray(c.categories) ? (c.categories as string[]) : [], relevantCats)).length
+    : candidates.length;
+
+  const toggle = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectRelevant = () => {
+    const relevant = new Set<string>();
+    for (const c of candidates) {
+      const cats = Array.isArray(c.categories) ? (c.categories as string[]) : [];
+      if (isRelevantCandidate(cats, relevantCats)) relevant.add(String(c.arxiv_id ?? ""));
+    }
+    setSelected(relevant);
+  };
+
+  const handleSubmit = () => {
+    if (selected.size === 0 || submitted) return;
+    setSubmitted(true);
+    const ids = Array.from(selected).join(", ");
+    sendMessage(`请将以下论文入库：${ids}`).catch(() => { setSubmitted(false); });
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-medium text-ink-secondary">
+          {candidates.length} 篇候选论文
+          {relevantCats.size > 0 && relevantCount < candidates.length && (
+            <span className="ml-1 text-success">（{relevantCount} 篇高相关）</span>
+          )}
+        </p>
+        <div className="flex items-center gap-1.5">
+          {relevantCats.size > 0 && relevantCount < candidates.length && (
+            <button
+              onClick={selectRelevant}
+              className="rounded-md px-2 py-0.5 text-[10px] font-medium text-success hover:bg-success/10 transition-colors"
+            >
+              仅选相关
+            </button>
+          )}
+          <button
+            onClick={() => setSelected(allSelected ? new Set() : new Set(candidates.map(c => String(c.arxiv_id ?? ""))))}
+            className="rounded-md px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 transition-colors"
+          >
+            {allSelected ? "取消全选" : "全选"}
+          </button>
+          <span className="text-[10px] text-ink-tertiary">已选 {selected.size}/{candidates.length}</span>
+        </div>
+      </div>
+      <div className="max-h-64 space-y-1 overflow-y-auto">
+        {candidates.map((p, i) => {
+          const aid = String(p.arxiv_id ?? "");
+          const isChecked = selected.has(aid);
+          const cats = Array.isArray(p.categories) ? (p.categories as string[]) : [];
+          const isRelevant = isRelevantCandidate(cats, relevantCats);
+          return (
+            <label key={aid || i} className={cn(
+              "flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-[11px] cursor-pointer transition-colors",
+              isChecked ? "bg-primary/5 border border-primary/20" : "bg-surface hover:bg-hover border border-transparent",
+              !isRelevant && relevantCats.size > 0 && "opacity-60",
+            )}>
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={() => toggle(aid)}
+                disabled={submitted}
+                className="mt-1 h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/20 shrink-0"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start gap-1.5">
+                  <p className="font-medium leading-snug text-ink flex-1">{String(p.title ?? "")}</p>
+                  {isRelevant && relevantCats.size > 0 && (
+                    <span className="shrink-0 rounded bg-success/10 px-1.5 py-0.5 text-[9px] font-medium text-success">相关</span>
+                  )}
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-ink-tertiary">
+                  {p.arxiv_id ? <span className="font-mono">{aid}</span> : null}
+                  {p.publication_date ? <span>{String(p.publication_date)}</span> : null}
+                  {cats.length > 0 && cats.slice(0, 3).map(c => (
+                    <span key={c} className={cn(
+                      "rounded px-1 py-px text-[9px] font-mono",
+                      relevantCats.has(c) ? "bg-primary/10 text-primary" : "bg-ink/5 text-ink-tertiary",
+                    )}>{c}</span>
+                  ))}
+                </div>
+                {Array.isArray(p.authors) && (p.authors as string[]).length > 0 && (
+                  <p className="mt-0.5 truncate text-[10px] text-ink-tertiary">{(p.authors as string[]).slice(0, 3).join(", ")}</p>
+                )}
+              </div>
+            </label>
+          );
+        })}
+      </div>
+      {!submitted ? (
+        <button
+          onClick={handleSubmit}
+          disabled={selected.size === 0 || loading}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-primary-hover disabled:opacity-50"
+        >
+          <Download className="h-4 w-4" />
+          入库选中 ({selected.size} 篇)
+        </button>
+      ) : (
+        <div className="flex items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          已发送请求，等待确认后开始入库…
+        </div>
+      )}
+    </div>
+  );
+}
+
 const StepDataView = memo(function StepDataView({ data, toolName }: { data: Record<string, unknown>; toolName: string }) {
+  const navigate = useNavigate();
+
   if (toolName === "search_papers" && Array.isArray(data.papers)) {
     return <PaperListView papers={data.papers as Array<Record<string, unknown>>} label={`找到 ${(data.papers as unknown[]).length} 篇论文`} />;
   }
   if (toolName === "search_arxiv" && Array.isArray(data.candidates)) {
-    return <PaperListView papers={data.candidates as Array<Record<string, unknown>>} label={`从 arXiv 搜索到 ${(data.candidates as unknown[]).length} 篇候选`} />;
+    return <ArxivCandidateSelector candidates={data.candidates as Array<Record<string, unknown>>} query={String(data.query ?? "")} />;
   }
   if (toolName === "ingest_arxiv" && data.total !== undefined) {
     return <IngestResultView data={data} />;
@@ -785,6 +957,209 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
       </div>
     );
   }
+  /* ask_knowledge_base — Markdown 答案 + 引用论文 */
+  if (toolName === "ask_knowledge_base" && data.markdown) {
+    const evidence = Array.isArray(data.evidence) ? (data.evidence as Array<Record<string, unknown>>) : [];
+    const rounds = data.rounds as number | undefined;
+    return (
+      <div className="space-y-2">
+        {rounds && rounds > 1 && (
+          <div className="flex items-center gap-1.5 text-[10px] text-primary">
+            <TrendingUp className="h-3 w-3" />
+            <span>经过 {rounds} 轮迭代检索优化</span>
+          </div>
+        )}
+        <div className="prose prose-sm dark:prose-invert max-w-none text-[12px] leading-relaxed">
+          <Markdown content={String(data.markdown)} />
+        </div>
+        {evidence.length > 0 && (
+          <div className="border-t border-border-light pt-2">
+            <p className="mb-1 text-[10px] font-medium text-ink-tertiary">引用 {evidence.length} 篇论文</p>
+            <div className="flex flex-wrap gap-1">
+              {evidence.slice(0, 8).map((e, i) => (
+                <button
+                  key={i}
+                  onClick={() => e.paper_id && navigate(`/papers/${String(e.paper_id)}`)}
+                  className="rounded bg-surface px-1.5 py-0.5 text-[9px] text-ink-secondary hover:bg-hover hover:text-primary transition-colors truncate max-w-[200px]"
+                  title={String(e.title ?? "")}
+                >
+                  {String(e.title ?? "").slice(0, 40)}{String(e.title ?? "").length > 40 ? "..." : ""}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+  /* list_topics — 主题列表 */
+  if (toolName === "list_topics" && Array.isArray(data.topics)) {
+    const topics = data.topics as Array<Record<string, unknown>>;
+    return (
+      <div className="space-y-1">
+        {topics.map((t, i) => (
+          <div key={i} className="flex items-center gap-2 rounded-lg bg-surface px-2.5 py-1.5 text-[11px]">
+            <Hash className="h-3 w-3 text-primary shrink-0" />
+            <span className="font-medium text-ink">{String(t.name ?? "")}</span>
+            {t.paper_count !== undefined && <span className="text-ink-tertiary">{String(t.paper_count)} 篇</span>}
+            {t.enabled !== undefined && (
+              <span className={cn("ml-auto rounded px-1.5 py-0.5 text-[9px]", t.enabled ? "bg-success/10 text-success" : "bg-ink/5 text-ink-tertiary")}>
+                {t.enabled ? "已订阅" : "未订阅"}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  /* get_timeline — 时间线 */
+  if (toolName === "get_timeline" && Array.isArray(data.timeline)) {
+    const items = data.timeline as Array<Record<string, unknown>>;
+    return (
+      <div className="space-y-1 max-h-48 overflow-y-auto">
+        {items.map((p, i) => (
+          <button
+            key={i}
+            onClick={() => p.paper_id && navigate(`/papers/${String(p.paper_id)}`)}
+            className="flex items-center gap-2 w-full text-left rounded-lg bg-surface px-2.5 py-1.5 text-[11px] hover:bg-hover transition-colors"
+          >
+            <span className="shrink-0 font-mono text-[10px] text-primary">{String(p.year ?? "?")}</span>
+            <span className="truncate text-ink">{String(p.title ?? "")}</span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+  /* get_similar_papers — 相似论文 */
+  if (toolName === "get_similar_papers") {
+    const items = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : [];
+    const ids = Array.isArray(data.similar_ids) ? (data.similar_ids as string[]) : [];
+    if (items.length > 0) {
+      return (
+        <div className="space-y-1">
+          {items.map((p, i) => (
+            <button
+              key={i}
+              onClick={() => p.id && navigate(`/papers/${String(p.id)}`)}
+              className="flex items-center gap-2 w-full text-left rounded-lg bg-surface px-2.5 py-1.5 text-[11px] hover:bg-hover transition-colors"
+            >
+              <Star className="h-3 w-3 text-amber-500 shrink-0" />
+              <span className="truncate text-ink">{String(p.title ?? "")}</span>
+            </button>
+          ))}
+        </div>
+      );
+    }
+    if (ids.length > 0) {
+      return <p className="text-[11px] text-ink-secondary">找到 {ids.length} 篇相似论文</p>;
+    }
+  }
+  /* get_citation_tree — 引用树统计 */
+  if (toolName === "get_citation_tree" && data.nodes) {
+    const nodes = Array.isArray(data.nodes) ? data.nodes.length : 0;
+    const edges = Array.isArray(data.edges) ? data.edges.length : 0;
+    return (
+      <div className="flex items-center gap-3 text-[11px]">
+        <span className="font-medium text-ink">{nodes} 个节点</span>
+        <span className="text-ink-tertiary">{edges} 条引用关系</span>
+      </div>
+    );
+  }
+  /* suggest_keywords — 关键词建议 */
+  if (toolName === "suggest_keywords" && Array.isArray(data.suggestions)) {
+    const suggestions = data.suggestions as Array<Record<string, unknown>>;
+    return (
+      <div className="space-y-1.5">
+        {suggestions.map((s, i) => (
+          <div key={i} className="rounded-lg bg-surface px-2.5 py-2 text-[11px]">
+            <p className="font-medium text-ink">{String(s.name ?? "")}</p>
+            <p className="mt-0.5 font-mono text-[10px] text-primary">{String(s.query ?? "")}</p>
+            {s.reason && <p className="mt-0.5 text-[10px] text-ink-tertiary">{String(s.reason)}</p>}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  /* skim_paper / deep_read_paper — 报告摘要 */
+  if ((toolName === "skim_paper" || toolName === "deep_read_paper") && data.one_liner) {
+    return (
+      <div className="text-[11px]">
+        <p className="font-medium text-ink">{String(data.one_liner)}</p>
+        {data.novelty && <p className="mt-1 text-ink-secondary"><span className="font-medium">创新点:</span> {String(data.novelty)}</p>}
+        {data.methodology && <p className="mt-0.5 text-ink-secondary"><span className="font-medium">方法:</span> {String(data.methodology)}</p>}
+      </div>
+    );
+  }
+  /* reasoning_analysis — 推理链 */
+  if (toolName === "reasoning_analysis" && data.reasoning_steps) {
+    const steps = Array.isArray(data.reasoning_steps) ? (data.reasoning_steps as Array<Record<string, unknown>>) : [];
+    return (
+      <div className="space-y-1.5 max-h-48 overflow-y-auto">
+        {steps.slice(0, 6).map((s, i) => (
+          <div key={i} className="rounded-lg bg-surface px-2.5 py-1.5 text-[11px]">
+            <p className="font-medium text-ink">{String(s.step_name ?? s.claim ?? `步骤 ${i + 1}`)}</p>
+            {s.evidence && <p className="mt-0.5 text-[10px] text-ink-tertiary truncate">{String(s.evidence)}</p>}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  /* analyze_figures — 图表列表 */
+  if (toolName === "analyze_figures" && Array.isArray(data.figures)) {
+    const figs = data.figures as Array<Record<string, unknown>>;
+    return (
+      <div className="space-y-1">
+        {figs.map((f, i) => (
+          <div key={i} className="rounded-lg bg-surface px-2.5 py-1.5 text-[11px]">
+            <p className="font-medium text-ink">{String(f.figure_type ?? "图表")} — p.{String(f.page ?? "?")}</p>
+            <p className="mt-0.5 text-[10px] text-ink-tertiary truncate">{String(f.description ?? f.analysis ?? "")}</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  /* identify_research_gaps — 研究空白 */
+  if (toolName === "identify_research_gaps" && data.analysis) {
+    const analysis = data.analysis as Record<string, unknown>;
+    const gaps = Array.isArray(analysis.research_gaps) ? (analysis.research_gaps as Array<Record<string, unknown>>) : [];
+    return (
+      <div className="space-y-1.5">
+        {gaps.slice(0, 5).map((g, i) => (
+          <div key={i} className="rounded-lg bg-surface px-2.5 py-1.5 text-[11px]">
+            <p className="font-medium text-ink">{String(g.gap_title ?? g.title ?? `空白 ${i + 1}`)}</p>
+            <p className="mt-0.5 text-[10px] text-ink-tertiary truncate">{String(g.description ?? g.evidence ?? "")}</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  /* get_paper_detail — 论文详情卡片 */
+  if (toolName === "get_paper_detail" && data.title) {
+    return (
+      <div className="text-[11px]">
+        <button
+          onClick={() => data.id && navigate(`/papers/${String(data.id)}`)}
+          className="font-medium text-primary hover:underline"
+        >
+          {String(data.title)}
+        </button>
+        {data.abstract_zh && <p className="mt-1 text-ink-secondary line-clamp-3">{String(data.abstract_zh)}</p>}
+        <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-ink-tertiary">
+          {data.arxiv_id ? <span className="font-mono">{String(data.arxiv_id)}</span> : null}
+          {data.read_status ? <span>{String(data.read_status)}</span> : null}
+        </div>
+      </div>
+    );
+  }
+  /* writing_assist — 写作助手结果 */
+  if (toolName === "writing_assist" && data.content) {
+    return (
+      <div className="prose prose-sm dark:prose-invert max-w-none text-[12px] max-h-48 overflow-y-auto">
+        <Markdown content={String(data.content)} />
+      </div>
+    );
+  }
+  /* 兜底：原始 JSON */
   return (
     <pre className="max-h-40 overflow-auto rounded-lg bg-surface p-2.5 text-[11px] text-ink-secondary">
       {JSON.stringify(data, null, 2)}

@@ -2,7 +2,7 @@
  * Wiki - Manus 风格结构化知识百科
  * @author Bamzc
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardHeader, Button, Tabs, Spinner, Empty } from "@/components/ui";
 import { wikiApi, generatedApi, tasksApi } from "@/services/api";
 import type { TaskStatus } from "@/services/api";
@@ -58,6 +58,11 @@ export default function Wiki() {
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskProgress, setTaskProgress] = useState(0);
   const [taskMessage, setTaskMessage] = useState("");
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => { if (pollTimerRef.current) clearTimeout(pollTimerRef.current); };
+  }, []);
 
   /* 历史记录 */
   const [history, setHistory] = useState<GeneratedContentListItem[]>([]);
@@ -91,17 +96,19 @@ export default function Wiki() {
           setPaperWiki(null);
           setLoading(false);
           setTaskId(null);
+          pollTimerRef.current = null;
           loadHistory(contentType);
           return;
         }
         if (status.status === "failed") {
           setLoading(false);
           setTaskId(null);
+          pollTimerRef.current = null;
           return;
         }
-        setTimeout(poll, 2000);
+        pollTimerRef.current = setTimeout(poll, 2000);
       } catch {
-        setTimeout(poll, 5000);
+        pollTimerRef.current = setTimeout(poll, 5000);
       }
     };
     poll();
