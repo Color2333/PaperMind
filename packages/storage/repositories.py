@@ -18,6 +18,8 @@ from packages.storage.models import (
     AnalysisReport,
     Citation,
     CollectionAction,
+    DailyReportConfig,
+    EmailConfig,
     GeneratedContent,
     LLMProviderConfig,
     Paper,
@@ -30,6 +32,52 @@ from packages.storage.models import (
 
 
 from packages.domain.math_utils import cosine_distance as _cosine_distance
+
+
+class BaseQuery:
+    """
+    基础查询类 - 提供通用的查询方法减少重复代码
+    """
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _paginate(self, query: Select, page: int, page_size: int) -> Select:
+        """
+        添加分页到查询
+
+        Args:
+            query: SQLAlchemy 查询对象
+            page: 页码（从 1 开始）
+            page_size: 每页大小
+
+        Returns:
+            添加了分页的查询对象
+        """
+        offset = (max(1, page) - 1) * page_size
+        return query.offset(offset).limit(page_size)
+
+    def _execute_paginated(
+        self, query: Select, page: int = 1, page_size: int = 20
+    ) -> tuple[list, int]:
+        """
+        执行分页查询，返回 (结果列表, 总数)
+
+        Args:
+            query: SQLAlchemy 查询对象
+            page: 页码（从 1 开始）
+            page_size: 每页大小
+
+        Returns:
+            (结果列表, 总数)
+        """
+        count_query = select(func.count()).select_from(query.alias())
+        total = self.session.execute(count_query).scalar() or 0
+
+        paginated_query = self._paginate(query, page, page_size)
+        results = list(self.session.execute(paginated_query).scalars())
+
+        return results, total
 
 
 class PaperRepository:
@@ -727,10 +775,18 @@ class CitationRepository:
             )
         )
 
-    def list_all(self) -> list[Citation]:
-        return list(
-            self.session.execute(select(Citation)).scalars()
-        )
+    def list_all(self, limit: int = 10000) -> list[Citation]:
+        """
+        查询所有引用关系（带分页限制）
+
+        Args:
+            limit: 最大返回数量，默认 10000
+
+        Returns:
+            引用关系列表
+        """
+        q = select(Citation).order_by(Citation.source_paper_id).limit(limit)
+        return list(self.session.execute(q).scalars())
 
     def list_for_paper_ids(
         self, paper_ids: list[str]
@@ -1081,3 +1137,119 @@ class ActionRepository:
             .limit(limit)
         ).scalars().all()
         return list(rows)
+
+
+class EmailConfigRepository:
+    """邮箱配置仓储"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def list_all(self) -> list[EmailConfig]:
+        """获取所有邮箱配置"""
+        q = select(EmailConfig).order_by(EmailConfig.created_at.desc())
+        return list(self.session.execute(q).scalars())
+
+    def get_active(self) -> EmailConfig | None:
+        """获取激活的邮箱配置"""
+        q = select(EmailConfig).where(EmailConfig.is_active == True)
+        return self.session.execute(q).scalar_one_or_none()
+
+    def get_by_id(self, config_id: str) -> EmailConfig | None:
+        """根据 ID 获取配置"""
+        return self.session.get(EmailConfig, config_id)
+
+    def create(
+        self,
+        name: str,
+        smtp_server: str,
+        smtp_port: int,
+        smtp_use_tls: bool,
+        sender_email: str,
+        sender_name: str,
+        username: str,
+        password: str,
+    ) -> EmailConfig:
+        """创建邮箱配置"""
+        config = EmailConfig(
+            name=name,
+            smtp_server=smtp_server,
+            smtp_port=smtp_port,
+            smtp_use_tls=smtp_use_tls,
+            sender_email=sender_email,
+            sender_name=sender_name,
+            username=username,
+            password=password,
+        )
+        self.session.add(config)
+        self.session.flush()
+        return config
+
+    def update(
+        self,
+        config_id: str,
+        **kwargs
+    ) -> EmailConfig | None:
+        """更新邮箱配置"""
+        config = self.get_by_id(config_id)
+        if config:
+            for key, value in kwargs.items():
+                if hasattr(config, key):
+                    setattr(config, key, value)
+            self.session.flush()
+        return config
+
+    def delete(self, config_id: str) -> bool:
+        """删除邮箱配置"""
+        config = self.get_by_id(config_id)
+        if config:
+            self.session.delete(config)
+            return True
+        return False
+
+    def set_active(self, config_id: str) -> EmailConfig | None:
+        """激活指定配置，取消其他配置的激活状态"""
+        # 取消所有激活状态
+        self.session.execute(
+            select(EmailConfig).where(EmailConfig.is_active == True)
+        )
+        all_configs = self.list_all()
+        for cfg in all_configs:
+            cfg.is_active = False
+
+        # 激活指定配置
+        config = self.get_by_id(config_id)
+        if config:
+            config.is_active = True
+            self.session.flush()
+        return config
+
+
+class DailyReportConfigRepository:
+    """每日报告配置仓储"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get_config(self) -> DailyReportConfig:
+        """获取每日报告配置（单例）"""
+        config = self.session.execute(
+            select(DailyReportConfig)
+        ).scalar_one_or_none()
+
+        if not config:
+            # 创建默认配置
+            config = DailyReportConfig()
+            self.session.add(config)
+            self.session.flush()
+
+        return config
+
+    def update_config(self, **kwargs) -> DailyReportConfig:
+        """更新每日报告配置"""
+        config = self.get_config()
+        for key, value in kwargs.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+        self.session.flush()
+        return config

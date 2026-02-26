@@ -1,0 +1,719 @@
+
+> papermind-frontend@0.1.0 dev
+> vite
+
+
+  VITE v5.4.21  ready in 185 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://192.168.1.123:5173/
+  ➜  Network: http://10.10.5.72:5173/
+  ➜  Network: http://198.18.0.1:5173/
+12:49:58 PM [vite] hmr update /src/components/Sidebar.tsx, /src/index.css
+12:49:59 PM [vite] hmr update /src/components/Sidebar.tsx, /src/index.css
+12:50:07 PM [vite] hmr update /src/components/Sidebar.tsx, /src/index.css
+12:50:08 PM [vite] hmr update /src/components/Sidebar.tsx, /src/index.css
+12:51:47 PM [vite] hmr update /src/index.css, /src/App.tsx
+12:54:21 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:54:24 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:54:33 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:55:19 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:58:19 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:58:23 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:58:31 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:58:34 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:58:38 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:58:52 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:59:00 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:59:08 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:59:18 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+12:59:28 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:00:14 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:00:22 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:01:49 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:04:43 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:04:48 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:05:08 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:06:25 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:12:10 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:14:28 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:18:00 PM [vite] hmr update /src/components/Sidebar.tsx, /src/index.css
+1:18:01 PM [vite] hmr update /src/components/Sidebar.tsx, /src/index.css
+1:18:02 PM [vite] hmr update /src/components/Sidebar.tsx, /src/index.css
+1:18:17 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:18:18 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:18:19 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:20:04 PM [vite] hmr update /src/index.css, /src/App.tsx
+1:20:04 PM [vite] hmr update /src/index.css, /src/App.tsx
+1:20:05 PM [vite] hmr update /src/index.css, /src/App.tsx
+1:20:06 PM [vite] hmr update /src/index.css, /src/App.tsx
+1:20:07 PM [vite] hmr update /src/index.css, /src/App.tsx
+1:20:08 PM [vite] hmr update /src/index.css, /src/App.tsx
+1:20:10 PM [vite] hmr update /src/index.css, /src/App.tsx
+1:23:13 PM [vite] hmr update /src/contexts/GlobalTaskContext.tsx, /src/index.css
+1:23:13 PM [vite] hmr invalidate /src/contexts/GlobalTaskContext.tsx Could not Fast Refresh ("useGlobalTasks" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+1:23:13 PM [vite] hmr update /src/index.css, /src/components/Layout.tsx, /src/components/GlobalTaskBar.tsx, /src/components/Sidebar.tsx, /src/pages/Dashboard.tsx
+1:23:44 PM [vite] hmr update /src/components/GlobalTaskBar.tsx, /src/index.css
+1:24:28 PM [vite] hmr update /src/components/Layout.tsx, /src/index.css
+1:24:56 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:26:00 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:26:09 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:28:17 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:29:22 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:30:12 PM [vite] hmr update /src/contexts/GlobalTaskContext.tsx, /src/index.css
+1:30:12 PM [vite] hmr invalidate /src/contexts/GlobalTaskContext.tsx Could not Fast Refresh ("useGlobalTasks" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+1:30:12 PM [vite] hmr update /src/index.css, /src/components/Layout.tsx, /src/components/GlobalTaskBar.tsx, /src/components/Sidebar.tsx, /src/pages/Dashboard.tsx
+1:32:57 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+1:33:01 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+1:33:53 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+1:34:47 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+1:34:53 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+1:36:58 PM [vite] Internal server error: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (778:14)
+
+  776 |                   </div>
+  777 |                 </div>
+> 778 |               </div>
+      |               ^
+  779 |             )}
+  780 |           </Card>
+  781 |
+  Plugin: vite:react-babel
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx:778:14
+  776|                    </div>
+  777|                  </div>
+  778|                </div>
+     |                ^
+  779|              )}
+  780|            </Card>
+      at constructor (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:365:19)
+      at TypeScriptParserMixin.raise (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6599:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4742:18)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:39
+      at TypeScriptParserMixin.tryParse (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:18)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12493:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11675:28)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11331:23)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10784:23)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:17)
+      at TypeScriptParserMixin.jsxParseExpressionContainer (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4632:31)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4711:36)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4698:32)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+1:37:03 PM [vite] Internal server error: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (778:14)
+
+  776 |                   </div>
+  777 |                 </div>
+> 778 |               </div>
+      |               ^
+  779 |             )}
+  780 |           </Card>
+  781 |
+  Plugin: vite:react-babel
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx:778:14
+  776|                    </div>
+  777|                  </div>
+  778|                </div>
+     |                ^
+  779|              )}
+  780|            </Card>
+      at constructor (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:365:19)
+      at TypeScriptParserMixin.raise (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6599:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4742:18)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:39
+      at TypeScriptParserMixin.tryParse (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:18)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12493:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11675:28)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11331:23)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10784:23)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:17)
+      at TypeScriptParserMixin.jsxParseExpressionContainer (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4632:31)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4711:36)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4698:32)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+1:37:04 PM [vite] Internal server error: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (778:14)
+
+  776 |                   </div>
+  777 |                 </div>
+> 778 |               </div>
+      |               ^
+  779 |             )}
+  780 |           </Card>
+  781 |
+  Plugin: vite:react-babel
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx:778:14
+  776|                    </div>
+  777|                  </div>
+  778|                </div>
+     |                ^
+  779|              )}
+  780|            </Card>
+      at constructor (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:365:19)
+      at TypeScriptParserMixin.raise (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6599:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4742:18)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:39
+      at TypeScriptParserMixin.tryParse (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:18)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12493:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11675:28)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11331:23)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10784:23)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:17)
+      at TypeScriptParserMixin.jsxParseExpressionContainer (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4632:31)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4711:36)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4698:32)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+1:37:04 PM [vite] Internal server error: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (778:14)
+
+  776 |                   </div>
+  777 |                 </div>
+> 778 |               </div>
+      |               ^
+  779 |             )}
+  780 |           </Card>
+  781 |
+  Plugin: vite:react-babel
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx:778:14
+  776|                    </div>
+  777|                  </div>
+  778|                </div>
+     |                ^
+  779|              )}
+  780|            </Card>
+      at constructor (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:365:19)
+      at TypeScriptParserMixin.raise (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6599:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4742:18)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:39
+      at TypeScriptParserMixin.tryParse (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:18)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12493:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11675:28)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11331:23)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10784:23)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:17)
+      at TypeScriptParserMixin.jsxParseExpressionContainer (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4632:31)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4711:36)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4698:32)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+1:37:05 PM [vite] Internal server error: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (778:14)
+
+  776 |                   </div>
+  777 |                 </div>
+> 778 |               </div>
+      |               ^
+  779 |             )}
+  780 |           </Card>
+  781 |
+  Plugin: vite:react-babel
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx:778:14
+  776|                    </div>
+  777|                  </div>
+  778|                </div>
+     |                ^
+  779|              )}
+  780|            </Card>
+      at constructor (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:365:19)
+      at TypeScriptParserMixin.raise (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6599:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4742:18)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:39
+      at TypeScriptParserMixin.tryParse (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:18)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12493:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11675:28)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11331:23)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10784:23)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:17)
+      at TypeScriptParserMixin.jsxParseExpressionContainer (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4632:31)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4711:36)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4698:32)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+1:37:05 PM [vite] Internal server error: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (778:14)
+
+  776 |                   </div>
+  777 |                 </div>
+> 778 |               </div>
+      |               ^
+  779 |             )}
+  780 |           </Card>
+  781 |
+  Plugin: vite:react-babel
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx:778:14
+  776|                    </div>
+  777|                  </div>
+  778|                </div>
+     |                ^
+  779|              )}
+  780|            </Card>
+      at constructor (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:365:19)
+      at TypeScriptParserMixin.raise (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6599:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4742:18)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:39
+      at TypeScriptParserMixin.tryParse (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:18)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12493:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11675:28)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11331:23)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10784:23)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:17)
+      at TypeScriptParserMixin.jsxParseExpressionContainer (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4632:31)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4711:36)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4698:32)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+1:37:05 PM [vite] Internal server error: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (778:14)
+
+  776 |                   </div>
+  777 |                 </div>
+> 778 |               </div>
+      |               ^
+  779 |             )}
+  780 |           </Card>
+  781 |
+  Plugin: vite:react-babel
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx:778:14
+  776|                    </div>
+  777|                  </div>
+  778|                </div>
+     |                ^
+  779|              )}
+  780|            </Card>
+      at constructor (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:365:19)
+      at TypeScriptParserMixin.raise (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6599:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4742:18)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:39
+      at TypeScriptParserMixin.tryParse (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:18)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12493:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11675:28)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11331:23)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10784:23)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:17)
+      at TypeScriptParserMixin.jsxParseExpressionContainer (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4632:31)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4711:36)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4698:32)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+1:37:05 PM [vite] Internal server error: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (778:14)
+
+  776 |                   </div>
+  777 |                 </div>
+> 778 |               </div>
+      |               ^
+  779 |             )}
+  780 |           </Card>
+  781 |
+  Plugin: vite:react-babel
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/pages/Settings.tsx:778:14
+  776|                    </div>
+  777|                  </div>
+  778|                </div>
+     |                ^
+  779|              )}
+  780|            </Card>
+      at constructor (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:365:19)
+      at TypeScriptParserMixin.raise (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6599:19)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4742:18)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10904:23)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:39
+      at TypeScriptParserMixin.tryParse (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:6907:20)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9775:18)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10800:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12493:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11675:28)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11331:23)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4764:20)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+      at TypeScriptParserMixin.parseExprOpBaseRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10986:34)
+      at TypeScriptParserMixin.parseExprOpRightExpr (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10981:21)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10947:27)
+      at TypeScriptParserMixin.parseExprOp (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9306:18)
+      at TypeScriptParserMixin.parseExprOps (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10908:17)
+      at TypeScriptParserMixin.parseMaybeConditional (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10881:23)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10831:21)
+      at TypeScriptParserMixin.parseMaybeAssign (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9786:20)
+      at TypeScriptParserMixin.parseExpressionBase (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10784:23)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:39
+      at TypeScriptParserMixin.allowInAnd (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:12426:12)
+      at TypeScriptParserMixin.parseExpression (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10780:17)
+      at TypeScriptParserMixin.jsxParseExpressionContainer (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4632:31)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4711:36)
+      at TypeScriptParserMixin.jsxParseElementAt (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4698:32)
+      at TypeScriptParserMixin.jsxParseElement (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4749:17)
+      at TypeScriptParserMixin.parseExprAtom (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:4759:19)
+      at TypeScriptParserMixin.parseExprSubscripts (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11081:23)
+      at TypeScriptParserMixin.parseUpdate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11066:21)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:11046:23)
+      at TypeScriptParserMixin.parseMaybeUnary (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:9837:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/@babel/parser/lib/index.js:10899:61)
+1:37:06 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+1:37:52 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:38:10 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:38:19 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:38:19 PM [vite] Internal server error: Transform failed with 1 error:
+/Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1218:13: ERROR: The character "}" is not valid inside a JSX element
+  Plugin: vite:esbuild
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1199:0
+  
+  The character "}" is not valid inside a JSX element
+  1216|                  </Button>
+  1217|                </>
+  1218|              )}
+     |               ^
+  1219|            </div>
+  1220|          </div>
+  
+      at failureErrorWithLog (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:1472:15)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+1:38:19 PM [vite] Internal server error: Transform failed with 1 error:
+/Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1218:13: ERROR: The character "}" is not valid inside a JSX element
+  Plugin: vite:esbuild
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1199:0
+  
+  The character "}" is not valid inside a JSX element
+  1216|                  </Button>
+  1217|                </>
+  1218|              )}
+     |               ^
+  1219|            </div>
+  1220|          </div>
+  
+      at failureErrorWithLog (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:1472:15)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+1:38:19 PM [vite] Internal server error: Transform failed with 1 error:
+/Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1218:13: ERROR: The character "}" is not valid inside a JSX element
+  Plugin: vite:esbuild
+  File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1199:0
+  
+  The character "}" is not valid inside a JSX element
+  1216|                  </Button>
+  1217|                </>
+  1218|              )}
+     |               ^
+  1219|            </div>
+  1220|          </div>
+  
+      at failureErrorWithLog (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:1472:15)
+      at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+1:38:22 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+1:51:15 PM [vite] hmr update /src/components/Toast.tsx, /src/index.css
+1:51:15 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+1:51:15 PM [vite] hmr update /src/contexts/ToastContext.tsx, /src/index.css
+1:51:15 PM [vite] hmr update /src/contexts/GlobalTaskContext.tsx, /src/index.css
+1:51:15 PM [vite] hmr update /src/components/Skeleton.tsx, /src/index.css
+1:51:15 PM [vite] hmr update /src/components/ConfirmDialog.tsx, /src/index.css
+1:51:15 PM [vite] hmr update /src/DesktopBootstrap.tsx, /src/index.css, /src/contexts/GlobalTaskContext.tsx, /src/pages/Agent.tsx, /src/components/Sidebar.tsx, /src/contexts/AgentSessionContext.tsx, /src/components/SettingsDialog.tsx, /src/pages/Collect.tsx, /src/pages/Papers.tsx, /src/pages/DailyBrief.tsx, /src/pages/Dashboard.tsx, /src/pages/Settings.tsx, /src/pages/Wiki.tsx, /src/pages/Writing.tsx, /src/components/graph/OverviewPanel.tsx, /src/components/graph/InsightPanel.tsx, /src/components/graph/CitationPanel.tsx, /src/pages/PaperDetail.tsx, /src/components/PdfReader.tsx, /src/pages/EmailSettings.tsx
+2:20:29 PM [vite] hmr update /src/index.css, /src/pages/Agent.tsx, /src/components/Sidebar.tsx, /src/contexts/AgentSessionContext.tsx, /src/components/SettingsDialog.tsx, /src/pages/Collect.tsx, /src/pages/Papers.tsx, /src/pages/DailyBrief.tsx, /src/pages/Dashboard.tsx, /src/pages/Settings.tsx, /src/pages/Wiki.tsx, /src/pages/Writing.tsx, /src/components/graph/OverviewPanel.tsx, /src/components/graph/InsightPanel.tsx, /src/components/graph/CitationPanel.tsx, /src/pages/PaperDetail.tsx, /src/components/PdfReader.tsx
+2:20:43 PM [vite] hmr update /src/index.css, /src/pages/Agent.tsx, /src/components/Sidebar.tsx, /src/contexts/AgentSessionContext.tsx, /src/components/SettingsDialog.tsx, /src/pages/Collect.tsx, /src/pages/Papers.tsx, /src/pages/DailyBrief.tsx, /src/pages/Dashboard.tsx, /src/pages/Settings.tsx, /src/pages/Wiki.tsx, /src/pages/Writing.tsx, /src/components/graph/OverviewPanel.tsx, /src/components/graph/InsightPanel.tsx, /src/components/graph/CitationPanel.tsx, /src/pages/PaperDetail.tsx, /src/components/PdfReader.tsx
+2:20:57 PM [vite] hmr update /src/index.css, /src/pages/Agent.tsx, /src/components/Sidebar.tsx, /src/contexts/AgentSessionContext.tsx, /src/components/SettingsDialog.tsx, /src/pages/Collect.tsx, /src/pages/Papers.tsx, /src/pages/DailyBrief.tsx, /src/pages/Dashboard.tsx, /src/pages/Settings.tsx, /src/pages/Wiki.tsx, /src/pages/Writing.tsx, /src/components/graph/OverviewPanel.tsx, /src/components/graph/InsightPanel.tsx, /src/components/graph/CitationPanel.tsx, /src/pages/PaperDetail.tsx, /src/components/PdfReader.tsx
+2:21:15 PM [vite] hmr update /src/contexts/GlobalTaskContext.tsx, /src/index.css
+2:21:30 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:21:37 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:21:42 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:21:50 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:21:56 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:22:04 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:22:11 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:22:17 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:22:24 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:22:36 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:22:45 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+2:23:19 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+2:23:26 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+2:23:31 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+2:23:39 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+2:23:46 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+2:23:54 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+6:20:13 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+6:20:47 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:20:59 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:21:10 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:21:23 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:21:33 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:21:48 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:21:55 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:22:03 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:22:16 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
+6:22:57 PM [vite] hmr update /src/index.css, /src/pages/Agent.tsx, /src/components/Sidebar.tsx, /src/contexts/AgentSessionContext.tsx, /src/components/SettingsDialog.tsx, /src/pages/Collect.tsx, /src/pages/Papers.tsx, /src/pages/DailyBrief.tsx, /src/pages/Dashboard.tsx, /src/pages/Settings.tsx, /src/pages/Wiki.tsx, /src/pages/Writing.tsx, /src/components/graph/OverviewPanel.tsx, /src/components/graph/InsightPanel.tsx, /src/components/graph/CitationPanel.tsx, /src/pages/PaperDetail.tsx, /src/components/PdfReader.tsx

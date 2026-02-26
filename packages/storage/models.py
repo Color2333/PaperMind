@@ -14,6 +14,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -46,18 +47,24 @@ class Paper(Base):
         Enum(ReadStatus, name="read_status"),
         nullable=False,
         default=ReadStatus.unread,
+        index=True,
     )
     metadata_json: Mapped[dict] = mapped_column(
         "metadata", JSON, nullable=False, default=dict
     )
     favorited: Mapped[bool] = mapped_column(
-        nullable=False, default=False
+        nullable=False, default=False,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=_utcnow, nullable=False
+        DateTime, default=_utcnow, nullable=False, index=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index('ix_papers_read_status_created_at', 'read_status', 'created_at'),
     )
 
 
@@ -405,4 +412,94 @@ class ActionPaper(Base):
         ForeignKey("papers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+
+
+class EmailConfig(Base):
+    """邮箱配置 - 用于发送每日简报"""
+
+    __tablename__ = "email_configs"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    name: Mapped[str] = mapped_column(
+        String(128), nullable=False, unique=True
+    )
+    smtp_server: Mapped[str] = mapped_column(
+        String(256), nullable=False
+    )
+    smtp_port: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=587
+    )
+    smtp_use_tls: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+    sender_email: Mapped[str] = mapped_column(
+        String(256), nullable=False
+    )
+    sender_name: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="PaperMind"
+    )
+    username: Mapped[str] = mapped_column(
+        String(256), nullable=False
+    )
+    password: Mapped[str] = mapped_column(
+        String(512), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class DailyReportConfig(Base):
+    """每日报告配置 - 自动精读和邮件发送设置"""
+
+    __tablename__ = "daily_report_configs"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    auto_deep_read: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True,
+        doc="是否自动精读新搜集的论文"
+    )
+    deep_read_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10,
+        doc="每日自动精读的论文数量限制"
+    )
+    send_email_report: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True,
+        doc="是否发送邮件报告"
+    )
+    recipient_emails: Mapped[str] = mapped_column(
+        String(2048), nullable=False, default="",
+        doc="收件人邮箱列表，逗号分隔"
+    )
+    report_time_utc: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=21,
+        doc="发送报告的时间（UTC，0-23）"
+    )
+    include_paper_details: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True,
+        doc="报告中是否包含论文详情"
+    )
+    include_graph_insights: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False,
+        doc="报告中是否包含图谱洞察"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
     )

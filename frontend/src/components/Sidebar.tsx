@@ -6,6 +6,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useConversationCtx } from "@/contexts/ConversationContext";
+import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
 import { groupByDate } from "@/hooks/useConversations";
 import { SettingsDialog } from "./SettingsDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -26,6 +27,7 @@ import {
   Menu,
   X,
   PenTool,
+  Loader2,
 } from "lucide-react";
 import { paperApi } from "@/services/api";
 
@@ -66,6 +68,7 @@ export default function Sidebar() {
   const [unreadCount, setUnreadCount] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
+  const { activeTasks, hasRunning } = useGlobalTasks();
 
   useEffect(() => {
     const fetchUnread = () => {
@@ -150,6 +153,36 @@ export default function Sidebar() {
             新对话
           </button>
         </div>
+
+        {/* 活跃任务进度条 */}
+        {hasRunning && activeTasks.length > 0 && (
+          <div className="mx-3 mb-2 rounded-xl bg-gradient-to-r from-primary/10 to-info/10 border border-primary/20 p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              <span className="text-xs font-semibold text-primary">运行中</span>
+            </div>
+            {activeTasks.slice(0, 2).map((task) => (
+              <div key={task.task_id} className="mb-2 last:mb-0">
+                <div className="mb-1 flex items-center justify-between text-[11px]">
+                  <span className="font-medium text-ink truncate flex-1">{task.title}</span>
+                  <span className="ml-2 text-ink-tertiary shrink-0">{task.progress_pct}%</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-page">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-primary to-info transition-all duration-300"
+                    style={{ width: `${task.progress_pct}%` }}
+                  />
+                </div>
+                <p className="mt-1 text-[10px] text-ink-secondary truncate">{task.message}</p>
+              </div>
+            ))}
+            {activeTasks.length > 2 && (
+              <p className="text-[10px] text-ink-tertiary">
+                还有 {activeTasks.length - 2} 个任务正在运行...
+              </p>
+            )}
+          </div>
+        )}
 
         {/* 工具网格 */}
         <div className="border-b border-border px-3 pb-3">

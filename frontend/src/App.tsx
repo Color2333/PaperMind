@@ -24,6 +24,7 @@ const DailyBrief = lazy(() => import("@/pages/DailyBrief"));
 const Pipelines = lazy(() => import("@/pages/Pipelines"));
 const Operations = lazy(() => import("@/pages/Operations"));
 const Settings = lazy(() => import("@/pages/Settings"));
+const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
 
 function PageFallback() {
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/pipelines" element={<Suspense fallback={<PageFallback />}><Pipelines /></Suspense>} />
           <Route path="/operations" element={<Suspense fallback={<PageFallback />}><Operations /></Suspense>} />
           <Route path="/settings" element={<Suspense fallback={<PageFallback />}><Settings /></Suspense>} />
+          <Route path="/email-settings" element={<Suspense fallback={<PageFallback />}><EmailSettings /></Suspense>} />
           <Route path="/writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
 
           {/* 常见拼写重定向 */}

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Badge } from "@/components/ui";
 import { StatCardSkeleton } from "@/components/Skeleton";
+import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
 import { systemApi, metricsApi, pipelineApi, todayApi, type TodaySummary } from "@/services/api";
 import { formatDuration, timeAgo } from "@/lib/utils";
 import type { SystemStatus, CostMetrics, PipelineRun } from "@/types";
@@ -24,6 +25,7 @@ import {
   BarChart3,
   Cpu,
   BookOpen,
+  Loader2,
 } from "lucide-react";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -53,6 +55,16 @@ const STAGE_LABELS: Record<string, string> = {
   translate: "标题翻译",
 };
 
+const PIPELINE_LABELS: Record<string, string> = {
+  skim: "粗读分析",
+  deep_dive: "深度精读",
+  embed_paper: "向量化",
+  ingest_arxiv: "arXiv 收集",
+  ingest_arxiv_with_ids: "订阅收集",
+  daily_brief: "每日简报",
+  daily_graph_maintenance: "图维护",
+};
+
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -61,6 +73,7 @@ function fmtTokens(n: number): string {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { activeTasks, hasRunning } = useGlobalTasks();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [costs, setCosts] = useState<CostMetrics | null>(null);
   const [runs, setRuns] = useState<PipelineRun[]>([]);
@@ -122,6 +135,12 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {hasRunning && (
+              <div className="flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>{activeTasks.length} 个任务运行中</span>
+              </div>
+            )}
             <div className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium ${
               isHealthy ? "bg-success-light text-success" : "bg-error-light text-error"
             }`}>
@@ -175,10 +194,11 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* 主内容区：成本 + 活动 */}
-      <div className="grid gap-6 lg:grid-cols-5">
-        {/* 成本分析 - 更宽 */}
-        <div className="space-y-6 lg:col-span-3">
+      {/* 主内容区：左侧数据 + 右侧任务 */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* 左侧：成本分析 + 活动记录 */}
+        <div className="space-y-6 lg:col-span-2">
+          {/* Token 用量分析 */}
           <SectionCard title="Token 用量分析" icon={<BarChart3 className="h-4 w-4 text-primary" />}>
             {costs && costs.by_stage.length > 0 ? (
               <div className="space-y-5">
@@ -235,101 +255,113 @@ export default function Dashboard() {
                     <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-warning/70" />输出</span>
                   </div>
                 </div>
-
-                {/* 按模型 */}
-                {costs.by_model.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-xs font-medium uppercase tracking-widest text-ink-tertiary">按模型</p>
-                    {costs.by_model.map((m) => {
-                      const modelTotal = (m.input_tokens ?? 0) + (m.output_tokens ?? 0);
-                      const maxTokens = Math.max(...costs.by_model.map((x) => (x.input_tokens ?? 0) + (x.output_tokens ?? 0)), 1);
-                      const pct = Math.max((modelTotal / maxTokens) * 100, 3);
-                      return (
-                        <div key={`${m.provider}-${m.model}`} className="group">
-                          <div className="mb-1 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <TrendingUp className="h-3 w-3 text-info" />
-                              <span className="text-sm text-ink">{m.provider}/{m.model}</span>
-                            </div>
-                            <div className="flex items-baseline gap-2">
-                              <span className="text-sm font-semibold text-ink">{fmtTokens(modelTotal)}</span>
-                              <span className="text-[10px] text-ink-tertiary">
-                                入{fmtTokens(m.input_tokens ?? 0)} / 出{fmtTokens(m.output_tokens ?? 0)}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="h-2 w-full overflow-hidden rounded-full bg-page">
-                            <div
-                              className="bar-animate h-full rounded-full bg-gradient-to-r from-info to-info/60"
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             ) : (
               <div className="py-8 text-center text-sm text-ink-tertiary">暂无 Token 数据</div>
             )}
           </SectionCard>
-        </div>
 
-        {/* 活动记录 */}
-        <div className="space-y-6 lg:col-span-2">
+          {/* 最近活动 */}
           <SectionCard title="最近活动" icon={<Activity className="h-4 w-4 text-primary" />}>
             {runs.length > 0 ? (
-              <div className="space-y-1">
-                {runs.map((run) => (
-                  <button
+              <div className="space-y-2">
+                {runs.map((run, index) => (
+                  <div
                     key={run.id}
+                    className="group flex items-center gap-3 rounded-xl bg-page p-3 transition-all hover:bg-hover cursor-pointer"
                     onClick={() => navigate("/pipelines")}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-hover"
                   >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium text-ink-tertiary bg-border-light">
+                      {index + 1}
+                    </span>
                     <RunStatusDot status={run.status} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-ink">{run.pipeline_name}</p>
-                      {run.error_message && (
-                        <p className="truncate text-xs text-error">{run.error_message}</p>
-                      )}
+                      <div className="mb-0.5 flex items-center gap-2">
+                        <p className="truncate text-sm font-medium text-ink">
+                          {PIPELINE_LABELS[run.pipeline_name] || run.pipeline_name}
+                        </p>
+                        {run.elapsed_ms != null && (
+                          <span className="shrink-0 text-[10px] text-ink-tertiary">
+                            {formatDuration(run.elapsed_ms)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-ink-tertiary">
+                        <span>{timeAgo(run.created_at)}</span>
+                        {run.error_message && (
+                          <span className="truncate text-error">{run.error_message}</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="shrink-0 text-right">
-                      {run.elapsed_ms != null && (
-                        <p className="text-xs text-ink-tertiary">{formatDuration(run.elapsed_ms)}</p>
-                      )}
-                      <p className="text-xs text-ink-tertiary">{timeAgo(run.created_at)}</p>
-                    </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             ) : (
-              <div className="py-8 text-center text-sm text-ink-tertiary">暂无运行记录</div>
+              <div className="py-12 text-center">
+                <Activity className="mx-auto h-10 w-10 text-ink-tertiary mb-3" />
+                <p className="text-sm text-ink-tertiary">暂无活动记录</p>
+                <p className="mt-1 text-xs text-ink-tertiary">运行任务后会在这里显示</p>
+              </div>
             )}
           </SectionCard>
+        </div>
+
+        {/* 右侧：活跃任务 + 推荐论文 */}
+        <div className="space-y-6 lg:col-span-1">
+          {/* 活跃任务 */}
+          {hasRunning && activeTasks.length > 0 && (
+            <SectionCard
+              title="运行中"
+              icon={<Loader2 className="h-4 w-4 text-primary animate-spin" />}
+            >
+              <div className="space-y-3">
+                {activeTasks.slice(0, 3).map((task) => (
+                  <div key={task.task_id} className="rounded-xl bg-page p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-ink truncate flex-1 mr-2">{task.title}</h4>
+                      <span className="text-[10px] text-primary font-medium">{task.progress_pct}%</span>
+                    </div>
+                    <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-page">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-primary to-info transition-all duration-300"
+                        style={{ width: `${task.progress_pct}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-ink-secondary truncate">{task.message}</p>
+                    {task.elapsed_seconds > 0 && (
+                      <p className="mt-1 text-[10px] text-ink-tertiary">
+                        {Math.floor(task.elapsed_seconds / 60)}:{(task.elapsed_seconds % 60).toString().padStart(2, '0')}
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {activeTasks.length > 3 && (
+                  <p className="text-center text-[10px] text-ink-tertiary">
+                    还有 {activeTasks.length - 3} 个任务...
+                  </p>
+                )}
+              </div>
+            </SectionCard>
+          )}
 
           {/* 推荐论文 */}
           {today && today.recommendations.length > 0 && (
             <SectionCard title="推荐阅读" icon={<Sparkles className="h-4 w-4 text-warning" />}>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {today.recommendations.slice(0, 4).map((rec) => (
                   <button
                     key={rec.id}
                     onClick={() => navigate(`/papers/${rec.id}`)}
-                    className="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-hover"
+                    className="block w-full text-left"
                   >
-                    <div className="mt-0.5 shrink-0 rounded-lg bg-warning-light p-1.5">
-                      <Sparkles className="h-3.5 w-3.5 text-warning" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="line-clamp-2 text-sm font-medium leading-snug text-ink">
+                    <div className="rounded-xl bg-page p-3 transition-colors hover:bg-hover">
+                      <p className="mb-1 text-xs font-medium text-ink line-clamp-2">
                         {rec.title_zh || rec.title}
                       </p>
-                      <p className="mt-0.5 text-xs text-ink-tertiary">
+                      <p className="text-[10px] text-ink-tertiary">
                         相似度 {(rec.similarity * 100).toFixed(0)}%
                       </p>
                     </div>
-                    <ArrowUpRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-tertiary" />
                   </button>
                 ))}
               </div>
@@ -337,6 +369,7 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
     </div>
   );
 }

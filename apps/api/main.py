@@ -9,11 +9,13 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from pathlib import Path
+from pydantic import BaseModel
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from packages.domain.exceptions import AppError, NotFoundError
 from packages.domain.schemas import (
     ReferenceImportReq, SuggestKeywordsReq, AIExplainReq,
     WritingProcessReq, WritingRefineReq, WritingMultimodalReq,
@@ -31,7 +33,7 @@ from packages.ai.daily_runner import (
 )
 from packages.ai.graph_service import GraphService
 from packages.ai.pipelines import PaperPipelines
-from packages.ai.task_manager import TaskManager
+from packages.domain.task_tracker import global_tracker
 from packages.ai.rag_service import RAGService
 from packages.config import get_settings
 from packages.domain.enums import ReadStatus
@@ -47,6 +49,8 @@ from packages.domain.schemas import (
 )
 from packages.storage.db import check_db_connection, session_scope
 from packages.storage.repositories import (
+    DailyReportConfigRepository,
+    EmailConfigRepository,
     GeneratedContentRepository,
     LLMConfigRepository,
     PaperRepository,
@@ -55,10 +59,9 @@ from packages.storage.repositories import (
     TopicRepository,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+from packages.logging_setup import setup_logging
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +107,16 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
 app.add_middleware(RequestLogMiddleware)
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(_request: Request, exc: AppError):
+    """统一处理所有业务异常 — 自动映射 status_code + 结构化响应"""
+    api_logger.warning(
+        "[%s] %s: %s",
+        exc.error_type, exc.__class__.__name__, exc.message,
+    )
+    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 origins = [
     x.strip()
     for x in settings.cors_allow_origins.split(",")
@@ -125,7 +138,6 @@ pipelines = PaperPipelines()
 rag_service = RAGService()
 brief_service = DailyBriefService()
 graph_service = GraphService()
-task_manager = TaskManager()
 
 
 def _brief_date() -> str:
@@ -310,9 +322,7 @@ def update_topic(topic_id: str, req: TopicUpdate) -> dict:
                 schedule_time_utc=req.schedule_time_utc,
             )
         except ValueError as exc:
-            raise HTTPException(
-                status_code=404, detail=str(exc)
-            ) from exc
+            raise NotFoundError(str(exc)) from exc
         return _topic_dict(topic, session)
 
 
@@ -323,56 +333,45 @@ def delete_topic(topic_id: str) -> dict:
         return {"deleted": topic_id}
 
 
-_fetch_tasks: dict[str, dict] = {}
-
 @app.post("/topics/{topic_id}/fetch")
 def manual_fetch_topic(topic_id: str) -> dict:
     """手动触发单个订阅的论文抓取（后台执行，立即返回）"""
-    import threading
     from packages.ai.daily_runner import run_topic_ingest
     from packages.storage.models import TopicSubscription
     with session_scope() as session:
         topic = session.get(TopicSubscription, topic_id)
         if not topic:
-            raise HTTPException(status_code=404, detail="订阅不存在")
+            raise NotFoundError("订阅不存在")
         topic_name = topic.name
 
-    if _fetch_tasks.get(topic_id, {}).get("running"):
-        return {"status": "already_running", "topic_name": topic_name, "inserted": 0, "processed": 0}
+    def _fetch_fn(progress_callback=None):
+        return run_topic_ingest(topic_id)
 
-    def _run():
-        from packages.domain.task_tracker import global_tracker
-        tid = f"fetch_{topic_id[:8]}"
-        global_tracker.start(tid, "fetch", f"抓取: {topic_name[:30]}")
-        _fetch_tasks[topic_id] = {"running": True}
-        try:
-            result = run_topic_ingest(topic_id)
-            _fetch_tasks[topic_id] = {"running": False, **result}
-            global_tracker.finish(tid, success=True)
-        except Exception as exc:
-            _fetch_tasks[topic_id] = {"running": False, "status": "failed", "error": str(exc)}
-            global_tracker.finish(tid, success=False, error=str(exc)[:100])
-
-    threading.Thread(target=_run, daemon=True).start()
-
+    task_id = global_tracker.submit(
+        task_type="fetch",
+        title=f"抓取: {topic_name[:30]}",
+        fn=_fetch_fn,
+    )
     return {
         "status": "started",
+        "task_id": task_id,
         "topic_id": topic_id,
         "topic_name": topic_name,
-        "inserted": 0,
-        "processed": 0,
         "message": f"「{topic_name}」抓取已在后台启动",
     }
 
 
 @app.get("/topics/{topic_id}/fetch-status")
 def fetch_topic_status(topic_id: str) -> dict:
-    """查询手动抓取的执行状态"""
-    task = _fetch_tasks.get(topic_id)
-    if not task:
-        return {"status": "idle"}
-    if task.get("running"):
-        return {"status": "running"}
+    """查询手动抓取的执行状态 — 通过全局 tracker 查询"""
+    # 兼容旧的轮询逻辑：从 tracker 中找匹配的 fetch 任务
+    active = global_tracker.get_active()
+    for t in active:
+        if t["task_type"] == "fetch" and topic_id[:8] in t.get("task_id", ""):
+            if t["finished"]:
+                return {"status": "completed" if t["success"] else "failed", **t}
+            return {"status": "running", **t}
+    # 没找到活跃任务，看 DB 里的主题信息
     with session_scope() as session:
         from packages.storage.models import TopicSubscription
         topic = session.get(TopicSubscription, topic_id)
@@ -399,10 +398,15 @@ def sync_citations_incremental(
     paper_limit: int = Query(default=40, ge=1, le=200),
     edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
 ) -> dict:
-    return graph_service.sync_incremental(
-        paper_limit=paper_limit,
-        edge_limit_per_paper=edge_limit_per_paper,
-    )
+    """增量同步引用（后台执行）"""
+    def _fn(progress_callback=None):
+        return graph_service.sync_incremental(
+            paper_limit=paper_limit,
+            edge_limit_per_paper=edge_limit_per_paper,
+        )
+
+    task_id = global_tracker.submit("citation_sync", "📊 增量引用同步", _fn)
+    return {"task_id": task_id, "message": "增量引用同步已启动", "status": "running"}
 
 
 @app.post("/citations/sync/topic/{topic_id}")
@@ -411,14 +415,25 @@ def sync_citations_for_topic(
     paper_limit: int = Query(default=30, ge=1, le=200),
     edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
 ) -> dict:
+    """主题引用同步（后台执行）"""
+    topic_name = topic_id
     try:
+        with session_scope() as session:
+            topic = TopicRepository(session).get_by_id(topic_id)
+            if topic:
+                topic_name = topic.name
+    except Exception:
+        pass
+
+    def _fn(progress_callback=None):
         return graph_service.sync_citations_for_topic(
             topic_id=topic_id,
             paper_limit=paper_limit,
             edge_limit_per_paper=edge_limit_per_paper,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    task_id = global_tracker.submit("citation_sync", f"📊 主题引用同步: {topic_name}", _fn)
+    return {"task_id": task_id, "message": f"主题引用同步已启动: {topic_name}", "status": "running"}
 
 
 @app.post("/citations/sync/{paper_id}")
@@ -426,9 +441,14 @@ def sync_citations(
     paper_id: str,
     limit: int = Query(default=8, ge=1, le=50),
 ) -> dict:
-    return graph_service.sync_citations_for_paper(
-        paper_id=paper_id, limit=limit
-    )
+    """单篇论文引用同步（后台执行）"""
+    paper_title = _get_paper_title(UUID(paper_id)) or paper_id[:8]
+
+    def _fn(progress_callback=None):
+        return graph_service.sync_citations_for_paper(paper_id=paper_id, limit=limit)
+
+    task_id = global_tracker.submit("citation_sync", f"📄 引用同步: {paper_title[:30]}", _fn)
+    return {"task_id": task_id, "message": "论文引用同步已启动", "status": "running"}
 
 
 # ---------- 图谱 ----------
@@ -634,7 +654,7 @@ def start_topic_wiki_task(
     limit: int = Query(default=120, ge=1, le=500),
 ) -> dict:
     """提交后台 wiki 生成任务"""
-    task_id = task_manager.submit(
+    task_id = global_tracker.submit(
         task_type="topic_wiki",
         title=f"Wiki: {keyword}",
         fn=_run_topic_wiki_task,
@@ -647,14 +667,14 @@ def start_topic_wiki_task(
 @app.get("/tasks/active")
 def get_active_tasks() -> dict:
     """获取全局进行中的任务列表（跨页面可见）"""
-    from packages.domain.task_tracker import global_tracker
+
     return {"tasks": global_tracker.get_active()}
 
 
 @app.post("/tasks/track")
 def track_task(body: dict) -> dict:
     """前端通知后端创建/更新/完成一个全局可见任务"""
-    from packages.domain.task_tracker import global_tracker
+
     action = body.get("action", "start")
     task_id = body.get("task_id", "")
     if action == "start":
@@ -683,31 +703,22 @@ def track_task(body: dict) -> dict:
 @app.get("/tasks/{task_id}")
 def get_task_status(task_id: str) -> dict:
     """查询任务进度"""
-    status = task_manager.get_status(task_id)
+    status = global_tracker.get_task(task_id)
     if not status:
-        raise HTTPException(404, f"Task {task_id} not found")
+        raise NotFoundError(f"Task {task_id} not found")
     return status
 
 
 @app.get("/tasks/{task_id}/result")
 def get_task_result(task_id: str) -> dict:
     """获取已完成任务的结果"""
-    status = task_manager.get_status(task_id)
+    status = global_tracker.get_task(task_id)
     if not status:
-        raise HTTPException(404, f"Task {task_id} not found")
-    if status["status"] != "completed":
-        raise HTTPException(400, f"Task not completed: {status['status']}")
-    result = task_manager.get_result(task_id)
+        raise NotFoundError(f"Task {task_id} not found")
+    if not status.get("finished"):
+        raise HTTPException(400, f"Task not finished yet")
+    result = global_tracker.get_result(task_id)
     return result or {}
-
-
-@app.get("/tasks")
-def list_tasks(
-    task_type: str | None = None,
-    limit: int = Query(default=20, ge=1, le=100),
-) -> dict:
-    """列出任务"""
-    return {"tasks": task_manager.list_tasks(task_type=task_type, limit=limit)}
 
 
 # ---------- Pipeline ----------
@@ -715,7 +726,7 @@ def list_tasks(
 
 @app.post("/pipelines/skim/{paper_id}")
 def run_skim(paper_id: UUID) -> dict:
-    from packages.domain.task_tracker import global_tracker
+
     tid = f"skim_{paper_id.hex[:8]}"
     title = _get_paper_title(paper_id) or str(paper_id)[:8]
     global_tracker.start(tid, "skim", f"粗读: {title[:30]}", total=1)
@@ -730,7 +741,7 @@ def run_skim(paper_id: UUID) -> dict:
 
 @app.post("/pipelines/deep/{paper_id}")
 def run_deep(paper_id: UUID) -> dict:
-    from packages.domain.task_tracker import global_tracker
+
     tid = f"deep_{paper_id.hex[:8]}"
     title = _get_paper_title(paper_id) or str(paper_id)[:8]
     global_tracker.start(tid, "deep_read", f"精读: {title[:30]}", total=1)
@@ -745,7 +756,7 @@ def run_deep(paper_id: UUID) -> dict:
 
 @app.post("/pipelines/embed/{paper_id}")
 def run_embed(paper_id: UUID) -> dict:
-    from packages.domain.task_tracker import global_tracker
+
     tid = f"embed_{paper_id.hex[:8]}"
     title = _get_paper_title(paper_id) or str(paper_id)[:8]
     global_tracker.start(tid, "embed", f"嵌入: {title[:30]}", total=1)
@@ -1217,30 +1228,45 @@ def generated_delete(content_id: str) -> dict:
 
 @app.post("/jobs/daily/run-once")
 def run_daily_once() -> dict:
-    logger.info("Manual daily job triggered")
-    ingest = run_daily_ingest()
-    brief = run_daily_brief()
-    return {"ingest": ingest, "brief": brief}
+    """每日任务（抓取+简报）- 后台执行"""
+    def _fn(progress_callback=None):
+        if progress_callback:
+            progress_callback("正在执行订阅收集...", 10, 100)
+        ingest = run_daily_ingest()
+        if progress_callback:
+            progress_callback("正在生成每日简报...", 70, 100)
+        brief = run_daily_brief()
+        return {"ingest": ingest, "brief": brief}
+
+    task_id = global_tracker.submit("daily_job", "📅 每日任务执行", _fn)
+    return {"task_id": task_id, "message": "每日任务已启动", "status": "running"}
 
 
 @app.post("/jobs/graph/weekly-run-once")
 def run_weekly_graph_once() -> dict:
-    logger.info("Manual weekly graph job triggered")
-    return run_weekly_graph_maintenance()
+    """每周图维护任务 - 后台执行"""
+    def _fn(progress_callback=None):
+        return run_weekly_graph_maintenance()
+
+    task_id = global_tracker.submit("weekly_maintenance", "🔄 每周图维护", _fn)
+    return {"task_id": task_id, "message": "每周图维护已启动", "status": "running"}
 
 
 @app.post("/jobs/batch-process-unread")
 def batch_process_unread(
+    background_tasks: BackgroundTasks,
     max_papers: int = Query(default=50, ge=1, le=200),
 ) -> dict:
-    """一键对未读论文执行 embed + skim（并行）"""
+    """批量处理未读论文（embed + skim 并行）- 后台执行"""
+    import uuid
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from packages.ai.daily_runner import _process_paper, PAPER_CONCURRENCY
 
+    # 先获取需要处理的论文数量
     with session_scope() as session:
         repo = PaperRepository(session)
         unread = repo.list_by_read_status(ReadStatus.unread, limit=max_papers)
-        # 过滤掉已经有 embedding 且已粗读的
         target_ids = []
         for p in unread:
             needs_embed = p.embedding is None
@@ -1248,28 +1274,37 @@ def batch_process_unread(
             if needs_embed or needs_skim:
                 target_ids.append(p.id)
 
-    if not target_ids:
+    total = len(target_ids)
+    if total == 0:
         return {"processed": 0, "total_unread": 0, "message": "没有需要处理的未读论文"}
 
-    processed = 0
-    failed = 0
-    with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
-        futs = {pool.submit(_process_paper, pid): pid for pid in target_ids}
-        for fut in as_completed(futs):
-            try:
-                fut.result()
-                processed += 1
-            except Exception as exc:
-                failed += 1
-                pid = futs[fut]
-                logger.warning("batch process %s failed: %s", str(pid)[:8], exc)
+    task_id = f"batch_unread_{uuid.uuid4().hex[:8]}"
 
-    return {
-        "processed": processed,
-        "failed": failed,
-        "total": len(target_ids),
-        "message": f"处理完成：{processed} 成功，{failed} 失败",
-    }
+    def _run_batch():
+        processed = 0
+        failed = 0
+        try:
+            global_tracker.start(task_id, "batch_process", f"📚 批量处理未读论文 ({total} 篇)", total=total)
+
+            with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
+                futs = {pool.submit(_process_paper, pid): pid for pid in target_ids}
+                for fut in as_completed(futs):
+                    try:
+                        fut.result()
+                        processed += 1
+                        global_tracker.update(task_id, processed, f"正在处理... ({processed}/{total})", total=total)
+                    except Exception as exc:
+                        failed += 1
+                        logger.warning("batch process %s failed: %s", str(futs[fut])[:8], exc)
+
+            global_tracker.finish(task_id, success=True)
+            logger.info(f"批量处理完成: {processed} 成功, {failed} 失败")
+        except Exception as e:
+            global_tracker.finish(task_id, success=False, error=str(e))
+            logger.error(f"批量处理失败: {e}", exc_info=True)
+
+    background_tasks.add_task(_run_batch)
+    return {"task_id": task_id, "message": f"批量处理已启动 ({total} 篇论文)", "status": "running"}
 
 
 # ---------- 行动记录 ----------
@@ -1618,3 +1653,241 @@ async def agent_reject(action_id: str):
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
+
+
+# ---------- 邮箱配置 ----------
+
+
+class EmailConfigCreate(BaseModel):
+    """创建邮箱配置请求"""
+    name: str
+    smtp_server: str
+    smtp_port: int = 587
+    smtp_use_tls: bool = True
+    sender_email: str
+    sender_name: str = "PaperMind"
+    username: str
+    password: str
+
+
+class EmailConfigUpdate(BaseModel):
+    """更新邮箱配置请求"""
+    name: str | None = None
+    smtp_server: str | None = None
+    smtp_port: int | None = None
+    smtp_use_tls: bool | None = None
+    sender_email: str | None = None
+    sender_name: str | None = None
+    username: str | None = None
+    password: str | None = None
+
+
+@app.get("/settings/email-configs")
+def list_email_configs():
+    """获取所有邮箱配置"""
+    with session_scope() as session:
+        repo = EmailConfigRepository(session)
+        configs = repo.list_all()
+        return [
+            {
+                "id": c.id,
+                "name": c.name,
+                "smtp_server": c.smtp_server,
+                "smtp_port": c.smtp_port,
+                "smtp_use_tls": c.smtp_use_tls,
+                "sender_email": c.sender_email,
+                "sender_name": c.sender_name,
+                "username": c.username,
+                "is_active": c.is_active,
+                "created_at": _iso(c.created_at),
+            }
+            for c in configs
+        ]
+
+
+@app.post("/settings/email-configs")
+def create_email_config(body: EmailConfigCreate):
+    """创建邮箱配置"""
+    with session_scope() as session:
+        repo = EmailConfigRepository(session)
+        config = repo.create(
+            name=body.name,
+            smtp_server=body.smtp_server,
+            smtp_port=body.smtp_port,
+            smtp_use_tls=body.smtp_use_tls,
+            sender_email=body.sender_email,
+            sender_name=body.sender_name,
+            username=body.username,
+            password=body.password,
+        )
+        return {"id": config.id, "message": "邮箱配置创建成功"}
+
+
+@app.patch("/settings/email-configs/{config_id}")
+def update_email_config(config_id: str, body: EmailConfigUpdate):
+    """更新邮箱配置"""
+    with session_scope() as session:
+        repo = EmailConfigRepository(session)
+        update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+        config = repo.update(config_id, **update_data)
+        if not config:
+            raise HTTPException(status_code=404, detail="邮箱配置不存在")
+        return {"message": "邮箱配置更新成功"}
+
+
+@app.delete("/settings/email-configs/{config_id}")
+def delete_email_config(config_id: str):
+    """删除邮箱配置"""
+    with session_scope() as session:
+        repo = EmailConfigRepository(session)
+        success = repo.delete(config_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="邮箱配置不存在")
+        return {"message": "邮箱配置删除成功"}
+
+
+@app.post("/settings/email-configs/{config_id}/activate")
+def activate_email_config(config_id: str):
+    """激活邮箱配置"""
+    with session_scope() as session:
+        repo = EmailConfigRepository(session)
+        config = repo.set_active(config_id)
+        if not config:
+            raise HTTPException(status_code=404, detail="邮箱配置不存在")
+        return {"message": "邮箱配置已激活"}
+
+
+@app.post("/settings/email-configs/{config_id}/test")
+async def test_email_config(config_id: str):
+    """测试邮箱配置（发送测试邮件）"""
+    from packages.integrations.email_service import create_test_email
+
+    with session_scope() as session:
+        repo = EmailConfigRepository(session)
+        config = repo.get_by_id(config_id)
+        if not config:
+            raise HTTPException(status_code=404, detail="邮箱配置不存在")
+
+        # 在session内发送测试邮件
+        try:
+            success = create_test_email(config)
+            if success:
+                return {"message": "测试邮件发送成功"}
+            else:
+                raise HTTPException(status_code=500, detail="测试邮件发送失败")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"测试邮件发送失败: {str(e)}")
+
+
+# ---------- 每日报告配置 ----------
+
+
+class DailyReportConfigUpdate(BaseModel):
+    """更新每日报告配置请求"""
+    enabled: bool | None = None
+    auto_deep_read: bool | None = None
+    deep_read_limit: int | None = None
+    send_email_report: bool | None = None
+    recipient_emails: str | None = None
+    report_time_utc: int | None = None
+    include_paper_details: bool | None = None
+    include_graph_insights: bool | None = None
+
+
+@app.get("/settings/daily-report-config")
+def get_daily_report_config():
+    """获取每日报告配置"""
+    from packages.ai.auto_read_service import AutoReadService
+    return AutoReadService().get_config()
+
+
+@app.put("/settings/daily-report-config")
+def update_daily_report_config(body: DailyReportConfigUpdate):
+    """更新每日报告配置"""
+    from packages.ai.auto_read_service import AutoReadService
+    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    config = AutoReadService().update_config(**update_data)
+    return {"message": "每日报告配置已更新", "config": config}
+
+
+@app.post("/jobs/daily-report/run-once")
+async def run_daily_report_once(background_tasks: BackgroundTasks):
+    """完整工作流（精读 + 生成 + 发邮件）— 后台执行"""
+    import asyncio
+    from packages.ai.auto_read_service import AutoReadService
+
+    def _run_workflow_bg():
+        task_id = f"daily_report_{_uuid.uuid4().hex[:8]}"
+        global_tracker.start(task_id, "daily_report", "📊 每日报告工作流", total=100)
+
+        def _progress(msg: str, cur: int, tot: int):
+            global_tracker.update(task_id, cur, msg, total=100)
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                AutoReadService().run_daily_workflow(_progress)
+            )
+            if result.get("success"):
+                global_tracker.finish(task_id, success=True)
+            else:
+                global_tracker.finish(task_id, success=False, error=result.get("error", "未知错误"))
+        except Exception as e:
+            global_tracker.finish(task_id, success=False, error=str(e))
+            logger.error(f"每日报告工作流失败: {e}", exc_info=True)
+
+    background_tasks.add_task(_run_workflow_bg)
+    return {"message": "每日报告工作流已启动", "status": "running"}
+
+
+@app.post("/jobs/daily-report/send-only")
+async def run_daily_report_send_only(
+    background_tasks: BackgroundTasks,
+    recipient: str | None = Query(default=None, description="收件人邮箱（逗号分隔），不填则用配置"),
+):
+    """快速发送模式 — 跳过精读，直接生成简报并发邮件（优先使用缓存）"""
+    from packages.ai.auto_read_service import AutoReadService
+
+    def _run_send_only_bg():
+        task_id = f"report_send_{_uuid.uuid4().hex[:8]}"
+        global_tracker.start(task_id, "report_send", "📧 快速发送简报", total=100)
+
+        def _progress(msg: str, cur: int, tot: int):
+            global_tracker.update(task_id, cur, msg, total=100)
+
+        try:
+            recipients = [e.strip() for e in recipient.split(",") if e.strip()] if recipient else None
+            result = AutoReadService().send_only(recipients, _progress)
+            if result.get("success"):
+                global_tracker.finish(task_id, success=True)
+            else:
+                global_tracker.finish(task_id, success=False, error=result.get("error", "未知错误"))
+        except Exception as e:
+            global_tracker.finish(task_id, success=False, error=str(e))
+            logger.error(f"快速发送失败: {e}", exc_info=True)
+
+    background_tasks.add_task(_run_send_only_bg)
+    return {"message": "快速发送已启动（跳过精读）", "status": "running"}
+
+
+@app.post("/jobs/daily-report/generate-only")
+def run_daily_report_generate_only(
+    use_cache: bool = Query(default=False, description="是否使用缓存"),
+):
+    """仅生成简报 HTML — 不发邮件、不精读（同步返回）"""
+    from packages.ai.auto_read_service import AutoReadService
+    html = AutoReadService().step_generate_html(use_cache=use_cache)
+    return {"html": html, "used_cache": use_cache}
+
+
+# ---------- SMTP 配置预设 ----------
+
+
+@app.get("/settings/smtp-presets")
+def get_smtp_presets():
+    """获取常见邮箱服务商的 SMTP 配置预设"""
+    from packages.integrations.email_service import get_default_smtp_config
+
+    providers = ["gmail", "qq", "163", "outlook"]
+    return {provider: get_default_smtp_config(provider) for provider in providers}

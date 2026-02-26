@@ -53,3 +53,6 @@ src-tauri/target/
 src-tauri/binaries/
 *.dmg
 *.app
+
+# Docker deploy data (runtime)
+deploy/

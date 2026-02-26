@@ -1154,7 +1154,7 @@ def _generate_wiki(type: str, keyword_or_id: str):
     """Wiki 生成 - generator，yield 进度和最终结果"""
     import time
 
-    from packages.ai.task_manager import TaskManager
+    from packages.domain.task_tracker import global_tracker
 
     if type == "topic":
         with session_scope() as session:
@@ -1172,9 +1172,8 @@ def _generate_wiki(type: str, keyword_or_id: str):
                 return
 
         # 提交后台任务
-        tm = TaskManager()
         gs = GraphService()
-        task_id = tm.submit(
+        task_id = global_tracker.submit(
             task_type="topic_wiki",
             title=f"Wiki: {keyword_or_id}",
             fn=lambda progress_callback=None: gs.topic_wiki(
@@ -1191,26 +1190,25 @@ def _generate_wiki(type: str, keyword_or_id: str):
         last_msg = ""
         while True:
             time.sleep(3)
-            status = tm.get_status(task_id)
+            status = global_tracker.get_task(task_id)
             if not status:
                 break
-            s = status["status"]
-            if s == "completed":
+            if status.get("finished"):
+                if not status.get("success"):
+                    yield ToolResult(
+                        success=False,
+                        summary=f"Wiki 生成失败: {status.get('error', '未知错误')}",
+                    )
+                    return
                 break
-            if s == "failed":
-                yield ToolResult(
-                    success=False,
-                    summary=f"Wiki 生成失败: {status.get('error', '未知错误')}",
-                )
-                return
             msg = status.get("message", "")
-            pct = status.get("progress", 0)
-            step = max(1, min(9, int(pct * 10)))
+            pct = status.get("progress_pct", 0)
+            step = max(1, min(9, int(pct / 10)))
             if msg and msg != last_msg:
                 yield ToolProgress(message=msg, current=step, total=10)
                 last_msg = msg
 
-        result = tm.get_result(task_id) or {}
+        result = global_tracker.get_result(task_id) or {}
         result["title"] = f"Wiki: {keyword_or_id}"
         yield ToolProgress(message="Wiki 生成完毕", current=10, total=10)
     elif type == "paper":

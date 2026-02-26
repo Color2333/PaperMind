@@ -46,7 +46,7 @@ function TaskItem({ task }: { task: ActiveTask }) {
 
 export default function GlobalTaskBar() {
   const { tasks, hasRunning } = useGlobalTasks();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true); // 默认展开
 
   if (tasks.length === 0) return null;
 
@@ -58,26 +58,29 @@ export default function GlobalTaskBar() {
 
   return (
     <div className={cn(
-      "fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-surface/95 backdrop-blur-sm",
+      "fixed bottom-0 left-0 right-0 z-50 border-t border-primary/30 bg-gradient-to-r from-primary/5 to-info/5 backdrop-blur-sm shadow-lg",
       "lg:left-[240px]",
       "transition-all duration-300",
     )}>
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between px-4 py-1.5 text-[10px] font-medium text-ink-secondary hover:bg-hover transition-colors"
+        className="flex w-full items-center justify-between px-4 py-2 text-xs font-semibold bg-primary/10 hover:bg-primary/15 transition-colors"
       >
         <div className="flex items-center gap-2">
-          {hasRunning && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
-          <span>
+          {hasRunning && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+          <span className="text-primary">
             {running.length > 0
-              ? `${running.length} 个任务进行中`
-              : "任务已完成"}
+              ? `🚀 ${running.length} 个任务进行中`
+              : "✅ 任务已完成"}
           </span>
         </div>
-        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-ink-tertiary">点击收起/展开</span>
+          {expanded ? <ChevronDown className="h-4 w-4 text-primary" /> : <ChevronUp className="h-4 w-4 text-primary" />}
+        </div>
       </button>
       {displayTasks.length > 0 && (
-        <div className="max-h-48 divide-y divide-border-light overflow-y-auto">
+        <div className="max-h-64 divide-y divide-border-light overflow-y-auto bg-surface/50">
           {displayTasks.map((t) => (
             <TaskItem key={t.task_id} task={t} />
           ))}

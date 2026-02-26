@@ -5,6 +5,7 @@
  */
 import { useState } from "react";
 import { Card, CardHeader, Button, Input } from "@/components/ui";
+import { useToast } from "@/contexts/ToastContext";
 import { citationApi, jobApi, systemApi } from "@/services/api";
 import type { CitationSyncResult, SystemStatus } from "@/types";
 import {
@@ -26,6 +27,7 @@ interface OperationResult {
 }
 
 export default function Operations() {
+  const toast = useToast();
   const [results, setResults] = useState<Record<string, OperationResult>>({});
   const [loadings, setLoadings] = useState<Record<string, boolean>>({});
 
@@ -47,13 +49,16 @@ export default function Operations() {
       const res = await citationApi.syncPaper(syncPaperId);
       setResult("syncPaper", {
         success: true,
-        message: `同步完成，插入 ${res.edges_inserted} 条引用边`,
+        message: res.message || "论文引用同步已启动",
+        data: res,
       });
+      toast("success", `✅ ${res.message || "论文引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
     } catch (err) {
       setResult("syncPaper", {
         success: false,
         message: err instanceof Error ? err.message : "同步失败",
       });
+      toast("error", err instanceof Error ? err.message : "同步失败");
     } finally {
       setLoading("syncPaper", false);
     }
@@ -66,13 +71,16 @@ export default function Operations() {
       const res = await citationApi.syncTopic(syncTopicId);
       setResult("syncTopic", {
         success: true,
-        message: `同步完成，处理 ${res.papers_processed ?? 0} 篇，插入 ${res.edges_inserted} 条边`,
+        message: res.message || "主题引用同步已启动",
+        data: res,
       });
+      toast("success", `✅ ${res.message || "主题引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
     } catch (err) {
       setResult("syncTopic", {
         success: false,
         message: err instanceof Error ? err.message : "同步失败",
       });
+      toast("error", err instanceof Error ? err.message : "同步失败");
     } finally {
       setLoading("syncTopic", false);
     }
@@ -84,13 +92,16 @@ export default function Operations() {
       const res = await citationApi.syncIncremental();
       setResult("syncIncremental", {
         success: true,
-        message: `增量同步完成，处理 ${res.processed_papers ?? 0} 篇，插入 ${res.edges_inserted} 条边`,
+        message: res.message || "增量引用同步已启动",
+        data: res,
       });
+      toast("success", `✅ ${res.message || "增量引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
     } catch (err) {
       setResult("syncIncremental", {
         success: false,
         message: err instanceof Error ? err.message : "同步失败",
       });
+      toast("error", err instanceof Error ? err.message : "同步失败");
     } finally {
       setLoading("syncIncremental", false);
     }
@@ -102,14 +113,16 @@ export default function Operations() {
       const res = await jobApi.dailyRun();
       setResult("dailyJob", {
         success: true,
-        message: "每日任务执行完成",
+        message: res.message || "每日任务已启动",
         data: res,
       });
+      toast("success", `✅ ${res.message || "每日任务已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
     } catch (err) {
       setResult("dailyJob", {
         success: false,
         message: err instanceof Error ? err.message : "执行失败",
       });
+      toast("error", err instanceof Error ? err.message : "执行失败");
     } finally {
       setLoading("dailyJob", false);
     }
@@ -121,14 +134,16 @@ export default function Operations() {
       const res = await jobApi.weeklyGraphRun();
       setResult("weeklyJob", {
         success: true,
-        message: "每周图维护任务执行完成",
+        message: res.message || "每周图维护已启动",
         data: res,
       });
+      toast("success", `✅ ${res.message || "每周图维护已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
     } catch (err) {
       setResult("weeklyJob", {
         success: false,
         message: err instanceof Error ? err.message : "执行失败",
       });
+      toast("error", err instanceof Error ? err.message : "执行失败");
     } finally {
       setLoading("weeklyJob", false);
     }

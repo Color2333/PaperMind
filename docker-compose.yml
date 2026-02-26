@@ -1,0 +1,30 @@
+# PaperMind Docker Compose 单容器部署
+# @author Bamzc
+#
+# 使用方法:
+#   1. cp .env.example deploy/.env  && 编辑 deploy/.env 填入 API Key
+#   2. docker compose up -d --build
+#   3. 访问 http://your-ip:80
+
+services:
+  papermind:
+    build: .
+    container_name: papermind
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/data:/app/data
+      - ./deploy/.env:/app/.env:ro
+    env_file:
+      - ./deploy/.env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 3G

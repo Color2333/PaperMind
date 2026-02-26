@@ -1,12 +1,15 @@
 """
 PaperMind Worker - 定时任务调度（按主题独立调度）
 @author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 
 import logging
 import signal
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Event
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -18,17 +21,43 @@ from packages.ai.daily_runner import (
     run_weekly_graph_maintenance,
 )
 from packages.config import get_settings
+from packages.logging_setup import setup_logging
 from packages.storage.db import session_scope
 from packages.storage.repositories import TopicRepository
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
+
+_HEALTH_FILE = Path("/tmp/worker_heartbeat")
+
+
+def _write_heartbeat() -> None:
+    """写入心跳文件供外部健康检查"""
+    try:
+        _HEALTH_FILE.write_text(str(time.time()))
+    except OSError:
+        pass
+
+
+def _retry_with_backoff(fn, *args, max_retries: int = 3, base_delay: float = 5.0, **kwargs):
+    """带指数退避的重试执行"""
+    for attempt in range(max_retries):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            delay = base_delay * (2 ** attempt)
+            logger.warning(
+                "Attempt %d/%d failed: %s — retrying in %.0fs",
+                attempt + 1, max_retries, e, delay,
+            )
+            time.sleep(delay)
 
 settings = get_settings()
 stop_event = Event()
+_RETRY_MAX = settings.worker_retry_max
+_RETRY_DELAY = settings.worker_retry_base_delay
 
 
 def _should_run(freq: str, time_utc: int, hour: int, weekday: int) -> bool:
@@ -73,7 +102,7 @@ def topic_dispatch_job() -> None:
     )
     for c in candidates:
         try:
-            result = run_topic_ingest(c["id"])
+            result = _retry_with_backoff(run_topic_ingest, c["id"], max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY)
             logger.info(
                 "topic %s done: inserted=%s, processed=%s",
                 c["name"],
@@ -82,16 +111,25 @@ def topic_dispatch_job() -> None:
             )
         except Exception:
             logger.exception("topic_dispatch failed for %s", c["name"])
+    _write_heartbeat()
 
 
 def brief_job() -> None:
     logger.info("Starting daily brief job")
-    run_daily_brief()
+    try:
+        _retry_with_backoff(run_daily_brief, max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY)
+    except Exception:
+        logger.exception("Daily brief job failed after retries")
+    _write_heartbeat()
 
 
 def weekly_graph_job() -> None:
     logger.info("Starting weekly graph job")
-    run_weekly_graph_maintenance()
+    try:
+        _retry_with_backoff(run_weekly_graph_maintenance, max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY)
+    except Exception:
+        logger.exception("Weekly graph job failed after retries")
+    _write_heartbeat()
 
 
 def run_worker() -> None:
@@ -129,6 +167,7 @@ def run_worker() -> None:
 
     signal.signal(signal.SIGINT, _graceful_stop)
     signal.signal(signal.SIGTERM, _graceful_stop)
+    _write_heartbeat()
     logger.info("Worker started — hourly topic dispatch + daily brief + weekly graph")
     scheduler.start()
 

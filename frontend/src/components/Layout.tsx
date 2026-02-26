@@ -4,7 +4,6 @@
  */
 import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
-import GlobalTaskBar from "./GlobalTaskBar";
 import { ConversationProvider } from "@/contexts/ConversationContext";
 import { AgentSessionProvider } from "@/contexts/AgentSessionContext";
 import { GlobalTaskProvider } from "@/contexts/GlobalTaskContext";
@@ -30,7 +29,6 @@ export default function Layout() {
                 </div>
               </main>
             )}
-            <GlobalTaskBar />
           </div>
         </GlobalTaskProvider>
       </AgentSessionProvider>

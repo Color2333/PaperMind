@@ -3,6 +3,7 @@
  * @author Bamzc
  */
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { useToast } from "@/contexts/ToastContext";
 
 export interface ActiveTask {
   task_id: string;
@@ -26,32 +27,54 @@ interface GlobalTaskCtx {
 
 const Ctx = createContext<GlobalTaskCtx>({ tasks: [], activeTasks: [], hasRunning: false });
 
-const API_BASE = (() => {
-  try {
-    const m = (window as Record<string, unknown>).__PAPERMIND_API_PORT__;
-    if (m) return `http://localhost:${m}`;
-  } catch { /* ignore */ }
-  return import.meta.env.VITE_API_BASE || "http://localhost:8000";
-})();
+import { tasksApi } from "@/services/api";
 
 export function GlobalTaskProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<ActiveTask[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previousTasksRef = useRef<Record<string, boolean>>({});
+  const toast = useToast();
 
   const fetchTasks = useCallback(async () => {
     try {
-      const resp = await fetch(`${API_BASE}/tasks/active`);
-      if (!resp.ok) return;
-      const data = await resp.json();
-      setTasks(data.tasks || []);
+      const data = await tasksApi.active();
+      const newTasks = (data.tasks || []) as ActiveTask[];
+
+      // 检测任务完成状态变化
+      newTasks.forEach((task: ActiveTask) => {
+        const previousState = previousTasksRef.current[task.task_id];
+        const currentState = task.finished;
+
+        // 如果之前未完成，现在完成了 → 触发通知
+        if (previousState === false && currentState === true) {
+          if (task.success) {
+            toast("success", `✅ ${task.title} 完成！\n${task.message || "任务执行成功"}`);
+          } else {
+            toast("error", `❌ ${task.title} 失败！\n${task.error || task.message || "任务执行失败"}`);
+          }
+        }
+
+        // 更新状态记录
+        previousTasksRef.current[task.task_id] = currentState;
+      });
+
+      // 清理已删除的任务
+      const currentTaskIds = new Set(newTasks.map((t: ActiveTask) => t.task_id));
+      Object.keys(previousTasksRef.current).forEach((tid) => {
+        if (!currentTaskIds.has(tid)) {
+          delete previousTasksRef.current[tid];
+        }
+      });
+
+      setTasks(newTasks);
     } catch {
       /* 静默失败，不影响主功能 */
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     fetchTasks();
-    intervalRef.current = setInterval(fetchTasks, 3000);
+    intervalRef.current = setInterval(fetchTasks, 2000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };

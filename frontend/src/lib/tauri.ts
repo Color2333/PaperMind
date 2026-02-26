@@ -102,7 +102,12 @@ let _portPromise: Promise<number> | null = null;
 
 export function resolveApiBase(): string {
   if (!isTauri()) {
-    return import.meta.env.VITE_API_BASE || "http://localhost:8000";
+    if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return "http://localhost:8000";
+    }
+    return "/api";
   }
   if (_resolvedPort) {
     return `http://127.0.0.1:${_resolvedPort}`;

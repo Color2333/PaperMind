@@ -1,5 +1,5 @@
 /**
- * 设置弹窗 - LLM 配置 / Pipeline 运行 / 运维操作
+ * 设置弹窗 - LLM 配置 / 邮箱与报告 / Pipeline 运行 / 运维操作
  * @author Bamzc
  */
 import { useState, useEffect, useCallback, type ReactNode } from "react";
@@ -16,7 +16,10 @@ import {
   citationApi,
   jobApi,
   systemApi,
+  emailConfigApi,
+  dailyReportApi,
 } from "@/services/api";
+import { getErrorMessage } from "@/lib/errorHandler";
 import type {
   LLMProviderConfig,
   LLMProviderCreate,
@@ -51,12 +54,15 @@ import {
   Calendar,
   AlertTriangle,
   BookOpen,
+  Mail,
+  Send,
 } from "lucide-react";
 
-type Tab = "llm" | "pipeline" | "ops";
+type Tab = "llm" | "pipeline" | "ops" | "email";
 
 const TABS: { key: Tab; label: string; icon: typeof Cpu }[] = [
   { key: "llm", label: "LLM 配置", icon: Cpu },
+  { key: "email", label: "邮箱与报告", icon: Mail },
   { key: "pipeline", label: "Pipeline", icon: GitBranch },
   { key: "ops", label: "运维", icon: Settings },
 ];
@@ -66,9 +72,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal title="系统设置" onClose={onClose} maxWidth="xl">
-      <div className="flex min-h-[420px] flex-col">
+      <div className="flex flex-col" style={{ height: "600px", maxHeight: "85vh" }}>
         {/* 标签栏 */}
-        <div className="mb-4 flex gap-1 rounded-xl bg-page p-1">
+        <div className="mb-4 flex gap-1 rounded-xl bg-page p-1 flex-shrink-0">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -87,8 +93,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* 内容区 */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto pr-1">
           {tab === "llm" && <LLMTab />}
+          {tab === "email" && <EmailTab />}
           {tab === "pipeline" && <PipelineTab />}
           {tab === "ops" && <OpsTab />}
         </div>
@@ -759,6 +766,608 @@ function StatusDot({ status }: { status: string }) {
         colors[status] || "bg-ink-tertiary",
       )}
     />
+  );
+}
+
+/* ======== 邮箱与报告 Tab ======== */
+
+function EmailTab() {
+  const { toast } = useToast();
+  const [emailConfigs, setEmailConfigs] = useState<any[]>([]);
+  const [dailyReportConfig, setDailyReportConfig] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [showAddEmail, setShowAddEmail] = useState(false);
+  const [editEmailConfig, setEditEmailConfig] = useState<any>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [testEmailId, setTestEmailId] = useState<string | null>(null);
+
+  const loadEmailConfigs = useCallback(async () => {
+    try {
+      const data = await emailConfigApi.list();
+      setEmailConfigs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    }
+  }, [toast]);
+
+  const loadDailyReportConfig = useCallback(async () => {
+    try {
+      const data = await dailyReportApi.getConfig();
+      setDailyReportConfig(data);
+      setLocalConfig(data);
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    Promise.all([loadEmailConfigs(), loadDailyReportConfig()]).finally(() => {
+      setLoading(false);
+    });
+  }, [loadEmailConfigs, loadDailyReportConfig]);
+
+  const handleActivateEmail = async (id: string) => {
+    setSubmitting(true);
+    try {
+      await emailConfigApi.activate(id);
+      await loadEmailConfigs();
+      toast("success", "邮箱已激活");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteEmail = async (id: string) => {
+    if (!confirm("确定要删除此邮箱配置？")) return;
+    try {
+      await emailConfigApi.delete(id);
+      await loadEmailConfigs();
+      toast("success", "邮箱配置已删除");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    }
+  };
+
+  const handleTestEmail = async (id: string) => {
+    setTestEmailId(id);
+    try {
+      await emailConfigApi.test(id);
+      toast("success", "测试邮件已发送，请检查邮箱");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setTestEmailId(null);
+    }
+  };
+
+  const handleUpdateDailyReport = async (updates: any) => {
+    setSubmitting(true);
+    try {
+      const body: Record<string, unknown> = { ...updates };
+      if (updates.recipient_emails !== undefined) {
+        body.recipient_emails = Array.isArray(updates.recipient_emails)
+          ? updates.recipient_emails.join(",")
+          : updates.recipient_emails;
+      }
+      const data = await dailyReportApi.updateConfig(body);
+      if (data.config) {
+        setDailyReportConfig(data.config);
+        setLocalConfig(data.config);
+        toast("success", "每日报告配置已更新");
+      }
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+      await loadDailyReportConfig();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // 本地临时存储的配置值
+  const [localConfig, setLocalConfig] = useState<any>(null);
+
+  // 初始化本地配置
+  useEffect(() => {
+    if (dailyReportConfig) {
+      setLocalConfig(dailyReportConfig);
+    }
+  }, [dailyReportConfig]);
+
+  // 处理输入变化（只更新本地state，不调用API）
+  const handleInputChange = (field: string, value: any) => {
+    setLocalConfig((prev: any) => ({ ...prev, [field]: value }));
+  };
+
+  // 处理失去焦点（提交更新）
+  const handleInputBlur = (field: string) => {
+    if (localConfig && localConfig[field] !== dailyReportConfig[field]) {
+      handleUpdateDailyReport({ [field]: localConfig[field] });
+    }
+  };
+
+  const handleRunDailyWorkflow = async () => {
+    if (!confirm("确定要立即执行每日工作流吗？这将使用AI推荐系统找出高价值论文进行精读，生成每日简报并发送邮件报告。\n\n注意：精读论文需要几分钟时间，任务将在后台执行，请稍后查看结果。")) return;
+    setSubmitting(true);
+    try {
+      await dailyReportApi.runOnce();
+      toast("success", "每日报告工作流已启动，正在后台执行");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-40 items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 邮箱配置 */}
+      <div className="rounded-xl border border-border bg-surface p-4">
+        <h3 className="mb-3 text-sm font-semibold text-ink">邮箱配置</h3>
+        {emailConfigs.length === 0 ? (
+          <div className="py-4 text-center text-xs text-ink-tertiary">
+            暂无邮箱配置
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {emailConfigs.map((cfg) => (
+              <div
+                key={cfg.id}
+                className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
+                  cfg.is_active ? "border-primary/30 bg-primary-light" : "border-border bg-page"
+                }`}
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-ink">{cfg.name}</span>
+                    {cfg.is_active && <Badge variant="default">激活</Badge>}
+                  </div>
+                  <p className="text-[10px] text-ink-tertiary">{cfg.sender_email}</p>
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => handleTestEmail(cfg.id)}
+                    disabled={testEmailId === cfg.id || submitting}
+                    className="rounded-lg p-1.5 text-ink-tertiary hover:bg-hover hover:text-ink"
+                    title="发送测试"
+                  >
+                    {testEmailId === cfg.id ? <Spinner className="h-3 w-3" /> : <Send className="h-3 w-3" />}
+                  </button>
+                  {!cfg.is_active && (
+                    <button
+                      onClick={() => handleActivateEmail(cfg.id)}
+                      disabled={submitting}
+                      className="rounded-lg p-1.5 text-ink-tertiary hover:bg-hover hover:text-primary"
+                      title="激活"
+                    >
+                      <Power className="h-3 w-3" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setEditEmailConfig(cfg)}
+                    className="rounded-lg p-1.5 text-ink-tertiary hover:bg-hover hover:text-ink"
+                    title="编辑"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteEmail(cfg.id)}
+                    className="rounded-lg p-1.5 text-ink-tertiary hover:bg-error-light hover:text-error"
+                    title="删除"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setShowAddEmail(true)}
+          className="mt-3 w-full"
+        >
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          添加邮箱
+        </Button>
+      </div>
+
+      {/* 每日报告配置 */}
+      {dailyReportConfig && (
+        <div className="rounded-xl border border-border bg-surface p-4">
+          <h3 className="mb-3 text-sm font-semibold text-ink">每日报告配置</h3>
+          <div className="space-y-3">
+            {/* 总开关 */}
+            <div className="flex items-center justify-between rounded-lg border border-border bg-page px-3 py-2">
+              <div>
+                <p className="text-xs font-medium text-ink">启用每日报告</p>
+                <p className="text-[10px] text-ink-tertiary">自动精读论文并发送邮件报告</p>
+              </div>
+              <button
+                onClick={() => handleUpdateDailyReport({ enabled: !dailyReportConfig.enabled })}
+                disabled={submitting}
+                className={`relative h-5 w-9 rounded-full transition-colors ${
+                  dailyReportConfig.enabled ? "bg-primary" : "bg-ink-tertiary"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                    dailyReportConfig.enabled ? "translate-x-[1.125rem]" : "translate-x-0.5"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* 详细配置 - 始终显示 */}
+            <>
+                {/* 自动精读 */}
+                <div className="rounded-lg border border-border bg-page px-3 py-2">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-medium text-ink">自动精读新论文</p>
+                    <button
+                      onClick={() => handleUpdateDailyReport({ auto_deep_read: !dailyReportConfig.auto_deep_read })}
+                      disabled={submitting}
+                      className={`relative h-4 w-8 rounded-full transition-colors ${
+                        dailyReportConfig.auto_deep_read ? "bg-primary" : "bg-ink-tertiary"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                          dailyReportConfig.auto_deep_read ? "translate-x-[1.125rem]" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {dailyReportConfig.auto_deep_read && (
+                    <div className="flex items-center gap-2">
+                      <label className="text-[10px] text-ink-secondary">每日精读数量限制</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={localConfig?.deep_read_limit ?? dailyReportConfig.deep_read_limit}
+                        onChange={(e) => handleInputChange("deep_read_limit", parseInt(e.target.value) || 10)}
+                        onBlur={() => handleInputBlur("deep_read_limit")}
+                        disabled={submitting}
+                        className="w-16 rounded border border-border bg-surface px-2 py-0.5 text-center text-xs text-ink"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* 邮件发送 */}
+                <div className="rounded-lg border border-border bg-page px-3 py-2">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-medium text-ink">发送邮件报告</p>
+                    <button
+                      onClick={() => handleUpdateDailyReport({ send_email_report: !dailyReportConfig.send_email_report })}
+                      disabled={submitting}
+                      className={`relative h-4 w-8 rounded-full transition-colors ${
+                        dailyReportConfig.send_email_report ? "bg-primary" : "bg-ink-tertiary"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                          dailyReportConfig.send_email_report ? "translate-x-[1.125rem]" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {dailyReportConfig.send_email_report && (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        placeholder="收件人邮箱（逗号分隔）"
+                        value={localConfig?.recipient_emails ?? dailyReportConfig.recipient_emails}
+                        onChange={(e) => handleInputChange("recipient_emails", e.target.value)}
+                        onBlur={() => handleInputBlur("recipient_emails")}
+                        disabled={submitting}
+                        className="w-full rounded border border-border bg-surface px-2 py-1.5 text-xs text-ink placeholder:text-ink-placeholder"
+                      />
+                      <div className="flex items-center gap-2">
+                        <label className="text-[10px] text-ink-secondary">发送时间（UTC）</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={23}
+                          value={localConfig?.report_time_utc ?? dailyReportConfig.report_time_utc}
+                          onChange={(e) => handleInputChange("report_time_utc", parseInt(e.target.value) || 21)}
+                          onBlur={() => handleInputBlur("report_time_utc")}
+                          disabled={submitting}
+                          className="w-16 rounded border border-border bg-surface px-2 py-0.5 text-center text-xs text-ink"
+                        />
+                        <span className="text-[10px] text-ink-tertiary">（北京时间 = UTC + 8）</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 报告内容 */}
+                <div className="rounded-lg border border-border bg-page px-3 py-2">
+                  <p className="mb-2 text-xs font-medium text-ink">报告内容</p>
+                  <div className="space-y-1">
+                    <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={dailyReportConfig.include_paper_details}
+                        onChange={(e) => handleUpdateDailyReport({ include_paper_details: e.target.checked })}
+                        disabled={submitting}
+                        className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-1 focus:ring-primary"
+                      />
+                      <span>包含论文详情</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={dailyReportConfig.include_graph_insights}
+                        onChange={(e) => handleUpdateDailyReport({ include_graph_insights: e.target.checked })}
+                        disabled={submitting}
+                        className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-1 focus:ring-primary"
+                      />
+                      <span>包含图谱洞察</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* 立即执行 */}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleRunDailyWorkflow}
+                  disabled={submitting}
+                  className="w-full"
+                >
+                  {submitting ? (
+                    <>
+                      <Spinner className="mr-1.5 h-3.5 w-3.5" />
+                      执行中...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="mr-1.5 h-3.5 w-3.5" />
+                      立即执行
+                    </>
+                  )}
+                </Button>
+            </>
+          </div>
+        </div>
+      )}
+
+      {/* 添加邮箱弹窗 */}
+      {showAddEmail && (
+        <AddEmailConfigInline
+          onCreated={() => {
+            setShowAddEmail(false);
+            loadEmailConfigs();
+          }}
+          onCancel={() => setShowAddEmail(false)}
+        />
+      )}
+
+      {/* 编辑邮箱弹窗 */}
+      {editEmailConfig && (
+        <EditEmailConfigInline
+          config={editEmailConfig}
+          onSaved={() => {
+            setEditEmailConfig(null);
+            loadEmailConfigs();
+          }}
+          onCancel={() => setEditEmailConfig(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddEmailConfigInline({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    name: "",
+    smtp_server: "",
+    smtp_port: 587,
+    smtp_use_tls: true,
+    sender_email: "",
+    sender_name: "PaperMind",
+    username: "",
+    password: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const setField = (key: keyof typeof form, value: any) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const handleSelectPreset = async (provider: string) => {
+    try {
+      const data = await emailConfigApi.smtpPresets();
+      const preset = data[provider];
+      if (!preset) {
+        toast("error", `未找到 ${provider} 邮箱的预设配置`);
+        return;
+      }
+      setForm((prev) => ({
+        ...prev,
+        smtp_server: preset.smtp_server || prev.smtp_server,
+        smtp_port: preset.smtp_port || 587,
+        smtp_use_tls: preset.smtp_use_tls !== false,
+      }));
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!form.name.trim() || !form.smtp_server || !form.sender_email || !form.username || !form.password) {
+      setError("请填写所有必填字段");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      await emailConfigApi.create(form);
+      onCreated();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-xl border border-primary/30 bg-primary-50 p-4">
+      <h4 className="text-xs font-medium text-ink">添加邮箱配置</h4>
+      {error && (
+        <div className="rounded-lg bg-error-light px-3 py-2 text-xs text-error">
+          {error}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleSelectPreset("qq")}
+          className="flex-1"
+        >
+          QQ 邮箱
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleSelectPreset("163")}
+          className="flex-1"
+        >
+          163 邮箱
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleSelectPreset("gmail")}
+          className="flex-1"
+        >
+          Gmail
+        </Button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniInput label="配置名称" value={form.name} onChange={(v) => setField("name", v)} placeholder="如：工作邮箱" />
+        <MiniInput label="发件人邮箱" value={form.sender_email} onChange={(v) => setField("sender_email", v)} placeholder="your@email.com" />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniInput label="SMTP 服务器" value={form.smtp_server} onChange={(v) => setField("smtp_server", v)} placeholder="smtp.qq.com" />
+        <MiniInput label="SMTP 端口" value={form.smtp_port.toString()} onChange={(v) => setField("smtp_port", parseInt(v) || 587)} type="number" />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniInput label="用户名" value={form.username} onChange={(v) => setField("username", v)} placeholder="邮箱地址或用户名" />
+        <MiniInput label="密码/授权码" value={form.password} onChange={(v) => setField("password", v)} type="password" placeholder="应用专用密码" />
+      </div>
+      <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
+        <input
+          type="checkbox"
+          checked={form.smtp_use_tls}
+          onChange={(e) => setField("smtp_use_tls", e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-1 focus:ring-primary"
+        />
+        <span>使用 TLS 加密</span>
+      </label>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          取消
+        </Button>
+        <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+          {submitting && <Spinner className="mr-1 h-3 w-3" />}
+          创建
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function EditEmailConfigInline({
+  config,
+  onSaved,
+  onCancel,
+}: {
+  config: any;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    name: config.name,
+    smtp_server: config.smtp_server,
+    smtp_port: config.smtp_port,
+    smtp_use_tls: config.smtp_use_tls,
+    sender_email: config.sender_email,
+    sender_name: config.sender_name || "PaperMind",
+    username: config.username,
+    password: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const setField = (key: keyof typeof form, value: any) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setError("");
+    try {
+      const payload = { ...form };
+      if (!form.password) delete (payload as any).password;
+      await emailConfigApi.update(config.id, payload);
+      onSaved();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-xl border border-primary/30 bg-primary-50 p-4">
+      <h4 className="text-xs font-medium text-ink">编辑邮箱配置</h4>
+      {error && (
+        <div className="rounded-lg bg-error-light px-3 py-2 text-xs text-error">
+          {error}
+        </div>
+      )}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniInput label="配置名称" value={form.name} onChange={(v) => setField("name", v)} />
+        <MiniInput label="发件人邮箱" value={form.sender_email} onChange={(v) => setField("sender_email", v)} />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniInput label="SMTP 服务器" value={form.smtp_server} onChange={(v) => setField("smtp_server", v)} />
+        <MiniInput label="SMTP 端口" value={form.smtp_port.toString()} onChange={(v) => setField("smtp_port", parseInt(v) || 587)} type="number" />
+      </div>
+      <MiniInput label="用户名" value={form.username} onChange={(v) => setField("username", v)} />
+      <MiniInput label="新密码（留空不改）" value={form.password} onChange={(v) => setField("password", v)} type="password" />
+      <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
+        <input
+          type="checkbox"
+          checked={form.smtp_use_tls}
+          onChange={(e) => setField("smtp_use_tls", e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-1 focus:ring-primary"
+        />
+        <span>使用 TLS 加密</span>
+      </label>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          取消
+        </Button>
+        <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+          {submitting && <Spinner className="mr-1 h-3 w-3" />}
+          保存
+        </Button>
+      </div>
+    </div>
   );
 }
 

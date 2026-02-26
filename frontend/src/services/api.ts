@@ -45,13 +45,26 @@ function getApiBase(): string {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${getApiBase().replace(/\/+$/, "")}${path}`;
-  const resp = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(options.headers as Record<string, string> || {}) },
-    ...options,
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      headers: { "Content-Type": "application/json", ...(options.headers as Record<string, string> || {}) },
+      ...options,
+    });
+  } catch (e) {
+    throw new Error("网络连接失败，请检查后端服务是否启动");
+  }
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status} ${resp.statusText}: ${text}`);
+    let msg = `${resp.status} ${resp.statusText}`;
+    try {
+      const body = await resp.json();
+      // 兼容后端 AppError 格式: {error, message, detail}
+      msg = body.message || body.detail || body.error || msg;
+    } catch {
+      const text = await resp.text().catch(() => "");
+      if (text) msg = text;
+    }
+    throw new Error(msg);
   }
   return resp.json();
 }
@@ -66,6 +79,10 @@ function post<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) 
 
 function patch<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) {
   return request<T>(path, { method: "PATCH", body: JSON.stringify(body ?? {}), signal: opts?.signal });
+}
+
+function put<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) {
+  return request<T>(path, { method: "PUT", body: JSON.stringify(body ?? {}), signal: opts?.signal });
 }
 
 function del<T>(path: string, opts?: { signal?: AbortSignal }) {
@@ -424,6 +441,64 @@ export const agentApi = {
   },
 };
 
+/* ========== 邮箱配置 ========== */
+export interface EmailConfig {
+  id: string;
+  name: string;
+  smtp_server: string;
+  smtp_port: number;
+  smtp_use_tls: boolean;
+  sender_email: string;
+  sender_name: string;
+  username: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface EmailConfigForm {
+  name: string;
+  smtp_server: string;
+  smtp_port: number;
+  smtp_use_tls: boolean;
+  sender_email: string;
+  sender_name: string;
+  username: string;
+  password: string;
+}
+
+export const emailConfigApi = {
+  list: () => get<EmailConfig[]>("/settings/email-configs"),
+  create: (data: EmailConfigForm) => post<EmailConfig>("/settings/email-configs", data),
+  update: (id: string, data: Partial<EmailConfigForm>) => patch<EmailConfig>(`/settings/email-configs/${id}`, data),
+  delete: (id: string) => del<{ deleted: string }>(`/settings/email-configs/${id}`),
+  activate: (id: string) => post<EmailConfig>(`/settings/email-configs/${id}/activate`),
+  test: (id: string) => post<{ status: string }>(`/settings/email-configs/${id}/test`),
+  smtpPresets: () => get<Record<string, { smtp_server: string; smtp_port: number; smtp_use_tls: boolean }>>("/settings/smtp-presets"),
+};
+
+/* ========== 每日报告配置 ========== */
+export interface DailyReportConfig {
+  enabled: boolean;
+  auto_deep_read: boolean;
+  deep_read_limit: number;
+  send_email_report: boolean;
+  recipient_emails: string[];
+  report_time_utc: number;
+  include_paper_details: boolean;
+  include_graph_insights: boolean;
+}
+
+export const dailyReportApi = {
+  getConfig: () => get<DailyReportConfig>("/settings/daily-report-config"),
+  updateConfig: (data: Record<string, unknown>) =>
+    put<{ config: DailyReportConfig }>("/settings/daily-report-config", data),
+  runOnce: () => post<Record<string, unknown>>("/jobs/daily-report/run-once"),
+  sendOnly: (recipientEmails?: string[]) =>
+    post<Record<string, unknown>>("/jobs/daily-report/send-only", recipientEmails ? { recipient_emails: recipientEmails } : {}),
+  generateOnly: (useCache = false) =>
+    post<{ html: string }>(`/jobs/daily-report/generate-only?use_cache=${useCache}`),
+};
+
 /* ========== 后台任务 ========== */
 export interface TaskStatus {
   task_id: string;
@@ -439,6 +514,7 @@ export interface TaskStatus {
 }
 
 export const tasksApi = {
+  active: () => get<{ tasks: ActiveTaskInfo[] }>("/tasks/active"),
   startTopicWiki: (keyword: string, limit = 120) =>
     post<{ task_id: string; status: string }>(
       `/tasks/wiki/topic?keyword=${encodeURIComponent(keyword)}&limit=${limit}`
@@ -454,3 +530,17 @@ export const tasksApi = {
   track: (body: { action: string; task_id: string; task_type?: string; title?: string; total?: number; current?: number; message?: string; success?: boolean; error?: string }) =>
     post<{ ok: boolean }>("/tasks/track", body),
 };
+
+export interface ActiveTaskInfo {
+  task_id: string;
+  task_type: string;
+  title: string;
+  current: number;
+  total: number;
+  message: string;
+  elapsed_seconds: number;
+  progress_pct: number;
+  finished: boolean;
+  success: boolean;
+  error: string | null;
+}

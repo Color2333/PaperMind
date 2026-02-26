@@ -1,0 +1,17 @@
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.git/
+.venv/
+__pycache__/
+*.pyc
+data/
+deploy/
+dist/
+build/
+*.egg-info/
+.cursor/
+src-tauri/target/
+papermind.egg-info/
+*.dmg
+*.app

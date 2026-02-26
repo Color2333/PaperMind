@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     semantic_scholar_api_key: str | None = None
     openalex_email: str | None = None
 
+    # Worker 调度
+    worker_retry_max: int = 2
+    worker_retry_base_delay: float = 5.0
+
+    # 并发与缓存
+    paper_concurrency: int = 5
+    brief_cache_ttl: int = 300
+
     cost_guard_enabled: bool = True
     per_call_budget_usd: float = 0.05
     daily_budget_usd: float = 2.0
