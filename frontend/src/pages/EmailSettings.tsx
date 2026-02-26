@@ -191,7 +191,7 @@ export default function EmailSettings() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <Spinner size="lg" />
+        <Spinner className="h-8 w-8" />
       </div>
     );
   }
@@ -225,7 +225,7 @@ export default function EmailSettings() {
           </div>
           <Button
             onClick={handleRunDailyReport}
-            variant="outline"
+            variant="secondary"
             size="sm"
           >
             <Sparkles className="h-4 w-4 mr-2" />
@@ -256,7 +256,7 @@ export default function EmailSettings() {
               </div>
               <Button
                 onClick={() => handleUpdateDailyConfig({ enabled: !dailyConfig.enabled })}
-                variant={dailyConfig.enabled ? "destructive" : "default"}
+                variant={dailyConfig.enabled ? "danger" : "primary"}
                 size="sm"
               >
                 {dailyConfig.enabled ? "禁用" : "启用"}
@@ -440,14 +440,14 @@ export default function EmailSettings() {
                 <div className="mt-3 flex items-center gap-2">
                   <Button
                     onClick={() => handleTestEmailConfig(config.id)}
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     disabled={testingEmail === config.id}
                     className="flex-1"
                   >
                     {testingEmail === config.id ? (
                       <>
-                        <Spinner size="sm" className="mr-2" />
+                        <Spinner className="mr-2 h-4 w-4" />
                         发送中...
                       </>
                     ) : (
@@ -466,7 +466,7 @@ export default function EmailSettings() {
 
       {/* 添加邮箱配置模态框 */}
       <Modal
-        isOpen={emailModalOpen}
+        open={emailModalOpen}
         onClose={() => {
           setEmailModalOpen(false);
           resetEmailForm();
@@ -484,7 +484,7 @@ export default function EmailSettings() {
                 <Button
                   key={key}
                   onClick={() => applySmtpPreset(key)}
-                  variant="outline"
+                  variant="secondary"
                   size="sm"
                 >
                   {preset.label}
@@ -620,7 +620,7 @@ export default function EmailSettings() {
                 setEmailModalOpen(false);
                 resetEmailForm();
               }}
-              variant="outline"
+              variant="secondary"
             >
               取消
             </Button>

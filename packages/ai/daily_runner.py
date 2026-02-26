@@ -1,14 +1,18 @@
 """
-每日/每周定时任务编排
+每日/每周定时任务编排 - 智能调度 + 精读限额
 @author Bamzc
+@author Color2333
 """
+
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from packages.ai.brief_service import DailyBriefService
 from packages.ai.graph_service import GraphService
 from packages.ai.pipelines import PaperPipelines
+from packages.ai.rate_limiter import acquire_api, get_rate_limiter
 from packages.config import get_settings
 from packages.domain.enums import ActionType, ReadStatus
 from packages.storage.db import session_scope
@@ -24,12 +28,32 @@ logger = logging.getLogger(__name__)
 PAPER_CONCURRENCY = 3
 
 
-def _process_paper(paper_id) -> None:
-    """单篇论文：embed ∥ skim 并行，按需精读"""
+def _process_paper(
+    paper_id, force_deep: bool = False, deep_read_quota: Optional[int] = None
+) -> dict:
+    """
+    单篇论文：embed ∥ skim 并行，智能精读
+
+    Args:
+        paper_id: 论文 ID
+        force_deep: 是否强制精读（忽略配额）
+        deep_read_quota: 剩余精读配额（None 表示不限制）
+
+    Returns:
+        dict: 处理结果 {skim_score, deep_read, success}
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     settings = get_settings()
     pipelines = PaperPipelines()
+    result = {
+        "paper_id": str(paper_id)[:8],
+        "skim_score": None,
+        "deep_read": False,
+        "success": False,
+        "error": None,
+    }
+
     skim_result = None
     with ThreadPoolExecutor(max_workers=2) as inner:
         fe = inner.submit(pipelines.embed_paper, paper_id)
@@ -43,24 +67,63 @@ def _process_paper(paper_id) -> None:
                 label = "embed" if fut is fe else "skim"
                 logger.warning(
                     "%s %s failed: %s",
-                    label, str(paper_id)[:8], exc,
+                    label,
+                    str(paper_id)[:8],
+                    exc,
                 )
-    if (
-        skim_result
-        and skim_result.relevance_score
-        >= settings.skim_score_threshold
-    ):
+                result["error"] = f"{label}: {exc}"
+
+    # 检查粗读结果
+    if skim_result and skim_result.relevance_score is not None:
+        result["skim_score"] = skim_result.relevance_score
+        result["success"] = True
+
+    # 判断是否精读
+    should_deep = False
+    deep_reason = ""
+
+    if force_deep:
+        should_deep = True
+        deep_reason = "强制精读"
+    elif skim_result and skim_result.relevance_score >= settings.skim_score_threshold:
+        # 检查精读配额
+        if deep_read_quota is None or deep_read_quota > 0:
+            should_deep = True
+            deep_reason = f"高分论文 (分数={skim_result.relevance_score:.2f})"
+        else:
+            deep_reason = "精读配额已用尽"
+
+    # 执行精读
+    if should_deep:
         try:
-            pipelines.deep_dive(paper_id)
+            # 获取 API 许可
+            if acquire_api("llm", timeout=30.0):
+                pipelines.deep_dive(str(paper_id))
+                result["deep_read"] = True
+                logger.info("🎯 %s 精读完成 - %s", str(paper_id)[:8], deep_reason)
+            else:
+                logger.warning("⚠️  %s 等待 API 许可超时，跳过精读", str(paper_id)[:8])
         except Exception as exc:
             logger.warning(
                 "deep_dive %s failed: %s",
-                str(paper_id)[:8], exc,
+                str(paper_id)[:8],
+                exc,
             )
+            result["error"] = f"deep: {exc}"
+
+    return result
 
 
 def run_topic_ingest(topic_id: str) -> dict:
-    """单独处理一个主题的抓取+处理"""
+    """
+    单独处理一个主题的抓取 + 处理 - 智能精读限额
+
+    Args:
+        topic_id: 主题 ID
+
+    Returns:
+        dict: 处理结果统计
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     pipelines = PaperPipelines()
@@ -69,6 +132,9 @@ def run_topic_ingest(topic_id: str) -> dict:
         if not topic:
             return {"topic_id": topic_id, "status": "not_found"}
         topic_name = topic.name
+
+        # 获取精读配额配置
+        max_deep_reads = getattr(topic, "max_deep_reads_per_run", 2)
 
         last_error: str | None = None
         ids: list[str] = []
@@ -98,22 +164,79 @@ def run_topic_ingest(topic_id: str) -> dict:
             }
 
         repo = PaperRepository(session)
-        # 只处理这次新入库的论文，不拖入全部未读论文
+        # 只处理这次新入库的论文
         unique = repo.list_by_ids(ids) if ids else []
 
-    processed = 0
+    logger.info(
+        "📝 主题 [%s] 新抓取 %d 篇论文，精读配额：%d 篇", topic_name, len(unique), max_deep_reads
+    )
+
+    # 第一步：全部论文并行粗读 + 嵌入（不精读）
+    logger.info("第一步：并行粗读 + 嵌入...")
+    skim_results = []
+
     with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
-        futs = {pool.submit(_process_paper, p.id): p for p in unique}
+        futs = {
+            pool.submit(_process_paper, p.id, force_deep=False, deep_read_quota=0): p
+            for p in unique
+        }
         for fut in as_completed(futs):
-            processed += 1
             try:
-                fut.result()
+                result = fut.result()
+                skim_results.append(result)
             except Exception as exc:
                 p = futs[fut]
                 logger.warning(
-                    "topic ingest process %s failed: %s",
-                    str(p.id)[:8], exc,
+                    "skim %s failed: %s",
+                    str(p.id)[:8],
+                    exc,
                 )
+
+    # 第二步：按粗读分数排序，选前 N 篇精读
+    logger.info("第二步：选择高分论文进行精读...")
+    scored_papers = [
+        (r, p) for r, p in zip(skim_results, unique) if r["success"] and r["skim_score"] is not None
+    ]
+    scored_papers.sort(key=lambda x: x[0]["skim_score"], reverse=True)
+
+    # 精读前 N 篇
+    deep_read_count = 0
+    for i, (result, paper) in enumerate(scored_papers):
+        if deep_read_count >= max_deep_reads:
+            logger.info(
+                "⚠️  精读配额已用尽 (%d/%d)，剩余 %d 篇跳过精读",
+                deep_read_count,
+                max_deep_reads,
+                len(scored_papers) - i,
+            )
+            break
+
+        # 只精读分数 >= 阈值的
+        if result["skim_score"] < get_settings().skim_score_threshold:
+            logger.info("⚠️  %s 分数过低 (%.2f)，跳过精读", str(paper.id)[:8], result["skim_score"])
+            continue
+
+        logger.info(
+            "🎯 开始精读第 %d 篇：%s (分数=%.2f)",
+            deep_read_count + 1,
+            paper.title[:50],
+            result["skim_score"],
+        )
+
+        try:
+            # 获取 API 许可
+            if acquire_api("llm", timeout=60.0):
+                pipelines.deep_dive(str(paper.id))
+                deep_read_count += 1
+                logger.info("✅ 精读完成 (%d/%d)", deep_read_count, max_deep_reads)
+            else:
+                logger.warning("等待 API 许可超时，跳过精读")
+        except Exception as exc:
+            logger.warning(
+                "deep_dive %s failed: %s",
+                str(paper.id)[:8],
+                exc,
+            )
 
     return {
         "topic_id": topic_id,
@@ -121,7 +244,9 @@ def run_topic_ingest(topic_id: str) -> dict:
         "status": "ok",
         "attempts": attempts,
         "inserted": len(ids),
-        "processed": processed,
+        "skimmed": len(skim_results),
+        "deep_read": deep_read_count,
+        "max_deep_reads": max_deep_reads,
     }
 
 
@@ -157,16 +282,12 @@ def run_daily_ingest() -> dict:
 
 def run_daily_brief() -> dict:
     settings = get_settings()
-    return DailyBriefService().publish(
-        recipient=settings.notify_default_to
-    )
+    return DailyBriefService().publish(recipient=settings.notify_default_to)
 
 
 def run_weekly_graph_maintenance() -> dict:
     with session_scope() as session:
-        topics = TopicRepository(session).list_topics(
-            enabled_only=True
-        )
+        topics = TopicRepository(session).list_topics(enabled_only=True)
     graph = GraphService()
     topic_results = []
     for t in topics:
@@ -184,9 +305,7 @@ def run_weekly_graph_maintenance() -> dict:
                 t.id,
             )
             continue
-    incremental = graph.sync_incremental(
-        paper_limit=50, edge_limit_per_paper=6
-    )
+    incremental = graph.sync_incremental(paper_limit=50, edge_limit_per_paper=6)
     return {
         "topic_sync": topic_results,
         "incremental": incremental,

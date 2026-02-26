@@ -33,7 +33,7 @@ export function GlobalTaskProvider({ children }: { children: React.ReactNode }) 
   const [tasks, setTasks] = useState<ActiveTask[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousTasksRef = useRef<Record<string, boolean>>({});
-  const toast = useToast();
+  const { toast } = useToast();
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -48,9 +48,9 @@ export function GlobalTaskProvider({ children }: { children: React.ReactNode }) 
         // 如果之前未完成，现在完成了 → 触发通知
         if (previousState === false && currentState === true) {
           if (task.success) {
-            toast("success", `✅ ${task.title} 完成！\n${task.message || "任务执行成功"}`);
+            toast("success", `✅ ${task.title} 完成！${task.message ? "\n" + task.message : "任务执行成功"}`);
           } else {
-            toast("error", `❌ ${task.title} 失败！\n${task.error || task.message || "任务执行失败"}`);
+            toast("error", `❌ ${task.title} 失败！${task.error ? "\n" + task.error : task.message ? "\n" + task.message : "任务执行失败"}`);
           }
         }
 

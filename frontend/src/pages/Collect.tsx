@@ -131,8 +131,8 @@ export default function Collect() {
         time: new Date().toLocaleTimeString("zh-CN"),
         expanded: true,
       }, ...prev.map(r => ({ ...r, expanded: false }))]);
-      if (res.ingested > 0) toast({ type: "success", message: `成功收集 ${res.ingested} 篇论文` });
-      else toast({ type: "info", message: "未找到新论文（可能已全部收集）" });
+      if (res.ingested > 0) toast("success", `成功收集 ${res.ingested} 篇论文`);
+      else toast("info", "未找到新论文（可能已全部收集）");
     } catch (err) {
       setError(err instanceof Error ? err.message : "搜索失败");
     } finally { setSearching(false); }
@@ -144,7 +144,7 @@ export default function Collect() {
     try {
       const res: TopicFetchResult = await topicApi.fetch(topicId);
       if (res.status === "started" || res.status === "already_running") {
-        toast({ type: "info", message: res.message || "抓取已在后台启动..." });
+        toast("info", res.message || "抓取已在后台启动...");
         // 轮询状态
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = setInterval(async () => {
@@ -154,12 +154,12 @@ export default function Collect() {
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
             setFetchingTopicId(null);
             if (status.status === "ok") {
-              toast({ type: "success", message: `抓取完成：${status.inserted} 篇入库，${status.processed || 0} 篇处理` });
+              toast("success", `抓取完成：${status.inserted} 篇入库，${status.processed || 0} 篇处理`);
               if (status.topic) {
                 setTopics((prev) => prev.map((t) => (t.id === topicId ? { ...t, ...status.topic } : t)));
               }
             } else if (status.status === "failed") {
-              toast({ type: "error", message: `抓取失败：${status.error || "未知错误"}` });
+              toast("error", `抓取失败：${status.error || "未知错误"}`);
             }
             const list = await topicApi.list(false);
             setTopics(list.items);
@@ -171,14 +171,14 @@ export default function Collect() {
         return;
       }
       if (res.status === "ok") {
-        toast({ type: "success", message: `「${res.topic_name}」抓取完成：${res.inserted} 篇入库，${res.processed || 0} 篇处理` });
+        toast("success", `「${res.topic_name}」抓取完成：${res.inserted} 篇入库，${res.processed || 0} 篇处理`);
         const list = await topicApi.list(false);
         setTopics(list.items);
       } else {
-        toast({ type: "error", message: `抓取失败：${res.error || "未知错误"}` });
+        toast("error", `抓取失败：${res.error || "未知错误"}`);
       }
     } catch (err) {
-      toast({ type: "error", message: err instanceof Error ? err.message : "抓取失败" });
+      toast("error", err instanceof Error ? err.message : "抓取失败");
     } finally { setFetchingTopicId(null); }
   }, [toast]);
 
@@ -222,10 +222,10 @@ export default function Collect() {
     try {
       const updated = await topicApi.update(t.id, { enabled: !t.enabled });
       setTopics((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
-    } catch { toast({ type: "error", message: "切换订阅状态失败" }); }
+    } catch { toast("error", "切换订阅状态失败"); }
   }, [toast]);
   const handleDelete = useCallback(async (id: string) => {
-    try { await topicApi.delete(id); setTopics((prev) => prev.filter((t) => t.id !== id)); } catch { toast({ type: "error", message: "删除订阅失败" }); }
+    try { await topicApi.delete(id); setTopics((prev) => prev.filter((t) => t.id !== id)); } catch { toast("error", "删除订阅失败"); }
   }, []);
 
   return (

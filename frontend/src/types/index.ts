@@ -594,6 +594,7 @@ export interface CitationSyncResult {
   edges_inserted: number;
   processed_papers?: number;
   strategy?: string;
+  message?: string;  // 添加 message 属性
 }
 
 /* ========== 摄入 ========== */

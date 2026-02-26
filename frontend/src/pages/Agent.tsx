@@ -95,6 +95,7 @@ function getToolMeta(name: string) {
 /* ========== 主组件 ========== */
 
 export default function Agent() {
+  const navigate = useNavigate();
   const {
     items, loading, pendingActions, confirmingActions, canvas,
     hasPendingConfirm, setCanvas, sendMessage, handleConfirm, handleReject, stopGeneration,
@@ -970,7 +971,7 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
           </div>
         )}
         <div className="prose prose-sm dark:prose-invert max-w-none text-[12px] leading-relaxed">
-          <Markdown content={String(data.markdown)} />
+          <Markdown>{String(data.markdown)}</Markdown>
         </div>
         {evidence.length > 0 && (
           <div className="border-t border-border-light pt-2">
@@ -1074,7 +1075,7 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
           <div key={i} className="rounded-lg bg-surface px-2.5 py-2 text-[11px]">
             <p className="font-medium text-ink">{String(s.name ?? "")}</p>
             <p className="mt-0.5 font-mono text-[10px] text-primary">{String(s.query ?? "")}</p>
-            {s.reason && <p className="mt-0.5 text-[10px] text-ink-tertiary">{String(s.reason)}</p>}
+            {s.reason !== undefined && <p className="mt-0.5 text-[10px] text-ink-tertiary">{String(s.reason)}</p>}
           </div>
         ))}
       </div>
@@ -1085,8 +1086,8 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
     return (
       <div className="text-[11px]">
         <p className="font-medium text-ink">{String(data.one_liner)}</p>
-        {data.novelty && <p className="mt-1 text-ink-secondary"><span className="font-medium">创新点:</span> {String(data.novelty)}</p>}
-        {data.methodology && <p className="mt-0.5 text-ink-secondary"><span className="font-medium">方法:</span> {String(data.methodology)}</p>}
+        {data.novelty !== undefined && <p className="mt-1 text-ink-secondary"><span className="font-medium">创新点:</span> {String(data.novelty)}</p>}
+        {data.methodology !== undefined && <p className="mt-0.5 text-ink-secondary"><span className="font-medium">方法:</span> {String(data.methodology)}</p>}
       </div>
     );
   }
@@ -1098,7 +1099,7 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
         {steps.slice(0, 6).map((s, i) => (
           <div key={i} className="rounded-lg bg-surface px-2.5 py-1.5 text-[11px]">
             <p className="font-medium text-ink">{String(s.step_name ?? s.claim ?? `步骤 ${i + 1}`)}</p>
-            {s.evidence && <p className="mt-0.5 text-[10px] text-ink-tertiary truncate">{String(s.evidence)}</p>}
+            {s.evidence !== undefined && <p className="mt-0.5 text-[10px] text-ink-tertiary truncate">{String(s.evidence)}</p>}
           </div>
         ))}
       </div>
@@ -1143,7 +1144,7 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
         >
           {String(data.title)}
         </button>
-        {data.abstract_zh && <p className="mt-1 text-ink-secondary line-clamp-3">{String(data.abstract_zh)}</p>}
+        {data.abstract_zh !== undefined && <p className="mt-1 text-ink-secondary line-clamp-3">{String(data.abstract_zh)}</p>}
         <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-ink-tertiary">
           {data.arxiv_id ? <span className="font-mono">{String(data.arxiv_id)}</span> : null}
           {data.read_status ? <span>{String(data.read_status)}</span> : null}
@@ -1155,7 +1156,7 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
   if (toolName === "writing_assist" && data.content) {
     return (
       <div className="prose prose-sm dark:prose-invert max-w-none text-[12px] max-h-48 overflow-y-auto">
-        <Markdown content={String(data.content)} />
+        <Markdown>{String(data.content)}</Markdown>
       </div>
     );
   }

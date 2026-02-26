@@ -27,7 +27,7 @@ interface OperationResult {
 }
 
 export default function Operations() {
-  const toast = useToast();
+  const { toast } = useToast();
   const [results, setResults] = useState<Record<string, OperationResult>>({});
   const [loadings, setLoadings] = useState<Record<string, boolean>>({});
 

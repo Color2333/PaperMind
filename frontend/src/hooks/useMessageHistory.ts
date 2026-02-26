@@ -3,7 +3,7 @@
  * @author Color2333
  */
 import { useCallback } from "react";
-import type { AgentMessage } from "@/services/api";
+import type { AgentMessage } from "@/types";
 import type { ChatItem } from "@/contexts/AgentSessionContext";
 
 /**

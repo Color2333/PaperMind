@@ -1,0 +1,43 @@
+# ============================================================
+# PaperMind Backend Dockerfile - FastAPI + Worker
+# @author Color2333
+# ============================================================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制项目文件
+COPY pyproject.toml ./
+COPY packages/ packages/
+COPY apps/ apps/
+COPY scripts/ scripts/
+COPY alembic.ini ./
+COPY infra/migrations/ infra/migrations/
+
+# 安装 Python 依赖（包含 LLM 和 PDF）
+RUN pip install --no-cache-dir ".[llm,pdf]" && \
+    pip install --no-cache-dir \
+        umap-learn \
+        psutil \
+        supervisor
+
+# 创建数据目录和日志目录
+RUN mkdir -p /app/data/papers /app/data/briefs /app/logs
+
+# 初始化数据库（如果不存在）
+RUN python scripts/local_bootstrap.py || true
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -sf http://localhost:8000/health || exit 1
+
+# 默认命令（可以被 docker-compose 覆盖）
+CMD ["python", "-m", "uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

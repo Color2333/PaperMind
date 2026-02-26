@@ -3,6 +3,7 @@
 支持桌面模式通过 PAPERMIND_ENV_FILE / PAPERMIND_DATA_DIR 环境变量注入路径。
 @author Bamzc
 """
+
 from functools import lru_cache
 import os
 from pathlib import Path
@@ -28,7 +29,8 @@ class Settings(BaseSettings):
     daily_cron: str = "0 21 * * *"
     weekly_cron: str = "0 22 * * 0"
     cors_allow_origins: str = (
-        "http://localhost:5173,http://127.0.0.1:5173"
+        "http://localhost:5173,http://127.0.0.1:5173,"  # 开发环境
+        "http://localhost:3002,http://127.0.0.1:3002"  # Docker 生产环境
     )
 
     # LLM Provider: openai / anthropic / zhipu

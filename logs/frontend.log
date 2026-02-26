@@ -717,3 +717,30 @@
 6:22:03 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
 6:22:16 PM [vite] hmr update /src/components/SettingsDialog.tsx, /src/index.css
 6:22:57 PM [vite] hmr update /src/index.css, /src/pages/Agent.tsx, /src/components/Sidebar.tsx, /src/contexts/AgentSessionContext.tsx, /src/components/SettingsDialog.tsx, /src/pages/Collect.tsx, /src/pages/Papers.tsx, /src/pages/DailyBrief.tsx, /src/pages/Dashboard.tsx, /src/pages/Settings.tsx, /src/pages/Wiki.tsx, /src/pages/Writing.tsx, /src/components/graph/OverviewPanel.tsx, /src/components/graph/InsightPanel.tsx, /src/components/graph/CitationPanel.tsx, /src/pages/PaperDetail.tsx, /src/components/PdfReader.tsx
+7:09:28 PM [vite] hmr update /src/DesktopBootstrap.tsx, /src/index.css, /src/contexts/GlobalTaskContext.tsx, /src/pages/Agent.tsx, /src/components/Sidebar.tsx, /src/contexts/AgentSessionContext.tsx, /src/components/SettingsDialog.tsx, /src/pages/Collect.tsx, /src/pages/Papers.tsx, /src/pages/DailyBrief.tsx, /src/pages/Dashboard.tsx, /src/pages/Settings.tsx, /src/pages/Wiki.tsx, /src/pages/Writing.tsx, /src/components/graph/OverviewPanel.tsx, /src/components/graph/InsightPanel.tsx, /src/components/graph/CitationPanel.tsx, /src/pages/PaperDetail.tsx, /src/components/PdfReader.tsx, /src/pages/EmailSettings.tsx
+7:10:07 PM [vite] page reload tsconfig.tsbuildinfo
+7:12:17 PM [vite] hmr update /src/contexts/GlobalTaskContext.tsx, /src/index.css
+7:12:55 PM [vite] hmr update /src/pages/Collect.tsx, /src/index.css
+7:13:01 PM [vite] hmr update /src/pages/Collect.tsx, /src/index.css
+7:13:33 PM [vite] hmr update /src/pages/Collect.tsx, /src/index.css
+7:13:39 PM [vite] hmr update /src/index.css, /src/App.tsx
+7:13:48 PM [vite] hmr update /src/index.css, /src/contexts/AgentSessionContext.tsx
+7:14:40 PM [vite] hmr update /src/contexts/GlobalTaskContext.tsx, /src/index.css
+7:14:52 PM [vite] page reload src/hooks/useMessageHistory.ts
+7:15:02 PM [vite] hmr update /src/pages/Agent.tsx, /src/index.css
+7:15:05 PM [vite] hmr update /src/pages/Agent.tsx, /src/index.css
+7:15:12 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:15:15 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:15:20 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:15:33 PM [vite] hmr update /src/pages/Agent.tsx, /src/index.css
+7:15:45 PM [vite] hmr update /src/pages/Agent.tsx, /src/index.css
+7:15:50 PM [vite] hmr update /src/pages/Agent.tsx, /src/index.css
+7:15:58 PM [vite] hmr update /src/pages/Agent.tsx, /src/index.css
+7:16:05 PM [vite] hmr update /src/pages/Agent.tsx, /src/index.css
+7:16:09 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:16:13 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:16:16 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:16:23 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:16:30 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:16:57 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
+7:18:11 PM [vite] hmr update /src/pages/Collect.tsx, /src/index.css
