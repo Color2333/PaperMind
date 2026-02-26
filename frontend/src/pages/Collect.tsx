@@ -144,7 +144,7 @@ export default function Collect() {
     try {
       const res: TopicFetchResult = await topicApi.fetch(topicId);
       if (res.status === "started" || res.status === "already_running") {
-        toast("info", res.message || "抓取已在后台启动...");
+        toast("info", res.topic_name || "抓取已在后台启动...");
         // 轮询状态
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = setInterval(async () => {

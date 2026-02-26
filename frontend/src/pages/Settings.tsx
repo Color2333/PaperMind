@@ -460,7 +460,7 @@ export default function Settings() {
 
           {/* 添加配置模态框 */}
           <Modal
-            isOpen={showAdd}
+            open={showAdd}
             onClose={() => setShowAdd(false)}
             title="添加 LLM 配置"
           >
@@ -497,7 +497,7 @@ export default function Settings() {
               </div>
               <Button
                 onClick={handleRunDailyReport}
-                variant="outline"
+                variant="secondary"
                 size="sm"
               >
                 <Sparkles className="h-4 w-4 mr-2" />
@@ -714,14 +714,14 @@ export default function Settings() {
                     <div className="mt-3 flex items-center gap-2">
                       <Button
                         onClick={() => handleTestEmailConfig(config.id)}
-                        variant="outline"
+                        variant="secondary"
                         size="sm"
                         disabled={testingEmail === config.id}
                         className="flex-1"
                       >
                         {testingEmail === config.id ? (
                           <>
-                            <Spinner size="sm" className="mr-2" />
+                            <Spinner className="w-4 h-4" className="mr-2" />
                             发送中...
                           </>
                         ) : (
@@ -740,7 +740,7 @@ export default function Settings() {
 
           {/* 添加邮箱配置模态框 */}
           <Modal
-            isOpen={emailModalOpen}
+            open={emailModalOpen}
             onClose={() => {
               setEmailModalOpen(false);
               setEmailForm({
@@ -767,7 +767,7 @@ export default function Settings() {
                     <Button
                       key={key}
                       onClick={() => applySmtpPreset(key)}
-                      variant="outline"
+                      variant="secondary"
                       size="sm"
                     >
                       {preset.label}
@@ -912,7 +912,7 @@ export default function Settings() {
                       password: "",
                     });
                   }}
-                  variant="outline"
+                  variant="secondary"
                 >
                   取消
                 </Button>
@@ -1110,7 +1110,7 @@ function LLMConfigForm({ onSubmit, onCancel }: LLMConfigFormProps) {
 
       {/* 按钮 */}
       <div className="flex justify-end gap-3 pt-4">
-        <Button type="button" onClick={onCancel} variant="outline">
+        <Button type="button" onClick={onCancel} variant="secondary">
           取消
         </Button>
         <Button type="submit">

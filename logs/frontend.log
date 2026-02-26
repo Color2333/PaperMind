@@ -744,3 +744,8 @@
 7:16:30 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
 7:16:57 PM [vite] hmr update /src/pages/EmailSettings.tsx, /src/index.css
 7:18:11 PM [vite] hmr update /src/pages/Collect.tsx, /src/index.css
+8:03:23 PM [vite] page reload package.json
+8:03:28 PM [vite] hmr update /src/pages/Collect.tsx, /src/index.css
+8:03:28 PM [vite] hmr update /src/index.css, /src/App.tsx
+8:03:34 PM [vite] hmr update /src/pages/Settings.tsx, /src/index.css
+8:03:34 PM [vite] hmr update /src/pages/Writing.tsx, /src/index.css

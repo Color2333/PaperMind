@@ -49,7 +49,7 @@ export default function Operations() {
       const res = await citationApi.syncPaper(syncPaperId);
       setResult("syncPaper", {
         success: true,
-        message: res.message || "论文引用同步已启动",
+        message: (res.message as string) || "论文引用同步已启动",
         data: res,
       });
       toast("success", `✅ ${res.message || "论文引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
@@ -71,7 +71,7 @@ export default function Operations() {
       const res = await citationApi.syncTopic(syncTopicId);
       setResult("syncTopic", {
         success: true,
-        message: res.message || "主题引用同步已启动",
+        message: (res.message as string) || "主题引用同步已启动",
         data: res,
       });
       toast("success", `✅ ${res.message || "主题引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
