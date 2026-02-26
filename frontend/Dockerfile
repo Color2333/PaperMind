@@ -8,11 +8,11 @@ FROM node:20-slim AS builder
 
 WORKDIR /build
 
-# 复制 package 文件（优先使用 lock 文件）
+# 复制 package 文件
 COPY package*.json ./
 
-# 安装依赖（有 lock 用 ci，没有用 install）
-RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+# 使用国内镜像源安装依赖
+RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com; else npm install --no-audit --no-fund --registry=https://registry.npmmirror.com; fi
 
 # 复制源码
 COPY . ./
