@@ -2,6 +2,7 @@
 PaperMind API - FastAPI 入口
 @author Bamzc
 """
+
 import logging
 import time
 import uuid as _uuid
@@ -17,8 +18,12 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from packages.domain.exceptions import AppError, NotFoundError
 from packages.domain.schemas import (
-    ReferenceImportReq, SuggestKeywordsReq, AIExplainReq,
-    WritingProcessReq, WritingRefineReq, WritingMultimodalReq,
+    ReferenceImportReq,
+    SuggestKeywordsReq,
+    AIExplainReq,
+    WritingProcessReq,
+    WritingRefineReq,
+    WritingMultimodalReq,
 )
 from packages.ai.agent_service import (
     confirm_action,
@@ -83,6 +88,7 @@ def _iso(dt: datetime | None) -> str | None:
         dt = dt.replace(tzinfo=UTC)
     return dt.isoformat()
 
+
 api_logger = logging.getLogger("papermind.api")
 
 
@@ -97,8 +103,11 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
         elapsed_ms = (time.perf_counter() - start) * 1000
         api_logger.info(
             "[%s] %s %s → %d (%.0fms)",
-            req_id, request.method, request.url.path,
-            response.status_code, elapsed_ms,
+            req_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
         )
         response.headers["X-Request-Id"] = req_id
         return response
@@ -114,14 +123,14 @@ async def app_error_handler(_request: Request, exc: AppError):
     """统一处理所有业务异常 — 自动映射 status_code + 结构化响应"""
     api_logger.warning(
         "[%s] %s: %s",
-        exc.error_type, exc.__class__.__name__, exc.message,
+        exc.error_type,
+        exc.__class__.__name__,
+        exc.message,
     )
     return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-origins = [
-    x.strip()
-    for x in settings.cors_allow_origins.split(",")
-    if x.strip()
-]
+
+
+origins = [x.strip() for x in settings.cors_allow_origins.split(",") if x.strip()]
 if origins:
     app.add_middleware(
         CORSMiddleware,
@@ -132,6 +141,7 @@ if origins:
     )
 
 from packages.storage.db import run_migrations
+
 run_migrations()
 
 pipelines = PaperPipelines()
@@ -196,11 +206,16 @@ def ingest_arxiv(
     query: str,
     max_results: int = Query(default=20, ge=1, le=200),
     topic_id: str | None = None,
-    sort_by: str = Query(default="submittedDate", regex="^(submittedDate|relevance|lastUpdatedDate)$"),
+    sort_by: str = Query(
+        default="submittedDate", regex="^(submittedDate|relevance|lastUpdatedDate)$"
+    ),
 ) -> dict:
     logger.info("ArXiv ingest: query=%r max_results=%d sort=%s", query, max_results, sort_by)
     count, inserted_ids = pipelines.ingest_arxiv(
-        query=query, max_results=max_results, topic_id=topic_id, sort_by=sort_by,
+        query=query,
+        max_results=max_results,
+        topic_id=topic_id,
+        sort_by=sort_by,
     )
     # 查询插入论文的基本信息
     papers_info: list[dict] = []
@@ -210,12 +225,16 @@ def ingest_arxiv(
             for pid in inserted_ids[:50]:
                 try:
                     p = repo.get_by_id(pid)
-                    papers_info.append({
-                        "id": p.id,
-                        "title": p.title,
-                        "arxiv_id": p.arxiv_id,
-                        "publication_date": p.publication_date.isoformat() if p.publication_date else None,
-                    })
+                    papers_info.append(
+                        {
+                            "id": p.id,
+                            "title": p.title,
+                            "arxiv_id": p.arxiv_id,
+                            "publication_date": p.publication_date.isoformat()
+                            if p.publication_date
+                            else None,
+                        }
+                    )
                 except Exception:
                     pass
     return {"ingested": count, "papers": papers_info}
@@ -225,6 +244,7 @@ def ingest_arxiv(
 def ingest_references(body: ReferenceImportReq) -> dict:
     """一键导入参考文献 — 返回 task_id 用于轮询进度"""
     from packages.ai.pipelines import ReferenceImporter
+
     importer = ReferenceImporter()
     task_id = importer.start_import(
         source_paper_id=body.source_paper_id,
@@ -239,6 +259,7 @@ def ingest_references(body: ReferenceImportReq) -> dict:
 def ingest_references_status(task_id: str) -> dict:
     """查询参考文献导入任务进度"""
     from packages.ai.pipelines import get_import_task
+
     task = get_import_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
@@ -265,10 +286,10 @@ def _topic_dict(t, session=None) -> dict:
     if session is not None:
         from sqlalchemy import func, select
         from packages.storage.models import PaperTopic, CollectionAction
+
         # 论文计数
         cnt = session.scalar(
-            select(func.count()).select_from(PaperTopic)
-            .where(PaperTopic.topic_id == t.id)
+            select(func.count()).select_from(PaperTopic).where(PaperTopic.topic_id == t.id)
         )
         d["paper_count"] = cnt or 0
         # 最近一次行动
@@ -279,7 +300,9 @@ def _topic_dict(t, session=None) -> dict:
             .limit(1)
         ).scalar_one_or_none()
         if last_action:
-            d["last_run_at"] = last_action.created_at.isoformat() if last_action.created_at else None
+            d["last_run_at"] = (
+                last_action.created_at.isoformat() if last_action.created_at else None
+            )
             d["last_run_count"] = last_action.paper_count
     return d
 
@@ -287,9 +310,7 @@ def _topic_dict(t, session=None) -> dict:
 @app.get("/topics")
 def list_topics(enabled_only: bool = False) -> dict:
     with session_scope() as session:
-        topics = TopicRepository(session).list_topics(
-            enabled_only=enabled_only
-        )
+        topics = TopicRepository(session).list_topics(enabled_only=enabled_only)
         return {"items": [_topic_dict(t, session) for t in topics]}
 
 
@@ -338,6 +359,7 @@ def manual_fetch_topic(topic_id: str) -> dict:
     """手动触发单个订阅的论文抓取（后台执行，立即返回）"""
     from packages.ai.daily_runner import run_topic_ingest
     from packages.storage.models import TopicSubscription
+
     with session_scope() as session:
         topic = session.get(TopicSubscription, topic_id)
         if not topic:
@@ -374,14 +396,17 @@ def fetch_topic_status(topic_id: str) -> dict:
     # 没找到活跃任务，看 DB 里的主题信息
     with session_scope() as session:
         from packages.storage.models import TopicSubscription
+
         topic = session.get(TopicSubscription, topic_id)
         topic_info = _topic_dict(topic, session) if topic else {}
-    return {**task, "topic": topic_info}
+    # 没找到任务时返回空字典
+    return {"topic": topic_info}
 
 
 @app.post("/topics/suggest-keywords")
 def suggest_keywords(req: SuggestKeywordsReq) -> dict:
     from packages.ai.keyword_service import KeywordService
+
     description = req.description
     if not description.strip():
         raise HTTPException(400, "description is required")
@@ -399,6 +424,7 @@ def sync_citations_incremental(
     edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
 ) -> dict:
     """增量同步引用（后台执行）"""
+
     def _fn(progress_callback=None):
         return graph_service.sync_incremental(
             paper_limit=paper_limit,
@@ -468,9 +494,7 @@ def citation_tree(
     paper_id: str,
     depth: int = Query(default=2, ge=1, le=5),
 ) -> dict:
-    return graph_service.citation_tree(
-        root_paper_id=paper_id, depth=depth
-    )
+    return graph_service.citation_tree(root_paper_id=paper_id, depth=depth)
 
 
 @app.get("/graph/citation-detail/{paper_id}")
@@ -569,6 +593,7 @@ def graph_research_gaps(
 def paper_reasoning(paper_id: UUID) -> dict:
     """推理链深度分析"""
     from packages.ai.reasoning_service import ReasoningService
+
     with session_scope() as session:
         repo = PaperRepository(session)
         try:
@@ -591,9 +616,7 @@ def wiki_paper(paper_id: str) -> dict:
             title=f"Paper Wiki: {result.get('title', paper_id)}",
             markdown=result.get("markdown", ""),
             paper_id=paper_id,
-            metadata_json={
-                k: v for k, v in result.items() if k != "markdown"
-            },
+            metadata_json={k: v for k, v in result.items() if k != "markdown"},
         )
         result["content_id"] = gc.id
     return result
@@ -612,9 +635,7 @@ def wiki_topic(
             title=f"Topic Wiki: {keyword}",
             markdown=result.get("markdown", ""),
             keyword=keyword,
-            metadata_json={
-                k: v for k, v in result.items() if k != "markdown"
-            },
+            metadata_json={k: v for k, v in result.items() if k != "markdown"},
         )
         result["content_id"] = gc.id
     return result
@@ -630,7 +651,8 @@ def _run_topic_wiki_task(
 ) -> dict:
     """后台执行 topic wiki 生成"""
     result = graph_service.topic_wiki(
-        keyword=keyword, limit=limit,
+        keyword=keyword,
+        limit=limit,
         progress_callback=progress_callback,
     )
     with session_scope() as session:
@@ -640,9 +662,7 @@ def _run_topic_wiki_task(
             title=f"Topic Wiki: {keyword}",
             markdown=result.get("markdown", ""),
             keyword=keyword,
-            metadata_json={
-                k: v for k, v in result.items() if k != "markdown"
-            },
+            metadata_json={k: v for k, v in result.items() if k != "markdown"},
         )
         result["content_id"] = gc.id
     return result
@@ -829,14 +849,23 @@ def similar(
             for pid in ids:
                 try:
                     p = repo.get_by_id(pid)
-                    items.append({
-                        "id": str(p.id),
-                        "title": p.title,
-                        "arxiv_id": p.arxiv_id,
-                        "read_status": p.read_status.value if p.read_status else "unread",
-                    })
+                    items.append(
+                        {
+                            "id": str(p.id),
+                            "title": p.title,
+                            "arxiv_id": p.arxiv_id,
+                            "read_status": p.read_status.value if p.read_status else "unread",
+                        }
+                    )
                 except Exception:
-                    items.append({"id": str(pid), "title": str(pid), "arxiv_id": None, "read_status": "unread"})
+                    items.append(
+                        {
+                            "id": str(pid),
+                            "title": str(pid),
+                            "arxiv_id": None,
+                            "read_status": "unread",
+                        }
+                    )
     return {
         "paper_id": str(paper_id),
         "similar_ids": [str(x) for x in ids],
@@ -915,6 +944,7 @@ def latest(
 @app.get("/papers/recommended")
 def recommended_papers(top_k: int = Query(default=10, ge=1, le=50)) -> dict:
     from packages.ai.recommendation_service import RecommendationService
+
     return {"items": RecommendationService().recommend(top_k=top_k)}
 
 
@@ -925,16 +955,13 @@ def paper_detail(paper_id: UUID) -> dict:
         try:
             p = repo.get_by_id(paper_id)
         except ValueError as exc:
-            raise HTTPException(
-                status_code=404, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         topic_map = repo.get_topic_names_for_papers([str(p.id)])
         # 查询已有分析报告
         from packages.storage.models import AnalysisReport as AR
         from sqlalchemy import select as _sel
-        ar = session.execute(
-            _sel(AR).where(AR.paper_id == str(p.id))
-        ).scalar_one_or_none()
+
+        ar = session.execute(_sel(AR).where(AR.paper_id == str(p.id))).scalar_one_or_none()
         skim_data = None
         deep_data = None
         if ar:
@@ -993,6 +1020,7 @@ def toggle_favorite(paper_id: UUID) -> dict:
 def download_paper_pdf(paper_id: UUID) -> dict:
     """从 arXiv 下载论文 PDF"""
     from packages.integrations.arxiv_client import ArxivClient
+
     with session_scope() as session:
         repo = PaperRepository(session)
         try:
@@ -1051,16 +1079,17 @@ def ai_explain_text(paper_id: UUID, body: AIExplainReq) -> dict:
             f"请将以下学术文本翻译为流畅的中文，保留专业术语的英文原文（括号标注）。\n\n"
             f"文本：{text[:2000]}"
         ),
-        "summarize": (
-            f"请用中文简要总结以下内容的核心观点（3-5 句话）：\n\n{text[:3000]}"
-        ),
+        "summarize": (f"请用中文简要总结以下内容的核心观点（3-5 句话）：\n\n{text[:3000]}"),
     }
     prompt = prompts.get(action, prompts["explain"])
 
     from packages.integrations.llm_client import LLMClient
+
     llm = LLMClient()
     result = llm.summarize_text(prompt, stage="rag", max_tokens=1024)
-    llm.trace_result(result, stage="pdf_reader_ai", prompt_digest=f"{action}:{text[:80]}", paper_id=str(paper_id))
+    llm.trace_result(
+        result, stage="pdf_reader_ai", prompt_digest=f"{action}:{text[:80]}", paper_id=str(paper_id)
+    )
     return {"action": action, "result": result.content}
 
 
@@ -1071,6 +1100,7 @@ def ai_explain_text(paper_id: UUID, body: AIExplainReq) -> dict:
 def get_paper_figures(paper_id: UUID) -> dict:
     """获取论文已有的图表解读"""
     from packages.ai.figure_service import FigureService
+
     items = FigureService.get_paper_analyses(paper_id)
     for item in items:
         if item.get("has_image"):
@@ -1112,6 +1142,7 @@ def analyze_paper_figures(
 ) -> dict:
     """提取并解读论文中的图表"""
     from packages.ai.figure_service import FigureService
+
     with session_scope() as session:
         repo = PaperRepository(session)
         try:
@@ -1128,6 +1159,7 @@ def analyze_paper_figures(
         raise HTTPException(status_code=500, detail=f"图表解读失败: {exc}") from exc
     # 分析完成后，从 DB 获取带 id 的完整结果（含 image_url）
     from packages.ai.figure_service import FigureService as FS2
+
     items = FS2.get_paper_analyses(paper_id)
     for item in items:
         if item.get("has_image"):
@@ -1229,6 +1261,7 @@ def generated_delete(content_id: str) -> dict:
 @app.post("/jobs/daily/run-once")
 def run_daily_once() -> dict:
     """每日任务（抓取+简报）- 后台执行"""
+
     def _fn(progress_callback=None):
         if progress_callback:
             progress_callback("正在执行订阅收集...", 10, 100)
@@ -1245,6 +1278,7 @@ def run_daily_once() -> dict:
 @app.post("/jobs/graph/weekly-run-once")
 def run_weekly_graph_once() -> dict:
     """每周图维护任务 - 后台执行"""
+
     def _fn(progress_callback=None):
         return run_weekly_graph_maintenance()
 
@@ -1284,7 +1318,9 @@ def batch_process_unread(
         processed = 0
         failed = 0
         try:
-            global_tracker.start(task_id, "batch_process", f"📚 批量处理未读论文 ({total} 篇)", total=total)
+            global_tracker.start(
+                task_id, "batch_process", f"📚 批量处理未读论文 ({total} 篇)", total=total
+            )
 
             with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
                 futs = {pool.submit(_process_paper, pid): pid for pid in target_ids}
@@ -1292,7 +1328,9 @@ def batch_process_unread(
                     try:
                         fut.result()
                         processed += 1
-                        global_tracker.update(task_id, processed, f"正在处理... ({processed}/{total})", total=total)
+                        global_tracker.update(
+                            task_id, processed, f"正在处理... ({processed}/{total})", total=total
+                        )
                     except Exception as exc:
                         failed += 1
                         logger.warning("batch process %s failed: %s", str(futs[fut])[:8], exc)
@@ -1319,11 +1357,14 @@ def list_actions(
 ) -> dict:
     """列出论文入库行动记录"""
     from packages.storage.repositories import ActionRepository
+
     with session_scope() as session:
         repo = ActionRepository(session)
         actions, total = repo.list_actions(
-            action_type=action_type, topic_id=topic_id,
-            limit=limit, offset=offset,
+            action_type=action_type,
+            topic_id=topic_id,
+            limit=limit,
+            offset=offset,
         )
         return {
             "items": [
@@ -1346,6 +1387,7 @@ def list_actions(
 def get_action_detail(action_id: str) -> dict:
     """获取行动详情"""
     from packages.storage.repositories import ActionRepository
+
     with session_scope() as session:
         repo = ActionRepository(session)
         action = repo.get_action(action_id)
@@ -1369,6 +1411,7 @@ def get_action_papers(
 ) -> dict:
     """获取某次行动关联的论文列表"""
     from packages.storage.repositories import ActionRepository
+
     with session_scope() as session:
         repo = ActionRepository(session)
         papers = repo.get_papers_by_action(action_id, limit=limit)
@@ -1379,7 +1422,9 @@ def get_action_papers(
                     "id": p.id,
                     "title": p.title,
                     "arxiv_id": p.arxiv_id,
-                    "publication_date": p.publication_date.isoformat() if p.publication_date else None,
+                    "publication_date": p.publication_date.isoformat()
+                    if p.publication_date
+                    else None,
                     "read_status": p.read_status,
                 }
                 for p in papers
@@ -1396,6 +1441,7 @@ def hot_keywords(
     top_k: int = Query(default=15, ge=1, le=50),
 ) -> dict:
     from packages.ai.recommendation_service import TrendService
+
     items = TrendService().detect_hot_keywords(days=days, top_k=top_k)
     return {"items": items}
 
@@ -1403,12 +1449,14 @@ def hot_keywords(
 @app.get("/trends/emerging")
 def emerging_trends(days: int = Query(default=14, ge=7, le=60)) -> dict:
     from packages.ai.recommendation_service import TrendService
+
     return TrendService().detect_trends(days=days)
 
 
 @app.get("/today")
 def today_summary() -> dict:
     from packages.ai.recommendation_service import TrendService
+
     return TrendService().get_today_summary()
 
 
@@ -1470,9 +1518,7 @@ def get_active_llm_config() -> dict:
             "provider": settings.llm_provider,
             "model_skim": settings.llm_model_skim,
             "model_deep": settings.llm_model_deep,
-            "model_vision": getattr(
-                settings, "llm_model_vision", None
-            ),
+            "model_vision": getattr(settings, "llm_model_vision", None),
             "model_embedding": settings.embedding_model,
             "model_fallback": settings.llm_model_fallback,
             "is_active": True,
@@ -1484,6 +1530,7 @@ def get_active_llm_config() -> dict:
 def deactivate_llm_providers() -> dict:
     """取消所有配置激活，回退到 .env 默认配置"""
     from packages.integrations.llm_client import invalidate_llm_config_cache
+
     with session_scope() as session:
         LLMConfigRepository(session).deactivate_all()
         invalidate_llm_config_cache()
@@ -1511,9 +1558,7 @@ def create_llm_provider(req: LLMProviderCreate) -> dict:
 
 
 @app.patch("/settings/llm-providers/{config_id}")
-def update_llm_provider(
-    config_id: str, req: LLMProviderUpdate
-) -> dict:
+def update_llm_provider(config_id: str, req: LLMProviderUpdate) -> dict:
     with session_scope() as session:
         try:
             cfg = LLMConfigRepository(session).update(
@@ -1529,9 +1574,7 @@ def update_llm_provider(
                 model_fallback=req.model_fallback,
             )
         except ValueError as exc:
-            raise HTTPException(
-                status_code=404, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         return _cfg_to_out(cfg)
 
 
@@ -1545,15 +1588,12 @@ def delete_llm_provider(config_id: str) -> dict:
 @app.post("/settings/llm-providers/{config_id}/activate")
 def activate_llm_provider(config_id: str) -> dict:
     from packages.integrations.llm_client import invalidate_llm_config_cache
+
     with session_scope() as session:
         try:
-            cfg = LLMConfigRepository(session).activate(
-                config_id
-            )
+            cfg = LLMConfigRepository(session).activate(config_id)
         except ValueError as exc:
-            raise HTTPException(
-                status_code=404, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         invalidate_llm_config_cache()
         return _cfg_to_out(cfg)
 
@@ -1565,6 +1605,7 @@ def activate_llm_provider(config_id: str) -> dict:
 def writing_templates() -> dict:
     """获取所有写作模板列表"""
     from packages.ai.writing_service import WritingService
+
     return {"items": WritingService.list_templates()}
 
 
@@ -1572,6 +1613,7 @@ def writing_templates() -> dict:
 def writing_process(body: WritingProcessReq) -> dict:
     """执行写作操作"""
     from packages.ai.writing_service import WritingService
+
     action = body.action
     text = body.content.strip() or body.topic.strip()
     if not action:
@@ -1588,6 +1630,7 @@ def writing_process(body: WritingProcessReq) -> dict:
 def writing_refine(body: WritingRefineReq) -> dict:
     """基于对话历史多轮微调"""
     from packages.ai.writing_service import WritingService
+
     messages = body.messages
     if not messages:
         raise HTTPException(status_code=400, detail="messages is required")
@@ -1601,6 +1644,7 @@ def writing_refine(body: WritingRefineReq) -> dict:
 def writing_process_multimodal(body: WritingMultimodalReq) -> dict:
     """多模态写作操作（图片 + 文本）"""
     from packages.ai.writing_service import WritingService
+
     if not body.image_base64:
         raise HTTPException(status_code=400, detail="image_base64 is required")
     try:
@@ -1660,6 +1704,7 @@ async def agent_reject(action_id: str):
 
 class EmailConfigCreate(BaseModel):
     """创建邮箱配置请求"""
+
     name: str
     smtp_server: str
     smtp_port: int = 587
@@ -1672,6 +1717,7 @@ class EmailConfigCreate(BaseModel):
 
 class EmailConfigUpdate(BaseModel):
     """更新邮箱配置请求"""
+
     name: str | None = None
     smtp_server: str | None = None
     smtp_port: int | None = None
@@ -1784,6 +1830,7 @@ async def test_email_config(config_id: str):
 
 class DailyReportConfigUpdate(BaseModel):
     """更新每日报告配置请求"""
+
     enabled: bool | None = None
     auto_deep_read: bool | None = None
     deep_read_limit: int | None = None
@@ -1798,6 +1845,7 @@ class DailyReportConfigUpdate(BaseModel):
 def get_daily_report_config():
     """获取每日报告配置"""
     from packages.ai.auto_read_service import AutoReadService
+
     return AutoReadService().get_config()
 
 
@@ -1805,6 +1853,7 @@ def get_daily_report_config():
 def update_daily_report_config(body: DailyReportConfigUpdate):
     """更新每日报告配置"""
     from packages.ai.auto_read_service import AutoReadService
+
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     config = AutoReadService().update_config(**update_data)
     return {"message": "每日报告配置已更新", "config": config}
@@ -1826,9 +1875,7 @@ async def run_daily_report_once(background_tasks: BackgroundTasks):
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(
-                AutoReadService().run_daily_workflow(_progress)
-            )
+            result = loop.run_until_complete(AutoReadService().run_daily_workflow(_progress))
             if result.get("success"):
                 global_tracker.finish(task_id, success=True)
             else:
@@ -1857,7 +1904,9 @@ async def run_daily_report_send_only(
             global_tracker.update(task_id, cur, msg, total=100)
 
         try:
-            recipients = [e.strip() for e in recipient.split(",") if e.strip()] if recipient else None
+            recipients = (
+                [e.strip() for e in recipient.split(",") if e.strip()] if recipient else None
+            )
             result = AutoReadService().send_only(recipients, _progress)
             if result.get("success"):
                 global_tracker.finish(task_id, success=True)
@@ -1877,6 +1926,7 @@ def run_daily_report_generate_only(
 ):
     """仅生成简报 HTML — 不发邮件、不精读（同步返回）"""
     from packages.ai.auto_read_service import AutoReadService
+
     html = AutoReadService().step_generate_html(use_cache=use_cache)
     return {"html": html, "used_cache": use_cache}
 
