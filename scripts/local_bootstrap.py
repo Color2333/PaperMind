@@ -1,47 +1,53 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from packages.storage.db import Base, engine, session_scope
-from packages.storage.models import Paper, TopicSubscription, PaperTopic, AnalysisReport
+from packages.storage.db import engine
+from packages.storage.models import Base
 
+# 导入所有模型，确保它们被注册到 Base.metadata
+print("Importing all models...")
+from packages.storage.models import (
+    Paper,
+    AnalysisReport,
+    ImageAnalysis,
+    Citation,
+    PipelineRun,
+    PromptTrace,
+    SourceCheckpoint,
+    TopicSubscription,
+    PaperTopic,
+    LLMProviderConfig,
+    GeneratedContent,
+    CollectionAction,
+    ActionPaper,
+    EmailConfig,
+    DailyReportConfig,
+)
 
-def main() -> None:
-    # 直接创建所有表（不使用迁移，避免 Alembic 错误）
-    print("Creating database tables...")
-    Base.metadata.create_all(bind=engine)
+# 创建所有表
+print("Creating database tables...")
+Base.metadata.create_all(bind=engine)
 
-    # 验证表是否创建成功
-    with session_scope() as session:
-        # 检查表是否存在
-        from sqlalchemy import inspect
+# 验证
+print("Checking tables...")
+from sqlalchemy import inspect
 
-        inspector = inspect(engine)
-        tables = inspector.get_table_names()
+inspector = inspect(engine)
+tables = sorted(inspector.get_table_names())
 
-        print(f"Tables created: {tables}")
+print(f"Tables created: {tables}")
 
-        # 如果没有表，手动创建
-        if not tables:
-            print("Warning: No tables created, trying alternative method...")
-            Base.metadata.create_all(bind=engine, checkfirst=False)
+# 检查关键表
+required_tables = ["papers", "topic_subscriptions", "analysis_reports"]
+missing = [t for t in required_tables if t not in tables]
 
-        # 再次检查
-        tables = inspector.get_table_names()
-        print(f"Final tables: {tables}")
+if missing:
+    print(f"⚠️  Missing tables: {missing}")
+else:
+    print("✅ All required tables created!")
 
-        if "papers" in tables:
-            print("✅ Database tables created successfully!")
-        else:
-            print("❌ Failed to create tables!")
-            # 打印所有模型
-            print("Models to create:", list(Base.metadata.tables.keys()))
-
-    print("SQLite schema initialized.")
-
-
-if __name__ == "__main__":
-    main()
+print("\nSQLite schema initialized.")
