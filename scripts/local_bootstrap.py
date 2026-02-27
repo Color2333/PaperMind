@@ -1,3 +1,12 @@
+"""
+数据库初始化脚本
+确保在 Docker 容器内正确创建所有表
+@author Color2333
+
+使用方法：
+    python scripts/local_bootstrap.py
+"""
+
 import sys
 from pathlib import Path
 
@@ -5,49 +14,69 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from packages.storage.db import engine
-from packages.storage.models import Base
 
-# 导入所有模型，确保它们被注册到 Base.metadata
-print("Importing all models...")
-from packages.storage.models import (
-    Paper,
-    AnalysisReport,
-    ImageAnalysis,
-    Citation,
-    PipelineRun,
-    PromptTrace,
-    SourceCheckpoint,
-    TopicSubscription,
-    PaperTopic,
-    LLMProviderConfig,
-    GeneratedContent,
-    CollectionAction,
-    ActionPaper,
-    EmailConfig,
-    DailyReportConfig,
-)
+def main() -> None:
+    print("=" * 50)
+    print("PaperMind 数据库初始化")
+    print("=" * 50)
 
-# 创建所有表
-print("Creating database tables...")
-Base.metadata.create_all(bind=engine)
+    # 强制使用容器内路径（避免环境变量冲突）
+    import os
 
-# 验证
-print("Checking tables...")
-from sqlalchemy import inspect
+    os.environ["DATABASE_URL"] = "sqlite:////app/data/papermind.db"
 
-inspector = inspect(engine)
-tables = sorted(inspector.get_table_names())
+    # 导入数据库引擎
+    print("\n[1/4] 导入数据库模块...")
+    from packages.storage.db import engine
 
-print(f"Tables created: {tables}")
+    # 导入所有模型（关键！不导入不会创建表）
+    print("[2/4] 导入所有模型...")
+    from packages.storage.models import (
+        Base,
+        Paper,
+        AnalysisReport,
+        ImageAnalysis,
+        Citation,
+        PipelineRun,
+        PromptTrace,
+        SourceCheckpoint,
+        TopicSubscription,
+        PaperTopic,
+        LLMProviderConfig,
+        GeneratedContent,
+        CollectionAction,
+        ActionPaper,
+        EmailConfig,
+        DailyReportConfig,
+    )
 
-# 检查关键表
-required_tables = ["papers", "topic_subscriptions", "analysis_reports"]
-missing = [t for t in required_tables if t not in tables]
+    # 创建所有表
+    print("[3/4] 创建数据库表...")
+    Base.metadata.create_all(bind=engine)
 
-if missing:
-    print(f"⚠️  Missing tables: {missing}")
-else:
-    print("✅ All required tables created!")
+    # 验证表是否创建成功
+    print("[4/4] 验证表...")
+    from sqlalchemy import inspect
 
-print("\nSQLite schema initialized.")
+    inspector = inspect(engine)
+    tables = sorted(inspector.get_table_names())
+
+    print(f"\n创建了 {len(tables)} 个表:")
+    for t in tables:
+        print(f"  - {t}")
+
+    # 检查关键表
+    required_tables = ["papers", "topic_subscriptions", "analysis_reports"]
+    missing = [t for t in required_tables if t not in tables]
+
+    if missing:
+        print(f"\n❌ 错误：缺少必要的表: {missing}")
+        sys.exit(1)
+    else:
+        print("\n✅ 数据库初始化成功！")
+
+    print("=" * 50)
+
+
+if __name__ == "__main__":
+    main()

@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    database_url: str = "sqlite:///./data/papermind.db"
+    # Docker 容器内默认路径
+    database_url: str = "sqlite:////app/data/papermind.db"
     pdf_storage_root: Path = Path("./data/papers")
     brief_output_root: Path = Path("./data/briefs")
     skim_score_threshold: float = 0.65
