@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -17,6 +18,8 @@ from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository, AnalysisRepository
 from sqlalchemy import select
 from packages.storage.models import PaperTopic, TopicSubscription
+
+logger = logging.getLogger(__name__)
 DAILY_TEMPLATE = Template("""\
 <!DOCTYPE html>
 <html lang="zh">
@@ -292,70 +295,11 @@ class DailyBriefService:
 
             try:
                 llm = LLMClient()
-                result = llm.complete(prompt, stage="daily_brief")
+                result = llm.summarize_text(prompt, stage="daily_brief")
                 return result.content[:500]
             except Exception as exc:
                 logger.warning("AI summary generation failed: %s", exc)
                 return f"今日新增 {len(papers)} 篇论文，涵盖多个研究方向"
-
-        # 并行获取推荐、热点、摘要
-        trend_svc = TrendService()
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            f_rec = pool.submit(RecommendationService().recommend, top_k=5)
-            f_hot = pool.submit(trend_svc.detect_hot_keywords, days=7, top_k=10)
-            f_sum = pool.submit(trend_svc.get_today_summary)
-        recommendations = f_rec.result()
-        hot_keywords = f_hot.result()
-        summary = f_sum.result()
-
-        # 获取论文列表（按主题分组）
-        with session_scope() as session:
-            papers = PaperRepository(session).list_latest(limit=limit)
-            paper_ids = [p.id for p in papers]
-            summaries = AnalysisRepository(session).summaries_for_papers(paper_ids)
-            topic_rows = session.execute(
-                select(PaperTopic.paper_id, TopicSubscription.name)
-                .join(
-                    TopicSubscription,
-                    PaperTopic.topic_id == TopicSubscription.id,
-                )
-                .where(PaperTopic.paper_id.in_(paper_ids))
-            ).all()
-
-            topic_map: dict[str, list[str]] = {}
-            for paper_id, topic_name in topic_rows:
-                topic_map.setdefault(paper_id, []).append(topic_name)
-
-            # 按主题分组
-            topic_groups: dict[str, list[dict]] = defaultdict(list)
-            uncategorized: list[dict] = []
-
-            for p in papers:
-                status_label = _STATUS_LABELS.get(p.read_status.value, p.read_status.value)
-                item = {
-                    "id": str(p.id),
-                    "title": p.title,
-                    "arxiv_id": p.arxiv_id,
-                    "read_status": status_label,
-                    "summary": (summaries.get(p.id, "") or "")[:400],
-                }
-                topics = topic_map.get(p.id, [])
-                if topics:
-                    for t in topics:
-                        topic_groups[t].append(item)
-                else:
-                    uncategorized.append(item)
-
-        return DAILY_TEMPLATE.render(
-            date=datetime.now(UTC).strftime("%Y-%m-%d"),
-            total_papers=summary["total_papers"],
-            today_new=summary["today_new"],
-            week_new=summary["week_new"],
-            recommendations=recommendations,
-            hot_keywords=hot_keywords,
-            topic_groups=dict(topic_groups),
-            uncategorized=uncategorized,
-        )
 
     def publish(self, recipient: str | None = None) -> dict:
         html = self.build_html()

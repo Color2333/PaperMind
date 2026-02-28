@@ -207,7 +207,7 @@ def ingest_arxiv(
     max_results: int = Query(default=20, ge=1, le=200),
     topic_id: str | None = None,
     sort_by: str = Query(
-        default="submittedDate", regex="^(submittedDate|relevance|lastUpdatedDate)$"
+        default="submittedDate", pattern="^(submittedDate|relevance|lastUpdatedDate)$"
     ),
 ) -> dict:
     logger.info("ArXiv ingest: query=%r max_results=%d sort=%s", query, max_results, sort_by)
