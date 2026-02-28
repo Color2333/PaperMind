@@ -721,7 +721,7 @@ export default function Settings() {
                       >
                         {testingEmail === config.id ? (
                           <>
-                            <Spinner className="w-4 h-4" className="mr-2" />
+                            <Spinner className="w-4 h-4 mr-2" />
                             发送中...
                           </>
                         ) : (
