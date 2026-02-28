@@ -1140,9 +1140,10 @@ def analyze_paper_figures(
     paper_id: UUID,
     max_figures: int = Query(default=10, ge=1, le=30),
 ) -> dict:
-    """提取并解读论文中的图表"""
-    from packages.ai.figure_service import FigureService
+    """提取并解读论文中的图表（异步任务）"""
+    from packages.domain.task_tracker import global_tracker
 
+    # 先验证论文和 PDF
     with session_scope() as session:
         repo = PaperRepository(session)
         try:
@@ -1151,25 +1152,36 @@ def analyze_paper_figures(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if not paper.pdf_path:
             raise HTTPException(status_code=400, detail="论文没有 PDF 文件")
-        pdf_path = paper.pdf_path  # 在 session 内取出
-    svc = FigureService()
-    try:
-        results = svc.analyze_paper_figures(paper_id, pdf_path, max_figures)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"图表解读失败: {exc}") from exc
-    # 分析完成后，从 DB 获取带 id 的完整结果（含 image_url）
-    from packages.ai.figure_service import FigureService as FS2
+        pdf_path = paper.pdf_path
+        paper_title = paper.title[:50]
 
-    items = FS2.get_paper_analyses(paper_id)
-    for item in items:
-        if item.get("has_image"):
-            item["image_url"] = f"/papers/{paper_id}/figures/{item['id']}/image"
-        else:
-            item["image_url"] = None
+    # 提交后台任务
+    def _analyze_fn(progress_callback=None):
+        from packages.ai.figure_service import FigureService
+
+        svc = FigureService()
+        results = svc.analyze_paper_figures(paper_id, pdf_path, max_figures)
+        # 分析完成后，从 DB 获取带 id 的完整结果
+        from packages.ai.figure_service import FigureService as FS2
+
+        items = FS2.get_paper_analyses(paper_id)
+        for item in items:
+            if item.get("has_image"):
+                item["image_url"] = f"/papers/{paper_id}/figures/{item['id']}/image"
+            else:
+                item["image_url"] = None
+        return {"paper_id": str(paper_id), "count": len(items), "items": items}
+
+    task_id = global_tracker.submit(
+        task_type="figure_analysis",
+        title=f"📊 图表分析：{paper_title}",
+        fn=_analyze_fn,
+        total=max_figures,
+    )
     return {
-        "paper_id": str(paper_id),
-        "count": len(items),
-        "items": items,
+        "task_id": task_id,
+        "status": "started",
+        "message": "图表分析已启动，正在处理...",
     }
 
 
@@ -1178,23 +1190,40 @@ def analyze_paper_figures(
 
 @app.post("/brief/daily")
 def daily_brief(req: DailyBriefRequest) -> dict:
+    """生成每日简报（异步任务）"""
+    from packages.domain.task_tracker import global_tracker
+
     recipient = req.recipient or settings.notify_default_to
-    html_content = brief_service.build_html()
-    result = brief_service.publish(recipient=recipient)
-    with session_scope() as session:
-        repo = GeneratedContentRepository(session)
-        ts = _brief_date()
-        gc = repo.create(
-            content_type="daily_brief",
-            title=f"Daily Brief: {ts}",
-            markdown=html_content,
-            metadata_json={
-                "saved_path": result.get("saved_path", ""),
-                "email_sent": result.get("email_sent", False),
-            },
-        )
-        result["content_id"] = gc.id
-    return result
+
+    def _generate_fn(progress_callback=None):
+        html_content = brief_service.build_html()
+        result = brief_service.publish(recipient=recipient)
+        with session_scope() as session:
+            repo = GeneratedContentRepository(session)
+            ts = _brief_date()
+            gc = repo.create(
+                content_type="daily_brief",
+                title=f"Daily Brief: {ts}",
+                markdown=html_content,
+                metadata_json={
+                    "saved_path": result.get("saved_path", ""),
+                    "email_sent": result.get("email_sent", False),
+                },
+            )
+            result["content_id"] = gc.id
+        return result
+
+    task_id = global_tracker.submit(
+        task_type="daily_brief",
+        title="📰 生成每日简报",
+        fn=_generate_fn,
+        total=100,
+    )
+    return {
+        "task_id": task_id,
+        "status": "started",
+        "message": "日报生成已启动，预计需要 1-3 分钟...",
+    }
 
 
 # ---------- 生成内容历史 ----------
