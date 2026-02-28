@@ -23,7 +23,6 @@ const Wiki = lazy(() => import("@/pages/Wiki"));
 const DailyBrief = lazy(() => import("@/pages/DailyBrief"));
 const Pipelines = lazy(() => import("@/pages/Pipelines"));
 const Operations = lazy(() => import("@/pages/Operations"));
-const Settings = lazy(() => import("@/pages/Settings"));
 const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
 
@@ -66,12 +65,12 @@ export default function App() {
           <Route path="/brief" element={<Suspense fallback={<PageFallback />}><DailyBrief /></Suspense>} />
           <Route path="/pipelines" element={<Suspense fallback={<PageFallback />}><Pipelines /></Suspense>} />
           <Route path="/operations" element={<Suspense fallback={<PageFallback />}><Operations /></Suspense>} />
-          <Route path="/settings" element={<Suspense fallback={<PageFallback />}><Settings /></Suspense>} />
           <Route path="/email-settings" element={<Suspense fallback={<PageFallback />}><EmailSettings /></Suspense>} />
           <Route path="/writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
 
           {/* 常见拼写重定向 */}
           <Route path="/briefs" element={<Navigate to="/brief" replace />} />
+          <Route path="/settings" element={<Navigate to="/collect" replace />} />
 
           {/* 404 */}
           <Route path="*" element={<NotFound />} />
