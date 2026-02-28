@@ -1775,29 +1775,27 @@ async def agent_chat(req: AgentChatRequest):
     # 流式响应
     msgs = [m.model_dump() for m in req.messages]
 
-    async def _save_assistant_response(content: str, tool_calls: list | None = None):
+    def _save_assistant_response(content: str, tool_calls: list | None = None):
         """保存助手响应（包含工具调用）"""
         with session_scope() as session:
             msg_repo = AgentMessageRepository(session)
-            metadata = {}
-            if tool_calls:
-                metadata["tool_calls"] = tool_calls
+            meta = {"tool_calls": tool_calls} if tool_calls else None
             msg_repo.create(
                 conversation_id=conversation_id,
                 role="assistant",
                 content=content,
-                metadata=metadata if metadata else None,
+                meta=meta,
             )
 
-    # 从 stream_chat 中提取工具调用信息
+    # 从 stream_chat 中提取工具调用信息并保存
     full_response = ""
     tool_calls = []
 
-    async def stream_with_save():
+    def stream_with_save():
         nonlocal full_response, tool_calls
-        async for chunk in stream_chat(msgs, confirmed_action_id=req.confirmed_action_id):
+        for chunk in stream_chat(msgs, confirmed_action_id=req.confirmed_action_id):
             full_response += chunk
-            # 尝试解析工具调用（如果有）
+            # 尝试解析工具调用
             if chunk.startswith('{"tool_'):
                 try:
                     import json
@@ -1805,12 +1803,12 @@ async def agent_chat(req: AgentChatRequest):
                     tool_info = json.loads(chunk)
                     if "tool_name" in tool_info:
                         tool_calls.append(tool_info)
-                except:
+                except Exception:
                     pass
             yield chunk
-        # 保存完整响应（包含工具调用）
+        # 流结束后保存完整响应
         if full_response:
-            await _save_assistant_response(full_response, tool_calls if tool_calls else None)
+            _save_assistant_response(full_response, tool_calls if tool_calls else None)
 
     return StreamingResponse(
         stream_with_save(),
