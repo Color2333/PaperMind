@@ -159,7 +159,7 @@ export default function Collect() {
             }
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
             setFetchingTopicId(null);
-            if (status.status === "ok") {
+            if (status.status === "ok" || status.status === "no_new_papers") {
               const newCount = status.new_count || status.inserted;
               const totalCount = status.total_count || status.inserted;
               const skipped = totalCount - newCount;
@@ -167,14 +167,15 @@ export default function Collect() {
               if (skipped > 0) msg += `（跳过 ${skipped} 篇重复）`;
               if (status.processed > 0) msg += `，${status.processed} 篇处理`;
               toast("success", msg);
-              if (status.topic) {
-                setTopics((prev) => prev.map((t) => (t.id === topicId ? { ...t, ...status.topic } : t)));
-              }
-            } else if (status.status === "failed") {
-              toast("error", `抓取失败：${status.error || "未知错误"}`);
-            } else if (status.status === "no_new_papers") {
-              toast("info", `⚠️  没有新论文（${status.total_count || 0} 篇重复），已跳过处理`);
+              // 刷新整个订阅列表，确保 last_run_at 和 paper_count 更新
+              const list = await topicApi.list(false);
+              setTopics(list.items);
+              return;
             }
+            if (status.status === "failed") {
+              toast("error", `抓取失败：${status.error || "未知错误"}`);
+            }
+            // 无论如何都刷新列表
             const list = await topicApi.list(false);
             setTopics(list.items);
           } catch {
