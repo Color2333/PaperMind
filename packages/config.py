@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
+    # 站点配置
+    site_url: str = "http://localhost:3002"  # 默认本地，生产环境设为 https://pm.vibingu.cn
+
     # Docker 容器内默认路径
     database_url: str = "sqlite:////app/data/papermind.db"
     pdf_storage_root: Path = Path("./data/papers")
@@ -31,7 +34,8 @@ class Settings(BaseSettings):
     weekly_cron: str = "0 22 * * 0"
     cors_allow_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173,"  # 开发环境
-        "http://localhost:3002,http://127.0.0.1:3002"  # Docker 生产环境
+        "http://localhost:3002,http://127.0.0.1:3002,"  # Docker 生产环境
+        "https://pm.vibingu.cn"  # 自定义域名 HTTPS
     )
 
     # LLM Provider: openai / anthropic / zhipu
