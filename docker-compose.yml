@@ -25,6 +25,7 @@ services:
     volumes:
       - pm_data:/app/data
       - pm_logs:/app/logs
+      - pm_pip_cache:/.pip-cache
     env_file:
       - ./deploy/.env
     environment:
@@ -60,6 +61,7 @@ services:
     volumes:
       - pm_data:/app/data
       - pm_logs:/app/logs
+      - pm_pip_cache:/.pip-cache
     env_file:
       - ./deploy/.env
     environment:
@@ -116,3 +118,5 @@ volumes:
     name: papermind_data
   pm_logs:
     name: papermind_logs
+  pm_pip_cache:
+

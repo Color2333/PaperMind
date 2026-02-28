@@ -26,9 +26,9 @@ COPY alembic.ini ./
 COPY infra/migrations/ infra/migrations/
 
 # 使用国内 pip 镜像源安装依赖
-RUN pip install --no-cache-dir ".[llm,pdf]" \
+RUN pip install --cache-dir=/.pip-cache ".[llm,pdf]" \
     -i https://mirrors.aliyun.com/pypi/simple/ \
-    && pip install --no-cache-dir \
+    && pip install --cache-dir=/.pip-cache \
         umap-learn \
         psutil \
         supervisor \
