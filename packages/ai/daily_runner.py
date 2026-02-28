@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
+from uuid import UUID
 
 from packages.ai.brief_service import DailyBriefService
 from packages.ai.graph_service import GraphService
@@ -98,7 +100,7 @@ def _process_paper(
         try:
             # 获取 API 许可
             if acquire_api("llm", timeout=30.0):
-                pipelines.deep_dive(str(paper_id))
+                pipelines.deep_dive(UUID(paper_id))
                 result["deep_read"] = True
                 logger.info("🎯 %s 精读完成 - %s", str(paper_id)[:8], deep_reason)
             else:
@@ -166,6 +168,8 @@ def run_topic_ingest(topic_id: str) -> dict:
         repo = PaperRepository(session)
         # 只处理这次新入库的论文
         unique = repo.list_by_ids(ids) if ids else []
+        # 在 Session 关闭前提取所有需要的数据，避免 DetachedInstanceError
+        papers_data = [(str(p.id), p.title) for p in unique]
 
     logger.info(
         "📝 主题 [%s] 新抓取 %d 篇论文，精读配额：%d 篇", topic_name, len(unique), max_deep_reads
@@ -177,31 +181,34 @@ def run_topic_ingest(topic_id: str) -> dict:
 
     with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
         futs = {
-            pool.submit(_process_paper, p.id, force_deep=False, deep_read_quota=0): p
-            for p in unique
+            pool.submit(_process_paper, paper_id, force_deep=False, deep_read_quota=0): paper_id
+            for paper_id, _ in papers_data
         }
         for fut in as_completed(futs):
             try:
                 result = fut.result()
                 skim_results.append(result)
             except Exception as exc:
-                p = futs[fut]
+                paper_id = futs[fut]
                 logger.warning(
                     "skim %s failed: %s",
-                    str(p.id)[:8],
+                    str(paper_id)[:8],
                     exc,
                 )
 
     # 第二步：按粗读分数排序，选前 N 篇精读
     logger.info("第二步：选择高分论文进行精读...")
+    # 只用 ID 和分数排序，不再引用 ORM 对象
     scored_papers = [
-        (r, p) for r, p in zip(skim_results, unique) if r["success"] and r["skim_score"] is not None
+        (r, paper_id)
+        for r, (paper_id, _) in zip(skim_results, papers_data)
+        if r["success"] and r["skim_score"] is not None
     ]
     scored_papers.sort(key=lambda x: x[0]["skim_score"], reverse=True)
 
     # 精读前 N 篇
     deep_read_count = 0
-    for i, (result, paper) in enumerate(scored_papers):
+    for i, (result, paper_id) in enumerate(scored_papers):
         if deep_read_count >= max_deep_reads:
             logger.info(
                 "⚠️  精读配额已用尽 (%d/%d)，剩余 %d 篇跳过精读",
@@ -213,20 +220,20 @@ def run_topic_ingest(topic_id: str) -> dict:
 
         # 只精读分数 >= 阈值的
         if result["skim_score"] < get_settings().skim_score_threshold:
-            logger.info("⚠️  %s 分数过低 (%.2f)，跳过精读", str(paper.id)[:8], result["skim_score"])
+            logger.info("⚠️  %s 分数过低 (%.2f)，跳过精读", str(paper_id)[:8], result["skim_score"])
             continue
 
         logger.info(
             "🎯 开始精读第 %d 篇：%s (分数=%.2f)",
             deep_read_count + 1,
-            paper.title[:50],
+            str(paper_id)[:50],
             result["skim_score"],
         )
 
         try:
             # 获取 API 许可
             if acquire_api("llm", timeout=60.0):
-                pipelines.deep_dive(str(paper.id))
+                pipelines.deep_dive(UUID(paper_id))  # type: ignore[arg-type]
                 deep_read_count += 1
                 logger.info("✅ 精读完成 (%d/%d)", deep_read_count, max_deep_reads)
             else:
@@ -234,7 +241,7 @@ def run_topic_ingest(topic_id: str) -> dict:
         except Exception as exc:
             logger.warning(
                 "deep_dive %s failed: %s",
-                str(paper.id)[:8],
+                str(paper_id)[:8],
                 exc,
             )
 
