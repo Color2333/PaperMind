@@ -145,7 +145,7 @@ def run_topic_ingest(topic_id: str) -> dict:
         for _attempt in range(topic.retry_limit + 1):
             attempts += 1
             try:
-                # 返回 (total_count, inserted_ids, new_papers_count)
+                # 返回详细统计信息
                 result = pipelines.ingest_arxiv_with_stats(
                     query=topic.query,
                     max_results=topic.max_results_per_run,

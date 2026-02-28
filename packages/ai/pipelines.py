@@ -79,27 +79,61 @@ class PaperPipelines:
         sort_by: str = "submittedDate",
     ) -> tuple[int, list[str], int]:
         """搜索 arXiv 并入库，upsert 去重。返回 (total_count, inserted_ids, new_papers_count)"""
-        papers = self.arxiv.fetch_latest(
-            query=query,
-            max_results=max_results,
-            sort_by=sort_by,
-        )
         inserted_ids: list[str] = []
         new_papers_count = 0
+        total_fetched = 0
+        batch_size = 20
+        max_pages = 5  # 最多抓取 5 批（100 篇），直到找到 max_results 篇新论文
+
         with session_scope() as session:
             repo = PaperRepository(session)
             run_repo = PipelineRunRepository(session)
             action_repo = ActionRepository(session)
             run = run_repo.start("ingest_arxiv", decision_note=f"query={query}")
+
             try:
-                # 提前检查哪些论文已存在，避免重复处理
-                existing_arxiv_ids = repo.list_existing_arxiv_ids([p.arxiv_id for p in papers])
-                for paper in papers:
-                    is_new = paper.arxiv_id not in existing_arxiv_ids
-                    saved = self._save_paper(repo, paper, topic_id)
-                    if is_new:
-                        new_papers_count += 1
-                    inserted_ids.append(saved.id)
+                # 分批抓取，直到找到足够的新论文或达到最大页数
+                for page in range(max_pages):
+                    start = page * batch_size
+                    papers = self.arxiv.fetch_latest(
+                        query=query,
+                        max_results=batch_size,
+                        sort_by=sort_by,
+                        start=start,
+                    )
+                    total_fetched += len(papers)
+
+                    if not papers:
+                        break  # 没有更多论文了
+
+                    # 提前检查哪些论文已存在
+                    existing_arxiv_ids = repo.list_existing_arxiv_ids([p.arxiv_id for p in papers])
+
+                    # 处理新论文
+                    for paper in papers:
+                        is_new = paper.arxiv_id not in existing_arxiv_ids
+                        saved = self._save_paper(repo, paper, topic_id)
+                        if is_new:
+                            new_papers_count += 1
+                        inserted_ids.append(saved.id)
+
+                    # 如果已找到足够的新论文，停止抓取
+                    if new_papers_count >= max_results:
+                        logger.info(
+                            "已找到 %d 篇新论文（共抓取 %d 篇，%d 篇重复）",
+                            new_papers_count,
+                            total_fetched,
+                            total_fetched - new_papers_count,
+                        )
+                        break
+                    else:
+                        logger.info(
+                            "第 %d 批：找到 %d 篇新论文（累计 %d/%d），继续抓取...",
+                            page + 1,
+                            len(papers) - len(existing_arxiv_ids),
+                            new_papers_count,
+                            max_results,
+                        )
 
                 if inserted_ids:
                     action_repo.create_action(
