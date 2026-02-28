@@ -2,6 +2,7 @@
 论文处理 Pipeline - 摄入 / 粗读 / 精读 / 向量化 / 参考文献导入
 @author Bamzc
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ def _bg_auto_link(paper_ids: list[str]) -> None:
     """后台线程：入库后自动关联引用"""
     try:
         from packages.ai.graph_service import GraphService
+
         gs = GraphService()
         result = gs.auto_link_citations(paper_ids)
         logger.info("bg auto_link: %s", result)
@@ -75,26 +77,34 @@ class PaperPipelines:
         topic_id: str | None = None,
         action_type: ActionType = ActionType.manual_collect,
         sort_by: str = "submittedDate",
-    ) -> tuple[int, list[str]]:
-        """搜索 arXiv 并入库，upsert 去重。返回 (count, inserted_ids)"""
+    ) -> tuple[int, list[str], int]:
+        """搜索 arXiv 并入库，upsert 去重。返回 (total_count, inserted_ids, new_papers_count)"""
         papers = self.arxiv.fetch_latest(
-            query=query, max_results=max_results, sort_by=sort_by,
+            query=query,
+            max_results=max_results,
+            sort_by=sort_by,
         )
         inserted_ids: list[str] = []
+        new_papers_count = 0
         with session_scope() as session:
             repo = PaperRepository(session)
             run_repo = PipelineRunRepository(session)
             action_repo = ActionRepository(session)
             run = run_repo.start("ingest_arxiv", decision_note=f"query={query}")
             try:
+                # 提前检查哪些论文已存在，避免重复处理
+                existing_arxiv_ids = repo.list_existing_arxiv_ids([p.arxiv_id for p in papers])
                 for paper in papers:
+                    is_new = paper.arxiv_id not in existing_arxiv_ids
                     saved = self._save_paper(repo, paper, topic_id)
+                    if is_new:
+                        new_papers_count += 1
                     inserted_ids.append(saved.id)
 
                 if inserted_ids:
                     action_repo.create_action(
                         action_type=action_type,
-                        title=f"收集: {query[:80]}",
+                        title=f"收集：{query[:80]}",
                         paper_ids=inserted_ids,
                         query=query,
                         topic_id=topic_id,
@@ -103,10 +113,11 @@ class PaperPipelines:
                 run_repo.finish(run.id)
                 if inserted_ids:
                     threading.Thread(
-                        target=_bg_auto_link, args=(inserted_ids,),
+                        target=_bg_auto_link,
+                        args=(inserted_ids,),
                         daemon=True,
                     ).start()
-                return len(inserted_ids), inserted_ids
+                return len(inserted_ids), inserted_ids, new_papers_count
             except Exception as exc:
                 run_repo.fail(run.id, str(exc))
                 raise
@@ -120,10 +131,32 @@ class PaperPipelines:
     ) -> list[str]:
         """ingest_arxiv 的别名，返回 inserted_ids"""
         _, ids = self.ingest_arxiv(
-            query=query, max_results=max_results,
-            topic_id=topic_id, action_type=action_type,
+            query=query,
+            max_results=max_results,
+            topic_id=topic_id,
+            action_type=action_type,
         )
         return ids
+
+    def ingest_arxiv_with_stats(
+        self,
+        query: str,
+        max_results: int = 20,
+        topic_id: str | None = None,
+        action_type: ActionType = ActionType.subscription_ingest,
+    ) -> dict:
+        """ingest_arxiv 返回详细统计信息"""
+        total_count, inserted_ids, new_count = self.ingest_arxiv(
+            query=query,
+            max_results=max_results,
+            topic_id=topic_id,
+            action_type=action_type,
+        )
+        return {
+            "total_count": total_count,
+            "inserted_ids": inserted_ids,
+            "new_count": new_count,
+        }
 
     def skim(self, paper_id: UUID) -> SkimReport:
         started = time.perf_counter()
@@ -135,12 +168,8 @@ class PaperPipelines:
             run = run_repo.start("skim", paper_id=paper_id)
             try:
                 paper = paper_repo.get_by_id(paper_id)
-                prompt = build_skim_prompt(
-                    paper.title, paper.abstract
-                )
-                decision = CostGuardService(
-                    session, self.llm
-                ).choose_model(
+                prompt = build_skim_prompt(paper.title, paper.abstract)
+                decision = CostGuardService(session, self.llm).choose_model(
                     stage="skim",
                     prompt=prompt,
                     default_model=self.settings.llm_model_skim,
@@ -164,9 +193,7 @@ class PaperPipelines:
                 if skim.abstract_zh:
                     meta["abstract_zh"] = skim.abstract_zh
                 paper.metadata_json = meta
-                paper_repo.update_read_status(
-                    paper_id, ReadStatus.skimmed
-                )
+                paper_repo.update_read_status(paper_id, ReadStatus.skimmed)
                 trace_repo.create(
                     stage="skim",
                     provider=self.llm.provider,
@@ -179,9 +206,7 @@ class PaperPipelines:
                     output_cost_usd=result.output_cost_usd,
                     total_cost_usd=result.total_cost_usd,
                 )
-                elapsed = int(
-                    (time.perf_counter() - started) * 1000
-                )
+                elapsed = int((time.perf_counter() - started) * 1000)
                 run_repo.finish(run.id, elapsed_ms=elapsed)
                 return skim
             except Exception as exc:
@@ -204,24 +229,11 @@ class PaperPipelines:
                         self.arxiv.download_pdf(paper.arxiv_id),
                     )
                     paper = paper_repo.get_by_id(paper_id)
-                extracted = (
-                    self.vision.extract_page_descriptions(
-                        paper.pdf_path
-                    )
-                )
-                extracted_text = self.pdf_extractor.extract_text(
-                    paper.pdf_path, max_pages=10
-                )
-                combined = (
-                    f"{extracted}\n\n"
-                    f"[TextLayer]\n{extracted_text[:8000]}"
-                )
-                prompt = build_deep_prompt(
-                    paper.title, combined
-                )
-                decision = CostGuardService(
-                    session, self.llm
-                ).choose_model(
+                extracted = self.vision.extract_page_descriptions(paper.pdf_path)
+                extracted_text = self.pdf_extractor.extract_text(paper.pdf_path, max_pages=10)
+                combined = f"{extracted}\n\n[TextLayer]\n{extracted_text[:8000]}"
+                prompt = build_deep_prompt(paper.title, combined)
+                decision = CostGuardService(session, self.llm).choose_model(
                     stage="deep",
                     prompt=prompt,
                     default_model=self.settings.llm_model_deep,
@@ -231,13 +243,9 @@ class PaperPipelines:
                     stage="deep",
                     model_override=decision.chosen_model,
                 )
-                deep = self._build_deep_structured(
-                    result.content, result.parsed_json
-                )
+                deep = self._build_deep_structured(result.content, result.parsed_json)
                 analysis_repo.upsert_deep_dive(paper_id, deep)
-                paper_repo.update_read_status(
-                    paper_id, ReadStatus.deep_read
-                )
+                paper_repo.update_read_status(paper_id, ReadStatus.deep_read)
                 trace_repo.create(
                     stage="deep_dive",
                     provider=self.llm.provider,
@@ -250,9 +258,7 @@ class PaperPipelines:
                     output_cost_usd=result.output_cost_usd,
                     total_cost_usd=result.total_cost_usd,
                 )
-                elapsed = int(
-                    (time.perf_counter() - started) * 1000
-                )
+                elapsed = int((time.perf_counter() - started) * 1000)
                 run_repo.finish(run.id, elapsed_ms=elapsed)
                 return deep
             except Exception as exc:
@@ -283,32 +289,23 @@ class PaperPipelines:
             title_zh = str(parsed_json.get("title_zh", "")).strip()
             abstract_zh = str(parsed_json.get("abstract_zh", "")).strip()
             try:
-                score = float(
-                    parsed_json.get("relevance_score", 0.5)
-                )
+                score = float(parsed_json.get("relevance_score", 0.5))
             except (TypeError, ValueError):
                 score = 0.5
             score = min(max(score, 0.0), 1.0)
-            one_liner = (
-                str(parsed_json.get("one_liner", "")).strip()
-                or llm_text[:140]
-            )
+            one_liner = str(parsed_json.get("one_liner", "")).strip() or llm_text[:140]
             if not innovations:
                 innovations = [one_liner[:80]]
             return SkimReport(
                 one_liner=one_liner[:280],
-                innovations=[
-                    str(x)[:180] for x in innovations[:5]
-                ],
+                innovations=[str(x)[:180] for x in innovations[:5]],
                 keywords=[str(k)[:60] for k in keywords[:8]],
                 title_zh=title_zh[:500],
                 abstract_zh=abstract_zh[:3000],
                 relevance_score=score,
             )
 
-        chunks = [
-            x.strip() for x in abstract.split(".") if x.strip()
-        ]
+        chunks = [x.strip() for x in abstract.split(".") if x.strip()]
         innovations = chunks[:3] if chunks else [llm_text[:80]]
         score = min(max(len(abstract) / 3000, 0.2), 0.95)
         return SkimReport(
@@ -329,52 +326,28 @@ class PaperPipelines:
                 risks = [str(risks)]
             return DeepDiveReport(
                 method_summary=(
-                    str(
-                        parsed_json.get(
-                            "method_summary", ""
-                        )
-                    )[:2400]
-                    or llm_text[:240]
+                    str(parsed_json.get("method_summary", ""))[:2400] or llm_text[:240]
                 ),
                 experiments_summary=(
-                    str(
-                        parsed_json.get(
-                            "experiments_summary", ""
-                        )
-                    )[:2400]
+                    str(parsed_json.get("experiments_summary", ""))[:2400]
                     or "Experiments section not extracted."
                 ),
                 ablation_summary=(
-                    str(
-                        parsed_json.get(
-                            "ablation_summary", ""
-                        )
-                    )[:2400]
+                    str(parsed_json.get("ablation_summary", ""))[:2400]
                     or "Ablation section not extracted."
                 ),
                 reviewer_risks=(
-                    [str(x)[:400] for x in risks[:6]]
-                    or ["Limitations could not be extracted."]
+                    [str(x)[:400] for x in risks[:6]] or ["Limitations could not be extracted."]
                 ),
             )
 
         return DeepDiveReport(
-            method_summary=(
-                f"Method extraction: {llm_text[:240]}"
-            ),
-            experiments_summary=(
-                "Experiments indicate consistent improvements "
-                "against baselines."
-            ),
-            ablation_summary=(
-                "Ablation shows each core module "
-                "contributes measurable gains."
-            ),
+            method_summary=(f"Method extraction: {llm_text[:240]}"),
+            experiments_summary=("Experiments indicate consistent improvements against baselines."),
+            ablation_summary=("Ablation shows each core module contributes measurable gains."),
             reviewer_risks=[
-                "Generalization to out-of-domain datasets "
-                "may be under-validated.",
-                "Compute budget assumptions "
-                "might limit reproducibility.",
+                "Generalization to out-of-domain datasets may be under-validated.",
+                "Compute budget assumptions might limit reproducibility.",
             ],
         )
 
@@ -427,8 +400,7 @@ class ReferenceImporter:
         }
         threading.Thread(
             target=self._run_import,
-            args=(task_id, source_paper_id, source_paper_title,
-                  entries, topic_ids or []),
+            args=(task_id, source_paper_id, source_paper_title, entries, topic_ids or []),
             daemon=True,
         ).start()
         return task_id
@@ -472,24 +444,33 @@ class ReferenceImporter:
             task["skipped"] = len(skip_entries)
             task["completed"] = len(skip_entries)
             for e in skip_entries:
-                task["results"].append({
-                    "title": e.get("title", ""),
-                    "status": "skipped",
-                    "reason": "已在库中",
-                })
+                task["results"].append(
+                    {
+                        "title": e.get("title", ""),
+                        "status": "skipped",
+                        "reason": "已在库中",
+                    }
+                )
 
             # 3) 批量通过 arXiv API 拉取有 arxiv_id 的论文
             if arxiv_entries:
                 self._import_arxiv_batch(
-                    task, arxiv_entries, source_paper_id,
-                    topic_ids, inserted_ids, existing_norms,
+                    task,
+                    arxiv_entries,
+                    source_paper_id,
+                    topic_ids,
+                    inserted_ids,
+                    existing_norms,
                 )
 
             # 4) 无 arxiv_id 的论文用 SS 元数据导入
             if ss_only_entries:
                 self._import_ss_batch(
-                    task, ss_only_entries, source_paper_id,
-                    topic_ids, inserted_ids,
+                    task,
+                    ss_only_entries,
+                    source_paper_id,
+                    topic_ids,
+                    inserted_ids,
                 )
 
             # 5) 记录 CollectionAction
@@ -534,7 +515,7 @@ class ReferenceImporter:
         batch_size = 30
         arxiv_papers_map: dict[str, PaperCreate] = {}
         for i in range(0, len(arxiv_ids), batch_size):
-            batch = arxiv_ids[i:i + batch_size]
+            batch = arxiv_ids[i : i + batch_size]
             try:
                 papers = self.arxiv.fetch_by_ids(batch)
                 for p in papers:
@@ -568,7 +549,8 @@ class ReferenceImporter:
             else:
                 # arXiv API 没找到（可能是旧论文），用 SS 数据创建
                 paper_data = self._build_paper_from_entry(
-                    entry, source_paper_id,
+                    entry,
+                    source_paper_id,
                 )
 
             try:
@@ -582,12 +564,14 @@ class ReferenceImporter:
                     direction = entry.get("direction", "reference")
                     if direction == "reference":
                         cit_repo.upsert_edge(
-                            source_paper_id, saved.id,
+                            source_paper_id,
+                            saved.id,
                             context="reference",
                         )
                     else:
                         cit_repo.upsert_edge(
-                            saved.id, source_paper_id,
+                            saved.id,
+                            source_paper_id,
                             context="citation",
                         )
                     # 下载 PDF
@@ -601,18 +585,24 @@ class ReferenceImporter:
                     inserted_ids.append(saved.id)
                     existing_norms.add(norm or "")
                     task["imported"] += 1
-                    task["results"].append({
-                        "title": title, "status": "imported",
-                        "paper_id": saved.id,
-                        "source": "arxiv",
-                    })
+                    task["results"].append(
+                        {
+                            "title": title,
+                            "status": "imported",
+                            "paper_id": saved.id,
+                            "source": "arxiv",
+                        }
+                    )
             except Exception as exc:
                 logger.warning("Import failed for %s: %s", title, exc)
                 task["failed"] += 1
-                task["results"].append({
-                    "title": title, "status": "failed",
-                    "reason": str(exc)[:100],
-                })
+                task["results"].append(
+                    {
+                        "title": title,
+                        "status": "failed",
+                        "reason": str(exc)[:100],
+                    }
+                )
 
             task["completed"] += 1
 
@@ -645,15 +635,18 @@ class ReferenceImporter:
                 # SS 返回了 arXiv ID，升级为 arXiv 导入
                 entry["arxiv_id"] = detail["arxiv_id"]
                 paper_data = self._build_paper_from_detail(
-                    detail, source_paper_id,
+                    detail,
+                    source_paper_id,
                 )
             elif detail:
                 paper_data = self._build_paper_from_detail(
-                    detail, source_paper_id,
+                    detail,
+                    source_paper_id,
                 )
             else:
                 paper_data = self._build_paper_from_entry(
-                    entry, source_paper_id,
+                    entry,
+                    source_paper_id,
                 )
 
             try:
@@ -666,12 +659,14 @@ class ReferenceImporter:
                     direction = entry.get("direction", "reference")
                     if direction == "reference":
                         cit_repo.upsert_edge(
-                            source_paper_id, saved.id,
+                            source_paper_id,
+                            saved.id,
                             context="reference",
                         )
                     else:
                         cit_repo.upsert_edge(
-                            saved.id, source_paper_id,
+                            saved.id,
+                            source_paper_id,
                             context="citation",
                         )
                     # 有 arxiv_id 的尝试下载 PDF
@@ -685,24 +680,31 @@ class ReferenceImporter:
                             pass
                     inserted_ids.append(saved.id)
                     task["imported"] += 1
-                    task["results"].append({
-                        "title": title, "status": "imported",
-                        "paper_id": saved.id,
-                        "source": "semantic_scholar",
-                    })
+                    task["results"].append(
+                        {
+                            "title": title,
+                            "status": "imported",
+                            "paper_id": saved.id,
+                            "source": "semantic_scholar",
+                        }
+                    )
             except Exception as exc:
                 logger.warning("SS import failed for %s: %s", title, exc)
                 task["failed"] += 1
-                task["results"].append({
-                    "title": title, "status": "failed",
-                    "reason": str(exc)[:100],
-                })
+                task["results"].append(
+                    {
+                        "title": title,
+                        "status": "failed",
+                        "reason": str(exc)[:100],
+                    }
+                )
 
             task["completed"] += 1
 
     @staticmethod
     def _build_paper_from_entry(
-        entry: dict, source_paper_id: str,
+        entry: dict,
+        source_paper_id: str,
     ) -> PaperCreate:
         """从 citation entry 构建 PaperCreate"""
         arxiv_id = entry.get("arxiv_id")
@@ -713,9 +715,7 @@ class ReferenceImporter:
             arxiv_id=arxiv_id,
             title=entry.get("title", "Unknown"),
             abstract=entry.get("abstract") or "",
-            publication_date=(
-                date(entry["year"], 1, 1) if entry.get("year") else None
-            ),
+            publication_date=(date(entry["year"], 1, 1) if entry.get("year") else None),
             metadata={
                 "source": "reference_import",
                 "source_paper_id": source_paper_id,
@@ -728,7 +728,8 @@ class ReferenceImporter:
 
     @staticmethod
     def _build_paper_from_detail(
-        detail: dict, source_paper_id: str,
+        detail: dict,
+        source_paper_id: str,
     ) -> PaperCreate:
         """从 SS 完整详情构建 PaperCreate（含作者、领域等）"""
         arxiv_id = detail.get("arxiv_id")
@@ -740,7 +741,8 @@ class ReferenceImporter:
         if detail.get("publication_date"):
             try:
                 pub_date = datetime.strptime(
-                    detail["publication_date"], "%Y-%m-%d",
+                    detail["publication_date"],
+                    "%Y-%m-%d",
                 ).date()
             except (ValueError, TypeError):
                 pass

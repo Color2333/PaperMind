@@ -140,16 +140,20 @@ def run_topic_ingest(topic_id: str) -> dict:
 
         last_error: str | None = None
         ids: list[str] = []
+        new_count: int = 0
         attempts = 0
         for _attempt in range(topic.retry_limit + 1):
             attempts += 1
             try:
-                ids = pipelines.ingest_arxiv_with_ids(
+                # 返回 (total_count, inserted_ids, new_papers_count)
+                result = pipelines.ingest_arxiv_with_stats(
                     query=topic.query,
                     max_results=topic.max_results_per_run,
                     topic_id=topic.id,
                     action_type=ActionType.auto_collect,
                 )
+                ids = result["inserted_ids"]
+                new_count = result["new_count"]
                 last_error = None
                 break
             except Exception as exc:
@@ -165,6 +169,22 @@ def run_topic_ingest(topic_id: str) -> dict:
                 "inserted": 0,
             }
 
+        # 如果没有新论文，直接返回
+        if new_count == 0:
+            logger.info(
+                "⚠️  主题 [%s] 没有新论文（重复 %d 篇），跳过处理",
+                topic_name,
+                len(ids),
+            )
+            return {
+                "topic_id": topic_id,
+                "topic_name": topic_name,
+                "status": "no_new_papers",
+                "inserted": 0,
+                "new_count": 0,
+                "total_count": len(ids),
+            }
+
         repo = PaperRepository(session)
         # 只处理这次新入库的论文
         unique = repo.list_by_ids(ids) if ids else []
@@ -172,7 +192,11 @@ def run_topic_ingest(topic_id: str) -> dict:
         papers_data = [(str(p.id), p.title) for p in unique]
 
     logger.info(
-        "📝 主题 [%s] 新抓取 %d 篇论文，精读配额：%d 篇", topic_name, len(unique), max_deep_reads
+        "📝 主题 [%s] 新抓取 %d 篇论文（新论文 %d 篇），精读配额：%d 篇",
+        topic_name,
+        len(unique),
+        new_count,
+        max_deep_reads,
     )
 
     # 第一步：全部论文并行粗读 + 嵌入（不精读）

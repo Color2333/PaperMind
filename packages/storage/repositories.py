@@ -2,6 +2,7 @@
 数据仓储层
 @author Bamzc
 """
+
 from __future__ import annotations
 
 import math
@@ -108,9 +109,7 @@ class PaperRepository:
         return paper
 
     def list_latest(self, limit: int = 20) -> list[Paper]:
-        q: Select[tuple[Paper]] = (
-            select(Paper).order_by(Paper.created_at.desc()).limit(limit)
-        )
+        q: Select[tuple[Paper]] = select(Paper).order_by(Paper.created_at.desc()).limit(limit)
         return list(self.session.execute(q).scalars())
 
     def list_all(self, limit: int = 10000) -> list[Paper]:
@@ -122,9 +121,14 @@ class PaperRepository:
         q = select(Paper).where(Paper.id.in_(paper_ids))
         return list(self.session.execute(q).scalars())
 
-    def list_by_read_status(
-        self, status: ReadStatus, limit: int = 200
-    ) -> list[Paper]:
+    def list_existing_arxiv_ids(self, arxiv_ids: list[str]) -> set[str]:
+        """批量检查哪些 arxiv_id 已存在，返回已存在的 ID 集合"""
+        if not arxiv_ids:
+            return set()
+        q = select(Paper.arxiv_id).where(Paper.arxiv_id.in_(arxiv_ids))
+        return set(self.session.execute(q).scalars())
+
+    def list_by_read_status(self, status: ReadStatus, limit: int = 200) -> list[Paper]:
         q = (
             select(Paper)
             .where(Paper.read_status == status)
@@ -149,9 +153,7 @@ class PaperRepository:
         )
         return list(self.session.execute(q).scalars())
 
-    def list_unread_with_embedding(
-        self, limit: int = 200
-    ) -> list[Paper]:
+    def list_unread_with_embedding(self, limit: int = 200) -> list[Paper]:
         """查询未读但有 embedding 的论文"""
         q = (
             select(Paper)
@@ -165,7 +167,9 @@ class PaperRepository:
         return list(self.session.execute(q).scalars())
 
     def list_with_embedding(
-        self, topic_id: str | None = None, limit: int = 200,
+        self,
+        topic_id: str | None = None,
+        limit: int = 200,
     ) -> list[Paper]:
         """查询有 embedding 的论文，可选按 topic 过滤"""
         if topic_id:
@@ -188,9 +192,7 @@ class PaperRepository:
             )
         return list(self.session.execute(q).scalars())
 
-    def list_recent_since(
-        self, since: datetime, limit: int = 500
-    ) -> list[Paper]:
+    def list_recent_since(self, since: datetime, limit: int = 500) -> list[Paper]:
         """查询指定时间之后入库的论文"""
         q = (
             select(Paper)
@@ -200,9 +202,7 @@ class PaperRepository:
         )
         return list(self.session.execute(q).scalars())
 
-    def list_recent_between(
-        self, start: datetime, end: datetime, limit: int = 500
-    ) -> list[Paper]:
+    def list_recent_between(self, start: datetime, end: datetime, limit: int = 500) -> list[Paper]:
         """查询指定时间区间内入库的论文"""
         q = (
             select(Paper)
@@ -247,16 +247,10 @@ class PaperRepository:
             .order_by(func.count(PaperTopic.paper_id).desc())
         )
         topic_rows = self.session.execute(topic_counts_q).all()
-        by_topic = [
-            {"topic_id": r[0], "topic_name": r[1], "count": r[2]}
-            for r in topic_rows
-        ]
+        by_topic = [{"topic_id": r[0], "topic_name": r[1], "count": r[2]} for r in topic_rows]
 
         # 按阅读状态统计
-        status_q = (
-            select(Paper.read_status, func.count())
-            .group_by(Paper.read_status)
-        )
+        status_q = select(Paper.read_status, func.count()).group_by(Paper.read_status)
         status_rows = self.session.execute(status_q).all()
         by_status = {r[0].value: r[1] for r in status_rows}
 
@@ -270,10 +264,7 @@ class PaperRepository:
             .order_by(date_expr.desc())
         )
         date_rows = self.session.execute(date_q).all()
-        by_date = [
-            {"date": str(r[0]), "count": r[1]}
-            for r in date_rows
-        ]
+        by_date = [{"date": str(r[0]), "count": r[1]} for r in date_rows]
 
         return {
             "total": total,
@@ -350,9 +341,7 @@ class PaperRepository:
         )
         return papers, total
 
-    def list_by_topic(
-        self, topic_id: str, limit: int = 200
-    ) -> list[Paper]:
+    def list_by_topic(self, topic_id: str, limit: int = 200) -> list[Paper]:
         q = (
             select(Paper)
             .join(PaperTopic, Paper.id == PaperTopic.paper_id)
@@ -373,24 +362,17 @@ class PaperRepository:
         paper.pdf_path = pdf_path
         paper.updated_at = datetime.now(UTC)
 
-    def update_embedding(
-        self, paper_id: UUID, embedding: list[float]
-    ) -> None:
+    def update_embedding(self, paper_id: UUID, embedding: list[float]) -> None:
         paper = self.get_by_id(paper_id)
         paper.embedding = embedding
         paper.updated_at = datetime.now(UTC)
 
-    def update_read_status(
-        self, paper_id: UUID, status: ReadStatus
-    ) -> None:
+    def update_read_status(self, paper_id: UUID, status: ReadStatus) -> None:
         paper = self.get_by_id(paper_id)
         upgrade = (
             paper.read_status == ReadStatus.unread
             and status in (ReadStatus.skimmed, ReadStatus.deep_read)
-        ) or (
-            paper.read_status == ReadStatus.skimmed
-            and status == ReadStatus.deep_read
-        )
+        ) or (paper.read_status == ReadStatus.skimmed and status == ReadStatus.deep_read)
         if upgrade:
             paper.read_status = status
 
@@ -417,9 +399,7 @@ class PaperRepository:
         )
         return ranked[:limit]
 
-    def full_text_candidates(
-        self, query: str, limit: int = 8
-    ) -> list[Paper]:
+    def full_text_candidates(self, query: str, limit: int = 8) -> list[Paper]:
         """按关键词搜索论文（每个词独立匹配 title/abstract）"""
         tokens = [t for t in query.lower().split() if len(t) >= 2]
         if not tokens:
@@ -428,14 +408,15 @@ class PaperRepository:
         conditions = []
         for token in tokens:
             conditions.append(
-                func.lower(Paper.title).contains(token)
-                | func.lower(Paper.abstract).contains(token)
+                func.lower(Paper.title).contains(token) | func.lower(Paper.abstract).contains(token)
             )
         q = select(Paper).where(*conditions).limit(limit)
         return list(self.session.execute(q).scalars())
 
     def semantic_candidates(
-        self, query_vector: list[float], limit: int = 8,
+        self,
+        query_vector: list[float],
+        limit: int = 8,
         max_candidates: int = 500,
     ) -> list[Paper]:
         if not query_vector:
@@ -449,9 +430,7 @@ class PaperRepository:
         candidates = list(self.session.execute(q).scalars())
         ranked = sorted(
             candidates,
-            key=lambda p: _cosine_distance(
-                query_vector, p.embedding or []
-            ),
+            key=lambda p: _cosine_distance(query_vector, p.embedding or []),
         )
         return ranked[:limit]
 
@@ -463,13 +442,9 @@ class PaperRepository:
         found = self.session.execute(q).scalar_one_or_none()
         if found:
             return
-        self.session.add(
-            PaperTopic(paper_id=paper_id, topic_id=topic_id)
-        )
+        self.session.add(PaperTopic(paper_id=paper_id, topic_id=topic_id))
 
-    def get_topic_names_for_papers(
-        self, paper_ids: list[str]
-    ) -> dict[str, list[str]]:
+    def get_topic_names_for_papers(self, paper_ids: list[str]) -> dict[str, list[str]]:
         """批量查 paper → topic name 映射"""
         if not paper_ids:
             return {}
@@ -494,19 +469,12 @@ class AnalysisRepository:
 
     def upsert_skim(self, paper_id: UUID, skim: SkimReport) -> None:
         report = self._get_or_create(paper_id)
-        innovations = "".join(
-            [f"  - {x}\n" for x in skim.innovations]
-        )
-        report.summary_md = (
-            f"- 一句话: {skim.one_liner}\n"
-            f"- 创新点:\n{innovations}"
-        )
+        innovations = "".join([f"  - {x}\n" for x in skim.innovations])
+        report.summary_md = f"- 一句话: {skim.one_liner}\n- 创新点:\n{innovations}"
         report.skim_score = skim.relevance_score
         report.key_insights = {"skim_innovations": skim.innovations}
 
-    def upsert_deep_dive(
-        self, paper_id: UUID, deep: DeepDiveReport
-    ) -> None:
+    def upsert_deep_dive(self, paper_id: UUID, deep: DeepDiveReport) -> None:
         report = self._get_or_create(paper_id)
         risks = "".join([f"- {x}\n" for x in deep.reviewer_risks])
         report.deep_dive_md = (
@@ -522,9 +490,7 @@ class AnalysisRepository:
 
     def _get_or_create(self, paper_id: UUID) -> AnalysisReport:
         pid = str(paper_id)
-        q = select(AnalysisReport).where(
-            AnalysisReport.paper_id == pid
-        )
+        q = select(AnalysisReport).where(AnalysisReport.paper_id == pid)
         found = self.session.execute(q).scalar_one_or_none()
         if found:
             return found
@@ -533,25 +499,17 @@ class AnalysisRepository:
         self.session.flush()
         return report
 
-    def summaries_for_papers(
-        self, paper_ids: list[str]
-    ) -> dict[str, str]:
+    def summaries_for_papers(self, paper_ids: list[str]) -> dict[str, str]:
         if not paper_ids:
             return {}
-        q = select(AnalysisReport).where(
-            AnalysisReport.paper_id.in_(paper_ids)
-        )
+        q = select(AnalysisReport).where(AnalysisReport.paper_id.in_(paper_ids))
         reports = list(self.session.execute(q).scalars())
         return {x.paper_id: x.summary_md or "" for x in reports}
 
-    def contexts_for_papers(
-        self, paper_ids: list[str]
-    ) -> dict[str, str]:
+    def contexts_for_papers(self, paper_ids: list[str]) -> dict[str, str]:
         if not paper_ids:
             return {}
-        q = select(AnalysisReport).where(
-            AnalysisReport.paper_id.in_(paper_ids)
-        )
+        q = select(AnalysisReport).where(AnalysisReport.paper_id.in_(paper_ids))
         reports = list(self.session.execute(q).scalars())
         out: dict[str, str] = {}
         for x in reports:
@@ -584,9 +542,7 @@ class PipelineRunRepository:
         self.session.flush()
         return run
 
-    def finish(
-        self, run_id: UUID, elapsed_ms: int | None = None
-    ) -> None:
+    def finish(self, run_id: UUID, elapsed_ms: int | None = None) -> None:
         run = self.session.get(PipelineRun, str(run_id))
         if not run:
             return
@@ -602,11 +558,7 @@ class PipelineRunRepository:
         run.error_message = error_message
 
     def list_latest(self, limit: int = 30) -> list[PipelineRun]:
-        q = (
-            select(PipelineRun)
-            .order_by(PipelineRun.created_at.desc())
-            .limit(limit)
-        )
+        q = select(PipelineRun).order_by(PipelineRun.created_at.desc()).limit(limit)
         return list(self.session.execute(q).scalars())
 
 
@@ -651,9 +603,7 @@ class PromptTraceRepository:
             func.coalesce(func.sum(PromptTrace.output_tokens), 0),
             func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
         ).where(PromptTrace.created_at >= since)
-        count, in_tokens, out_tokens, total_cost = (
-            self.session.execute(total_q).one()
-        )
+        count, in_tokens, out_tokens, total_cost = self.session.execute(total_q).one()
 
         by_stage_q = (
             select(
@@ -687,9 +637,7 @@ class PromptTraceRepository:
                 "input_tokens": int(in_t or 0),
                 "output_tokens": int(out_t or 0),
             }
-            for stage, calls, cost, in_t, out_t in self.session.execute(
-                by_stage_q
-            ).all()
+            for stage, calls, cost, in_t, out_t in self.session.execute(by_stage_q).all()
         ]
         by_model = [
             {
@@ -700,9 +648,7 @@ class PromptTraceRepository:
                 "input_tokens": int(in_t or 0),
                 "output_tokens": int(out_t or 0),
             }
-            for prov, mdl, calls, cost, in_t, out_t in self.session.execute(
-                by_model_q
-            ).all()
+            for prov, mdl, calls, cost, in_t, out_t in self.session.execute(by_model_q).all()
         ]
 
         return {
@@ -721,21 +667,16 @@ class SourceCheckpointRepository:
         self.session = session
 
     def get(self, source: str) -> SourceCheckpoint | None:
-        q = select(SourceCheckpoint).where(
-            SourceCheckpoint.source == source
-        )
+        q = select(SourceCheckpoint).where(SourceCheckpoint.source == source)
         return self.session.execute(q).scalar_one_or_none()
 
-    def upsert(
-        self, source: str, last_published_date: date | None
-    ) -> None:
+    def upsert(self, source: str, last_published_date: date | None) -> None:
         found = self.get(source)
         now = datetime.now(UTC)
         if found:
             found.last_fetch_at = now
             if last_published_date and (
-                found.last_published_date is None
-                or last_published_date > found.last_published_date
+                found.last_published_date is None or last_published_date > found.last_published_date
             ):
                 found.last_published_date = last_published_date
             return
@@ -788,14 +729,11 @@ class CitationRepository:
         q = select(Citation).order_by(Citation.source_paper_id).limit(limit)
         return list(self.session.execute(q).scalars())
 
-    def list_for_paper_ids(
-        self, paper_ids: list[str]
-    ) -> list[Citation]:
+    def list_for_paper_ids(self, paper_ids: list[str]) -> list[Citation]:
         if not paper_ids:
             return []
         q = select(Citation).where(
-            Citation.source_paper_id.in_(paper_ids)
-            | Citation.target_paper_id.in_(paper_ids)
+            Citation.source_paper_id.in_(paper_ids) | Citation.target_paper_id.in_(paper_ids)
         )
         return list(self.session.execute(q).scalars())
 
@@ -804,20 +742,14 @@ class TopicRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def list_topics(
-        self, enabled_only: bool = False
-    ) -> list[TopicSubscription]:
-        q = select(TopicSubscription).order_by(
-            TopicSubscription.created_at.desc()
-        )
+    def list_topics(self, enabled_only: bool = False) -> list[TopicSubscription]:
+        q = select(TopicSubscription).order_by(TopicSubscription.created_at.desc())
         if enabled_only:
             q = q.where(TopicSubscription.enabled.is_(True))
         return list(self.session.execute(q).scalars())
 
     def get_by_name(self, name: str) -> TopicSubscription | None:
-        q = select(TopicSubscription).where(
-            TopicSubscription.name == name
-        )
+        q = select(TopicSubscription).where(TopicSubscription.name == name)
         return self.session.execute(q).scalar_one_or_none()
 
     def get_by_id(self, topic_id: str) -> TopicSubscription | None:
@@ -899,23 +831,17 @@ class LLMConfigRepository:
         self.session = session
 
     def list_all(self) -> list[LLMProviderConfig]:
-        q = select(LLMProviderConfig).order_by(
-            LLMProviderConfig.created_at.desc()
-        )
+        q = select(LLMProviderConfig).order_by(LLMProviderConfig.created_at.desc())
         return list(self.session.execute(q).scalars())
 
     def get_active(self) -> LLMProviderConfig | None:
-        q = select(LLMProviderConfig).where(
-            LLMProviderConfig.is_active.is_(True)
-        )
+        q = select(LLMProviderConfig).where(LLMProviderConfig.is_active.is_(True))
         return self.session.execute(q).scalar_one_or_none()
 
     def get_by_id(self, config_id: str) -> LLMProviderConfig:
         cfg = self.session.get(LLMProviderConfig, config_id)
         if cfg is None:
-            raise ValueError(
-                f"llm_config {config_id} not found"
-            )
+            raise ValueError(f"llm_config {config_id} not found")
         return cfg
 
     def create(
@@ -1033,9 +959,7 @@ class GeneratedContentRepository:
         self.session.flush()
         return gc
 
-    def list_by_type(
-        self, content_type: str, limit: int = 50
-    ) -> list[GeneratedContent]:
+    def list_by_type(self, content_type: str, limit: int = 50) -> list[GeneratedContent]:
         q = (
             select(GeneratedContent)
             .where(GeneratedContent.content_type == content_type)
@@ -1082,10 +1006,12 @@ class ActionRepository:
         self.session.flush()
 
         for pid in paper_ids:
-            self.session.add(ActionPaper(
-                action_id=action.id,
-                paper_id=pid,
-            ))
+            self.session.add(
+                ActionPaper(
+                    action_id=action.id,
+                    paper_id=pid,
+                )
+            )
         self.session.flush()
         return action
 
@@ -1108,10 +1034,13 @@ class ActionRepository:
             count_q = count_q.where(CollectionAction.topic_id == topic_id)
 
         total = self.session.execute(count_q).scalar() or 0
-        rows = self.session.execute(
-            base.order_by(CollectionAction.created_at.desc())
-            .limit(limit).offset(offset)
-        ).scalars().all()
+        rows = (
+            self.session.execute(
+                base.order_by(CollectionAction.created_at.desc()).limit(limit).offset(offset)
+            )
+            .scalars()
+            .all()
+        )
         return list(rows), total
 
     def get_action(self, action_id: str) -> CollectionAction | None:
@@ -1119,23 +1048,32 @@ class ActionRepository:
 
     def get_paper_ids_by_action(self, action_id: str) -> list[str]:
         """获取某次行动关联的所有论文 ID"""
-        rows = self.session.execute(
-            select(ActionPaper.paper_id)
-            .where(ActionPaper.action_id == action_id)
-        ).scalars().all()
+        rows = (
+            self.session.execute(
+                select(ActionPaper.paper_id).where(ActionPaper.action_id == action_id)
+            )
+            .scalars()
+            .all()
+        )
         return list(rows)
 
     def get_papers_by_action(
-        self, action_id: str, limit: int = 200,
+        self,
+        action_id: str,
+        limit: int = 200,
     ) -> list[Paper]:
         """获取某次行动关联的论文列表"""
-        rows = self.session.execute(
-            select(Paper)
-            .join(ActionPaper, Paper.id == ActionPaper.paper_id)
-            .where(ActionPaper.action_id == action_id)
-            .order_by(Paper.created_at.desc())
-            .limit(limit)
-        ).scalars().all()
+        rows = (
+            self.session.execute(
+                select(Paper)
+                .join(ActionPaper, Paper.id == ActionPaper.paper_id)
+                .where(ActionPaper.action_id == action_id)
+                .order_by(Paper.created_at.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
         return list(rows)
 
 
@@ -1185,11 +1123,7 @@ class EmailConfigRepository:
         self.session.flush()
         return config
 
-    def update(
-        self,
-        config_id: str,
-        **kwargs
-    ) -> EmailConfig | None:
+    def update(self, config_id: str, **kwargs) -> EmailConfig | None:
         """更新邮箱配置"""
         config = self.get_by_id(config_id)
         if config:
@@ -1210,9 +1144,7 @@ class EmailConfigRepository:
     def set_active(self, config_id: str) -> EmailConfig | None:
         """激活指定配置，取消其他配置的激活状态"""
         # 取消所有激活状态
-        self.session.execute(
-            select(EmailConfig).where(EmailConfig.is_active == True)
-        )
+        self.session.execute(select(EmailConfig).where(EmailConfig.is_active == True))
         all_configs = self.list_all()
         for cfg in all_configs:
             cfg.is_active = False
@@ -1233,9 +1165,7 @@ class DailyReportConfigRepository:
 
     def get_config(self) -> DailyReportConfig:
         """获取每日报告配置（单例）"""
-        config = self.session.execute(
-            select(DailyReportConfig)
-        ).scalar_one_or_none()
+        config = self.session.execute(select(DailyReportConfig)).scalar_one_or_none()
 
         if not config:
             # 创建默认配置
