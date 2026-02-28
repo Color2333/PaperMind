@@ -150,16 +150,30 @@ export default function Collect() {
         pollRef.current = setInterval(async () => {
           try {
             const status = await topicApi.fetchStatus(topicId);
-            if (status.status === "running") return;
+            if (status.status === "running") {
+              // 显示进度
+              const progress = status.progress_pct || 0;
+              const message = status.message || `抓取中... (${progress}%)`;
+              toast("info", message);
+              return;
+            }
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
             setFetchingTopicId(null);
             if (status.status === "ok") {
-              toast("success", `抓取完成：${status.inserted} 篇入库，${status.processed || 0} 篇处理`);
+              const newCount = status.new_count || status.inserted;
+              const totalCount = status.total_count || status.inserted;
+              const skipped = totalCount - newCount;
+              let msg = `抓取完成：${newCount} 篇新论文`;
+              if (skipped > 0) msg += `（跳过 ${skipped} 篇重复）`;
+              if (status.processed > 0) msg += `，${status.processed} 篇处理`;
+              toast("success", msg);
               if (status.topic) {
                 setTopics((prev) => prev.map((t) => (t.id === topicId ? { ...t, ...status.topic } : t)));
               }
             } else if (status.status === "failed") {
               toast("error", `抓取失败：${status.error || "未知错误"}`);
+            } else if (status.status === "no_new_papers") {
+              toast("info", `⚠️  没有新论文（${status.total_count || 0} 篇重复），已跳过处理`);
             }
             const list = await topicApi.list(false);
             setTopics(list.items);
@@ -171,9 +185,17 @@ export default function Collect() {
         return;
       }
       if (res.status === "ok") {
-        toast("success", `「${res.topic_name}」抓取完成：${res.inserted} 篇入库，${res.processed || 0} 篇处理`);
+        const newCount = res.new_count || res.inserted;
+        const totalCount = res.total_count || res.inserted;
+        const skipped = totalCount - newCount;
+        let msg = `抓取完成：${newCount} 篇新论文`;
+        if (skipped > 0) msg += `（跳过 ${skipped} 篇重复）`;
+        if (res.processed > 0) msg += `，${res.processed} 篇处理`;
+        toast("success", msg);
         const list = await topicApi.list(false);
         setTopics(list.items);
+      } else if (res.status === "no_new_papers") {
+        toast("info", `⚠️  没有新论文（${res.total_count || 0} 篇重复），已跳过处理`);
       } else {
         toast("error", `抓取失败：${res.error || "未知错误"}`);
       }

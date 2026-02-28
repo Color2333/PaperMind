@@ -64,6 +64,33 @@ export interface KeywordSuggestion {
   reason: string;
 }
 
+/* ========== 抓取任务 ========== */
+export interface TopicFetchResult {
+  status: "started" | "already_running" | "ok" | "failed" | "no_new_papers";
+  task_id?: string;
+  topic_name?: string;
+  topic_id?: string;
+  message?: string;
+  inserted?: number;
+  new_count?: number;      // 新论文数量
+  total_count?: number;    // 总抓取数量（包含重复）
+  processed?: number;
+  error?: string;
+}
+
+export interface TopicFetchStatus {
+  status: "running" | "ok" | "failed" | "no_new_papers";
+  task_id: string;
+  progress_pct: number;
+  message?: string;
+  inserted?: number;
+  new_count?: number;
+  total_count?: number;
+  processed?: number;
+  error?: string;
+  topic?: Partial<Topic>;
+}
+
 /* ========== 论文 ========== */
 export type ReadStatus = "unread" | "skimmed" | "deep_read";
 
