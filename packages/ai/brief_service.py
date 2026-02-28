@@ -5,20 +5,18 @@
 
 from __future__ import annotations
 
-import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from jinja2 import Template
 from packages.config import get_settings
-logger = logging.getLogger(__name__)
+
 from packages.integrations.notifier import NotificationService
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository, AnalysisRepository
 from sqlalchemy import select
 from packages.storage.models import PaperTopic, TopicSubscription
-
 DAILY_TEMPLATE = Template("""\
 <!DOCTYPE html>
 <html lang="zh">
@@ -200,7 +198,6 @@ class DailyBriefService:
             TrendService,
         )
         from packages.config import get_settings
-logger = logging.getLogger(__name__)
 
         settings = get_settings()
 
