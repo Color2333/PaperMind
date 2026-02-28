@@ -34,6 +34,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 interface PdfReaderProps {
   paperId: string;
   paperTitle: string;
+  paperArxivId?: string;  // arXiv ID（用于在线链接）
   onClose: () => void;
 }
 
@@ -45,7 +46,7 @@ interface AiResult {
   result: string;
 }
 
-export default function PdfReader({ paperId, paperTitle, onClose }: PdfReaderProps) {
+export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }: PdfReaderProps) {
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState(1.2);
@@ -65,7 +66,13 @@ export default function PdfReader({ paperId, paperTitle, onClose }: PdfReaderPro
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  const pdfUrl = useMemo(() => paperApi.pdfUrl(paperId), [paperId]);
+  // 混合加载：优先本地 PDF，没有则用 arXiv 在线链接
+  const pdfUrl = useMemo(() => {
+    if (paperArxivId && !paperArxivId.startsWith("ss-")) {
+      return `https://arxiv.org/pdf/${paperArxivId}.pdf`;
+    }
+    return paperApi.pdfUrl(paperId);
+  }, [paperId, paperArxivId]);
 
   /**
    * PDF 加载成功

@@ -708,11 +708,12 @@ export default function PaperDetail() {
         </div>
       </div>
 
-      {/* PDF 阅读器 */}
-      {readerOpen && paper.pdf_path && (
+      {/* PDF 阅读器 - 支持本地 PDF 或 arXiv 在线链接 */}
+      {readerOpen && (paper.pdf_path || paper.arxiv_id) && (
         <PdfReader
           paperId={id!}
           paperTitle={paper.title}
+          paperArxivId={paper.arxiv_id}
           onClose={() => setReaderOpen(false)}
         />
       )}
