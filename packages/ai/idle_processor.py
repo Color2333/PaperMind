@@ -175,16 +175,27 @@ class IdleProcessor:
 
     def _process_batch(self) -> int:
         """
-        处理一批论文
+        处理一批论文（带任务追踪）
 
         Returns:
             int: 处理的论文数量
         """
+        from packages.domain.task_tracker import global_tracker
+
         papers = self._get_unread_papers(limit=self.batch_size)
 
         if not papers:
             logger.info("没有需要处理的未读论文")
             return 0
+
+        # 启动任务追踪
+        task_id = f"idle_skim_{int(time.time())}"
+        global_tracker.start(
+            task_id=task_id,
+            task_type="idle_skim",
+            title=f"🤖 闲时粗读 ({len(papers)} 篇)",
+            total=len(papers),
+        )
 
         logger.info("📝 闲时处理开始：%d 篇论文 (并发度=3)", len(papers))
 
@@ -193,60 +204,78 @@ class IdleProcessor:
         pipelines = PaperPipelines()
         limiter = get_rate_limiter()
 
-        for paper_id, title in papers:
-            # 检查是否应该暂停
-            if not self.detector.is_idle():
-                logger.warning("系统不再空闲，暂停处理")
-                break
+        try:
+            for i, (paper_id, title) in enumerate(papers):
+                # 检查是否应该暂停
+                if not self.detector.is_idle():
+                    logger.warning("系统不再空闲，暂停处理")
+                    global_tracker.update(
+                        task_id=task_id,
+                        current=processed,
+                        message="系统繁忙，暂停处理",
+                    )
+                    break
 
-            # 检查并发许可
-            if not limiter.start_task():
-                logger.debug("并发数已达上限，等待...")
-                time.sleep(2)
-                continue
+                # 更新进度
+                global_tracker.update(
+                    task_id=task_id,
+                    current=i + 1,
+                    message=f"处理：{title[:50]}...",
+                )
 
-            try:
-                logger.info("处理：%s", title[:50])
-
-                # 获取 API 许可
-                if not acquire_api("embedding", timeout=30.0):
-                    logger.warning("Embedding API 限流，跳过")
-                    failed += 1
+                # 检查并发许可
+                if not limiter.start_task():
+                    logger.debug("并发数已达上限，等待...")
+                    time.sleep(2)
                     continue
 
-                # 嵌入
                 try:
-                    pipelines.embed_paper(str(paper_id))
-                    logger.info("✅ 嵌入完成：%s", title[:40])
-                except Exception as e:
-                    logger.warning("嵌入失败：%s - %s", title[:40], e)
-                    failed += 1
-                    continue
+                    logger.info("处理：%s", title[:50])
 
-                # 获取 API 许可
-                if not acquire_api("llm", timeout=30.0):
-                    logger.warning("LLM API 限流，跳过粗读")
-                    continue
+                    # 获取 API 许可
+                    if not acquire_api("embedding", timeout=30.0):
+                        logger.warning("Embedding API 限流，跳过")
+                        failed += 1
+                        continue
 
-                # 粗读
-                try:
-                    result = pipelines.skim(str(paper_id))
-                    score = result.relevance_score if result else None
-                    logger.info("✅ 粗读完成：%s (分数=%.2f)", title[:40], score or 0)
-                except Exception as e:
-                    logger.warning("粗读失败：%s - %s", title[:40], e)
-                    failed += 1
-                    continue
+                    # 嵌入
+                    try:
+                        pipelines.embed_paper(str(paper_id))
+                        logger.info("✅ 嵌入完成：%s", title[:40])
+                    except Exception as e:
+                        logger.warning("嵌入失败：%s - %s", title[:40], e)
+                        failed += 1
+                        continue
 
-                processed += 1
+                    # 获取 API 许可
+                    if not acquire_api("llm", timeout=30.0):
+                        logger.warning("LLM API 限流，跳过粗读")
+                        continue
 
-                # 短暂休息，避免过于频繁
-                time.sleep(1)
+                    # 粗读
+                    try:
+                        result = pipelines.skim(str(paper_id))
+                        score = result.relevance_score if result else None
+                        logger.info("✅ 粗读完成：%s (分数=%.2f)", title[:40], score or 0)
+                    except Exception as e:
+                        logger.warning("粗读失败：%s - %s", title[:40], e)
+                        failed += 1
+                        continue
 
-            finally:
-                limiter.end_task()
+                    processed += 1
 
-        logger.info("📊 闲时处理完成：成功=%d, 失败=%d", processed, failed)
+                    # 短暂休息，避免过于频繁
+                    time.sleep(1)
+
+                finally:
+                    limiter.end_task()
+
+            global_tracker.finish(task_id, success=True)
+            logger.info("📊 闲时处理完成：成功=%d, 失败=%d", processed, failed)
+
+        except Exception as exc:
+            global_tracker.finish(task_id, success=False, error=str(exc)[:200])
+            logger.error("❌ 闲时处理失败：%s", exc)
 
         self._papers_processed += processed
         self.detector.mark_task_executed()
