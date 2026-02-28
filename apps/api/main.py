@@ -1699,12 +1699,12 @@ _SSE_HEADERS = {
 
 @app.post("/agent/chat")
 async def agent_chat(req: AgentChatRequest):
-    """Agent 对话 - SSE 流式响应（带持久化）"""
+    """Agent 对话 - SSE 流式响应（带持久化 + 工具调用记录）"""
     from packages.storage.db import session_scope
     from packages.storage.repositories import AgentConversationRepository, AgentMessageRepository
 
     # 如果有 conversation_id，保存到该会话；否则创建新会话
-    conversation_id = req.conversation_id
+    conversation_id = getattr(req, "conversation_id", None)
     with session_scope() as session:
         conv_repo = AgentConversationRepository(session)
         msg_repo = AgentMessageRepository(session)
@@ -1735,24 +1735,42 @@ async def agent_chat(req: AgentChatRequest):
     # 流式响应
     msgs = [m.model_dump() for m in req.messages]
 
-    async def _save_assistant_response(content: str):
-        """保存助手响应"""
+    async def _save_assistant_response(content: str, tool_calls: list | None = None):
+        """保存助手响应（包含工具调用）"""
         with session_scope() as session:
             msg_repo = AgentMessageRepository(session)
+            metadata = {}
+            if tool_calls:
+                metadata["tool_calls"] = tool_calls
             msg_repo.create(
                 conversation_id=conversation_id,
                 role="assistant",
                 content=content,
+                metadata=metadata if metadata else None,
             )
 
+    # 从 stream_chat 中提取工具调用信息
+    full_response = ""
+    tool_calls = []
+
     async def stream_with_save():
-        full_response = ""
+        nonlocal full_response, tool_calls
         async for chunk in stream_chat(msgs, confirmed_action_id=req.confirmed_action_id):
             full_response += chunk
+            # 尝试解析工具调用（如果有）
+            if chunk.startswith('{"tool_'):
+                try:
+                    import json
+
+                    tool_info = json.loads(chunk)
+                    if "tool_name" in tool_info:
+                        tool_calls.append(tool_info)
+                except:
+                    pass
             yield chunk
-        # 保存完整响应
+        # 保存完整响应（包含工具调用）
         if full_response:
-            await _save_assistant_response(full_response)
+            await _save_assistant_response(full_response, tool_calls if tool_calls else None)
 
     return StreamingResponse(
         stream_with_save(),
