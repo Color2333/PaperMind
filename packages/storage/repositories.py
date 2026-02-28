@@ -1133,6 +1133,91 @@ class EmailConfigRepository:
             self.session.flush()
         return config
 
+
+# ========== Agent 对话相关 ==========
+
+
+class AgentConversationRepository:
+    """Agent 对话会话 Repository"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def create(self, user_id: str | None = None, title: str | None = None) -> AgentConversation:
+        """创建新会话"""
+        conv = AgentConversation(user_id=user_id, title=title)
+        self.session.add(conv)
+        self.session.flush()
+        return conv
+
+    def get_by_id(self, conv_id: str) -> AgentConversation | None:
+        """根据 ID 获取会话"""
+        return self.session.get(AgentConversation, conv_id)
+
+    def list_all(self, user_id: str | None = None, limit: int = 50) -> list[AgentConversation]:
+        """获取所有会话（按时间倒序）"""
+        q = select(AgentConversation).order_by(AgentConversation.updated_at.desc()).limit(limit)
+        return list(self.session.execute(q).scalars())
+
+    def update_title(self, conv_id: str, title: str) -> AgentConversation | None:
+        """更新会话标题"""
+        conv = self.get_by_id(conv_id)
+        if conv:
+            conv.title = title
+            self.session.flush()
+        return conv
+
+    def delete(self, conv_id: str) -> bool:
+        """删除会话"""
+        conv = self.get_by_id(conv_id)
+        if conv:
+            self.session.delete(conv)
+            self.session.flush()
+            return True
+        return False
+
+
+class AgentMessageRepository:
+    """Agent 对话消息 Repository"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def create(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        metadata: dict | None = None,
+    ) -> AgentMessage:
+        """创建消息"""
+        msg = AgentMessage(
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            metadata=metadata,
+        )
+        self.session.add(msg)
+        self.session.flush()
+        return msg
+
+    def list_by_conversation(self, conversation_id: str, limit: int = 100) -> list[AgentMessage]:
+        """获取会话的所有消息"""
+        q = (
+            select(AgentMessage)
+            .where(AgentMessage.conversation_id == conversation_id)
+            .order_by(AgentMessage.created_at.asc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def delete_by_conversation(self, conversation_id: str) -> int:
+        """删除会话的所有消息"""
+        q = delete(AgentMessage).where(AgentMessage.conversation_id == conversation_id)
+        result = self.session.execute(q)
+        self.session.flush()
+        return result.rowcount
+
     def delete(self, config_id: str) -> bool:
         """删除邮箱配置"""
         config = self.get_by_id(config_id)
