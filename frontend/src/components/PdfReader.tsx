@@ -66,12 +66,10 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  // 混合加载：优先本地 PDF，没有则用 arXiv 在线链接
+  // 混合加载：优先本地 PDF，没有则用后端代理访问 arXiv（解决 CORS 问题）
   const pdfUrl = useMemo(() => {
-    if (paperArxivId && !paperArxivId.startsWith("ss-")) {
-      return `https://arxiv.org/pdf/${paperArxivId}.pdf`;
-    }
-    return paperApi.pdfUrl(paperId);
+    // 先尝试本地 PDF（如果有）
+    return paperApi.pdfUrl(paperId, paperArxivId);
   }, [paperId, paperArxivId]);
 
   /**
