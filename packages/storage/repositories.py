@@ -1135,6 +1135,26 @@ class EmailConfigRepository:
             self.session.flush()
         return config
 
+    def delete(self, config_id: str) -> bool:
+        """删除邮箱配置"""
+        config = self.get_by_id(config_id)
+        if config:
+            self.session.delete(config)
+            self.session.flush()
+            return True
+        return False
+
+    def set_active(self, config_id: str) -> EmailConfig | None:
+        """激活指定配置，取消其他配置的激活状态"""
+        all_configs = self.list_all()
+        for cfg in all_configs:
+            cfg.is_active = False
+        config = self.get_by_id(config_id)
+        if config:
+            config.is_active = True
+            self.session.flush()
+        return config
+
 
 # ========== Agent 对话相关 ==========
 
