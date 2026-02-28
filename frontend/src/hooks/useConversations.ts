@@ -68,7 +68,7 @@ function saveMetas(metas: ConversationMeta[]) {
   localStorage.setItem(STORAGE_KEY + "_index", JSON.stringify(metas));
 }
 
-function loadConversation(id: string): Conversation | null {
+export function loadConversation(id: string): Conversation | null {
   try {
     const raw = localStorage.getItem(`${STORAGE_KEY}_${id}`);
     if (!raw) return null;

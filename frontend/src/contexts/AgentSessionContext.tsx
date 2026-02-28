@@ -7,6 +7,7 @@ import { agentApi } from "@/services/api";
 import type { AgentMessage, SSEEvent, SSEEventType } from "@/types";
 import { parseSSEStream } from "@/types";
 import { useConversationCtx } from "@/contexts/ConversationContext";
+import { loadConversation } from "@/hooks/useConversations";
 import type { ConversationMessage } from "@/hooks/useConversations";
 
 /* ========== 共享类型 ========== */
@@ -73,7 +74,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const [confirmingActions, setConfirmingActions] = useState<Set<string>>(new Set());
   const [canvas, setCanvas] = useState<CanvasData | null>(null);
 
-  const { activeId, activeConv, createConversation, saveMessages } = useConversationCtx();
+  const { activeId, createConversation, saveMessages } = useConversationCtx();
   const justCreatedRef = useRef(false);
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
@@ -130,14 +131,15 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
     });
   }, [flushStreamBuffer]);
 
-  /* ---- 切换对话时恢复消息（包含工具调用、artifact 等） ---- */
+  /* ---- 切换对话时恢复消息 —— 直接读 localStorage，绕过 React state 异步 ---- */
   useEffect(() => {
     if (justCreatedRef.current) {
       justCreatedRef.current = false;
       return;
     }
-    if (activeConv && activeConv.messages.length > 0) {
-      setItems(activeConv.messages.map((m): ChatItem => ({
+    const conv = activeId ? loadConversation(activeId) : null;
+    if (conv && conv.messages.length > 0) {
+      setItems(conv.messages.map((m): ChatItem => ({
         id: m.id,
         type: m.type,
         content: m.content,
@@ -157,7 +159,6 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
     }
     setPendingActions(new Set());
     setCanvas(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
   /* ---- 保存对话到 localStorage ---- */
