@@ -32,6 +32,7 @@ services:
       - APP_ENV=production
       - API_HOST=0.0.0.0
       - API_PORT=8000
+      - SITE_URL=https://pm.vibingu.cn
       - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002,https://pm.vibingu.cn,http://pm.vibingu.cn
     restart: unless-stopped
     healthcheck:
@@ -66,6 +67,7 @@ services:
       - ./deploy/.env
     environment:
       - APP_ENV=production
+      - SITE_URL=https://pm.vibingu.cn
     restart: unless-stopped
     depends_on:
       - backend
