@@ -418,7 +418,7 @@ export default function PaperDetail() {
 
         {/* 主操作 */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {paper.pdf_path ? (
+          {paper.pdf_path || (paper.arxiv_id && !paper.arxiv_id.startsWith("ss-")) ? (
             <button
               onClick={() => setReaderOpen(true)}
               className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-4 transition-all hover:border-primary/30 hover:shadow-md"
@@ -428,29 +428,9 @@ export default function PaperDetail() {
               </div>
               <div className="text-left">
                 <p className="text-sm font-semibold text-ink">阅读原文</p>
-                <p className="text-xs text-ink-tertiary">PDF 阅读器</p>
-              </div>
-            </button>
-          ) : paper.arxiv_id && !paper.arxiv_id.startsWith("ss-") ? (
-            <button
-              onClick={async () => {
-                try {
-                  toast("info", "正在从 arXiv 下载 PDF...");
-                  const res = await paperApi.downloadPdf(id!);
-                  toast("success", res.status === "exists" ? "PDF 已存在" : "PDF 下载成功");
-                  window.location.reload();
-                } catch (err) {
-                  toast("error", err instanceof Error ? err.message : "PDF 下载失败");
-                }
-              }}
-              className="flex items-center gap-3 rounded-2xl border border-dashed border-primary/30 bg-primary/[0.03] p-4 transition-all hover:border-primary/50 hover:shadow-md"
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <Download className="h-5 w-5" />
-              </div>
-              <div className="text-left">
-                <p className="text-sm font-semibold text-primary">下载 PDF</p>
-                <p className="text-xs text-ink-tertiary">从 arXiv 获取原文</p>
+                <p className="text-xs text-ink-tertiary">
+                  {paper.pdf_path ? "PDF 阅读器（本地）" : "PDF 阅读器（arXiv 在线）"}
+                </p>
               </div>
             </button>
           ) : (
