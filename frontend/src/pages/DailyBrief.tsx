@@ -8,8 +8,8 @@ import { Button, Spinner, Empty } from "@/components/ui";
 import { useToast } from "@/contexts/ToastContext";
 import DOMPurify from "dompurify";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { briefApi, generatedApi } from "@/services/api";
-import type { DailyBriefResponse, GeneratedContentListItem, GeneratedContent } from "@/types";
+import { briefApi, generatedApi, tasksApi } from "@/services/api";
+import type { GeneratedContentListItem, GeneratedContent } from "@/types";
 import {
   Newspaper, Send, CheckCircle2, Mail, FileText, Calendar, Clock,
   Trash2, ChevronRight, Sparkles, Plus, RefreshCw, X,
@@ -22,7 +22,8 @@ export default function DailyBrief() {
   const [date, setDate] = useState("");
   const [recipient, setRecipient] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<DailyBriefResponse | null>(null);
+  const [taskProgress, setTaskProgress] = useState<string>("");
+  const [genDone, setGenDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [history, setHistory] = useState<GeneratedContentListItem[]>([]);
@@ -65,17 +66,51 @@ export default function DailyBrief() {
   }, [navigate, selectedContent]);
 
   const handleGenerate = async () => {
-    setLoading(true); setError(null); setResult(null);
+    setLoading(true); setError(null); setGenDone(false); setTaskProgress("正在提交任务...");
     try {
       const data: Record<string, string> = {};
       if (date) data.date = date;
       if (recipient) data.recipient = recipient;
       const res = await briefApi.daily(Object.keys(data).length > 0 ? data : undefined);
-      setResult(res); loadHistory();
+      const taskId = res.task_id;
+      setTaskProgress("任务已提交，正在生成简报...");
+
+      // 轮询任务状态，直到完成或失败
+      const POLL_INTERVAL = 3000;
+      const MAX_WAIT_MS = 5 * 60 * 1000; // 最多等 5 分钟
+      const startTime = Date.now();
+
+      await new Promise<void>((resolve, reject) => {
+        const poll = async () => {
+          if (Date.now() - startTime > MAX_WAIT_MS) {
+            reject(new Error("生成超时，请稍后刷新查看结果"));
+            return;
+          }
+          try {
+            const status = await tasksApi.getStatus(taskId);
+            const pct = Math.round(status.progress * 100);
+            setTaskProgress(status.message || `生成中... ${pct}%`);
+            if (status.status === "completed") { resolve(); return; }
+            if (status.status === "failed") { reject(new Error(status.error || "生成失败")); return; }
+          } catch {
+            // 轮询出错不中断，继续重试
+          }
+          setTimeout(poll, POLL_INTERVAL);
+        };
+        poll();
+      });
+
+      setGenDone(true);
+      setTaskProgress("");
+      await loadHistory();
       setShowGenPanel(false);
       toast("success", "简报生成成功");
-    } catch (err) { setError(err instanceof Error ? err.message : "生成失败"); }
-    finally { setLoading(false); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成失败");
+      setTaskProgress("");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleView = async (item: GeneratedContentListItem) => {
@@ -146,11 +181,16 @@ export default function DailyBrief() {
             </Button>
           </div>
           {error && <p className="mt-2 text-xs text-error">{error}</p>}
-          {result && (
+          {taskProgress && !error && (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-secondary">
+              <RefreshCw className="h-3 w-3 animate-spin" />
+              {taskProgress}
+            </p>
+          )}
+          {genDone && !loading && (
             <div className="mt-2 flex items-center gap-2">
               <CheckCircle2 className="h-3.5 w-3.5 text-success" />
               <span className="text-xs text-success">生成成功</span>
-              {result.email_sent && <span className="text-xs text-ink-tertiary">· 已发送邮件</span>}
             </div>
           )}
         </div>

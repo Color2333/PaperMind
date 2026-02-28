@@ -559,9 +559,9 @@ export interface DailyBriefRequest {
 }
 
 export interface DailyBriefResponse {
-  saved_path: string;
-  email_sent: boolean;
-  content_id?: string;
+  task_id: string;
+  status: string;
+  message: string;
 }
 
 /* ========== 生成内容 ========== */
