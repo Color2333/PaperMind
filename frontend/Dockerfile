@@ -25,10 +25,7 @@ RUN npm run build
 # ============================================================
 FROM nginx:alpine
 
-# 添加 .mjs 文件的 MIME type
-RUN echo "application/javascript mjs;" >> /etc/nginx/mime.types
-
-# 复制自定义 Nginx 配置
+# 复制自定义 Nginx 配置（已包含 .mjs MIME type）
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # 复制构建产物
