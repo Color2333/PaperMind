@@ -39,6 +39,9 @@ def upgrade() -> None:
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("meta", sa.JSON(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("paper_id", sa.String(36), nullable=True),
+        sa.Column("markdown", sa.Text(), nullable=False, server_default=""),
+        sa.Column("metadata_json", sa.JSON(), nullable=False, server_default="{}"),
         sa.ForeignKeyConstraint(
             ["conversation_id"], ["agent_conversations.id"], ondelete="CASCADE"
         ),
