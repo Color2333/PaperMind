@@ -1188,14 +1188,14 @@ class AgentMessageRepository:
         conversation_id: str,
         role: str,
         content: str,
-        metadata: dict | None = None,
+        meta: dict | None = None,
     ) -> AgentMessage:
         """创建消息"""
         msg = AgentMessage(
             conversation_id=conversation_id,
             role=role,
             content=content,
-            metadata=metadata,
+            meta=meta,
         )
         self.session.add(msg)
         self.session.flush()
