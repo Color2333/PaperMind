@@ -650,10 +650,18 @@ def _run_topic_wiki_task(
     progress_callback=None,
 ) -> dict:
     """后台执行 topic wiki 生成"""
+
+    # task_tracker 传入的 progress_callback 签名为 (msg, cur, tot)
+    # graph_service.topic_wiki 期望的签名为 (pct: float, msg: str)
+    # 做适配器转换
+    def _adapted_progress(pct: float, msg: str):
+        if progress_callback:
+            progress_callback(msg, int(pct * 100), 100)
+
     result = graph_service.topic_wiki(
         keyword=keyword,
         limit=limit,
-        progress_callback=progress_callback,
+        progress_callback=_adapted_progress,
     )
     with session_scope() as session:
         repo = GeneratedContentRepository(session)
