@@ -3,6 +3,7 @@
 从 PDF 中提取 Figure/Table/公式区域，送 Vision 模型解读
 @author Bamzc
 """
+
 from __future__ import annotations
 
 import base64
@@ -51,6 +52,7 @@ VISION_PROMPT_TABLE = """\
 @dataclass
 class ExtractedFigure:
     """从 PDF 中提取的图片"""
+
     page_number: int
     image_index: int
     image_bytes: bytes
@@ -62,6 +64,7 @@ class ExtractedFigure:
 @dataclass
 class FigureAnalysis:
     """图表解读结果"""
+
     page_number: int
     image_index: int
     image_type: str
@@ -78,7 +81,9 @@ class FigureService:
         self.llm = LLMClient()
 
     def extract_figures(
-        self, pdf_path: str, max_figures: int = 20,
+        self,
+        pdf_path: str,
+        max_figures: int = 20,
     ) -> list[ExtractedFigure]:
         """从 PDF 提取图片区域"""
         path = Path(pdf_path)
@@ -129,14 +134,16 @@ class FigureService:
                 # 推断类型
                 img_type = self._infer_type(caption, page_text)
 
-                figures.append(ExtractedFigure(
-                    page_number=page_idx + 1,
-                    image_index=img_idx,
-                    image_bytes=img_bytes,
-                    image_type=img_type,
-                    caption=caption,
-                    bbox=None,
-                ))
+                figures.append(
+                    ExtractedFigure(
+                        page_number=page_idx + 1,
+                        image_index=img_idx,
+                        image_bytes=img_bytes,
+                        image_type=img_type,
+                        caption=caption,
+                        bbox=None,
+                    )
+                )
 
         doc.close()
 
@@ -147,7 +154,9 @@ class FigureService:
         return figures
 
     def _extract_page_renders(
-        self, pdf_path: str, max_pages: int = 10,
+        self,
+        pdf_path: str,
+        max_pages: int = 10,
     ) -> list[ExtractedFigure]:
         """对包含图表内容的页面做整页高分辨率渲染"""
         try:
@@ -166,11 +175,14 @@ class FigureService:
             page_text = page.get_text("text").lower()
 
             # 只渲染包含图表/公式的页面
-            has_figure = bool(re.search(
-                r"(figure\s*\d|fig\.\s*\d|table\s*\d|tab\.\s*\d"
-                r"|equation\s*\d|algorithm\s*\d)",
-                page_text, re.IGNORECASE,
-            ))
+            has_figure = bool(
+                re.search(
+                    r"(figure\s*\d|fig\.\s*\d|table\s*\d|tab\.\s*\d"
+                    r"|equation\s*\d|algorithm\s*\d)",
+                    page_text,
+                    re.IGNORECASE,
+                )
+            )
             if not has_figure and page_idx > 1:
                 continue
 
@@ -182,14 +194,16 @@ class FigureService:
             caption = self._extract_caption(page.get_text("text"), page_idx + 1, 0)
             img_type = self._infer_type(caption, page.get_text("text"))
 
-            figures.append(ExtractedFigure(
-                page_number=page_idx + 1,
-                image_index=0,
-                image_bytes=img_bytes,
-                image_type=img_type,
-                caption=caption or f"Page {page_idx + 1}",
-                bbox=None,
-            ))
+            figures.append(
+                ExtractedFigure(
+                    page_number=page_idx + 1,
+                    image_index=0,
+                    image_bytes=img_bytes,
+                    image_type=img_type,
+                    caption=caption or f"Page {page_idx + 1}",
+                    bbox=None,
+                )
+            )
 
         doc.close()
         return figures
@@ -312,23 +326,22 @@ class FigureService:
                 analysis.image_path = str(fig_dir / img_filename)
                 logger.info(
                     "Analyzed %s on page %d: %s",
-                    fig.image_type, fig.page_number,
+                    fig.image_type,
+                    fig.page_number,
                     analysis.description[:80],
                 )
                 return analysis
             except Exception as exc:
                 logger.warning(
                     "Failed to analyze figure on page %d: %s",
-                    fig.page_number, exc,
+                    fig.page_number,
+                    exc,
                 )
                 return None
 
         results: list[FigureAnalysis] = []
         with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = {
-                pool.submit(_analyze_one, fig): fig
-                for fig in figures
-            }
+            futures = {pool.submit(_analyze_one, fig): fig for fig in figures}
             for future in as_completed(futures):
                 r = future.result()
                 if r is not None:
@@ -342,6 +355,7 @@ class FigureService:
     def _ensure_figure_dir(paper_id: UUID) -> Path:
         """创建论文图表存储目录"""
         from packages.config import get_settings
+
         base = get_settings().pdf_storage_root.parent / "figures" / str(paper_id)
         base.mkdir(parents=True, exist_ok=True)
         return base
@@ -351,34 +365,40 @@ class FigureService:
         """将解读结果持久化"""
         with session_scope() as session:
             session.execute(
-                ImageAnalysis.__table__.delete().where(
-                    ImageAnalysis.paper_id == str(paper_id)
-                )
+                ImageAnalysis.__table__.delete().where(ImageAnalysis.paper_id == str(paper_id))
             )
             for a in analyses:
-                session.add(ImageAnalysis(
-                    id=str(uuid4()),
-                    paper_id=str(paper_id),
-                    page_number=a.page_number,
-                    image_index=a.image_index,
-                    image_type=a.image_type,
-                    caption=a.caption,
-                    description=a.description,
-                    image_path=a.image_path,
-                    bbox_json=a.bbox,
-                ))
+                session.add(
+                    ImageAnalysis(
+                        id=str(uuid4()),
+                        paper_id=str(paper_id),
+                        page_number=a.page_number,
+                        image_index=a.image_index,
+                        image_type=a.image_type,
+                        caption=a.caption,
+                        description=a.description,
+                        image_path=a.image_path,
+                        bbox_json=a.bbox,
+                    )
+                )
 
     @classmethod
     def get_paper_analyses(cls, paper_id: UUID) -> list[dict]:
         """获取论文已有的图表解读"""
         with session_scope() as session:
             from sqlalchemy import select
+
             q = (
                 select(ImageAnalysis)
                 .where(ImageAnalysis.paper_id == str(paper_id))
                 .order_by(ImageAnalysis.page_number, ImageAnalysis.image_index)
             )
-            rows = list(session.execute(q).scalars())
+            try:
+                result = session.execute(q)
+                rows = list(result.scalars().all())
+            except Exception as exc:
+                logger.warning("Failed to fetch image_analyses for %s: %s", str(paper_id)[:8], exc)
+                rows = []
             return [
                 {
                     "id": r.id,
