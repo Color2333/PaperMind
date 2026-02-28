@@ -87,11 +87,13 @@ class PaperPipelines:
         total_fetched = 0
         batch_size = 20
         max_pages = 5  # 最多抓取 5 批（100 篇），直到找到 max_results 篇新论文
+        total_arxiv_tokens = 0.0
 
         with session_scope() as session:
             repo = PaperRepository(session)
             run_repo = PipelineRunRepository(session)
             action_repo = ActionRepository(session)
+            trace_repo = PromptTraceRepository(session)
             run = run_repo.start("ingest_arxiv", decision_note=f"query={query}")
 
             try:
