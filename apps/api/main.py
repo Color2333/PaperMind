@@ -1061,6 +1061,46 @@ def serve_paper_pdf(paper_id: UUID) -> FileResponse:
     )
 
 
+@app.get("/papers/proxy-arxiv-pdf/{arxiv_id:path}")
+async def proxy_arxiv_pdf(arxiv_id: str):
+    """代理访问 arXiv PDF（解决 CORS 问题）"""
+    import httpx
+
+    # 清理 arxiv_id（移除版本号）
+    clean_id = arxiv_id.split("v")[0]
+    arxiv_url = f"https://arxiv.org/pdf/{clean_id}.pdf"
+
+    try:
+        # 使用后端服务器访问 arXiv（绕过 CORS）
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(arxiv_url, follow_redirects=True)
+
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"arXiv 论文不存在：{clean_id}")
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=500, detail=f"arXiv 访问失败：{response.status_code}"
+                )
+
+            # 返回 PDF 内容
+            from fastapi.responses import Response
+
+            return Response(
+                content=response.content,
+                media_type="application/pdf",
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Content-Disposition": f'inline; filename="{clean_id}.pdf"',
+                    "Cache-Control": "public, max-age=3600",
+                },
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="arXiv 请求超时")
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=500, detail=f"arXiv 访问失败：{str(exc)}")
+
+
 @app.post("/papers/{paper_id}/ai/explain")
 def ai_explain_text(paper_id: UUID, body: AIExplainReq) -> dict:
     """AI 解释/翻译选中文本"""

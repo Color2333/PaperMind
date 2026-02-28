@@ -197,8 +197,8 @@ export const paperApi = {
   reasoningAnalysis: (id: string) =>
     post<ReasoningAnalysisResponse>(`/papers/${id}/reasoning`),
   pdfUrl: (id: string, arxivId?: string) =>
-    arxivId 
-      ? `https://arxiv.org/pdf/${arxivId}.pdf`  // arXiv 在线链接
+    arxivId && !arxivId.startsWith("ss-")
+      ? `${API_BASE_URL}/papers/proxy-arxiv-pdf/${arxivId}`  // 通过后端代理访问 arXiv
       : `${API_BASE_URL}/papers/${id}/pdf`,  // 本地 PDF
   downloadPdf: (id: string) =>
     post<{ status: string; pdf_path: string }>(`/papers/${id}/download-pdf`),
