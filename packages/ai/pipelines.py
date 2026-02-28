@@ -78,7 +78,10 @@ class PaperPipelines:
         action_type: ActionType = ActionType.manual_collect,
         sort_by: str = "submittedDate",
     ) -> tuple[int, list[str], int]:
-        """搜索 arXiv 并入库，upsert 去重。返回 (total_count, inserted_ids, new_papers_count)"""
+        """搜索 arXiv 并入库，upsert 去重。返回 (total_count, inserted_ids, new_papers_count)
+
+        智能递归抓取：如果前 N 篇有重复，继续抓取更早的论文，直到找到 max_results 篇新论文
+        """
         inserted_ids: list[str] = []
         new_papers_count = 0
         total_fetched = 0
@@ -94,10 +97,17 @@ class PaperPipelines:
             try:
                 # 分批抓取，直到找到足够的新论文或达到最大页数
                 for page in range(max_pages):
+                    if new_papers_count >= max_results:
+                        break  # 已找到足够的新论文
+
                     start = page * batch_size
+                    # 计算本批需要抓取的数量（避免超目标）
+                    needed = max_results - new_papers_count
+                    this_batch = min(batch_size, needed + 20)  # 多抓 20 篇作为缓冲
+
                     papers = self.arxiv.fetch_latest(
                         query=query,
-                        max_results=batch_size,
+                        max_results=this_batch,
                         sort_by=sort_by,
                         start=start,
                     )
@@ -109,31 +119,28 @@ class PaperPipelines:
                     # 提前检查哪些论文已存在
                     existing_arxiv_ids = repo.list_existing_arxiv_ids([p.arxiv_id for p in papers])
 
-                    # 处理新论文
+                    # 只处理新论文
                     for paper in papers:
                         is_new = paper.arxiv_id not in existing_arxiv_ids
-                        saved = self._save_paper(repo, paper, topic_id)
                         if is_new:
+                            saved = self._save_paper(repo, paper, topic_id)
                             new_papers_count += 1
-                        inserted_ids.append(saved.id)
+                            inserted_ids.append(saved.id)
 
-                    # 如果已找到足够的新论文，停止抓取
-                    if new_papers_count >= max_results:
-                        logger.info(
-                            "已找到 %d 篇新论文（共抓取 %d 篇，%d 篇重复）",
-                            new_papers_count,
-                            total_fetched,
-                            total_fetched - new_papers_count,
-                        )
-                        break
-                    else:
-                        logger.info(
-                            "第 %d 批：找到 %d 篇新论文（累计 %d/%d），继续抓取...",
-                            page + 1,
-                            len(papers) - len(existing_arxiv_ids),
-                            new_papers_count,
-                            max_results,
-                        )
+                            # 达到目标就停止
+                            if new_papers_count >= max_results:
+                                break
+
+                    # 日志
+                    new_in_batch = len(papers) - len(existing_arxiv_ids)
+                    logger.info(
+                        "第 %d 批：抓取 %d 篇，新论文 %d 篇（累计 %d/%d）",
+                        page + 1,
+                        len(papers),
+                        new_in_batch,
+                        new_papers_count,
+                        max_results,
+                    )
 
                 if inserted_ids:
                     action_repo.create_action(
@@ -151,6 +158,12 @@ class PaperPipelines:
                         args=(inserted_ids,),
                         daemon=True,
                     ).start()
+
+                logger.info(
+                    "✅ 抓取完成：共 %d 篇新论文（从 %d 篇中筛选）",
+                    new_papers_count,
+                    total_fetched,
+                )
                 return len(inserted_ids), inserted_ids, new_papers_count
             except Exception as exc:
                 run_repo.fail(run.id, str(exc))
