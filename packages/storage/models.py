@@ -306,49 +306,6 @@ class AgentMessage(Base):
     )
 
 
-# ========== Agent 对话相关 ==========
-
-
-class AgentConversation(Base):
-    """Agent 对话会话"""
-
-    __tablename__ = "agent_conversations"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    title: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=_utcnow, nullable=False, index=True
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
-    )
-
-
-class AgentMessage(Base):
-    """Agent 对话消息"""
-
-    __tablename__ = "agent_messages"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    conversation_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    role: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,  # user/assistant/system
-    )
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=_utcnow, nullable=False, index=True
-    )
-    content_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    title: Mapped[str] = mapped_column(String(512), nullable=False)
-    keyword: Mapped[str | None] = mapped_column(String(256), nullable=True)
     paper_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("papers.id", ondelete="SET NULL"),
