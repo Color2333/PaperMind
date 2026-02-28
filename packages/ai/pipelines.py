@@ -58,16 +58,27 @@ class PaperPipelines:
         self.vision = VisionPdfReader()
         self.pdf_extractor = PdfTextExtractor()
 
-    def _save_paper(self, repo, paper, topic_id=None):
-        """入库 + 下载 PDF 的公共逻辑"""
+    def _save_paper(self, repo, paper, topic_id=None, download_pdf=False):
+        """入库 + 下载 PDF 的公共逻辑
+
+        Args:
+            repo: PaperRepository
+            paper: PaperCreate 数据
+            topic_id: 可选的主题 ID
+            download_pdf: 是否下载 PDF（默认 False，只在精读时下载）
+        """
         saved = repo.upsert_paper(paper)
         if topic_id:
             repo.link_to_topic(saved.id, topic_id)
-        try:
-            pdf_path = self.arxiv.download_pdf(paper.arxiv_id)
-            repo.set_pdf_path(saved.id, pdf_path)
-        except Exception as exc:
-            logger.warning("PDF download failed for %s: %s", paper.arxiv_id, exc)
+
+        # 只在明确需要时才下载 PDF
+        if download_pdf:
+            try:
+                pdf_path = self.arxiv.download_pdf(paper.arxiv_id)
+                repo.set_pdf_path(saved.id, pdf_path)
+            except Exception as exc:
+                logger.warning("PDF download failed for %s: %s", paper.arxiv_id, exc)
+
         return saved
 
     def ingest_arxiv(
