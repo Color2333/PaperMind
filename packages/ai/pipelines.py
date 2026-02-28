@@ -315,12 +315,22 @@ class PaperPipelines:
                 raise
 
     def embed_paper(self, paper_id: UUID) -> None:
+        """向量化嵌入（带追踪）"""
+        started = time.perf_counter()
         with session_scope() as session:
-            paper_repo = PaperRepository(session)
-            paper = paper_repo.get_by_id(paper_id)
-            content = f"{paper.title}\n{paper.abstract}"
-            vector = self.llm.embed_text(content)
-            paper_repo.update_embedding(paper_id, vector)
+            run_repo = PipelineRunRepository(session)
+            run = run_repo.start("embed_paper", paper_id=paper_id)
+            try:
+                paper_repo = PaperRepository(session)
+                paper = paper_repo.get_by_id(paper_id)
+                content = f"{paper.title}\n{paper.abstract}"
+                vector = self.llm.embed_text(content)
+                paper_repo.update_embedding(paper_id, vector)
+                elapsed = int((time.perf_counter() - started) * 1000)
+                run_repo.finish(run.id, elapsed_ms=elapsed)
+            except Exception as exc:
+                run_repo.fail(run.id, str(exc))
+                raise
 
     def _build_skim_structured(
         self,
