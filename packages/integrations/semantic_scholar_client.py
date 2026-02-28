@@ -3,6 +3,7 @@ Semantic Scholar API 客户端
 连接复用 + 429 重试 + 日志
 @author Bamzc
 """
+
 from __future__ import annotations
 
 import logging
@@ -14,8 +15,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _RETRY_CODES = {429, 500, 502, 503}
-_MAX_RETRIES = 5
-_BASE_DELAY = 2.0
+_MAX_RETRIES = 8
+_BASE_DELAY = 3.0
+_MAX_DELAY = 30.0
 
 
 @dataclass
@@ -28,6 +30,7 @@ class CitationEdge:
 @dataclass
 class RichCitationInfo:
     """丰富的引用/参考文献信息"""
+
     scholar_id: str | None
     title: str
     year: int | None = None
@@ -73,11 +76,14 @@ class SemanticScholarClient:
             try:
                 resp = self.client.get(path, params=params)
                 if resp.status_code in _RETRY_CODES:
-                    delay = min(_BASE_DELAY * (2 ** attempt), 15.0)
+                    delay = min(_BASE_DELAY * (2**attempt), _MAX_DELAY)
                     logger.warning(
                         "Scholar API %d for %s, retry %d/%d in %.1fs",
-                        resp.status_code, path, attempt + 1,
-                        _MAX_RETRIES, delay,
+                        resp.status_code,
+                        path,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        delay,
                     )
                     time.sleep(delay)
                     continue
@@ -95,17 +101,26 @@ class SemanticScholarClient:
         return None
 
     def fetch_edges_by_title(
-        self, title: str, limit: int = 8, *, arxiv_id: str | None = None,
+        self,
+        title: str,
+        limit: int = 8,
+        *,
+        arxiv_id: str | None = None,
     ) -> list[CitationEdge]:
         paper_id = self.resolve_paper_id(arxiv_id=arxiv_id, title=title)
         if not paper_id:
             return []
         return self._fetch_edges(
-            paper_id=paper_id, source_title=title, limit=limit,
+            paper_id=paper_id,
+            source_title=title,
+            limit=limit,
         )
 
     def resolve_paper_id(
-        self, *, arxiv_id: str | None = None, title: str | None = None,
+        self,
+        *,
+        arxiv_id: str | None = None,
+        title: str | None = None,
     ) -> str | None:
         """优先用 arxiv_id 直接定位，退而求其次标题搜索"""
         if arxiv_id:
@@ -133,11 +148,15 @@ class SemanticScholarClient:
         return items[0].get("paperId") if items else None
 
     def _fetch_edges(
-        self, paper_id: str, source_title: str, limit: int = 8,
+        self,
+        paper_id: str,
+        source_title: str,
+        limit: int = 8,
     ) -> list[CitationEdge]:
         fields = "references.title,citations.title"
         payload = self._get(
-            f"/paper/{paper_id}", params={"fields": fields},
+            f"/paper/{paper_id}",
+            params={"fields": fields},
         )
         if not payload:
             return []
@@ -145,39 +164,43 @@ class SemanticScholarClient:
         for ref in (payload.get("references") or [])[:limit]:
             t = (ref.get("title") or "").strip()
             if t:
-                edges.append(CitationEdge(
-                    source_title=source_title,
-                    target_title=t, context="reference",
-                ))
+                edges.append(
+                    CitationEdge(
+                        source_title=source_title,
+                        target_title=t,
+                        context="reference",
+                    )
+                )
         for cit in (payload.get("citations") or [])[:limit]:
             t = (cit.get("title") or "").strip()
             if t:
-                edges.append(CitationEdge(
-                    source_title=t,
-                    target_title=source_title, context="citation",
-                ))
+                edges.append(
+                    CitationEdge(
+                        source_title=t,
+                        target_title=source_title,
+                        context="citation",
+                    )
+                )
         return edges
 
     def fetch_paper_metadata(
-        self, title: str, *, arxiv_id: str | None = None,
+        self,
+        title: str,
+        *,
+        arxiv_id: str | None = None,
     ) -> dict | None:
         paper_id = self.resolve_paper_id(arxiv_id=arxiv_id, title=title)
         if not paper_id:
             return None
-        fields = (
-            "title,year,citationCount,influentialCitationCount,"
-            "venue,fieldsOfStudy,tldr"
-        )
+        fields = "title,year,citationCount,influentialCitationCount,venue,fieldsOfStudy,tldr"
         data = self._get(
-            f"/paper/{paper_id}", params={"fields": fields},
+            f"/paper/{paper_id}",
+            params={"fields": fields},
         )
         if not data:
             return None
         tldr_obj = data.get("tldr")
-        tldr_text = (
-            tldr_obj.get("text")
-            if isinstance(tldr_obj, dict) else None
-        )
+        tldr_text = tldr_obj.get("text") if isinstance(tldr_obj, dict) else None
         return {
             "title": data.get("title"),
             "year": data.get("year"),
@@ -188,9 +211,7 @@ class SemanticScholarClient:
             "tldr": tldr_text,
         }
 
-    def fetch_batch_metadata(
-        self, titles: list[str], max_papers: int = 10
-    ) -> list[dict]:
+    def fetch_batch_metadata(self, titles: list[str], max_papers: int = 10) -> list[dict]:
         results: list[dict] = []
         for title in titles[:max_papers]:
             meta = self.fetch_paper_metadata(title)
@@ -220,7 +241,8 @@ class SemanticScholarClient:
             "citations.externalIds,citations.abstract"
         )
         payload = self._get(
-            f"/paper/{paper_id}", params={"fields": fields},
+            f"/paper/{paper_id}",
+            params={"fields": fields},
         )
         if not payload:
             return []
@@ -231,31 +253,35 @@ class SemanticScholarClient:
             t = (ref.get("title") or "").strip()
             if not t:
                 continue
-            results.append(RichCitationInfo(
-                scholar_id=ref.get("paperId"),
-                title=t,
-                year=ref.get("year"),
-                venue=(ref.get("venue") or "").strip() or None,
-                citation_count=ref.get("citationCount"),
-                arxiv_id=_extract_arxiv_id(ref.get("externalIds")),
-                abstract=(ref.get("abstract") or "")[:500] or None,
-                direction="reference",
-            ))
+            results.append(
+                RichCitationInfo(
+                    scholar_id=ref.get("paperId"),
+                    title=t,
+                    year=ref.get("year"),
+                    venue=(ref.get("venue") or "").strip() or None,
+                    citation_count=ref.get("citationCount"),
+                    arxiv_id=_extract_arxiv_id(ref.get("externalIds")),
+                    abstract=(ref.get("abstract") or "")[:500] or None,
+                    direction="reference",
+                )
+            )
 
         for cit in (payload.get("citations") or [])[:cite_limit]:
             t = (cit.get("title") or "").strip()
             if not t:
                 continue
-            results.append(RichCitationInfo(
-                scholar_id=cit.get("paperId"),
-                title=t,
-                year=cit.get("year"),
-                venue=(cit.get("venue") or "").strip() or None,
-                citation_count=cit.get("citationCount"),
-                arxiv_id=_extract_arxiv_id(cit.get("externalIds")),
-                abstract=(cit.get("abstract") or "")[:500] or None,
-                direction="citation",
-            ))
+            results.append(
+                RichCitationInfo(
+                    scholar_id=cit.get("paperId"),
+                    title=t,
+                    year=cit.get("year"),
+                    venue=(cit.get("venue") or "").strip() or None,
+                    citation_count=cit.get("citationCount"),
+                    arxiv_id=_extract_arxiv_id(cit.get("externalIds")),
+                    abstract=(cit.get("abstract") or "")[:500] or None,
+                    direction="citation",
+                )
+            )
 
         return results
 
@@ -266,12 +292,13 @@ class SemanticScholarClient:
             "externalIds,authors,publicationDate,fieldsOfStudy"
         )
         data = self._get(
-            f"/paper/{scholar_id}", params={"fields": fields},
+            f"/paper/{scholar_id}",
+            params={"fields": fields},
         )
         if not data:
             return None
         authors = []
-        for a in (data.get("authors") or []):
+        for a in data.get("authors") or []:
             name = (a.get("name") or "").strip()
             if name:
                 authors.append(name)
