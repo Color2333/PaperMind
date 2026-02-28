@@ -9,13 +9,15 @@ import math
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.orm import Session
 
 from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
 from packages.domain.schemas import DeepDiveReport, PaperCreate, SkimReport
 from packages.storage.models import (
     ActionPaper,
+    AgentConversation,
+    AgentMessage,
     AnalysisReport,
     Citation,
     CollectionAction,
@@ -1217,29 +1219,6 @@ class AgentMessageRepository:
         result = self.session.execute(q)
         self.session.flush()
         return result.rowcount
-
-    def delete(self, config_id: str) -> bool:
-        """删除邮箱配置"""
-        config = self.get_by_id(config_id)
-        if config:
-            self.session.delete(config)
-            return True
-        return False
-
-    def set_active(self, config_id: str) -> EmailConfig | None:
-        """激活指定配置，取消其他配置的激活状态"""
-        # 取消所有激活状态
-        self.session.execute(select(EmailConfig).where(EmailConfig.is_active == True))
-        all_configs = self.list_all()
-        for cfg in all_configs:
-            cfg.is_active = False
-
-        # 激活指定配置
-        config = self.get_by_id(config_id)
-        if config:
-            config.is_active = True
-            self.session.flush()
-        return config
 
 
 class DailyReportConfigRepository:
