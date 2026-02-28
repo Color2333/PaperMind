@@ -32,7 +32,7 @@ services:
       - APP_ENV=production
       - API_HOST=0.0.0.0
       - API_PORT=8000
-      - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002
+      - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002,https://pm.vibingu.cn,http://pm.vibingu.cn
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
