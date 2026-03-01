@@ -3,10 +3,12 @@
  * 切换页面不会丢失 SSE 流和进度
  * @author Bamzc
  */
-import { useState, useRef, useEffect, useCallback, memo } from "react";
+import { useState, useRef, useEffect, useCallback, memo, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
-import Markdown from "@/components/Markdown";
 import { cn } from "@/lib/utils";
+
+// Markdown 含 katex，懒加载避免首屏拉取大 chunk
+const Markdown = lazy(() => import("@/components/Markdown"));
 import {
   Send,
   CheckCircle2,
@@ -354,7 +356,9 @@ export default function Agent() {
               />
             ) : (
               <div className="prose-custom">
-                <Markdown>{canvas.markdown}</Markdown>
+                <Suspense fallback={<div className="h-4 animate-pulse rounded bg-surface" />}>
+                  <Markdown>{canvas.markdown}</Markdown>
+                </Suspense>
               </div>
             )}
           </div>
@@ -539,7 +543,9 @@ const AssistantMessage = memo(function AssistantMessage({
       ) : (
         <>
           <div className="prose-custom text-sm leading-relaxed text-ink">
-            <Markdown>{content}</Markdown>
+            <Suspense fallback={<div className="h-4 animate-pulse rounded bg-surface" />}>
+              <Markdown>{content}</Markdown>
+            </Suspense>
           </div>
           <div className="mt-1 flex opacity-0 transition-opacity group-hover:opacity-100">
             <button
@@ -971,7 +977,9 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
           </div>
         )}
         <div className="prose prose-sm dark:prose-invert max-w-none text-[12px] leading-relaxed">
-          <Markdown>{String(data.markdown)}</Markdown>
+          <Suspense fallback={<div className="h-4 animate-pulse rounded bg-surface" />}>
+            <Markdown>{String(data.markdown)}</Markdown>
+          </Suspense>
         </div>
         {evidence.length > 0 && (
           <div className="border-t border-border-light pt-2">
@@ -1156,7 +1164,9 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
   if (toolName === "writing_assist" && data.content) {
     return (
       <div className="prose prose-sm dark:prose-invert max-w-none text-[12px] max-h-48 overflow-y-auto">
-        <Markdown>{String(data.content)}</Markdown>
+        <Suspense fallback={<div className="h-4 animate-pulse rounded bg-surface" />}>
+          <Markdown>{String(data.content)}</Markdown>
+        </Suspense>
       </div>
     );
   }
@@ -1321,7 +1331,9 @@ const ArtifactCard = memo(function ArtifactCard({
               />
             ) : (
               <div className="prose-custom text-sm">
-                <Markdown>{content}</Markdown>
+                <Suspense fallback={<div className="h-4 animate-pulse rounded bg-surface" />}>
+                  <Markdown>{content}</Markdown>
+                </Suspense>
               </div>
             )}
           </div>

@@ -21,10 +21,31 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          "react-vendor": ["react", "react-dom", "react-router-dom"],
-          "markdown": ["react-markdown", "remark-gfm", "remark-math", "rehype-katex", "katex"],
-          "icons": ["lucide-react"],
+        manualChunks(id) {
+          // React 核心
+          if (id.includes("node_modules/react/") || id.includes("node_modules/react-dom/") || id.includes("node_modules/react-router-dom/") || id.includes("node_modules/scheduler/")) {
+            return "react-vendor";
+          }
+          // KaTeX 单独切（体积最大，且只有 LaTeX 内容才用到）
+          if (id.includes("node_modules/katex/")) {
+            return "katex";
+          }
+          // Markdown 解析器（不含 katex）
+          if (id.includes("node_modules/react-markdown/") || id.includes("node_modules/remark") || id.includes("node_modules/rehype") || id.includes("node_modules/unified/") || id.includes("node_modules/mdast") || id.includes("node_modules/hast") || id.includes("node_modules/micromark") || id.includes("node_modules/vfile") || id.includes("node_modules/bail/") || id.includes("node_modules/is-plain-obj/") || id.includes("node_modules/trough/") || id.includes("node_modules/extend/")) {
+            return "markdown";
+          }
+          // 图标库
+          if (id.includes("node_modules/lucide-react/")) {
+            return "icons";
+          }
+          // D3 / 图谱
+          if (id.includes("node_modules/d3") || id.includes("node_modules/@nivo") || id.includes("node_modules/force-graph") || id.includes("node_modules/three/")) {
+            return "graph-vendor";
+          }
+          // DOMPurify
+          if (id.includes("node_modules/dompurify/")) {
+            return "dompurify";
+          }
         },
       },
     },

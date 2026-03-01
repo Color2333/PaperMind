@@ -2,13 +2,15 @@
  * Paper Detail - 论文详情（重构版：进度面板 + Tab 化报告 + 统一布局）
  * @author Bamzc
  */
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardHeader, Button, Badge, Empty } from "@/components/ui";
 import { Tabs } from "@/components/ui/Tabs";
 import { PaperDetailSkeleton } from "@/components/Skeleton";
-import Markdown from "@/components/Markdown";
-import PdfReader from "@/components/PdfReader";
+
+// 重型依赖懒加载，只在真正需要时加载
+const Markdown = lazy(() => import("@/components/Markdown"));
+const PdfReader = lazy(() => import("@/components/PdfReader"));
 import { useToast } from "@/contexts/ToastContext";
 import { paperApi, pipelineApi, type FigureAnalysisItem } from "@/services/api";
 import type { Paper, SkimReport, DeepDiveReport, ReasoningChainResult } from "@/types";
@@ -549,7 +551,9 @@ export default function PaperDetail() {
                     ) : null}
                   />
                   <div className="prose prose-sm max-w-none text-ink-secondary dark:prose-invert">
-                    <Markdown>{savedSkim.summary_md}</Markdown>
+                    <Suspense fallback={<div className="h-20 animate-pulse rounded bg-surface" />}>
+                      <Markdown>{savedSkim.summary_md}</Markdown>
+                    </Suspense>
                   </div>
                 </Card>
               ) : skimReport ? (
@@ -594,7 +598,9 @@ export default function PaperDetail() {
                 <Card className="rounded-2xl border-blue-500/20">
                   <CardHeader title="精读报告" />
                   <div className="prose prose-sm max-w-none text-ink-secondary dark:prose-invert">
-                    <Markdown>{savedDeep.deep_dive_md}</Markdown>
+                    <Suspense fallback={<div className="h-20 animate-pulse rounded bg-surface" />}>
+                      <Markdown>{savedDeep.deep_dive_md}</Markdown>
+                    </Suspense>
                   </div>
                 </Card>
               ) : deepReport ? (
@@ -688,14 +694,16 @@ export default function PaperDetail() {
         </div>
       </div>
 
-      {/* PDF 阅读器 - 支持本地 PDF 或 arXiv 在线链接 */}
+      {/* PDF 阅读器 - 支持本地 PDF 或 arXiv 在线链接，懒加载避免首屏加载 pdf.js */}
       {readerOpen && (paper.pdf_path || paper.arxiv_id) && (
-        <PdfReader
-          paperId={id!}
-          paperTitle={paper.title}
-          paperArxivId={paper.arxiv_id}
-          onClose={() => setReaderOpen(false)}
-        />
+        <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>}>
+          <PdfReader
+            paperId={id!}
+            paperTitle={paper.title}
+            paperArxivId={paper.arxiv_id}
+            onClose={() => setReaderOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );
@@ -780,7 +788,9 @@ function FigureCard({ figure, index, paperId }: { figure: FigureAnalysisItem; in
                 <Sparkles className="h-3 w-3" /> AI 解读
               </div>
               <div className="prose prose-sm max-w-none text-ink-secondary dark:prose-invert">
-                <Markdown>{figure.description}</Markdown>
+                <Suspense fallback={<div className="h-8 animate-pulse rounded bg-surface" />}>
+                  <Markdown>{figure.description}</Markdown>
+                </Suspense>
               </div>
             </div>
           </div>
