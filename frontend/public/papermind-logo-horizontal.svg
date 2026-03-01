@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 64" width="280" height="64">
+  <defs>
+    <style>
+      .line {
+        fill: none;
+        stroke: #C4663C;
+        stroke-width: 6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .text {
+        font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 28px;
+        font-weight: 700;
+        fill: #1A1612;
+        letter-spacing: -0.5px;
+      }
+    </style>
+  </defs>
+
+  <g transform="translate(12, 12) scale(0.4)">
+    <line x1="50" y1="85" x2="50" y2="25" class="line" />
+    <path d="M 50 85 C 15 85, 10 65, 15 45 C 20 20, 40 15, 50 25" class="line" />
+    <path d="M 50 85 C 85 85, 90 65, 85 45 C 80 20, 60 15, 50 25" class="line" />
+    <path d="M 50 65 C 30 65, 25 50, 30 40 C 35 30, 45 25, 50 35" class="line" />
+    <path d="M 50 65 C 70 65, 75 50, 70 40 C 65 30, 55 25, 50 35" class="line" />
+  </g>
+
+  <text x="64" y="42" class="text">PaperMind</text>
+</svg>

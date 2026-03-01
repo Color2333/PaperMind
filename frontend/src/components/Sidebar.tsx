@@ -1,6 +1,6 @@
 /**
  * 侧边栏 - AI 应用风格：图标网格 + 对话历史 + 设置弹窗
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
@@ -9,6 +9,7 @@ import { useConversationCtx } from "@/contexts/ConversationContext";
 import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
 import { groupByDate } from "@/hooks/useConversations";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import LogoIcon from "@/assets/logo-icon.svg?react";
 
 // 1550 行的设置弹窗，只在用户点击设置按钮时才加载
 const SettingsDialog = lazy(() => import("./SettingsDialog").then(m => ({ default: m.SettingsDialog })));
@@ -17,7 +18,6 @@ import {
   Network,
   BookOpen,
   Newspaper,
-  Sparkles,
   Moon,
   Sun,
   Plus,
@@ -141,9 +141,7 @@ export default function Sidebar() {
         {/* Logo + 新建对话 */}
         <div className="px-3 pt-4 pb-2">
           <div className="mb-3 flex items-center gap-2.5 px-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary">
-              <Sparkles className="h-3.5 w-3.5 text-white" />
-            </div>
+            <LogoIcon className="h-7 w-7 text-primary" />
             <span className="text-base font-semibold tracking-tight text-ink">
               PaperMind
             </span>

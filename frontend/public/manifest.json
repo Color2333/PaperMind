@@ -1,0 +1,17 @@
+{
+  "name": "PaperMind",
+  "short_name": "PaperMind",
+  "description": "AI 驱动的学术论文研究平台",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF9F6",
+  "theme_color": "#C4663C",
+  "icons": [
+    {
+      "src": "/papermind-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
