@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 from jinja2 import Template
 from packages.config import get_settings
+from packages.timezone import user_date_str
 
 from packages.integrations.notifier import NotificationService
 from packages.storage.db import session_scope
@@ -256,7 +257,7 @@ class DailyBriefService:
 
         return DAILY_TEMPLATE.render(
             site_url=settings.site_url,
-            date=datetime.now(UTC).strftime("%Y-%m-%d"),
+            date=user_date_str(),
             total_papers=summary["total_papers"],
             today_new=summary["today_new"],
             week_new=summary["week_new"],

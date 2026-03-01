@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Callable
 
 from packages.config import get_settings
+from packages.timezone import user_date_str
 from packages.domain.exceptions import ConfigError, ServiceUnavailableError
 from packages.domain.service_base import ServiceBase
 from packages.storage.db import session_scope
@@ -36,7 +37,7 @@ _BRIEF_CACHE_TTL = get_settings().brief_cache_ttl
 
 def _get_cached_html() -> str | None:
     """获取缓存的简报 HTML（同一天、5分钟内有效）"""
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    today = user_date_str()
     with _brief_cache_lock:
         entry = _brief_cache.get(today)
         if entry and (time.monotonic() - entry[0]) < _BRIEF_CACHE_TTL:
@@ -46,7 +47,7 @@ def _get_cached_html() -> str | None:
 
 def _set_cached_html(html: str) -> None:
     """缓存简报 HTML"""
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    today = user_date_str()
     with _brief_cache_lock:
         _brief_cache.clear()  # 只保留当天
         _brief_cache[today] = (time.monotonic(), html)

@@ -220,15 +220,19 @@ class PaperRepository:
 
     def folder_stats(self) -> dict:
         """返回文件夹统计：按主题、收藏、最近、未分类"""
+        from packages.timezone import user_today_start_utc, utc_offset_hours
+
         total = self.count_all()
         fav_q = select(func.count()).select_from(Paper).where(Paper.favorited == True)  # noqa: E712
         favorites = self.session.execute(fav_q).scalar() or 0
 
-        now = datetime.now(UTC)
+        # "最近 7 天" 用用户时区的今天 0 点往前推 7 天
+        user_today_utc = user_today_start_utc()
+        week_start_utc = user_today_utc - timedelta(days=7)
         recent_q = (
             select(func.count())
             .select_from(Paper)
-            .where(Paper.created_at >= now - timedelta(days=7))
+            .where(Paper.created_at >= week_start_utc)
         )
         recent_7d = self.session.execute(recent_q).scalar() or 0
 
@@ -256,9 +260,12 @@ class PaperRepository:
         status_rows = self.session.execute(status_q).all()
         by_status = {r[0].value: r[1] for r in status_rows}
 
-        # 按日期分组（最近 30 天，每天的论文数）
-        date_expr = func.date(Paper.created_at)
-        since_30d = now - timedelta(days=30)
+        # 按日期分组（最近 30 天），用用户时区偏移
+        # SQLite: datetime(created_at, '+N hours') 将 UTC 转为用户本地时间再取 date
+        offset_h = utc_offset_hours()
+        offset_str = f"{offset_h:+.0f} hours"
+        date_expr = func.date(func.datetime(Paper.created_at, offset_str))
+        since_30d = user_today_utc - timedelta(days=30)
         date_q = (
             select(date_expr.label("d"), func.count().label("c"))
             .where(Paper.created_at >= since_30d)

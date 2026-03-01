@@ -80,7 +80,8 @@ def iso_dt(dt: datetime | None) -> str | None:
 
 
 def brief_date() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
+    from packages.timezone import user_date_str
+    return user_date_str()
 
 
 def paper_list_response(papers: list, repo: PaperRepository) -> dict:

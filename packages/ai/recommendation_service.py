@@ -215,11 +215,10 @@ class TrendService:
         hit = _cached("today_summary")
         if hit is not None:
             return hit
-        now = datetime.now(UTC)
-        today_start = now.replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        week_start = now - timedelta(days=7)
+        # 用用户时区的"今天 0:00"作为起始点，转为 UTC 与数据库比较
+        from packages.timezone import user_today_start_utc
+        today_start = user_today_start_utc()
+        week_start = today_start - timedelta(days=7)
 
         with session_scope() as session:
             repo = PaperRepository(session)
