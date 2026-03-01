@@ -65,9 +65,48 @@ from packages.storage.repositories import (
 )
 
 from packages.logging_setup import setup_logging
+from starlette.middleware.gzip import GZipMiddleware
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+
+# ---------- 轻量内存缓存（TTL，线程安全） ----------
+
+import threading as _threading
+from typing import Any as _Any
+
+
+class _TTLCache:
+    """简单的 TTL 内存缓存，避免引入 cachetools 依赖"""
+
+    def __init__(self):
+        self._store: dict[str, tuple[float, _Any]] = {}
+        self._lock = _threading.Lock()
+
+    def get(self, key: str) -> _Any:
+        with self._lock:
+            entry = self._store.get(key)
+            if entry and time.time() < entry[0]:
+                return entry[1]
+            return None
+
+    def set(self, key: str, value: _Any, ttl: float):
+        with self._lock:
+            self._store[key] = (time.time() + ttl, value)
+
+    def invalidate(self, key: str):
+        with self._lock:
+            self._store.pop(key, None)
+
+    def invalidate_prefix(self, prefix: str):
+        with self._lock:
+            keys = [k for k in self._store if k.startswith(prefix)]
+            for k in keys:
+                del self._store[k]
+
+
+_cache = _TTLCache()
 
 
 def _get_paper_title(paper_id: UUID) -> str | None:
@@ -116,6 +155,7 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
 app.add_middleware(RequestLogMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # 压缩 >1KB 的 API 响应
 
 
 @app.exception_handler(AppError)
@@ -517,22 +557,38 @@ def topic_deep_trace(topic_id: str) -> dict:
 
 @app.get("/graph/overview")
 def graph_overview() -> dict:
-    """全库引用概览 — 节点 + 边 + PageRank + 统计"""
-    return graph_service.library_overview()
+    """全库引用概览 — 节点 + 边 + PageRank + 统计（60s 缓存）"""
+    cached = _cache.get("graph_overview")
+    if cached is not None:
+        return cached
+    result = graph_service.library_overview()
+    _cache.set("graph_overview", result, ttl=60)
+    return result
 
 
 @app.get("/graph/bridges")
 def graph_bridges() -> dict:
-    """跨主题桥接论文"""
-    return graph_service.cross_topic_bridges()
+    """跨主题桥接论文（60s 缓存）"""
+    cached = _cache.get("graph_bridges")
+    if cached is not None:
+        return cached
+    result = graph_service.cross_topic_bridges()
+    _cache.set("graph_bridges", result, ttl=60)
+    return result
 
 
 @app.get("/graph/frontier")
 def graph_frontier(
     days: int = Query(default=90, ge=7, le=365),
 ) -> dict:
-    """研究前沿检测"""
-    return graph_service.research_frontier(days=days)
+    """研究前沿检测（60s 缓存）"""
+    cache_key = f"graph_frontier_{days}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+    result = graph_service.research_frontier(days=days)
+    _cache.set(cache_key, result, ttl=60)
+    return result
 
 
 @app.get("/graph/cocitation-clusters")
@@ -886,10 +942,15 @@ def similar(
 
 @app.get("/papers/folder-stats")
 def paper_folder_stats() -> dict:
-    """论文文件夹统计"""
+    """论文文件夹统计（30s 缓存）"""
+    cached = _cache.get("folder_stats")
+    if cached is not None:
+        return cached
     with session_scope() as session:
         repo = PaperRepository(session)
-        return repo.folder_stats()
+        result = repo.folder_stats()
+    _cache.set("folder_stats", result, ttl=30)
+    return result
 
 
 def _paper_list_response(papers: list, repo: "PaperRepository") -> dict:
@@ -1018,6 +1079,7 @@ def toggle_favorite(paper_id: UUID) -> dict:
         current = getattr(p, "favorited", False)
         p.favorited = not current
         session.commit()
+        _cache.invalidate("folder_stats")
         return {"id": str(p.id), "favorited": p.favorited}
 
 
@@ -1532,9 +1594,15 @@ def emerging_trends(days: int = Query(default=14, ge=7, le=60)) -> dict:
 
 @app.get("/today")
 def today_summary() -> dict:
+    """今日研究速览（60s 缓存，内容变化慢）"""
+    cached = _cache.get("today_summary")
+    if cached is not None:
+        return cached
     from packages.ai.recommendation_service import TrendService
 
-    return TrendService().get_today_summary()
+    result = TrendService().get_today_summary()
+    _cache.set("today_summary", result, ttl=60)
+    return result
 
 
 # ---------- 指标 ----------

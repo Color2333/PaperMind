@@ -29,10 +29,15 @@ const Ctx = createContext<GlobalTaskCtx>({ tasks: [], activeTasks: [], hasRunnin
 
 import { tasksApi } from "@/services/api";
 
+// 有任务运行时快速轮询，空闲时降速
+const POLL_FAST = 2000;
+const POLL_IDLE = 10000;
+
 export function GlobalTaskProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<ActiveTask[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousTasksRef = useRef<Record<string, boolean>>({});
+  const hasRunningRef = useRef(false);
   const { toast } = useToast();
 
   const fetchTasks = useCallback(async () => {
@@ -40,12 +45,9 @@ export function GlobalTaskProvider({ children }: { children: React.ReactNode }) 
       const data = await tasksApi.active();
       const newTasks = (data.tasks || []) as ActiveTask[];
 
-      // 检测任务完成状态变化
       newTasks.forEach((task: ActiveTask) => {
         const previousState = previousTasksRef.current[task.task_id];
         const currentState = task.finished;
-
-        // 如果之前未完成，现在完成了 → 触发通知
         if (previousState === false && currentState === true) {
           if (task.success) {
             toast("success", `✅ ${task.title} 完成！${task.message ? "\n" + task.message : "任务执行成功"}`);
@@ -53,28 +55,31 @@ export function GlobalTaskProvider({ children }: { children: React.ReactNode }) 
             toast("error", `❌ ${task.title} 失败！${task.error ? "\n" + task.error : task.message ? "\n" + task.message : "任务执行失败"}`);
           }
         }
-
-        // 更新状态记录
         previousTasksRef.current[task.task_id] = currentState;
       });
 
-      // 清理已删除的任务
       const currentTaskIds = new Set(newTasks.map((t: ActiveTask) => t.task_id));
       Object.keys(previousTasksRef.current).forEach((tid) => {
-        if (!currentTaskIds.has(tid)) {
-          delete previousTasksRef.current[tid];
-        }
+        if (!currentTaskIds.has(tid)) delete previousTasksRef.current[tid];
       });
 
       setTasks(newTasks);
+
+      // 动态调整轮询间隔：有运行中任务 2s，否则 10s
+      const nowRunning = newTasks.some((t) => !t.finished);
+      if (nowRunning !== hasRunningRef.current) {
+        hasRunningRef.current = nowRunning;
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        intervalRef.current = setInterval(fetchTasks, nowRunning ? POLL_FAST : POLL_IDLE);
+      }
     } catch {
-      /* 静默失败，不影响主功能 */
+      /* 静默失败 */
     }
   }, [toast]);
 
   useEffect(() => {
     fetchTasks();
-    intervalRef.current = setInterval(fetchTasks, 2000);
+    intervalRef.current = setInterval(fetchTasks, POLL_IDLE);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };

@@ -2,14 +2,16 @@
  * 侧边栏 - AI 应用风格：图标网格 + 对话历史 + 设置弹窗
  * @author Bamzc
  */
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useConversationCtx } from "@/contexts/ConversationContext";
 import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
 import { groupByDate } from "@/hooks/useConversations";
-import { SettingsDialog } from "./SettingsDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
+
+// 1550 行的设置弹窗，只在用户点击设置按钮时才加载
+const SettingsDialog = lazy(() => import("./SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 import {
   FileText,
   Network,
@@ -70,6 +72,7 @@ export default function Sidebar() {
   const location = useLocation();
   const { activeTasks, hasRunning } = useGlobalTasks();
 
+  // folder-stats 每 60s 轮询一次，与路由无关（路由变化不重新注册 interval）
   useEffect(() => {
     const fetchUnread = () => {
       paperApi.folderStats().then((s: any) => {
@@ -77,9 +80,9 @@ export default function Sidebar() {
       }).catch(() => {});
     };
     fetchUnread();
-    const timer = setInterval(fetchUnread, 30000);
+    const timer = setInterval(fetchUnread, 60000);
     return () => clearInterval(timer);
-  }, [location.pathname]);
+  }, []);
   const {
     metas,
     activeId,
@@ -293,9 +296,11 @@ export default function Sidebar() {
         </div>
       </aside>
 
-      {/* 设置弹窗 */}
+      {/* 设置弹窗 - 懒加载，只在用户点击时才拉取 chunk */}
       {showSettings && (
-        <SettingsDialog onClose={() => setShowSettings(false)} />
+        <Suspense fallback={null}>
+          <SettingsDialog onClose={() => setShowSettings(false)} />
+        </Suspense>
       )}
 
       <ConfirmDialog
