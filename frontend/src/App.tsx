@@ -2,7 +2,7 @@
  * PaperMind - 主应用路由（懒加载）
  * @author Bamzc
  */
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -47,12 +47,31 @@ function NotFound() {
   );
 }
 
+/**
+ * 首屏加载完成后，利用浏览器空闲时间预取重型 chunk
+ * markdown(168KB) + katex(259KB) 在 Agent 首条 AI 回复时需要
+ */
+function PrefetchChunks() {
+  useEffect(() => {
+    const prefetch = () => {
+      import("@/components/Markdown");
+    };
+    if ("requestIdleCallback" in window) {
+      const id = requestIdleCallback(prefetch);
+      return () => cancelIdleCallback(id);
+    }
+    const timer = setTimeout(prefetch, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+  return null;
+}
 export default function App() {
   return (
     <ErrorBoundary>
     <ToastProvider>
     <BrowserRouter>
       <ToastContainer />
+      <PrefetchChunks />
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<AgentPage />} />
