@@ -15,9 +15,11 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from packages.config import get_settings
 from packages.domain.exceptions import AppError
-
 from packages.auth import decode_access_token
+from packages.logging_setup import setup_logging
 
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # ---------- 请求日志中间件 ----------
 
@@ -69,15 +71,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi"):
             return await call_next(request)
 
-        # 验证 Authorization header
+        # 验证 Authorization header 或 query param token
         auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        token: str | None = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.replace("Bearer ", "")
+        else:
+            # 支持 query param token（用于 PDF/图片等浏览器直接请求）
+            token = request.query_params.get("token")
+
+        if not token:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Not authenticated"},
             )
 
-        token = auth_header.replace("Bearer ", "")
         payload = decode_access_token(token)
         if not payload:
             return JSONResponse(
@@ -95,6 +103,7 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name)
 app.add_middleware(RequestLogMiddleware)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 @app.exception_handler(AppError)

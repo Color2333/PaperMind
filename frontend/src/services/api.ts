@@ -41,7 +41,7 @@ import { resolveApiBase } from "@/lib/tauri";
 
 function getApiBase(): string {
   return resolveApiBase();
-
+}
 /** 获取认证 token */
 function getAuthToken(): string | null {
   return localStorage.getItem("auth_token");
@@ -218,14 +218,20 @@ export const paperApi = {
     ),
   reasoningAnalysis: (id: string) =>
     post<ReasoningAnalysisResponse>(`/papers/${id}/reasoning`),
-  pdfUrl: (id: string, arxivId?: string) =>
-    arxivId && !arxivId.startsWith("ss-")
-      ? `${getApiBase().replace(/\/+$/, "")}/papers/proxy-arxiv-pdf/${arxivId}`  // 通过后端代理访问 arXiv
-      : `${getApiBase().replace(/\/+$/, "")}/papers/${id}/pdf`,  // 本地 PDF
+  pdfUrl: (id: string, arxivId?: string) => {
+    const token = getAuthToken();
+    const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
+    return arxivId && !arxivId.startsWith("ss-")
+      ? `${getApiBase().replace(/\/+$/, "")}/papers/proxy-arxiv-pdf/${arxivId}${suffix}`
+      : `${getApiBase().replace(/\/+$/, "")}/papers/${id}/pdf${suffix}`;
+  },
   downloadPdf: (id: string) =>
     post<{ status: string; pdf_path: string }>(`/papers/${id}/download-pdf`),
-  figureImageUrl: (paperId: string, figureId: string) =>
-    `${getApiBase().replace(/\/+$/, "")}/papers/${paperId}/figures/${figureId}/image`,
+  figureImageUrl: (paperId: string, figureId: string) => {
+    const token = getAuthToken();
+    const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
+    return `${getApiBase().replace(/\/+$/, "")}/papers/${paperId}/figures/${figureId}/image${suffix}`;
+  },
   aiExplain: (id: string, text: string, action: "explain" | "translate" | "summarize") =>
     post<{ action: string; result: string }>(`/papers/${id}/ai/explain`, { text, action }),
 };
@@ -435,8 +441,23 @@ export const writingApi = {
 import type { AgentMessage } from "@/types";
 
 async function fetchSSE(url: string, init?: RequestInit): Promise<Response> {
-  const resp = await fetch(url, init);
+  const authHeaders: Record<string, string> = {};
+  const token = getAuthToken();
+  if (token) {
+    authHeaders["Authorization"] = `Bearer ${token}`;
+  }
+  const resp = await fetch(url, {
+    ...init,
+    headers: {
+      ...authHeaders,
+      ...(init?.headers as Record<string, string> || {}),
+    },
+  });
   if (!resp.ok) {
+    // 401 清除 token
+    if (resp.status === 401) {
+      clearAuth();
+    }
     const text = await resp.text().catch(() => "");
     throw new Error(`请求失败 (${resp.status}): ${text || resp.statusText}`);
   }
