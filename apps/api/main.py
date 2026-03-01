@@ -15,10 +15,8 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from packages.config import get_settings
 from packages.domain.exceptions import AppError
-from packages.logging_setup import setup_logging
 
-setup_logging()
-logger = logging.getLogger(__name__)
+from packages.auth import decode_access_token
 
 
 # ---------- 请求日志中间件 ----------
@@ -48,13 +46,55 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# ---------- App 创建 & 中间件 ----------
+class AuthMiddleware(BaseHTTPMiddleware):
+    """认证中间件 - 保护所有 API（白名单除外）"""
+
+    # 白名单路径（无需认证）
+    WHITELIST = {
+        "/health",
+        "/auth/login",
+        "/auth/status",
+    }
+
+    async def dispatch(self, request: Request, call_next):
+        # 未配置密码则跳过认证
+        if not settings.auth_password:
+            return await call_next(request)
+
+        # 白名单路径跳过认证
+        if request.url.path in self.WHITELIST:
+            return await call_next(request)
+
+        # 静态文件和文档跳过
+        if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi"):
+            return await call_next(request)
+
+        # 验证 Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Not authenticated"},
+            )
+
+        token = auth_header.replace("Bearer ", "")
+        payload = decode_access_token(token)
+        if not payload:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or expired token"},
+            )
+
+        # 将用户信息存入 request.state
+        request.state.user = payload
+        return await call_next(request)
+
 
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
 app.add_middleware(RequestLogMiddleware)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(AuthMiddleware)
 
 
 @app.exception_handler(AppError)
@@ -86,6 +126,7 @@ run_migrations()
 
 from apps.api.routers import (  # noqa: E402
     agent,
+    auth,
     content,
     graph,
     jobs,
@@ -107,3 +148,4 @@ app.include_router(pipelines.router)
 app.include_router(settings_router.router)
 app.include_router(writing.router)
 app.include_router(jobs.router)
+app.include_router(auth.router)

@@ -12,9 +12,9 @@ dependencies = [
   "jinja2>=3.1.4",
   "pydantic-settings>=2.10.1",
   "python-dotenv>=1.1.1",
-  "sqlalchemy>=2.0.43",
-  "uvicorn>=0.35.0",
-]
+  "python-jose[cryptography]>=3.3.0",
+  "passlib[bcrypt]>=1.7.4",
+
 
 [project.optional-dependencies]
 dev = [

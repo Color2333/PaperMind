@@ -41,6 +41,20 @@ import { resolveApiBase } from "@/lib/tauri";
 
 function getApiBase(): string {
   return resolveApiBase();
+
+/** 获取认证 token */
+function getAuthToken(): string | null {
+  return localStorage.getItem("auth_token");
+}
+
+/** 检查是否已认证 */
+export function isAuthenticated(): boolean {
+  return !!getAuthToken();
+}
+
+/** 清除认证信息 */
+export function clearAuth(): void {
+  localStorage.removeItem("auth_token");
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -48,7 +62,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let resp: Response;
   try {
     resp = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...(options.headers as Record<string, string> || {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(getAuthToken() ? { "Authorization": `Bearer ${getAuthToken()}` } : {}),
+        ...(options.headers as Record<string, string> || {}),
+      },
       ...options,
     });
   } catch (e) {
@@ -63,6 +81,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     } catch {
       const text = await resp.text().catch(() => "");
       if (text) msg = text;
+    }
+    // 401 未认证，清除 token
+    if (resp.status === 401) {
+      clearAuth();
     }
     throw new Error(msg);
   }
@@ -546,3 +568,19 @@ export interface ActiveTaskInfo {
   success: boolean;
   error: string | null;
 }
+
+/* ========== 认证 ========== */
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface AuthStatusResponse {
+  auth_enabled: boolean;
+}
+
+export const authApi = {
+  login: (password: string) =>
+    post<LoginResponse>("/auth/login", { password }),
+  status: () => get<AuthStatusResponse>("/auth/status"),
+};

@@ -26,6 +26,10 @@ const Operations = lazy(() => import("@/pages/Operations"));
 const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
 
+import LoginPage from "@/pages/Login";
+import { isAuthenticated as checkAuth, clearAuth } from "@/services/api";
+import { useState, useCallback } from "react";
+
 function PageFallback() {
   return (
     <div className="flex h-full items-center justify-center">
@@ -66,6 +70,26 @@ function PrefetchChunks() {
   return null;
 }
 export default function App() {
+  const [isAuthed, setIsAuthed] = useState(() => checkAuth());
+
+  const handleLoginSuccess = useCallback(() => {
+    setIsAuthed(true);
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    clearAuth();
+    setIsAuthed(false);
+  }, []);
+
+  // 未认证时显示登录页
+  if (!isAuthed) {
+    return (
+      <ErrorBoundary>
+        <LoginPage onLoginSuccess={handleLoginSuccess} />
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
     <ToastProvider>

@@ -25,7 +25,10 @@ class Settings(BaseSettings):
     # 站点配置
     site_url: str = "http://localhost:3002"  # 默认本地，生产环境设为 https://pm.vibingu.cn
 
-    # Docker 容器内默认路径
+    # 认证配置
+    auth_password: str = ""  # 站点密码，为空则禁用认证
+    auth_secret_key: str = "papermind-secret-key-change-in-production"  # JWT 密钥
+
     database_url: str = "sqlite:////app/data/papermind.db"
     pdf_storage_root: Path = Path("./data/papers")
     brief_output_root: Path = Path("./data/briefs")
