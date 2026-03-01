@@ -342,7 +342,7 @@ const briefContentStyles = `
 /* 统计卡片 */
 .brief-content .stats {
   display: grid !important;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr) !important;
   gap: 12px;
   margin-bottom: 2rem;
 }
@@ -493,6 +493,106 @@ const briefContentStyles = `
   border-top: 1px solid var(--color-border, #e2e8f0) !important;
 }
 
+/* Deep read cards */
+.brief-content .deep-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 5%, var(--color-surface)) 0%, color-mix(in srgb, var(--color-primary) 10%, var(--color-surface)) 100%) !important;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, var(--color-border)) !important;
+  border-left: 4px solid var(--color-primary) !important;
+  border-radius: 12px !important;
+  padding: 18px !important;
+  margin-bottom: 14px;
+  transition: box-shadow 0.2s;
+}
+.brief-content .deep-card:hover {
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.12);
+}
+.brief-content .deep-title {
+  font-weight: 700 !important;
+  font-size: 0.9rem !important;
+  color: var(--color-ink) !important;
+}
+.brief-content .deep-section {
+  margin-top: 10px !important;
+}
+.brief-content .deep-section-label {
+  font-size: 0.7rem !important;
+  font-weight: 600 !important;
+  color: var(--color-primary) !important;
+  margin-bottom: 4px !important;
+}
+.brief-content .deep-text {
+  font-size: 0.8rem !important;
+  color: var(--color-ink-secondary) !important;
+  line-height: 1.6;
+  margin: 0 !important;
+}
+.brief-content .risk-list {
+  margin: 4px 0 0 16px !important;
+  padding: 0 !important;
+  font-size: 0.72rem !important;
+  color: #b45309 !important;
+}
+.brief-content .risk-list li {
+  margin-bottom: 2px;
+}
+
+/* Score badges */
+.brief-content .score-badge {
+  font-weight: 700 !important;
+  border-radius: 9999px !important;
+  white-space: nowrap;
+}
+.brief-content .score-sm {
+  font-size: 0.65rem !important;
+  padding: 1px 6px !important;
+}
+.brief-content .score-high {
+  background: #dcfce7 !important;
+  color: #15803d !important;
+}
+.brief-content .score-mid {
+  background: #fef3c7 !important;
+  color: #b45309 !important;
+}
+.brief-content .score-low {
+  background: #fee2e2 !important;
+  color: #dc2626 !important;
+}
+
+/* Innovation tags */
+.brief-content .innovation-tags {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 4px !important;
+  margin-top: 6px !important;
+}
+.brief-content .innovation-tag {
+  display: inline-block !important;
+  background: color-mix(in srgb, #f59e0b 12%, transparent) !important;
+  color: #92400e !important;
+  border-radius: 6px !important;
+  padding: 3px 8px !important;
+  font-size: 0.68rem !important;
+}
+
+/* Deep badge */
+.brief-content .deep-badge {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent) !important;
+  color: var(--color-primary) !important;
+  padding: 1px 6px !important;
+  border-radius: 4px !important;
+  font-size: 0.6rem !important;
+  font-weight: 600 !important;
+}
+
+/* Paper header */
+.brief-content .paper-header {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+}
+
 /* 暗色模式 */
 :root.dark .brief-content,
 .dark .brief-content {
@@ -511,7 +611,34 @@ const briefContentStyles = `
   border-color: var(--color-border, #333) !important;
 }
 .dark .brief-content .rec-card:hover,
-.dark .brief-content .paper-item:hover {
+.dark .brief-content .paper-item:hover,
+.dark .brief-content .deep-card:hover {
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.dark .brief-content .deep-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 8%, var(--color-surface)) 0%, color-mix(in srgb, var(--color-primary) 12%, var(--color-surface)) 100%) !important;
+  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border)) !important;
+}
+.dark .brief-content .deep-card:hover {
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+}
+.dark .brief-content .innovation-tag {
+  background: color-mix(in srgb, #f59e0b 15%, transparent) !important;
+  color: #fbbf24 !important;
+}
+.dark .brief-content .score-high {
+  background: #052e16 !important;
+  color: #4ade80 !important;
+}
+.dark .brief-content .score-mid {
+  background: #451a03 !important;
+  color: #fbbf24 !important;
+}
+.dark .brief-content .score-low {
+  background: #450a0a !important;
+  color: #f87171 !important;
+}
+.dark .brief-content .risk-list {
+  color: #fbbf24 !important;
 }
 `;
