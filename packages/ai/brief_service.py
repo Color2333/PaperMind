@@ -303,6 +303,9 @@ class DailyBriefService:
                 return f"今日新增 {len(papers)} 篇论文，涵盖多个研究方向"
 
     def publish(self, recipient: str | None = None) -> dict:
+        """生成并发布日报：存 HTML 文件 + 写入 generated_content 表 + 可选发邮件"""
+        from packages.storage.repositories import GeneratedContentRepository
+
         html = self.build_html()
         ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = f"daily_brief_{ts}.html"
@@ -310,4 +313,24 @@ class DailyBriefService:
         sent = False
         if recipient:
             sent = self.notifier.send_email_html(recipient, "PaperMind Daily Brief", html)
-        return {"saved_path": saved, "email_sent": sent}
+
+        # 写入 generated_content 表，确保研究简报页面能查到
+        content_id = None
+        try:
+            with session_scope() as session:
+                repo = GeneratedContentRepository(session)
+                gc = repo.create(
+                    content_type="daily_brief",
+                    title=f"Daily Brief: {user_date_str()}",
+                    markdown=html,
+                    metadata_json={
+                        "saved_path": saved or "",
+                        "email_sent": sent,
+                        "source": "auto" if not recipient else "manual",
+                    },
+                )
+                content_id = gc.id
+        except Exception as exc:
+            logger.warning("写入 generated_content 失败: %s", exc)
+
+        return {"saved_path": saved, "email_sent": sent, "content_id": content_id}

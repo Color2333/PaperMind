@@ -114,7 +114,7 @@ export default function DailyBrief() {
   };
 
   const handleView = async (item: GeneratedContentListItem) => {
-    setDetailLoading(true); setResult(null);
+    setDetailLoading(true); setSelectedContent(null);
     try { setSelectedContent(await generatedApi.detail(item.id)); }
     catch { toast("error", "加载简报内容失败"); } finally { setDetailLoading(false); }
   };

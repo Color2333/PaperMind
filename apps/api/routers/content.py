@@ -171,22 +171,8 @@ def daily_brief(req: DailyBriefRequest) -> dict:
     recipient = req.recipient or settings.notify_default_to
 
     def _generate_fn(progress_callback=None):
-        html_content = brief_service.build_html()
-        result = brief_service.publish(recipient=recipient)
-        with session_scope() as session:
-            repo = GeneratedContentRepository(session)
-            ts = brief_date()
-            gc = repo.create(
-                content_type="daily_brief",
-                title=f"Daily Brief: {ts}",
-                markdown=html_content,
-                metadata_json={
-                    "saved_path": result.get("saved_path", ""),
-                    "email_sent": result.get("email_sent", False),
-                },
-            )
-            result["content_id"] = gc.id
-        return result
+        # publish() 内部已写入 generated_content 表，无需重复
+        return brief_service.publish(recipient=recipient)
 
     task_id = global_tracker.submit(
         task_type="daily_brief",
