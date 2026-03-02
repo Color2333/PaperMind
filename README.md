@@ -278,7 +278,16 @@ docker compose up -d --build
 AUTH_PASSWORD=your_password_here
 AUTH_SECRET_KEY=your_random_secret_key
 ```
-
+#MP|
+#TB|---
+#RS|
+#BT|## 📚 完整文档
+#NK|
+#YV|- **[📖 部署 Wiki](WIKI_DEPLOYMENT.md)** - 从本地开发到生产环境，一站式部署指南
+#QW|- **[🔧 技术细节](TECH_DETAILS.md)** - 架构设计、核心流程、性能优化
+#BK|
+#TB|---
+#BT|
 ---
 
 ## ⚙️ 环境变量
