@@ -87,17 +87,22 @@ export default function Wiki() {
     const poll = async (): Promise<void> => {
       try {
         const status: TaskStatus = await tasksApi.getStatus(tid);
-        // 后端返回 progress_pct (0-100)，转换为 0-1 的小数
-        const progress = status.progress_pct ? status.progress_pct / 100 : 0;
-        setTaskProgress(progress);
+        // progress 是 0-1 的小数
+        setTaskProgress(status.progress || 0);
         setTaskMessage(status.message || "处理中...");
 
-        if (status.finished) {
+        if (status.status === "completed" || status.status === "failed") {
           // 任务完成，加载 Wiki 内容
           const result = await generatedApi.list(contentType, 1);
           if (result.items && result.items.length > 0) {
-            const content = await generatedApi.get(result.items[0].id);
-            setTopicWiki(content.wiki_content as unknown as TopicWiki);
+            const content = await generatedApi.detail(result.items[0].id);
+            setTopicWiki({
+              keyword: content.keyword || content.title,
+              markdown: content.markdown,
+              timeline: { events: [], insights: [] },
+              survey: { summary: "", sections: [] },
+              content_id: content.id,
+            } as unknown as TopicWiki);
             setPaperWiki(null);
           }
           setLoading(false);

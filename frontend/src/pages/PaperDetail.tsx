@@ -183,6 +183,10 @@ export default function PaperDetail() {
     try {
       const report = await pipelineApi.skim(id);
       setSkimReport(report);
+      // 刷新论文信息，更新粗读报告
+      const updated = await paperApi.detail(id);
+      setPaper(updated);
+      if (updated.skim_report) setSavedSkim(updated.skim_report);
       toast("success", "粗读完成");
     } catch { toast("error", "粗读失败"); } finally { setSkimLoading(false); }
   };
@@ -194,6 +198,12 @@ export default function PaperDetail() {
     try {
       const report = await pipelineApi.deep(id);
       setDeepReport(report);
+      // 刷新论文信息，更新精读报告并清除旧缓存
+      const updated = await paperApi.detail(id);
+      setPaper(updated);
+      if (updated.deep_report) setSavedDeep(updated.deep_report);
+      // 清除新生成的报告，优先显示 savedDeep（从后端加载的最新数据）
+      setDeepReport(null);
       toast("success", "精读完成");
     } catch { toast("error", "精读失败"); } finally { setDeepLoading(false); }
   };
@@ -419,7 +429,38 @@ export default function PaperDetail() {
         )}
 
         {/* 主操作 */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          {/* PDF 下载按钮 */}
+          <button
+            onClick={async () => {
+              if (!id) return;
+              try {
+                toast("info", "正在下载 PDF...");
+                const res = await paperApi.downloadPdf(id);
+                toast("success", `PDF 已下载：${res.status === "exists" ? "文件已存在" : "下载成功"}`);
+                // 刷新论文信息
+                const updated = await paperApi.detail(id);
+                setPaper(updated);
+                if (updated.pdf_path) setReaderOpen(true);
+              } catch (e) {
+                toast("error", e instanceof Error ? e.message : "PDF 下载失败");
+              }
+            }}
+            disabled={!paper.arxiv_id || paper.arxiv_id.startsWith("ss-")}
+            className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-4 transition-all hover:border-primary/30 hover:shadow-md disabled:opacity-50"
+            title={!paper.arxiv_id || paper.arxiv_id.startsWith("ss-") ? "该论文没有有效的 arXiv ID，无法下载 PDF" : "下载 PDF 到本地存储"}
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Download className="h-5 w-5" />
+            </div>
+            <div className="text-left">
+              <p className="text-sm font-semibold text-ink">下载 PDF</p>
+              <p className="text-xs text-ink-tertiary">
+                {paper.pdf_path ? "已下载" : "从 arXiv 获取"}
+              </p>
+            </div>
+          </button>
+          {/* 阅读原文 */}
           {paper.pdf_path || (paper.arxiv_id && !paper.arxiv_id.startsWith("ss-")) ? (
             <button
               onClick={() => setReaderOpen(true)}
@@ -492,7 +533,7 @@ export default function PaperDetail() {
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium text-ink-secondary transition-all hover:border-primary/30 hover:text-ink disabled:opacity-50"
           >
             {reasoningLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : hasReasoning ? <Check className="h-3.5 w-3.5 text-success" /> : <Brain className="h-3.5 w-3.5" />}
-            {!paper.pdf_path ? "推理链(无PDF)" : "推理链分析"}
+            {!paper.pdf_path ? "推理链 (无 PDF)" : "推理链分析"}
           </button>
           <button
             onClick={handleEmbed}
@@ -509,7 +550,7 @@ export default function PaperDetail() {
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium text-ink-secondary transition-all hover:border-primary/30 hover:text-ink disabled:opacity-50"
           >
             {similarLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
-            {!paper.has_embedding ? "相似(需嵌入)" : "相似论文"}
+            {!paper.has_embedding ? "相似 (需嵌入)" : "相似论文"}
           </button>
         </div>
       </div>
@@ -560,7 +601,7 @@ export default function PaperDetail() {
                 <Card className="rounded-2xl border-primary/20">
                   <CardHeader title="粗读报告" action={
                     <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1">
-                      <Star className="h-4 w-4 text-amber-500" />
+                      <Sparkles className="h-4 w-4 text-amber-500" />
                       <span className="text-sm font-bold text-amber-600">{skimReport.relevance_score.toFixed(2)}</span>
                     </div>
                   } />

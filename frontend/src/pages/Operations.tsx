@@ -111,12 +111,13 @@ export default function Operations() {
     setLoading("dailyJob", true);
     try {
       const res = await jobApi.dailyRun();
+      const message = (res as { message?: string }).message || "每日任务已启动";
       setResult("dailyJob", {
         success: true,
-        message: res.message || "每日任务已启动",
+        message,
         data: res,
       });
-      toast("success", `✅ ${res.message || "每日任务已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
+      toast("success", `✅ ${message}\n你可以在侧边栏或 Dashboard 查看进度`);
     } catch (err) {
       setResult("dailyJob", {
         success: false,
@@ -132,12 +133,13 @@ export default function Operations() {
     setLoading("weeklyJob", true);
     try {
       const res = await jobApi.weeklyGraphRun();
+      const message = (res as { message?: string }).message || "每周图维护已启动";
       setResult("weeklyJob", {
         success: true,
-        message: res.message || "每周图维护已启动",
+        message,
         data: res,
       });
-      toast("success", `✅ ${res.message || "每周图维护已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
+      toast("success", `✅ ${message}\n你可以在侧边栏或 Dashboard 查看进度`);
     } catch (err) {
       setResult("weeklyJob", {
         success: false,
@@ -148,7 +150,6 @@ export default function Operations() {
       setLoading("weeklyJob", false);
     }
   };
-
   const handleCheckHealth = async () => {
     setLoading("health", true);
     try {

@@ -269,7 +269,9 @@ export default function Writing() {
                             <p className="text-sm font-medium">{tpl.label}</p>
                           </div>
                           {tpl.supports_image && (
-                            <ImagePlus className="h-3 w-3 shrink-0 text-ink-tertiary/50" title="支持图片输入" />
+                            <div className="shrink-0" title="支持图片输入">
+                              <ImagePlus className="h-3 w-3 text-ink-tertiary/50" />
+                            </div>
                           )}
                         </button>
                       );
