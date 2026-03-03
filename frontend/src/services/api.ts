@@ -193,6 +193,8 @@ export const paperApi = {
     folder?: string;
     date?: string;
     search?: string;
+    sortBy?: string;
+    sortOrder?: string;
   } = {}) => {
     const params = new URLSearchParams();
     params.set("page", String(opts.page || 1));
@@ -202,6 +204,8 @@ export const paperApi = {
     if (opts.folder) params.append("folder", opts.folder);
     if (opts.date) params.append("date", opts.date);
     if (opts.search) params.append("search", opts.search);
+    if (opts.sortBy) params.append("sort_by", opts.sortBy);
+    if (opts.sortOrder) params.append("sort_order", opts.sortOrder);
     return get<PaperListResponse>(`/papers/latest?${params}`);
   },
   folderStats: () => get<FolderStats>("/papers/folder-stats"),

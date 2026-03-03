@@ -294,6 +294,8 @@ class PaperRepository:
         status: str | None = None,
         date_str: str | None = None,
         search: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
     ) -> tuple[list[Paper], int]:
         """分页查询论文，返回 (papers, total_count)"""
         filters = []
@@ -343,9 +345,16 @@ class PaperRepository:
 
         total = self.session.execute(count_q).scalar() or 0
         offset = (max(1, page) - 1) * page_size
+        _SORT_COLS = {
+            "created_at": Paper.created_at,
+            "publication_date": Paper.publication_date,
+            "title": Paper.title,
+        }
+        sort_col = _SORT_COLS.get(sort_by, Paper.created_at)
+        order_expr = sort_col.desc() if sort_order == "desc" else sort_col.asc()
         papers = list(
             self.session.execute(
-                base_q.order_by(Paper.created_at.desc()).offset(offset).limit(page_size)
+                base_q.order_by(order_expr).offset(offset).limit(page_size)
             ).scalars()
         )
         return papers, total

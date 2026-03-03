@@ -38,6 +38,8 @@ import {
   ChevronsRight,
   Bot,
   CalendarClock,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 
 /* ========== 类型 ========== */
@@ -109,6 +111,11 @@ export default function Papers() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
+  /* 排序 + 状态筛选 */
+  const [sortBy, setSortBy] = useState("created_at");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [statusFilter, setStatusFilter] = useState("");
+
   useEffect(() => {
     clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
@@ -164,13 +171,16 @@ export default function Papers() {
         folder,
         date: activeDate,
         search: debouncedSearch || undefined,
+        status: statusFilter || undefined,
+        sortBy,
+        sortOrder,
       });
       setPapers(res.items);
       setTotal(res.total);
       setTotalPages(res.total_pages);
       setSelected(new Set());
     } catch { toast("error", "加载论文列表失败"); } finally { setLoading(false); }
-  }, [activeFolder, activeDate, activeActionId, page, pageSize, debouncedSearch, toast]);
+  }, [activeFolder, activeDate, activeActionId, page, pageSize, debouncedSearch, statusFilter, sortBy, sortOrder, toast]);
 
   useEffect(() => { loadFolderStats(); }, [loadFolderStats]);
   useEffect(() => { loadPapers(); }, [loadPapers]);
@@ -508,8 +518,8 @@ export default function Papers() {
           </div>
         </div>
 
-        {/* 搜索 + 状态过滤 */}
-        <div className="flex items-center gap-3 border-b border-border-light px-5 py-3">
+        {/* 搜索 + 排序筛选 */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border-light px-5 py-3">
           <div className="relative max-w-sm flex-1">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-tertiary" />
             <input
@@ -520,6 +530,54 @@ export default function Papers() {
               className="h-8 w-full rounded-lg border border-border bg-surface pl-8 pr-3 text-xs text-ink placeholder:text-ink-placeholder focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
           </div>
+
+          {/* 排序筛选控件 */}
+          {selected.size === 0 && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* 状态筛选 */}
+              <div className="flex items-center rounded-lg border border-border bg-surface p-0.5">
+                {([
+                  { value: "", label: "全部" },
+                  { value: "unread", label: "未读" },
+                  { value: "skimmed", label: "已粗读" },
+                  { value: "deep_read", label: "已精读" },
+                ] as { value: string; label: string }[]).map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setStatusFilter(opt.value); setPage(1); }}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${ statusFilter === opt.value ? "bg-primary/10 text-primary" : "text-ink-tertiary hover:text-ink" }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 分隔线 */}
+              <div className="h-4 w-px bg-border-light" />
+
+              {/* 排序字段 */}
+              <select
+                value={sortBy}
+                onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
+                className="h-7 cursor-pointer rounded-lg border border-border bg-surface px-2 text-[11px] text-ink-secondary focus:border-primary focus:outline-none"
+              >
+                <option value="created_at">入库时间</option>
+                <option value="publication_date">发表时间</option>
+                <option value="title">标题</option>
+              </select>
+
+              {/* 排序方向 */}
+              <button
+                onClick={() => { setSortOrder((o) => (o === "desc" ? "asc" : "desc")); setPage(1); }}
+                className="flex h-7 items-center rounded-lg border border-border bg-surface px-2 text-ink-tertiary transition-colors hover:bg-hover hover:text-ink"
+                title={sortOrder === "desc" ? "当前：倒序，点击切换升序" : "当前：升序，点击切换倒序"}
+              >
+                {sortOrder === "desc"
+                  ? <ArrowDown className="h-3.5 w-3.5" />
+                  : <ArrowUp className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          )}
 
           {/* 批量操作 */}
           {selected.size > 0 && (

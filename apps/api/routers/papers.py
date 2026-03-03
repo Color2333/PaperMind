@@ -40,6 +40,8 @@ def latest(
     folder: str | None = Query(default=None),
     date: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_order: str = Query(default="desc"),
 ) -> dict:
     with session_scope() as session:
         repo = PaperRepository(session)
@@ -51,6 +53,8 @@ def latest(
             status=status,
             date_str=date,
             search=search.strip() if search else None,
+            sort_by=sort_by if sort_by in ("created_at", "publication_date", "title") else "created_at",
+            sort_order=sort_order if sort_order in ("asc", "desc") else "desc",
         )
         resp = paper_list_response(papers, repo)
         resp["total"] = total
