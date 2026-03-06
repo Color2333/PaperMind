@@ -187,8 +187,10 @@ class SourceCheckpoint(Base):
 
 
 class TopicSubscription(Base):
+    """主题订阅配置 - 支持多渠道"""
+    
     __tablename__ = "topic_subscriptions"
-
+    
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     query: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -197,11 +199,24 @@ class TopicSubscription(Base):
     retry_limit: Mapped[int] = mapped_column(nullable=False, default=2)
     schedule_frequency: Mapped[str] = mapped_column(String(20), nullable=False, default="daily")
     schedule_time_utc: Mapped[int] = mapped_column(nullable=False, default=21)
+    
+    # 完整版新增：多渠道支持
+    sources: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=lambda: ["arxiv"]
+    )  # ["arxiv", "ieee"]
+    
+    # IEEE 特定配置
+    ieee_daily_quota: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10  # IEEE 每日 API 调用限额
+    )
+    ieee_api_key_override: Mapped[str | None] = mapped_column(
+        String(512), nullable=True  # 可选的 IEEE API Key 覆盖
+    )
+    
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
     )
-
 
 class PaperTopic(Base):
     __tablename__ = "paper_topics"
@@ -413,4 +428,24 @@ class DailyReportConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class IeeeApiQuota(Base):
+    """IEEE API 配额追踪 - 完整版新增"""
+    
+    __tablename__ = "ieee_api_quotas"
+    
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    topic_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("topic_subscriptions.id"), nullable=True, index=True
+    )
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    api_calls_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    api_calls_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    last_reset_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint("topic_id", "date", name="uq_ieee_quota_daily"),
     )

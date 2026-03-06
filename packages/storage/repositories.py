@@ -130,6 +130,16 @@ class PaperRepository:
         q = select(Paper.arxiv_id).where(Paper.arxiv_id.in_(arxiv_ids))
         return set(self.session.execute(q).scalars())
 
+    def list_existing_dois(self, dois: list[str]) -> set[str]:
+        """批量检查哪些 DOI 已存在，返回已存在的 DOI 集合（IEEE 去重用）"""
+        if not dois:
+            return set()
+        # 过滤 None 值
+        clean_dois = [d for d in dois if d]
+        if not clean_dois:
+            return set()
+        q = select(Paper.doi).where(Paper.doi.in_(clean_dois))
+        return set(self.session.execute(q).scalars())
     def list_by_read_status(self, status: ReadStatus, limit: int = 200) -> list[Paper]:
         q = (
             select(Paper)
@@ -1283,3 +1293,76 @@ class DailyReportConfigRepository:
                 setattr(config, key, value)
         self.session.flush()
         return config
+
+
+class IeeeQuotaRepository:
+    """IEEE API 配额管理 Repository - 完整版新增"""
+    
+    def __init__(self, session: Session):
+        from packages.storage.models import IeeeApiQuota
+        self.session = session
+        self.IeeeApiQuota = IeeeApiQuota
+    
+    def get_or_create(self, topic_id: str, date: date, limit: int = 50) -> IeeeApiQuota:
+        """获取或创建当日配额记录"""
+        from sqlalchemy import select
+        
+        q = select(self.IeeeApiQuota).where(
+            self.IeeeApiQuota.topic_id == topic_id,
+            self.IeeeApiQuota.date == date,
+        )
+        quota = self.session.execute(q).scalar_one_or_none()
+        
+        if not quota:
+            quota = self.IeeeApiQuota(
+                topic_id=topic_id,
+                date=date,
+                api_calls_used=0,
+                api_calls_limit=limit,
+            )
+            self.session.add(quota)
+            self.session.flush()
+        
+        return quota
+    
+    def check_quota(self, topic_id: str, date: date, limit: int = 50) -> bool:
+        """检查是否还有配额
+        
+        Returns:
+            bool: True 表示还有配额，False 表示配额已用尽
+        """
+        quota = self.get_or_create(topic_id, date, limit)
+        return quota.api_calls_used < quota.api_calls_limit
+    
+    def consume_quota(self, topic_id: str, date: date, amount: int = 1) -> bool:
+        """消耗配额
+        
+        Args:
+            topic_id: 主题 ID
+            date: 日期
+            amount: 消耗数量
+        
+        Returns:
+            bool: True 表示成功消耗，False 表示配额不足
+        """
+        quota = self.get_or_create(topic_id, date)
+        
+        if quota.api_calls_used + amount > quota.api_calls_limit:
+            return False
+        
+        quota.api_calls_used += amount
+        self.session.flush()
+        return True
+    
+    def get_remaining(self, topic_id: str, date: date) -> int:
+        """获取剩余配额"""
+        quota = self.get_or_create(topic_id, date)
+        return max(0, quota.api_calls_limit - quota.api_calls_used)
+    
+    def reset_quota(self, topic_id: str, date: date, new_limit: int = 50) -> None:
+        """重置配额（用于手动调整）"""
+        quota = self.get_or_create(topic_id, date, new_limit)
+        quota.api_calls_used = 0
+        quota.api_calls_limit = new_limit
+        quota.last_reset_at = datetime.now(UTC)
+        self.session.flush()
