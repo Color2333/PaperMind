@@ -268,6 +268,27 @@ def acquire_api(api_type: str = "llm", timeout: Optional[float] = 10.0) -> bool:
     return limiter.acquire(api_type, timeout)
 
 
+def record_rate_limit_error(api_type: str = "llm"):
+    """便捷函数：记录 API 限流错误（429）"""
+    limiter = get_rate_limiter()
+    # 简化处理：直接触发全局降速
+    limiter.record_rate_limit_error()
+
+
+def can_start_task() -> bool:
+    """便捷函数：获取 API 调用许可
+
+    Args:
+        api_type: API 类型
+        timeout: 超时时间
+
+    Returns:
+        bool: 是否成功获取
+    """
+    limiter = get_rate_limiter()
+    return limiter.acquire(api_type, timeout)
+
+
 def can_start_task() -> bool:
     """便捷函数：检查是否可以启动任务"""
     return get_rate_limiter().can_start_task()

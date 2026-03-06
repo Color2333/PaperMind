@@ -10,6 +10,7 @@ import httpx
 
 from packages.config import get_settings
 from packages.domain.schemas import PaperCreate
+from packages.ai.rate_limiter import acquire_api, record_rate_limit_error
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 logger = logging.getLogger(__name__)
@@ -53,6 +54,10 @@ class ArxivClient:
         start: int = 0,
     ) -> list[PaperCreate]:
         """sort_by: submittedDate(最新) / relevance(相关性) / lastUpdatedDate"""
+        # 获取速率限制许可（10 秒超时）
+        if not acquire_api("arxiv", timeout=10.0):
+            raise httpx.TimeoutException("ArXiv 速率限制等待超时，请稍后重试")
+        
         structured_query = _build_arxiv_query(query)
         logger.info("ArXiv search: %s → %s (sort=%s start=%d)", query, structured_query, sort_by, start)
         params = {
@@ -72,6 +77,7 @@ class ArxivClient:
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 if exc.response.status_code == 429:
+                    record_rate_limit_error("arxiv")
                     wait = 3 * (attempt + 1)
                     logger.warning("ArXiv 429 限流，等待 %ds 重试...", wait)
                     time.sleep(wait)
@@ -91,6 +97,11 @@ class ArxivClient:
         clean_ids = [aid.split("v")[0] if "v" in aid else aid for aid in arxiv_ids]
         id_list = ",".join(clean_ids)
         params = {"id_list": id_list, "max_results": len(clean_ids)}
+        
+        # 获取速率限制许可（10 秒超时）
+        if not acquire_api("arxiv", timeout=10.0):
+            raise httpx.TimeoutException("ArXiv 速率限制等待超时，请稍后重试")
+        
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
@@ -100,6 +111,7 @@ class ArxivClient:
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 if exc.response.status_code == 429:
+                    record_rate_limit_error("arxiv")
                     wait = 3 * (attempt + 1)
                     logger.warning("ArXiv 429 限流，等待 %ds 重试...", wait)
                     time.sleep(wait)
@@ -109,12 +121,16 @@ class ArxivClient:
                 last_exc = exc
                 logger.warning("ArXiv 请求超时 (attempt %d)", attempt + 1)
                 time.sleep(2)
+                continue
         raise last_exc or RuntimeError("ArXiv fetch_by_ids failed")
 
     def download_pdf(self, arxiv_id: str) -> str:
+        """下载 PDF 到本地存储"""
         url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         target = self.settings.pdf_storage_root / f"{arxiv_id}.pdf"
         target.parent.mkdir(parents=True, exist_ok=True)
+        
+        # PDF 下载不经过速率限制器（因为是直接下载，不是 API 查询）
         response = self.client.get(url, timeout=90)
         response.raise_for_status()
         target.write_bytes(response.content)
