@@ -29,6 +29,9 @@ def _topic_dict(t, session=None) -> dict:
         "retry_limit": t.retry_limit,
         "schedule_frequency": getattr(t, "schedule_frequency", "daily"),
         "schedule_time_utc": getattr(t, "schedule_time_utc", 21),
+        "enable_date_filter": getattr(t, "enable_date_filter", False),
+        "date_filter_days": getattr(t, "date_filter_days", 7),
+        "schedule_time_utc": getattr(t, "schedule_time_utc", 21),
         "paper_count": 0,
         "last_run_at": None,
         "last_run_count": None,
@@ -75,6 +78,8 @@ def upsert_topic(req: TopicCreate) -> dict:
             retry_limit=req.retry_limit,
             schedule_frequency=req.schedule_frequency,
             schedule_time_utc=req.schedule_time_utc,
+            enable_date_filter=req.enable_date_filter,
+
         )
         return _topic_dict(topic, session)
 
@@ -102,6 +107,8 @@ def update_topic(topic_id: str, req: TopicUpdate) -> dict:
                 retry_limit=req.retry_limit,
                 schedule_frequency=req.schedule_frequency,
                 schedule_time_utc=req.schedule_time_utc,
+                enable_date_filter=req.enable_date_filter,
+
             )
         except ValueError as exc:
             raise NotFoundError(str(exc)) from exc

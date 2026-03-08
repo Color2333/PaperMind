@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-import time
-from datetime import date, datetime
-from xml.etree import ElementTree
+from datetime import date, datetime, timedelta
 
 import httpx
 
@@ -16,23 +14,33 @@ ARXIV_API_URL = "https://export.arxiv.org/api/query"
 logger = logging.getLogger(__name__)
 
 
-def _build_arxiv_query(raw: str) -> str:
+def _build_arxiv_query(raw: str, days_back: int = 7) -> str:
     """将用户输入转换为 ArXiv API 查询语法
 
     - 已是结构化查询（含 all:/ti: 等）直接返回
     - 否则按空格拆分，取前 3 个关键词用 AND 连接（避免 429）
+    - 自动添加最近 N 天的日期范围过滤
     """
     raw = raw.strip()
     if not raw:
         return raw
-    if re.search(r'\b(all|ti|au|abs|cat|co|jr|rn|id):', raw):
+    if re.search(r"\b(all|ti|au|abs|cat|co|jr|rn|id):", raw):
+        # 已经是结构化查询，检查是否已有日期过滤
+        if "submittedDate:" not in raw:
+            # 添加日期范围过滤（最近 N 天）
+            from_date = datetime.now() - timedelta(days=days_back)
+            date_filter = f" AND submittedDate:[{from_date.strftime('%Y%m%d')}000000 TO *]"
+            return raw + date_filter
         return raw
-    # 拆分词汇，跳过短词（<2字符），最多取 3 个
+    # 拆分词汇，跳过短词（<2 字符），最多取 3 个
     tokens = [t.strip() for t in raw.split() if len(t.strip()) >= 2]
     if not tokens:
         return f"all:{raw}"
     tokens = tokens[:3]
-    return " AND ".join(f"all:{t}" for t in tokens)
+    # 添加日期范围过滤（最近 N 天）
+    from_date = datetime.now() - timedelta(days=days_back)
+    date_filter = f" AND submittedDate:[{from_date.strftime('%Y%m%d')}000000 TO *]"
+    return " AND ".join(f"all:{t}" for t in tokens) + date_filter
 
 
 class ArxivClient:
@@ -52,14 +60,22 @@ class ArxivClient:
         max_results: int = 20,
         sort_by: str = "submittedDate",
         start: int = 0,
+        days_back: int = 7,
     ) -> list[PaperCreate]:
         """sort_by: submittedDate(最新) / relevance(相关性) / lastUpdatedDate"""
         # 获取速率限制许可（10 秒超时）
         if not acquire_api("arxiv", timeout=10.0):
             raise httpx.TimeoutException("ArXiv 速率限制等待超时，请稍后重试")
-        
-        structured_query = _build_arxiv_query(query)
-        logger.info("ArXiv search: %s → %s (sort=%s start=%d)", query, structured_query, sort_by, start)
+
+        structured_query = _build_arxiv_query(query, days_back)
+        logger.info(
+            "ArXiv search: %s → %s (sort=%s start=%d days_back=%d)",
+            query,
+            structured_query,
+            sort_by,
+            start,
+            days_back,
+        )
         params = {
             "search_query": structured_query,
             "sortBy": sort_by,
@@ -97,11 +113,11 @@ class ArxivClient:
         clean_ids = [aid.split("v")[0] if "v" in aid else aid for aid in arxiv_ids]
         id_list = ",".join(clean_ids)
         params = {"id_list": id_list, "max_results": len(clean_ids)}
-        
+
         # 获取速率限制许可（10 秒超时）
         if not acquire_api("arxiv", timeout=10.0):
             raise httpx.TimeoutException("ArXiv 速率限制等待超时，请稍后重试")
-        
+
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
@@ -129,7 +145,7 @@ class ArxivClient:
         url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         target = self.settings.pdf_storage_root / f"{arxiv_id}.pdf"
         target.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # PDF 下载不经过速率限制器（因为是直接下载，不是 API 查询）
         response = self.client.get(url, timeout=90)
         response.raise_for_status()

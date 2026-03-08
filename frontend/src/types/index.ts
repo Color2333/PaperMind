@@ -34,6 +34,9 @@ export interface Topic {
   retry_limit: number;
   schedule_frequency: ScheduleFrequency;
   schedule_time_utc: number;
+  enable_date_filter: boolean;
+  date_filter_days: number;
+  schedule_time_utc: number;
   paper_count?: number;
   last_run_at?: string | null;
   last_run_count?: number | null;
@@ -47,6 +50,9 @@ export interface TopicCreate {
   retry_limit?: number;
   schedule_frequency?: ScheduleFrequency;
   schedule_time_utc?: number;
+  enable_date_filter?: boolean;
+  date_filter_days?: number;
+  schedule_time_utc?: number;
 }
 
 export interface TopicUpdate {
@@ -55,6 +61,9 @@ export interface TopicUpdate {
   max_results_per_run?: number;
   retry_limit?: number;
   schedule_frequency?: ScheduleFrequency;
+  schedule_time_utc?: number;
+  enable_date_filter?: boolean;
+  date_filter_days?: number;
   schedule_time_utc?: number;
 }
 

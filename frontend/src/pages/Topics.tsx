@@ -221,6 +221,9 @@ function TopicModal({
     max_results_per_run: 20,
     retry_limit: 2,
   });
+  const [dateFilterEnabled, setDateFilterEnabled] = useState(false);
+  const [dateFilterDays, setDateFilterDays] = useState(7);
+  });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -232,7 +235,13 @@ function TopicModal({
         max_results_per_run: topic.max_results_per_run,
         retry_limit: topic.retry_limit,
       });
+      setDateFilterEnabled(topic.enable_date_filter ?? false);
+      setDateFilterDays(topic.date_filter_days ?? 7);
+      });
     } else {
+      setForm({ name: "", query: "", enabled: true, max_results_per_run: 20, retry_limit: 2 });
+      setDateFilterEnabled(false);
+      setDateFilterDays(7);
       setForm({ name: "", query: "", enabled: true, max_results_per_run: 20, retry_limit: 2 });
     }
   }, [topic, open]);
@@ -248,7 +257,17 @@ function TopicModal({
           max_results_per_run: form.max_results_per_run,
           retry_limit: form.retry_limit,
         });
+        await topicApi.update(topic!.id, {
+          enable_date_filter: dateFilterEnabled,
+          date_filter_days: dateFilterDays,
+        });
+        });
       } else {
+        await topicApi.create({
+          ...form,
+          enable_date_filter: dateFilterEnabled,
+          date_filter_days: dateFilterDays,
+        });
         await topicApi.create(form);
       }
       onSaved();
@@ -291,6 +310,30 @@ function TopicModal({
               setForm({ ...form, retry_limit: parseInt(e.target.value) || 2 })
             }
           />
+        </div>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={dateFilterEnabled}
+              onChange={(e) => setDateFilterEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+            />
+            <span className="text-ink">启用日期过滤（只抓取最近 N 天的论文）</span>
+          </label>
+          {dateFilterEnabled && (
+            <div className="pl-6">
+              <Input
+                label="日期范围（天）"
+                type="number"
+                min="1"
+                max="365"
+                value={dateFilterDays}
+                onChange={(e) => setDateFilterDays(parseInt(e.target.value) || 7)}
+                help="例如：7=最近 7 天，30=最近 30 天"
+              />
+            </div>
+          )}
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input

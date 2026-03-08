@@ -783,6 +783,9 @@ class TopicRepository:
         retry_limit: int = 2,
         schedule_frequency: str = "daily",
         schedule_time_utc: int = 21,
+        enable_date_filter: bool = False,
+        date_filter_days: int = 7,
+
     ) -> TopicSubscription:
         found = self.get_by_name(name)
         if found:
@@ -792,6 +795,7 @@ class TopicRepository:
             found.retry_limit = max(retry_limit, 0)
             found.schedule_frequency = schedule_frequency
             found.schedule_time_utc = max(0, min(23, schedule_time_utc))
+            found.updated_at = datetime.now(UTC)
             found.updated_at = datetime.now(UTC)
             self.session.flush()
             return found
@@ -803,6 +807,8 @@ class TopicRepository:
             retry_limit=max(retry_limit, 0),
             schedule_frequency=schedule_frequency,
             schedule_time_utc=max(0, min(23, schedule_time_utc)),
+            enable_date_filter=enable_date_filter,
+
         )
         self.session.add(topic)
         self.session.flush()
@@ -817,6 +823,8 @@ class TopicRepository:
         max_results_per_run: int | None = None,
         retry_limit: int | None = None,
         schedule_frequency: str | None = None,
+        enable_date_filter: bool | None = None,
+        date_filter_days: int | None = None,
         schedule_time_utc: int | None = None,
     ) -> TopicSubscription:
         topic = self.session.get(TopicSubscription, topic_id)
@@ -834,6 +842,10 @@ class TopicRepository:
             topic.schedule_frequency = schedule_frequency
         if schedule_time_utc is not None:
             topic.schedule_time_utc = max(0, min(23, schedule_time_utc))
+        if enable_date_filter is not None:
+            topic.enable_date_filter = enable_date_filter
+        if date_filter_days is not None:
+            topic.date_filter_days = max(1, date_filter_days)
         topic.updated_at = datetime.now(UTC)
         self.session.flush()
         return topic

@@ -88,6 +88,7 @@ class PaperPipelines:
         topic_id: str | None = None,
         action_type: ActionType = ActionType.manual_collect,
         sort_by: str = "submittedDate",
+
     ) -> tuple[int, list[str], int]:
         """搜索 arXiv 并入库，upsert 去重。返回 (total_count, inserted_ids, new_papers_count)
 
@@ -97,8 +98,8 @@ class PaperPipelines:
         new_papers_count = 0
         total_fetched = 0
         batch_size = 20
-        max_pages = 5  # 最多抓取 5 批（100 篇），直到找到 max_results 篇新论文
-        total_arxiv_tokens = 0.0
+        max_pages = 10  # 最多抓取 10 批（200 篇），直到找到 max_results 篇新论文
+        arxiv_request_delay = 3.0  # arXiv API 建议请求间隔 3 秒
 
         with session_scope() as session:
             repo = PaperRepository(session)
@@ -118,13 +119,20 @@ class PaperPipelines:
                     needed = max_results - new_papers_count
                     this_batch = min(batch_size, needed + 20)  # 多抓 20 篇作为缓冲
 
+                    # 使用传入的 days_back，如果没有则默认 30 天
+                    effective_days_back = days_back if days_back is not None else 30
                     papers = self.arxiv.fetch_latest(
                         query=query,
                         max_results=this_batch,
                         sort_by=sort_by,
                         start=start,
+                        days_back=effective_days_back,
                     )
                     total_fetched += len(papers)
+
+                    # 添加请求间隔，避免触发 arXiv 限流
+                    if page < max_pages - 1 and papers:
+                        time.sleep(arxiv_request_delay)
 
                     if not papers:
                         break  # 没有更多论文了

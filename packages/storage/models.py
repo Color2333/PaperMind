@@ -195,8 +195,9 @@ class TopicSubscription(Base):
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
     max_results_per_run: Mapped[int] = mapped_column(nullable=False, default=20)
     retry_limit: Mapped[int] = mapped_column(nullable=False, default=2)
-    schedule_frequency: Mapped[str] = mapped_column(String(20), nullable=False, default="daily")
     schedule_time_utc: Mapped[int] = mapped_column(nullable=False, default=21)
+    enable_date_filter: Mapped[bool] = mapped_column(nullable=False, default=False)  # 是否启用日期过滤
+    date_filter_days: Mapped[int] = mapped_column(nullable=False, default=7)  # 日期范围（最近 N 天）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
