@@ -151,7 +151,6 @@ def run_topic_ingest(topic_id: str) -> dict:
                     max_results=topic.max_results_per_run,
                     topic_id=topic.id,
                     action_type=ActionType.auto_collect,
-                    days_back=topic.date_filter_days if topic.enable_date_filter else None,
                 )
                 ids = result["inserted_ids"]
                 new_count = result["new_count"]

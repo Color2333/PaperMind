@@ -194,6 +194,7 @@ class PaperPipelines:
         max_results: int = 20,
         topic_id: str | None = None,
         action_type: ActionType = ActionType.subscription_ingest,
+        sort_by: str = "submittedDate",
     ) -> list[str]:
         """ingest_arxiv 的别名，返回 inserted_ids"""
         _, ids = self.ingest_arxiv(
@@ -201,6 +202,7 @@ class PaperPipelines:
             max_results=max_results,
             topic_id=topic_id,
             action_type=action_type,
+            sort_by=sort_by,
         )
         return ids
 
@@ -210,6 +212,7 @@ class PaperPipelines:
         max_results: int = 20,
         topic_id: str | None = None,
         action_type: ActionType = ActionType.subscription_ingest,
+        sort_by: str = "submittedDate",
     ) -> dict:
         """ingest_arxiv 返回详细统计信息"""
         total_count, inserted_ids, new_count = self.ingest_arxiv(
@@ -217,6 +220,7 @@ class PaperPipelines:
             max_results=max_results,
             topic_id=topic_id,
             action_type=action_type,
+            sort_by=sort_by,
         )
         return {
             "total_count": total_count,
