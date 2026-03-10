@@ -119,8 +119,7 @@ class PaperPipelines:
                     needed = max_results - new_papers_count
                     this_batch = min(batch_size, needed + 20)  # 多抓 20 篇作为缓冲
 
-                    # 使用传入的 days_back，如果没有则默认 30 天
-                    effective_days_back = days_back if days_back is not None else 30
+                    # 默认查询最近 30 天的论文
                     papers = self.arxiv.fetch_latest(
                         query=query,
                         max_results=this_batch,

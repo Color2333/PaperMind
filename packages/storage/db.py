@@ -198,6 +198,35 @@ def run_migrations() -> None:
         except Exception:
             conn.rollback()
 
+        # generated_contents 表（如果不存在则创建）
+        try:
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS generated_contents (
+                    id VARCHAR(36) PRIMARY KEY,
+                    content_type VARCHAR(32) NOT NULL,
+                    title VARCHAR(512) NOT NULL,
+                    keyword VARCHAR(256),
+                    paper_id VARCHAR(36) REFERENCES papers(id) ON DELETE SET NULL,
+                    markdown TEXT NOT NULL,
+                    metadata_json JSON,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            )
+            _safe_create_index(
+                conn, "ix_generated_contents_created_at", "generated_contents", "created_at"
+            )
+            _safe_create_index(
+                conn, "ix_generated_contents_content_type", "generated_contents", "content_type"
+            )
+            _safe_create_index(
+                conn, "ix_generated_contents_paper_id", "generated_contents", "paper_id"
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
         # 初始化：给没有 action 的已有论文创建 initial_import 记录
         _init_existing_papers_action(conn)
 

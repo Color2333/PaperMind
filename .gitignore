@@ -32,6 +32,7 @@ htmlcov/
 # AI agent config (local only)
 .claude/
 CLAUDE.md
+.spec-workflow/
 
 # Data (runtime generated)
 data/
