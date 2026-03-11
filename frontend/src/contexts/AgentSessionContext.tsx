@@ -1,6 +1,6 @@
 /**
  * Agent 会话全局上下文 - SSE 流和对话状态在页面切换时保持存活
- * @author Bamzc
+ * @author Color2333
  */
 import { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { agentApi } from "@/services/api";
@@ -9,6 +9,7 @@ import { parseSSEStream } from "@/types";
 import { useConversationCtx } from "@/contexts/ConversationContext";
 import { loadConversation } from "@/hooks/useConversations";
 import type { ConversationMessage } from "@/hooks/useConversations";
+import { uid } from "@/lib/utils";
 
 /* ========== 共享类型 ========== */
 
@@ -118,7 +119,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       }
       return [
         ...prev,
-        { id: `asst_${Date.now()}`, type: "assistant" as const, content: text, streaming: true, timestamp: new Date() },
+        { id: `asst_${uid()}`, type: "assistant" as const, content: text, streaming: true, timestamp: new Date() },
       ];
     });
   }, []);
@@ -213,7 +214,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
     const lastIdx = copy.length - 1;
     if (lastIdx < 0) {
       if (pendingText) {
-        copy.push({ id: `asst_${Date.now()}`, type: "assistant" as const, content: pendingText, streaming: false, timestamp: new Date() });
+        copy.push({ id: `asst_${uid()}`, type: "assistant" as const, content: pendingText, streaming: false, timestamp: new Date() });
       }
       return;
     }
@@ -221,7 +222,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
     if (last.type === "assistant" && last.streaming) {
       copy[lastIdx] = { ...last, content: last.content + pendingText, streaming: false };
     } else if (pendingText) {
-      copy.push({ id: `asst_${Date.now()}`, type: "assistant" as const, content: pendingText, streaming: false, timestamp: new Date() });
+      copy.push({ id: `asst_${uid()}`, type: "assistant" as const, content: pendingText, streaming: false, timestamp: new Date() });
     }
   };
 
@@ -229,7 +230,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const processSSE = useCallback(
     (event: SSEEvent) => {
       const { type, data } = event;
-      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const id = uid();
 
       switch (type as SSEEventType) {
         case "text_delta": {
@@ -307,7 +308,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
               const artTitle = String(d.title || "Daily Brief");
               const artContent = String(d.html);
               setItems((prev) => [...prev, {
-                id: `art_${Date.now()}`, type: "artifact" as const, content: "",
+                id: `art_${uid()}`, type: "artifact" as const, content: "",
                 artifactTitle: artTitle, artifactContent: artContent, artifactIsHtml: true,
                 timestamp: new Date(),
               }]);
@@ -317,7 +318,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
               const artTitle = String(d.title || "报告");
               const artContent = String(d.markdown);
               setItems((prev) => [...prev, {
-                id: `art_${Date.now()}`, type: "artifact" as const, content: "",
+                id: `art_${uid()}`, type: "artifact" as const, content: "",
                 artifactTitle: artTitle, artifactContent: artContent, artifactIsHtml: false,
                 timestamp: new Date(),
               }]);
@@ -360,7 +361,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
               copy[copy.length - 1] = { ...last, steps };
               return copy;
             }
-            return [...prev, { id: `sg_${Date.now()}`, type: "step_group" as const, content: "", steps: [{ id: arId, status: ((data.success as boolean) ? "done" : "error") as "done" | "error", toolName: "操作执行", success: data.success as boolean, summary: data.summary as string, data: data.data as Record<string, unknown> }], timestamp: new Date() }];
+            return [...prev, { id: `sg_${uid()}`, type: "step_group" as const, content: "", steps: [{ id: arId, status: ((data.success as boolean) ? "done" : "error") as "done" | "error", toolName: "操作执行", success: data.success as boolean, summary: data.summary as string, data: data.data as Record<string, unknown> }], timestamp: new Date() }];
           });
           if (data.success && data.data) {
             const d = data.data as Record<string, unknown>;
@@ -368,7 +369,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
               const artTitle = String(d.title || "Wiki");
               const artContent = String(d.markdown);
               setItems((prev) => [...prev, {
-                id: `art_${Date.now()}`, type: "artifact" as const, content: "",
+                id: `art_${uid()}`, type: "artifact" as const, content: "",
                 artifactTitle: artTitle, artifactContent: artContent, artifactIsHtml: false,
                 timestamp: new Date(),
               }]);
@@ -377,7 +378,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
               const artTitle = String(d.title || "Daily Brief");
               const artContent = String(d.html);
               setItems((prev) => [...prev, {
-                id: `art_${Date.now()}`, type: "artifact" as const, content: "",
+                id: `art_${uid()}`, type: "artifact" as const, content: "",
                 artifactTitle: artTitle, artifactContent: artContent, artifactIsHtml: true,
                 timestamp: new Date(),
               }]);
@@ -407,7 +408,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
               );
             }
             if (pending) {
-              return [...prev, { id: `asst_done_${Date.now()}`, type: "assistant" as const, content: pending, streaming: false, timestamp: new Date() }];
+              return [...prev, { id: `asst_done_${uid()}`, type: "assistant" as const, content: pending, streaming: false, timestamp: new Date() }];
             }
             return prev;
           });
@@ -439,7 +440,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
                     : item,
                 );
               }
-              if (pending) return [...prev, { id: `asst_fallback_${Date.now()}`, type: "assistant" as const, content: pending, streaming: false, timestamp: new Date() }];
+              if (pending) return [...prev, { id: `asst_fallback_${uid()}`, type: "assistant" as const, content: pending, streaming: false, timestamp: new Date() }];
               return prev;
             });
           }
@@ -458,6 +459,9 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   );
 
   /* ---- 发送消息 ---- */
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
   const sendMessage = useCallback(
     async (text: string) => {
       if (!text.trim() || loading || pendingActions.size > 0) {
@@ -469,9 +473,11 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         createConversation();
       }
       setLoading(true);
-      setItems((prev) => [...prev, { id: `user_${Date.now()}`, type: "user" as const, content: text.trim(), timestamp: new Date() }]);
+      setItems((prev) => [...prev, { id: `user_${uid()}`, type: "user" as const, content: text.trim(), timestamp: new Date() }]);
+      // 使用 ref 获取最新 items，避免闭包过时
+      const currentItems = itemsRef.current;
       const msgs: AgentMessage[] = [];
-      for (const it of items) {
+      for (const it of currentItems) {
         if (it.type === "user") {
           msgs.push({ role: "user", content: it.content });
         } else if (it.type === "assistant") {
@@ -498,17 +504,17 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         abortRef.current = ac;
         const resp = await agentApi.chat(msgs);
         if (!resp.body) {
-          setItems((p) => [...p, { id: `e_${Date.now()}`, type: "error" as const, content: "无响应流", timestamp: new Date() }]);
+          setItems((p) => [...p, { id: `e_${uid()}`, type: "error" as const, content: "无响应流", timestamp: new Date() }]);
           setLoading(false);
           return;
         }
         startStream(resp.body.getReader(), ac.signal);
       } catch (err) {
-        setItems((p) => [...p, { id: `e_${Date.now()}`, type: "error" as const, content: err instanceof Error ? err.message : "请求失败", timestamp: new Date() }]);
+        setItems((p) => [...p, { id: `e_${uid()}`, type: "error" as const, content: err instanceof Error ? err.message : "请求失败", timestamp: new Date() }]);
         setLoading(false);
       }
     },
-    [items, loading, pendingActions, cancelStream, createConversation, startStream],
+    [loading, pendingActions, cancelStream, createConversation, startStream],
   );
 
   /* ---- 确认/拒绝操作 ---- */
@@ -525,7 +531,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         if (resp.body) startStream(resp.body.getReader(), ac.signal);
         else setLoading(false);
       } catch (err) {
-        setItems((p) => [...p, { id: `e_${Date.now()}`, type: "error" as const, content: err instanceof Error ? err.message : "确认失败", timestamp: new Date() }]);
+        setItems((p) => [...p, { id: `e_${uid()}`, type: "error" as const, content: err instanceof Error ? err.message : "确认失败", timestamp: new Date() }]);
         setLoading(false);
       } finally {
         setConfirmingActions((prev) => { const n = new Set(prev); n.delete(actionId); return n; });
@@ -549,7 +555,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
           setLoading(false);
         }
       } catch (err) {
-        setItems((p) => [...p, { id: `e_${Date.now()}`, type: "error" as const, content: err instanceof Error ? err.message : "拒绝操作失败", timestamp: new Date() }]);
+        setItems((p) => [...p, { id: `e_${uid()}`, type: "error" as const, content: err instanceof Error ? err.message : "拒绝操作失败", timestamp: new Date() }]);
         setLoading(false);
       }
     },

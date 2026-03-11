@@ -69,6 +69,8 @@ export function useStreamBuffer() {
  */
 export function useSSEStream(options: UseSSEStreamOptions) {
   const abortControllerRef = useRef<AbortController | null>(null);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const cancelStream = useCallback(() => {
     if (abortControllerRef.current) {
@@ -86,6 +88,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
       const parseSSEStream = async () => {
         const decoder = new TextDecoder();
         let buffer = "";
+        let currentEvent = "";
 
         try {
           while (true) {
@@ -93,29 +96,49 @@ export function useSSEStream(options: UseSSEStreamOptions) {
             if (done) break;
 
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n\n");
+            const lines = buffer.split("\n");
             buffer = lines.pop() || "";
 
             for (const line of lines) {
-              if (!line.trim()) continue;
-              const [eventLine, dataLine] = line.split("\n");
-              if (!eventLine || !dataLine) continue;
-
-              const eventType = eventLine.replace("event: ", "").trim() as SSEEventType;
-              const dataStr = dataLine.replace("data: ", "").trim();
-
-              try {
-                const data = JSON.parse(dataStr);
-                options.onEvent({ type: eventType, data });
-              } catch (e) {
-                console.error("Failed to parse SSE data:", e);
+              if (line.startsWith("event: ")) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith("data: ")) {
+                const dataStr = line.slice(6);
+                try {
+                  const data = JSON.parse(dataStr);
+                  optionsRef.current.onEvent({ type: currentEvent as SSEEventType, data });
+                } catch (e) {
+                  console.warn("[SSE] Failed to parse:", currentEvent, dataStr.slice(0, 200), e);
+                }
+                currentEvent = "";
+              }
+              // 空行 = 事件结束，重置状态
+              if (line === "") {
+                currentEvent = "";
               }
             }
           }
-          options.onComplete?.();
+          // 流结束时处理残余数据
+          if (buffer.trim()) {
+            buffer += "\n";
+            const remaining = buffer.split("\n");
+            for (const line of remaining) {
+              if (line.startsWith("event: ")) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith("data: ")) {
+                const dataStr = line.slice(6);
+                try {
+                  const data = JSON.parse(dataStr);
+                  optionsRef.current.onEvent({ type: currentEvent as SSEEventType, data });
+                } catch { /* ignore trailing incomplete data */ }
+                currentEvent = "";
+              }
+            }
+          }
+          optionsRef.current.onComplete?.();
         } catch (error) {
           if (error instanceof Error && error.name !== "AbortError") {
-            options.onError?.(error);
+            optionsRef.current.onError?.(error);
           }
         }
       };
@@ -128,7 +151,7 @@ export function useSSEStream(options: UseSSEStreamOptions) {
         });
       }
     },
-    [options],
+    [], // 通过 optionsRef 解耦，无需依赖外部变量
   );
 
   return {
