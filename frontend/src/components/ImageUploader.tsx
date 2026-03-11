@@ -1,6 +1,6 @@
 /**
  * ImageUploader - 图片上传组件（拖拽 + 粘贴 + 点击选文件）
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ImagePlus, X, Upload } from "lucide-react";

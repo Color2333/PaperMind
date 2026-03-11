@@ -1,6 +1,6 @@
 """
 AI 关键词建议服务 - 自然语言 → arXiv 搜索关键词
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

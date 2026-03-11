@@ -3,7 +3,7 @@
 # 1. PyInstaller 打包 Python 后端
 # 2. 安装 Tauri 前端依赖
 # 3. Tauri build 生成 .dmg
-# @author Bamzc
+# @author Color2333
 
 set -euo pipefail
 

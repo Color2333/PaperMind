@@ -1,6 +1,6 @@
 /**
  * Graph Explorer - 知识图谱探索（3 大面板：全局概览 / 引文分析 / 领域洞察）
- * @author Bamzc
+ * @author Color2333
  */
 import { useState } from "react";
 import { Compass, Network, TrendingUp } from "lucide-react";

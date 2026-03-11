@@ -1,6 +1,6 @@
 /**
  * PDF Reader - 沉浸式论文阅读器（连续滚动 + AI 功能）
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Document, Page, pdfjs } from "react-pdf";

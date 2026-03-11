@@ -1,7 +1,7 @@
 """
 学术写作助手服务 - 封装高质量写作 Prompt 模板
 Prompt 模板来源：https://github.com/Leey21/awesome-ai-research-writing
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 /**
  * Pipelines - 运行记录（现代精致版）
- * @author Bamzc
+ * @author Color2333
  */
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";

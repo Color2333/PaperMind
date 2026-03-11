@@ -1,7 +1,7 @@
 /**
  * Operations - 运维操作
  * 覆盖 API: POST /citations/sync/*, POST /jobs/*, GET /system/status
- * @author Bamzc
+ * @author Color2333
  */
 import { useState } from "react";
 import { Card, CardHeader, Button, Input } from "@/components/ui";

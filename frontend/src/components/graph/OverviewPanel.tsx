@@ -1,6 +1,6 @@
 /**
  * 全局概览面板 — 统计 / 力导向图 / PageRank / 前沿 / 桥接 / 共引
- * @author Bamzc
+ * @author Color2333
  */
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";

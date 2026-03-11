@@ -1,6 +1,6 @@
 /**
  * 知识图谱 - 通用子组件
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";

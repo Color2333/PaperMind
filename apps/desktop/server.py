@@ -1,7 +1,7 @@
 """
 PaperMind Desktop Server — PyInstaller 入口
 Tauri sidecar 调用此二进制，自动选端口 + 内嵌 scheduler。
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

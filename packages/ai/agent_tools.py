@@ -1,6 +1,6 @@
 """
 Agent 工具注册表和执行函数
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

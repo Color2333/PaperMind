@@ -1,7 +1,7 @@
 """
 双源引用数据提供者
 OpenAlex（10 req/s）为主力，Semantic Scholar 为兜底
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

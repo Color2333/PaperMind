@@ -1,6 +1,6 @@
 /**
  * 引文分析面板 — 单篇引用详情 / 主题网络 / 深度溯源
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Link } from "react-router-dom";

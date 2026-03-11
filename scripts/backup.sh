@@ -1,6 +1,6 @@
 #!/bin/bash
 # PaperMind 数据备份脚本
-# @author Bamzc
+# @author Color2333
 #
 # 用法: 添加到 crontab:
 #   0 3 * * * /opt/papermind/backup.sh >> /opt/papermind/backups/backup.log 2>&1

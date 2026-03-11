@@ -1,6 +1,6 @@
 """
 SQLAlchemy ORM 模型定义
-@author Bamzc
+@author Color2333
 """
 
 from datetime import UTC, date, datetime

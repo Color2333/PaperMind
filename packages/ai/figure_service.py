@@ -1,7 +1,7 @@
 """
 图表/公式智能识别与解读服务
 从 PDF 中提取 Figure/Table/公式区域，送 Vision 模型解读
-@author Bamzc
+@author Color2333
 """
 
 from __future__ import annotations

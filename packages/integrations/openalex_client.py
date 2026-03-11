@@ -1,7 +1,7 @@
 """
 OpenAlex API 客户端
 高速率引用数据源（10 req/s, 100k/day），覆盖 4.7 亿论文
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

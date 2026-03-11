@@ -1,6 +1,6 @@
 """
 RAG 检索增强生成服务
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

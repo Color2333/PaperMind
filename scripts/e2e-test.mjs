@@ -1,7 +1,7 @@
 /**
  * PaperMind 深度用户体验自动化测试
  * 模拟真人操作：导航、点击、输入、滚动、截图
- * @author Bamzc
+ * @author Color2333
  */
 import { chromium } from "playwright";
 import { mkdirSync } from "fs";

@@ -1,6 +1,6 @@
 /**
  * PaperMind - 主应用路由（懒加载）
- * @author Bamzc
+ * @author Color2333
  */
 import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";

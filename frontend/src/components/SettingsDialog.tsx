@@ -1,6 +1,6 @@
 /**
  * 设置弹窗 - LLM 配置 / 邮箱与报告 / Pipeline 运行 / 运维操作
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { useToast } from "@/contexts/ToastContext";

@@ -1,7 +1,7 @@
 /**
  * Writing Assistant - 学术写作助手（支持多轮微调对话）
  * Prompt 模板来源：https://github.com/Leey21/awesome-ai-research-writing
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Button, Spinner } from "@/components/ui";

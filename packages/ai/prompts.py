@@ -1,6 +1,6 @@
 """
 LLM Prompt 模板
-@author Bamzc
+@author Color2333
 """
 
 

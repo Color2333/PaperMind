@@ -1,7 +1,7 @@
 /**
  * AI Chat - RAG 问答 (Claude 对话风格)
  * 覆盖 API: POST /rag/ask
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useRef, useEffect } from "react";
 import { Card, Button } from "@/components/ui";

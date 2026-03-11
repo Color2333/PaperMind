@@ -1,6 +1,6 @@
 """
 推荐引擎 + 热点趋势检测
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

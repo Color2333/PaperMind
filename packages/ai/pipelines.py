@@ -1,6 +1,6 @@
 """
 论文处理 Pipeline - 摄入 / 粗读 / 精读 / 向量化 / 参考文献导入
-@author Bamzc
+@author Color2333
 """
 
 from __future__ import annotations

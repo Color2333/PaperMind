@@ -1,6 +1,6 @@
 /**
  * Tab 切换组件（支持 label 为 ReactNode，可带状态指示器）
- * @author Bamzc
+ * @author Color2333
  */
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";

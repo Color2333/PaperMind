@@ -1,6 +1,6 @@
 /**
  * 全局任务追踪 — 跨页面可见的实时任务进度
- * @author Bamzc
+ * @author Color2333
  */
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/contexts/ToastContext";

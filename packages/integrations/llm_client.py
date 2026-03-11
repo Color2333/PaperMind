@@ -1,7 +1,7 @@
 """
 LLM 提供者抽象层 - OpenAI / Anthropic / ZhipuAI / Pseudo
 支持从数据库动态加载激活的 LLM 配置
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 

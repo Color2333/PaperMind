@@ -1,6 +1,6 @@
 /**
  * 全局任务进度条 — 固定在页面底部
- * @author Bamzc
+ * @author Color2333
  */
 import { useGlobalTasks, type ActiveTask } from "@/contexts/GlobalTaskContext";
 import { Loader2, CheckCircle2, XCircle, ChevronUp, ChevronDown } from "lucide-react";

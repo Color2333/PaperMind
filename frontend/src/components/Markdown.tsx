@@ -1,6 +1,6 @@
 /**
  * 统一 Markdown 渲染组件（含 LaTeX 支持）
- * @author Bamzc
+ * @author Color2333
  */
 import { memo } from "react";
 import ReactMarkdown from "react-markdown";

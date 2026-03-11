@@ -1,6 +1,6 @@
 /**
  * 主布局组件
- * @author Bamzc
+ * @author Color2333
  */
 import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";

@@ -1,6 +1,6 @@
 /**
  * Daily Brief - 研究简报（重构：清晰排版 + 暗色适配 + 阅读体验优化）
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";

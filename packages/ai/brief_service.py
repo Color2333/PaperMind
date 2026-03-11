@@ -1,6 +1,6 @@
 """
 每日简报服务 - 精美日报生成
-@author Bamzc
+@author Color2333
 """
 
 from __future__ import annotations

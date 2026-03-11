@@ -1,7 +1,7 @@
 /**
  * PaperMind 桌面版 — 首次启动引导
  * 让用户选择数据目录和 .env 配置文件路径。
- * @author Bamzc
+ * @author Color2333
  */
 import { useState } from "react";
 import {

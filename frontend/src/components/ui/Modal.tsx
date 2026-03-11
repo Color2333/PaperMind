@@ -1,6 +1,6 @@
 /**
  * 模态框组件
- * @author Bamzc
+ * @author Color2333
  */
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";

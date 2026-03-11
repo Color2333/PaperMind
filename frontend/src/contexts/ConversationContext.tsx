@@ -1,6 +1,6 @@
 /**
  * 对话上下文 - Sidebar 和 Agent 共享对话状态
- * @author Bamzc
+ * @author Color2333
  */
 import { createContext, useContext } from "react";
 import {

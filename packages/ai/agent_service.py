@@ -1,6 +1,6 @@
 """
 Agent 核心服务 - 对话管理、工具调度、确认流程
-@author Bamzc
+@author Color2333
 """
 from __future__ import annotations
 
