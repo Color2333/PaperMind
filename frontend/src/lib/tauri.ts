@@ -1,6 +1,6 @@
 /**
  * Tauri 桌面环境检测与 IPC 桥接
- * @author Bamzc
+ * @author Color2333
  */
 
 /** 是否运行在 Tauri 桌面环境中 */
@@ -127,14 +127,20 @@ export function setApiPort(port: number): void {
   _resolvedPort = port;
 }
 
-export function waitForBackend(): Promise<number> {
+/** 等待后端就绪，最多等待 30 秒 */
+export function waitForBackend(timeoutMs = 30000): Promise<number> {
   if (_resolvedPort) return Promise.resolve(_resolvedPort);
 
   if (!_portPromise) {
-    _portPromise = new Promise((resolve) => {
+    _portPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`后端服务启动超时 (${timeoutMs / 1000}s)，请检查配置`));
+      }, timeoutMs);
+
       const poll = async () => {
         const port = await getApiPort();
         if (port) {
+          clearTimeout(timer);
           _resolvedPort = port;
           resolve(port);
         } else {
@@ -144,6 +150,7 @@ export function waitForBackend(): Promise<number> {
       poll();
 
       listen<number>("backend-ready", (port) => {
+        clearTimeout(timer);
         _resolvedPort = port;
         resolve(port);
       });

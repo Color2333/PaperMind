@@ -1,12 +1,13 @@
 /**
  * PaperMind - API 服务层
- * @author Bamzc
+ * @author Color2333
  */
 import type {
   SystemStatus,
   Topic,
   TopicCreate,
   TopicUpdate,
+  TopicFetchResult,
   Paper,
   PipelineRun,
   SkimReport,
@@ -35,8 +36,39 @@ import type {
   BridgesResponse,
   FrontierResponse,
   CocitationResponse,
+  TodaySummary,
+  FolderStats,
+  PaperListResponse,
+  FigureAnalysisItem,
+  ReferenceImportEntry,
+  ImportTaskStatus,
+  CollectionAction,
+  EmailConfig,
+  EmailConfigForm,
+  DailyReportConfig,
+  TaskStatus,
+  ActiveTaskInfo,
+  LoginResponse,
+  AuthStatusResponse,
 } from "@/types";
 
+export type {
+  TodaySummary,
+  TopicFetchResult,
+  FolderStats,
+  PaperListResponse,
+  FigureAnalysisItem,
+  ReferenceImportEntry,
+  ImportTaskStatus,
+  CollectionAction,
+  EmailConfig,
+  EmailConfigForm,
+  DailyReportConfig,
+  TaskStatus,
+  ActiveTaskInfo,
+  LoginResponse,
+  AuthStatusResponse,
+} from "@/types";
 import { resolveApiBase } from "@/lib/tauri";
 
 function getApiBase(): string {
@@ -82,9 +114,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       const text = await resp.text().catch(() => "");
       if (text) msg = text;
     }
-    // 401 未认证，清除 token
+    // 401 未认证，清除 token 并刷新页面跳转登录
     if (resp.status === 401) {
       clearAuth();
+      // 强制刷新页面触发 App 重新渲染登录页
+      window.location.reload();
     }
     throw new Error(msg);
   }
@@ -117,23 +151,6 @@ export const systemApi = {
   status: () => get<SystemStatus>("/system/status"),
 };
 
-/* ========== 今日速览 ========== */
-export interface TodaySummary {
-  today_new: number;
-  week_new: number;
-  total_papers: number;
-  recommendations: {
-    id: string;
-    title: string;
-    arxiv_id: string;
-    abstract: string;
-    similarity: number;
-    title_zh?: string;
-    keywords?: string[];
-    categories?: string[];
-  }[];
-  hot_keywords: { keyword: string; count: number }[];
-}
 
 export const todayApi = {
   summary: () => get<TodaySummary>("/today"),
@@ -154,36 +171,7 @@ export const topicApi = {
     post<{ suggestions: KeywordSuggestion[] }>("/topics/suggest-keywords", { description }),
 };
 
-export interface TopicFetchResult {
-  topic_id: string;
-  topic_name?: string;
-  status: string;
-  inserted: number;
-  processed?: number;
-  attempts?: number;
-  error?: string;
-  topic?: Topic;
-}
-
 /* ========== 论文 ========== */
-export interface FolderStats {
-  total: number;
-  favorites: number;
-  recent_7d: number;
-  unclassified: number;
-  by_topic: { topic_id: string; topic_name: string; count: number }[];
-  by_status: Record<string, number>;
-  by_date: { date: string; count: number }[];
-}
-
-export interface PaperListResponse {
-  items: Paper[];
-  total: number;
-  page: number;
-  page_size: number;
-  total_pages: number;
-}
-
 export const paperApi = {
   latest: (opts: {
     page?: number;
@@ -240,41 +228,7 @@ export const paperApi = {
     post<{ action: string; result: string }>(`/papers/${id}/ai/explain`, { text, action }),
 };
 
-export interface FigureAnalysisItem {
-  id?: string;
-  page_number: number;
-  image_index?: number;
-  image_type: string;
-  caption: string;
-  description: string;
-  image_url?: string | null;
-  has_image?: boolean;
-}
-
 /* ========== 摄入 ========== */
-export interface ReferenceImportEntry {
-  scholar_id: string | null;
-  title: string;
-  year: number | null;
-  venue: string | null;
-  citation_count: number | null;
-  arxiv_id: string | null;
-  abstract: string | null;
-  direction?: string;
-}
-
-export interface ImportTaskStatus {
-  task_id: string;
-  status: "running" | "completed" | "failed";
-  total: number;
-  completed: number;
-  imported: number;
-  skipped: number;
-  failed: number;
-  current: string;
-  error?: string;
-  results: { title: string; status: string; reason?: string; paper_id?: string; source?: string }[];
-}
 
 export const ingestApi = {
   arxiv: (query: string, maxResults = 20, topicId?: string, sortBy = "submittedDate") => {
@@ -316,16 +270,6 @@ export const citationApi = {
 };
 
 /* ========== 行动记录 ========== */
-export interface CollectionAction {
-  id: string;
-  action_type: string;
-  title: string;
-  query: string | null;
-  topic_id: string | null;
-  paper_count: number;
-  created_at: string;
-}
-
 export const actionApi = {
   list: (opts: { actionType?: string; topicId?: string; limit?: number; offset?: number } = {}) => {
     const params = new URLSearchParams();
@@ -458,9 +402,10 @@ async function fetchSSE(url: string, init?: RequestInit): Promise<Response> {
     },
   });
   if (!resp.ok) {
-    // 401 清除 token
+    // 401 未认证，清除 token 并刷新页面跳转登录
     if (resp.status === 401) {
       clearAuth();
+      window.location.reload();
     }
     const text = await resp.text().catch(() => "");
     throw new Error(`请求失败 (${resp.status}): ${text || resp.statusText}`);
@@ -491,30 +436,6 @@ export const agentApi = {
 };
 
 /* ========== 邮箱配置 ========== */
-export interface EmailConfig {
-  id: string;
-  name: string;
-  smtp_server: string;
-  smtp_port: number;
-  smtp_use_tls: boolean;
-  sender_email: string;
-  sender_name: string;
-  username: string;
-  is_active: boolean;
-  created_at: string;
-}
-
-export interface EmailConfigForm {
-  name: string;
-  smtp_server: string;
-  smtp_port: number;
-  smtp_use_tls: boolean;
-  sender_email: string;
-  sender_name: string;
-  username: string;
-  password: string;
-}
-
 export const emailConfigApi = {
   list: () => get<EmailConfig[]>("/settings/email-configs"),
   create: (data: EmailConfigForm) => post<EmailConfig>("/settings/email-configs", data),
@@ -526,17 +447,6 @@ export const emailConfigApi = {
 };
 
 /* ========== 每日报告配置 ========== */
-export interface DailyReportConfig {
-  enabled: boolean;
-  auto_deep_read: boolean;
-  deep_read_limit: number;
-  send_email_report: boolean;
-  recipient_emails: string[];
-  report_time_utc: number;
-  include_paper_details: boolean;
-  include_graph_insights: boolean;
-}
-
 export const dailyReportApi = {
   getConfig: () => get<DailyReportConfig>("/settings/daily-report-config"),
   updateConfig: (data: Record<string, unknown>) =>
@@ -549,19 +459,6 @@ export const dailyReportApi = {
 };
 
 /* ========== 后台任务 ========== */
-export interface TaskStatus {
-  task_id: string;
-  task_type: string;
-  title: string;
-  status: "pending" | "running" | "completed" | "failed";
-  progress: number;
-  message: string;
-  error: string | null;
-  created_at: number;
-  updated_at: number;
-  has_result: boolean;
-}
-
 export const tasksApi = {
   active: () => get<{ tasks: ActiveTaskInfo[] }>("/tasks/active"),
   startTopicWiki: (keyword: string, limit = 120) =>
@@ -580,29 +477,7 @@ export const tasksApi = {
     post<{ ok: boolean }>("/tasks/track", body),
 };
 
-export interface ActiveTaskInfo {
-  task_id: string;
-  task_type: string;
-  title: string;
-  current: number;
-  total: number;
-  message: string;
-  elapsed_seconds: number;
-  progress_pct: number;
-  finished: boolean;
-  success: boolean;
-  error: string | null;
-}
-
 /* ========== 认证 ========== */
-export interface LoginResponse {
-  access_token: string;
-  token_type: string;
-}
-
-export interface AuthStatusResponse {
-  auth_enabled: boolean;
-}
 
 export const authApi = {
   login: (password: string) =>

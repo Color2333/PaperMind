@@ -30,8 +30,9 @@ import {
   X,
   PenTool,
   Loader2,
+  LogOut,
 } from "lucide-react";
-import { paperApi } from "@/services/api";
+import { paperApi, clearAuth } from "@/services/api";
 
 /* 工具网格定义 */
 const TOOLS = [
@@ -278,6 +279,13 @@ export default function Sidebar() {
             </button>
             <div className="flex items-center gap-1">
               <span className="text-[10px] text-ink-tertiary">v0.2.0</span>
+              <button
+                onClick={() => { clearAuth(); window.location.reload(); }}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-tertiary transition-colors hover:bg-hover hover:text-red-500"
+                title="退出登录"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
               <button
                 onClick={toggleDark}
                 className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-tertiary transition-colors hover:bg-hover hover:text-ink"
