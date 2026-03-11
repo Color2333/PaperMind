@@ -3,6 +3,7 @@
 @author Color2333
 """
 
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -53,9 +54,9 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
 def authenticate_user(password: str) -> bool:
     """
     验证站点密码
-    简单模式：直接对比明文密码
+    使用 hmac.compare_digest 防止时序攻击
     """
     settings = get_settings()
     if not settings.auth_password:
         return False
-    return password == settings.auth_password
+    return hmac.compare_digest(password, settings.auth_password)
