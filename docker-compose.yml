@@ -1,13 +1,12 @@
-# PaperMind Docker Compose - 多容器分离部署 + 端口预留
-# @author Bamzc
+# PaperMind Docker Compose - 分离部署配置
 # @author Color2333
 #
 # 端口规划：
-# - 现有项目：3001(前端) + 8001(后端)
-# - PaperMind: 3002(前端) + 8002(后端)
+# - 前端：3002
+# - 后端：8002
 #
 # 使用方法:
-#   1. cp .env.example deploy/.env && 编辑 deploy/.env 填入 API Key 和 SMTP
+#   1. cp .env.example .env && 编辑 .env 填入 API Key
 #   2. docker compose up -d --build
 #   3. 访问 http://localhost:3002
 
@@ -27,6 +26,7 @@ services:
       - pm_logs:/app/logs
       - pm_pip_cache:/.pip-cache
     env_file:
+      - ./.env
       - ./deploy/.env
     environment:
       - APP_ENV=production
@@ -64,6 +64,7 @@ services:
       - pm_logs:/app/logs
       - pm_pip_cache:/.pip-cache
     env_file:
+      - ./.env
       - ./deploy/.env
     environment:
       - APP_ENV=production
