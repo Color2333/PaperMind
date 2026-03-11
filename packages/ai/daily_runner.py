@@ -138,6 +138,11 @@ def run_topic_ingest(topic_id: str) -> dict:
         # 获取精读配额配置
         max_deep_reads = getattr(topic, "max_deep_reads_per_run", 2)
 
+        # 读取日期过滤配置
+        enable_date_filter = getattr(topic, "enable_date_filter", False)
+        date_filter_days = getattr(topic, "date_filter_days", 7)
+        days_back = date_filter_days if enable_date_filter else 0
+
         last_error: str | None = None
         ids: list[str] = []
         new_count: int = 0
@@ -151,6 +156,7 @@ def run_topic_ingest(topic_id: str) -> dict:
                     max_results=topic.max_results_per_run,
                     topic_id=topic.id,
                     action_type=ActionType.auto_collect,
+                    days_back=days_back,
                 )
                 ids = result["inserted_ids"]
                 new_count = result["new_count"]

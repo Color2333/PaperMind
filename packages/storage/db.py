@@ -120,6 +120,20 @@ def run_migrations() -> None:
             "INTEGER",
             "21",
         )
+        _safe_add_column(
+            conn,
+            "topic_subscriptions",
+            "enable_date_filter",
+            "BOOLEAN",
+            "0",
+        )
+        _safe_add_column(
+            conn,
+            "topic_subscriptions",
+            "date_filter_days",
+            "INTEGER",
+            "7",
+        )
         _safe_add_column(conn, "papers", "favorited", "BOOLEAN", "0")
         # 关键列索引加速 ORDER BY / WHERE 查询
         _safe_create_index(conn, "ix_papers_created_at", "papers", "created_at")

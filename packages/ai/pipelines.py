@@ -88,7 +88,7 @@ class PaperPipelines:
         topic_id: str | None = None,
         action_type: ActionType = ActionType.manual_collect,
         sort_by: str = "submittedDate",
-
+        days_back: int = 7,
     ) -> tuple[int, list[str], int]:
         """搜索 arXiv 并入库，upsert 去重。返回 (total_count, inserted_ids, new_papers_count)
 
@@ -119,12 +119,12 @@ class PaperPipelines:
                     needed = max_results - new_papers_count
                     this_batch = min(batch_size, needed + 20)  # 多抓 20 篇作为缓冲
 
-                    # 默认查询最近 30 天的论文
                     papers = self.arxiv.fetch_latest(
                         query=query,
                         max_results=this_batch,
                         sort_by=sort_by,
                         start=start,
+                        days_back=days_back,
                     )
                     total_fetched += len(papers)
 
@@ -195,6 +195,7 @@ class PaperPipelines:
         topic_id: str | None = None,
         action_type: ActionType = ActionType.subscription_ingest,
         sort_by: str = "submittedDate",
+        days_back: int = 7,
     ) -> list[str]:
         """ingest_arxiv 的别名，返回 inserted_ids"""
         _, ids = self.ingest_arxiv(
@@ -203,6 +204,7 @@ class PaperPipelines:
             topic_id=topic_id,
             action_type=action_type,
             sort_by=sort_by,
+            days_back=days_back,
         )
         return ids
 
@@ -213,6 +215,7 @@ class PaperPipelines:
         topic_id: str | None = None,
         action_type: ActionType = ActionType.subscription_ingest,
         sort_by: str = "submittedDate",
+        days_back: int = 7,
     ) -> dict:
         """ingest_arxiv 返回详细统计信息"""
         total_count, inserted_ids, new_count = self.ingest_arxiv(
@@ -221,6 +224,7 @@ class PaperPipelines:
             topic_id=topic_id,
             action_type=action_type,
             sort_by=sort_by,
+            days_back=days_back,
         )
         return {
             "total_count": total_count,

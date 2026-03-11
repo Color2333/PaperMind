@@ -79,7 +79,7 @@ def upsert_topic(req: TopicCreate) -> dict:
             schedule_frequency=req.schedule_frequency,
             schedule_time_utc=req.schedule_time_utc,
             enable_date_filter=req.enable_date_filter,
-
+            date_filter_days=req.date_filter_days,
         )
         return _topic_dict(topic, session)
 
@@ -108,7 +108,7 @@ def update_topic(topic_id: str, req: TopicUpdate) -> dict:
                 schedule_frequency=req.schedule_frequency,
                 schedule_time_utc=req.schedule_time_utc,
                 enable_date_filter=req.enable_date_filter,
-
+                date_filter_days=req.date_filter_days,
             )
         except ValueError as exc:
             raise NotFoundError(str(exc)) from exc

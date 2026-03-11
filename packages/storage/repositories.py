@@ -795,7 +795,8 @@ class TopicRepository:
             found.retry_limit = max(retry_limit, 0)
             found.schedule_frequency = schedule_frequency
             found.schedule_time_utc = max(0, min(23, schedule_time_utc))
-            found.updated_at = datetime.now(UTC)
+            found.enable_date_filter = enable_date_filter
+            found.date_filter_days = max(1, date_filter_days)
             found.updated_at = datetime.now(UTC)
             self.session.flush()
             return found
@@ -808,7 +809,7 @@ class TopicRepository:
             schedule_frequency=schedule_frequency,
             schedule_time_utc=max(0, min(23, schedule_time_utc)),
             enable_date_filter=enable_date_filter,
-
+            date_filter_days=max(1, date_filter_days),
         )
         self.session.add(topic)
         self.session.flush()
