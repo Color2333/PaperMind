@@ -36,10 +36,7 @@ CLAUDE.md
 .cursor/
 
 # Data (runtime generated)
-data/*.db
-data/papers/
-data/briefs/
-
+data/
 # Logs
 logs/
 *.log
