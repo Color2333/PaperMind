@@ -45,14 +45,14 @@ class EmailConfigUpdate(BaseModel):
 
 
 class DailyReportConfigUpdate(BaseModel):
-    """更新每日报告配置请求"""
+    """每日报告配置更新请求"""
 
     enabled: bool | None = None
     auto_deep_read: bool | None = None
     deep_read_limit: int | None = None
     send_email_report: bool | None = None
     recipient_emails: str | None = None
-    report_time_utc: int | None = None
+    cron_expression: str | None = None  # 新增：cron 表达式配置
     include_paper_details: bool | None = None
     include_graph_insights: bool | None = None
 

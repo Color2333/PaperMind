@@ -861,7 +861,8 @@ export interface DailyReportConfig {
   deep_read_limit: number;
   send_email_report: boolean;
   recipient_emails: string[];
-  report_time_utc: number;
+  cron_expression: string;  // 新增：cron 表达式
+  report_time_utc: number;  // 保留：向后兼容
   include_paper_details: boolean;
   include_graph_insights: boolean;
 }

@@ -188,9 +188,19 @@ def run_worker() -> None:
     )
     logger.info("✅ 已添加：主题分发任务（每小时整点，UTC）")
 
-    # 每日简报（UTC 4 点生成，4 点半发送）
-    # 默认配置：DAILY_CRON=0 4 * * *
-    daily_trigger = CronTrigger.from_crontab(getattr(settings, "daily_cron", "0 4 * * *"))
+    # 每日简报（从数据库读取 cron 表达式）
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import DailyReportConfigRepository
+
+    try:
+        with session_scope() as session:
+            config = DailyReportConfigRepository(session).get_config()
+            daily_cron = config.cron_expression or "0 4 * * *"
+    except Exception as e:
+        logger.warning(f"从数据库读取 cron 失败：{e}，使用默认值")
+        daily_cron = "0 4 * * *"
+
+    daily_trigger = CronTrigger.from_crontab(daily_cron)
     scheduler.add_job(
         brief_job,
         trigger=daily_trigger,
@@ -198,9 +208,8 @@ def run_worker() -> None:
         replace_existing=True,
     )
     logger.info(
-        "✅ 已添加：每日简报任务（UTC %s，北京时间%s）",
-        getattr(settings, "daily_cron", "0 4 * * *"),
-        "12:00" if getattr(settings, "daily_cron", "").startswith("0 4") else "计算中",
+        "✅ 已添加：每日简报任务（cron: %s）",
+        daily_cron,
     )
 
     # 每周图谱维护（UTC 周日 22 点 = 北京时间周一 6 点）

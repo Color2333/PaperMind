@@ -318,8 +318,21 @@ def run_daily_ingest() -> dict:
 
 
 def run_daily_brief() -> dict:
-    settings = get_settings()
-    return DailyBriefService().publish(recipient=settings.notify_default_to)
+    """生成每日简报，从数据库读取收件人配置"""
+    # 从数据库读取收件人
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import DailyReportConfigRepository
+
+    recipient = None
+    try:
+        with session_scope() as session:
+            config = DailyReportConfigRepository(session).get_config()
+            if config.send_email_report and config.recipient_emails:
+                recipient = config.recipient_emails.split(",")[0]
+    except Exception as e:
+        logger.warning(f"读取收件人配置失败：{e}")
+
+    return DailyBriefService().publish(recipient=recipient)
 
 
 def run_weekly_graph_maintenance() -> dict:

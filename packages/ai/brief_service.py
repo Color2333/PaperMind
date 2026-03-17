@@ -499,6 +499,17 @@ class DailyBriefService:
         ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = f"daily_brief_{ts}.html"
         saved = self.notifier.save_brief_html(filename, html)
+
+        # 如果没有指定收件人，从数据库读取配置
+        if not recipient:
+            from packages.storage.db import session_scope
+            from packages.storage.repositories import DailyReportConfigRepository
+
+            with session_scope() as session:
+                config = DailyReportConfigRepository(session).get_config()
+                if config.send_email_report and config.recipient_emails:
+                    recipient = config.recipient_emails.split(",")[0]  # 取第一个收件人
+
         sent = False
         if recipient:
             sent = self.notifier.send_email_html(recipient, "PaperMind Daily Brief", html)

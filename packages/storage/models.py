@@ -197,8 +197,12 @@ class TopicSubscription(Base):
     retry_limit: Mapped[int] = mapped_column(nullable=False, default=2)
     schedule_frequency: Mapped[str] = mapped_column(String(32), nullable=False, default="daily")
     schedule_time_utc: Mapped[int] = mapped_column(nullable=False, default=21)
-    enable_date_filter: Mapped[bool] = mapped_column(nullable=False, default=False)  # 是否启用日期过滤
-    date_filter_days: Mapped[int] = mapped_column(nullable=False, default=7)  # 日期范围（最近 N 天）
+    enable_date_filter: Mapped[bool] = mapped_column(
+        nullable=False, default=False
+    )  # 是否启用日期过滤
+    date_filter_days: Mapped[int] = mapped_column(
+        nullable=False, default=7
+    )  # 日期范围（最近 N 天）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
@@ -423,8 +427,14 @@ class DailyReportConfig(Base):
     recipient_emails: Mapped[str] = mapped_column(
         String(2048), nullable=False, default="", doc="收件人邮箱列表，逗号分隔"
     )
+    cron_expression: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="0 4 * * *", doc="定时任务 cron 表达式（UTC 时间）"
+    )
     report_time_utc: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=21, doc="发送报告的时间（UTC，0-23）"
+        Integer,
+        nullable=False,
+        default=21,
+        doc="发送报告的时间（UTC，0-23）- 已废弃，使用 cron_expression",
     )
     include_paper_details: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, doc="报告中是否包含论文详情"
