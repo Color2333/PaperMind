@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import Integer, Select, delete, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
 from packages.domain.math_utils import cosine_distance as _cosine_distance
@@ -116,6 +116,19 @@ class PaperRepository:
 
     def list_all(self, limit: int = 10000) -> list[Paper]:
         return self.list_latest(limit=limit)
+
+    def list_lightweight(self, limit: int = 50000) -> list[Paper]:
+        """只加载论文的轻量字段，避免加载 embedding 和大文本
+
+        适用于需要批量加载论文但只需 id, title, arxiv_id, publication_date 等字段的场景
+        """
+        q = (
+            select(Paper)
+            .options(defer(Paper.embedding), defer(Paper.abstract))
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
 
     def list_by_ids(self, paper_ids: list[str]) -> list[Paper]:
         if not paper_ids:
@@ -284,15 +297,17 @@ class PaperRepository:
     def topic_stats(self) -> dict:
         """
         返回主题维度统计：
-        - 每个主题的论文数、总引用数、活跃度（近30天新增）
+        - 每个主题的论文数、总引用数、活跃度（近 30 天新增）
         - 每个主题的阅读状态分布
+
+        优化：将 N+1 查询合并为 4 次批量聚合查询
         """
         from packages.timezone import user_today_start_utc
 
         user_today_utc = user_today_start_utc()
         since_30d = user_today_utc - timedelta(days=30)
 
-        # 按主题聚合统计
+        # 1. 获取所有主题基本信息和论文数
         topic_stats_q = (
             select(
                 TopicSubscription.id,
@@ -304,49 +319,77 @@ class PaperRepository:
         )
         topic_rows = self.session.execute(topic_stats_q).all()
 
+        # 提取所有 topic_id 用于批量查询
+        topic_ids = [row.id for row in topic_rows]
+        if not topic_ids:
+            return {"topics": []}
+
+        # 2. 批量查询所有主题的总引用数（一次查询，GROUP BY topic_id）
+        citation_subq = (
+            select(
+                PaperTopic.topic_id,
+                func.coalesce(
+                    func.sum(
+                        func.cast(
+                            func.json_extract(Paper.metadata_json, "$.citation_count"), Integer
+                        )
+                    ),
+                    0,
+                ).label("total_citations"),
+            )
+            .join(Paper, Paper.id == PaperTopic.paper_id)
+            .group_by(PaperTopic.topic_id)
+            .subquery()
+        )
+        citation_rows = {
+            row[0]: row[1] for row in self.session.execute(select(citation_subq)).all()
+        }
+
+        # 3. 批量查询所有主题的近 30 天新增论文数（一次查询，GROUP BY topic_id）
+        recent_subq = (
+            select(
+                PaperTopic.topic_id,
+                func.count().label("recent_30d"),
+            )
+            .join(Paper, Paper.id == PaperTopic.paper_id)
+            .where(Paper.created_at >= since_30d)
+            .group_by(PaperTopic.topic_id)
+            .subquery()
+        )
+        recent_rows = {row[0]: row[1] for row in self.session.execute(select(recent_subq)).all()}
+
+        # 4. 批量查询所有主题的阅读状态分布（一次查询，GROUP BY topic_id, read_status）
+        status_subq = (
+            select(
+                PaperTopic.topic_id,
+                Paper.read_status,
+                func.count().label("count"),
+            )
+            .join(Paper, Paper.id == PaperTopic.paper_id)
+            .group_by(PaperTopic.topic_id, Paper.read_status)
+            .subquery()
+        )
+        status_rows = self.session.execute(select(status_subq)).all()
+        # 组装成 {topic_id: {status: count}}
+        status_map: dict[str, dict[str, int]] = {}
+        for row in status_rows:
+            tid = row[0]
+            status = row[1].value
+            count = row[2]
+            if tid not in status_map:
+                status_map[tid] = {}
+            status_map[tid][status] = count
+
+        # 在 Python 中组装结果
         result = []
         for row in topic_rows:
             topic_id = row.id
             topic_name = row.name
             paper_count = row.paper_count or 0
+            total_citations = citation_rows.get(topic_id, 0)
+            recent_30d = recent_rows.get(topic_id, 0)
 
-            # 该主题下所有论文的总引用数
-            citation_q = (
-                select(
-                    func.coalesce(
-                        func.sum(
-                            func.cast(
-                                func.json_extract(Paper.metadata_json, "$.citation_count"), Integer
-                            )
-                        ),
-                        0,
-                    )
-                )
-                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
-                .where(PaperTopic.topic_id == topic_id)
-            )
-            total_citations = self.session.execute(citation_q).scalar() or 0
-
-            # 近30天该主题的新增论文数（活跃度）
-            recent_q = (
-                select(func.count())
-                .select_from(Paper)
-                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
-                .where(PaperTopic.topic_id == topic_id)
-                .where(Paper.created_at >= since_30d)
-            )
-            recent_30d = self.session.execute(recent_q).scalar() or 0
-
-            # 该主题下论文的阅读状态分布
-            status_q = (
-                select(Paper.read_status, func.count())
-                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
-                .where(PaperTopic.topic_id == topic_id)
-                .group_by(Paper.read_status)
-            )
-            status_rows = self.session.execute(status_q).all()
-            status_dist = {r[0].value: r[1] for r in status_rows}
-
+            topic_status = status_map.get(topic_id, {})
             result.append(
                 {
                     "topic_id": topic_id,
@@ -355,9 +398,9 @@ class PaperRepository:
                     "total_citations": total_citations,
                     "recent_30d": recent_30d,
                     "status_dist": {
-                        "unread": status_dist.get("unread", 0),
-                        "skimmed": status_dist.get("skimmed", 0),
-                        "deep_read": status_dist.get("deep_read", 0),
+                        "unread": topic_status.get("unread", 0),
+                        "skimmed": topic_status.get("skimmed", 0),
+                        "deep_read": topic_status.get("deep_read", 0),
                     },
                 }
             )
@@ -1247,13 +1290,9 @@ class ActionRepository:
         self.session.add(action)
         self.session.flush()
 
-        for pid in paper_ids:
-            self.session.add(
-                ActionPaper(
-                    action_id=action.id,
-                    paper_id=pid,
-                )
-            )
+        # 批量插入关联论文
+        action_papers = [ActionPaper(action_id=action.id, paper_id=pid) for pid in paper_ids]
+        self.session.add_all(action_papers)
         self.session.flush()
         return action
 

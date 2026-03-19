@@ -2,7 +2,7 @@
  * Dashboard - 系统总览（现代精致版）
  * @author Color2333
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Badge } from "@/components/ui";
 import { StatCardSkeleton } from "@/components/Skeleton";
@@ -82,7 +82,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [costDays, setCostDays] = useState<number>(7);
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -101,11 +101,11 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [costDays]);
 
   useEffect(() => {
     loadData();
-  }, [costDays]);
+  }, [loadData]);
 
   if (loading) return <StatCardSkeleton />;
   if (error) {

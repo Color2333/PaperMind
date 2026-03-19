@@ -924,6 +924,8 @@ export interface ActiveTaskInfo {
   finished: boolean;
   success: boolean;
   error: string | null;
+  category?: string;
+  created_at?: number;
 }
 
 /* ========== 认证 ========== */

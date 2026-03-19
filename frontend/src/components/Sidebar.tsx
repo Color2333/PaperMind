@@ -158,33 +158,23 @@ export default function Sidebar() {
           </button>
         </div>
 
-        {/* 活跃任务进度条 */}
         {hasRunning && activeTasks.length > 0 && (
-          <div className="mx-3 mb-2 rounded-xl bg-gradient-to-r from-primary/10 to-info/10 border border-primary/20 p-3">
-            <div className="mb-2 flex items-center gap-2">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-              <span className="text-xs font-semibold text-primary">运行中</span>
-            </div>
-            {activeTasks.slice(0, 2).map((task) => (
-              <div key={task.task_id} className="mb-2 last:mb-0">
-                <div className="mb-1 flex items-center justify-between text-[11px]">
-                  <span className="font-medium text-ink truncate flex-1">{task.title}</span>
-                  <span className="ml-2 text-ink-tertiary shrink-0">{task.progress_pct}%</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-page">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-primary to-info transition-all duration-300"
-                    style={{ width: `${task.progress_pct}%` }}
-                  />
-                </div>
-                <p className="mt-1 text-[10px] text-ink-secondary truncate">{task.message}</p>
+          <div className="mx-3 mb-2 rounded-xl bg-gradient-to-r from-primary/10 to-info/10 border border-primary/20 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-primary truncate">
+                  {activeTasks.length} 个任务进行中
+                </p>
+                <p className="text-[10px] text-ink-secondary truncate">
+                  {activeTasks[0]?.title || ""}
+                  {activeTasks.length > 1 ? ` 等${activeTasks.length}个` : ""}
+                </p>
               </div>
-            ))}
-            {activeTasks.length > 2 && (
-              <p className="text-[10px] text-ink-tertiary">
-                还有 {activeTasks.length - 2} 个任务正在运行...
-              </p>
-            )}
+              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+                <span className="text-xs font-bold text-primary">{activeTasks[0]?.progress_pct || 0}%</span>
+              </div>
+            </div>
           </div>
         )}
 

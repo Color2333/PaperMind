@@ -85,18 +85,29 @@ class GraphService:
         paper_limit: int = 30,
         edge_limit_per_paper: int = 6,
     ) -> dict:
-        total_edges = 0
-        paper_count = 0
         with session_scope() as session:
             topic = TopicRepository(session).get_by_id(topic_id)
             if topic is None:
                 raise ValueError(f"topic {topic_id} not found")
             papers = PaperRepository(session).list_by_topic(topic_id, limit=paper_limit)
             paper_ids = [p.id for p in papers]
-        for pid in paper_ids:
-            result = self.sync_citations_for_paper(pid, limit=edge_limit_per_paper)
-            total_edges += int(result.get("edges_inserted", 0))
-            paper_count += 1
+
+        total_edges = 0
+        paper_count = 0
+        # 限制并发避免 API 限速和 SQLite 锁竞争
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(self.sync_citations_for_paper, pid, edge_limit_per_paper): pid
+                for pid in paper_ids
+            }
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    total_edges += int(result.get("edges_inserted", 0))
+                    paper_count += 1
+                except Exception as exc:
+                    logger.warning("sync error for %s: %s", futures[future], exc)
+
         return {
             "topic_id": topic_id,
             "papers_processed": paper_count,
@@ -111,7 +122,7 @@ class GraphService:
         with session_scope() as session:
             paper_repo = PaperRepository(session)
             cit_repo = CitationRepository(session)
-            all_papers = paper_repo.list_all(limit=50000)
+            all_papers = paper_repo.list_lightweight(limit=50000)
             lib_norm: dict[str, str] = {}
             for p in all_papers:
                 pn = norm(p.arxiv_id)
@@ -166,7 +177,7 @@ class GraphService:
             cit_repo = CitationRepository(session)
             topic_repo = TopicRepository(session)
 
-            papers = paper_repo.list_all(limit=50000)
+            papers = paper_repo.list_lightweight(limit=50000)
             edges = cit_repo.list_all()
             topics = topic_repo.list_topics()
             topic_map = {t.id: t.name for t in topics}
@@ -243,7 +254,7 @@ class GraphService:
             cit_repo = CitationRepository(session)
             topic_repo = TopicRepository(session)
 
-            papers = paper_repo.list_all(limit=50000)
+            papers = paper_repo.list_lightweight(limit=50000)
             edges = cit_repo.list_all()
             topics = topic_repo.list_topics()
             topic_map = {t.id: t.name for t in topics}
@@ -300,7 +311,7 @@ class GraphService:
             paper_repo = PaperRepository(session)
             cit_repo = CitationRepository(session)
 
-            papers = paper_repo.list_all(limit=50000)
+            papers = paper_repo.list_lightweight(limit=50000)
             edges = cit_repo.list_all()
             paper_ids = {p.id for p in papers}
 
@@ -347,7 +358,7 @@ class GraphService:
             paper_repo = PaperRepository(session)
             cit_repo = CitationRepository(session)
 
-            papers = paper_repo.list_all(limit=50000)
+            papers = paper_repo.list_lightweight(limit=50000)
             edges = cit_repo.list_all()
             paper_ids = {p.id for p in papers}
             paper_map = {p.id: p for p in papers}
@@ -516,7 +527,7 @@ class GraphService:
 
     def citation_tree(self, root_paper_id: str, depth: int = 2) -> dict:
         with session_scope() as session:
-            papers = {p.id: p for p in PaperRepository(session).list_all(limit=10000)}
+            papers = {p.id: p for p in PaperRepository(session).list_lightweight(limit=10000)}
             edges = CitationRepository(session).list_all()
             out_edges: dict[str, list[str]] = defaultdict(list)
             in_edges: dict[str, list[str]] = defaultdict(list)
@@ -615,7 +626,8 @@ class GraphService:
             ext_normed = {norm(r.arxiv_id): r.arxiv_id for r in rich_list if r.arxiv_id}
             lib_norm_map: dict[str, str] = {}
             if ext_normed:
-                for p in paper_repo.list_all(limit=50000):
+                # 只加载轻量字段，减少内存占用
+                for p in paper_repo.list_lightweight(limit=50000):
                     pn = norm(p.arxiv_id)
                     if pn and pn in ext_normed:
                         lib_norm_map[pn] = p.id
@@ -1205,11 +1217,11 @@ class GraphService:
         self,
         keyword: str,
         limit: int = 120,
-        progress_callback: Callable[[float, str], None] | None = None,
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> dict:
         def _progress(pct: float, msg: str):
             if progress_callback:
-                progress_callback(pct, msg)
+                progress_callback(msg, int(pct * 100), 100)
 
         # Phase 0: 并行收集数据
         _progress(0.05, "收集时间线和综述数据...")

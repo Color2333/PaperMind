@@ -3,7 +3,7 @@
  * Prompt 模板来源：https://github.com/Leey21/awesome-ai-research-writing
  * @author Color2333
  */
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from "react";
 import { Button, Spinner } from "@/components/ui";
 import { useToast } from "@/contexts/ToastContext";
 import { writingApi } from "@/services/api";
@@ -35,9 +35,10 @@ import {
   Bot,
   ScanText,
   ImagePlus,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+const ReactMarkdown = lazy(() => import("react-markdown"));
 import ImageUploader from "@/components/ImageUploader";
 
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -465,9 +466,11 @@ export default function Writing() {
               {/* 首次结果 */}
               <div className="border-border bg-page rounded-xl border p-5">
                 <div className="prose-custom text-ink max-w-none text-sm leading-relaxed">
-                  <ReactMarkdown>
-                    {refineMsgs.length >= 2 ? refineMsgs[1].content : result.content}
-                  </ReactMarkdown>
+                  <Suspense fallback={<div className="flex items-center justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-ink-tertiary" /></div>}>
+                    <ReactMarkdown>
+                      {refineMsgs.length >= 2 ? refineMsgs[1].content : result.content}
+                    </ReactMarkdown>
+                  </Suspense>
                 </div>
               </div>
 
@@ -480,7 +483,7 @@ export default function Writing() {
                   </div>
                   <div className="border-border bg-page max-h-[50vh] space-y-2 overflow-y-auto rounded-xl border p-3">
                     {refineConversation.map((msg, idx) => (
-                      <div key={idx} className={`flex gap-2.5 ${msg.role === "user" ? "" : ""}`}>
+                      <div key={`refine-${msg.role}-${idx}`} className={`flex gap-2.5 ${msg.role === "user" ? "" : ""}`}>
                         <div
                           className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
                             msg.role === "user" ? "bg-primary/10" : "bg-warning/10"
@@ -512,7 +515,9 @@ export default function Writing() {
                             }`}
                           >
                             <div className="prose-custom max-w-none text-sm leading-relaxed">
-                              <ReactMarkdown>{msg.content}</ReactMarkdown>
+                              <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}>
+                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                              </Suspense>
                             </div>
                           </div>
                         </div>

@@ -1,12 +1,9 @@
-/**
- * 主布局组件
- * @author Color2333
- */
 import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import { ConversationProvider } from "@/contexts/ConversationContext";
 import { AgentSessionProvider } from "@/contexts/AgentSessionContext";
 import { GlobalTaskProvider } from "@/contexts/GlobalTaskContext";
+import GlobalTaskBar from "./GlobalTaskBar";
 
 export default function Layout() {
   const { pathname } = useLocation();
@@ -29,6 +26,7 @@ export default function Layout() {
                 </div>
               </main>
             )}
+            <GlobalTaskBar />
           </div>
         </GlobalTaskProvider>
       </AgentSessionProvider>

@@ -7,7 +7,7 @@ import uuid as _uuid
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
-from packages.ai.daily_runner import run_daily_brief, run_daily_ingest, run_weekly_graph_maintenance
+from packages.ai.daily_runner import run_daily_brief, run_daily_ingest
 from packages.domain.enums import ReadStatus
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
@@ -31,7 +31,7 @@ def run_daily_once() -> dict:
         brief = run_daily_brief()
         return {"ingest": ingest, "brief": brief}
 
-    task_id = global_tracker.submit("daily_job", "📅 每日任务执行", _fn)
+    task_id = global_tracker.submit("daily_job", "📅 每日任务执行", _fn, category="report")
     return {"task_id": task_id, "message": "每日任务已启动", "status": "running"}
 
 
@@ -40,9 +40,54 @@ def run_weekly_graph_once() -> dict:
     """每周图维护任务 - 后台执行"""
 
     def _fn(progress_callback=None):
-        return run_weekly_graph_maintenance()
+        from packages.ai.graph_service import GraphService
+        from packages.storage.db import session_scope
+        from packages.storage.repositories import TopicRepository
 
-    task_id = global_tracker.submit("weekly_maintenance", "🔄 每周图维护", _fn)
+        if progress_callback:
+            progress_callback("正在获取主题列表...", 10, 100)
+
+        with session_scope() as session:
+            topics = TopicRepository(session).list_topics(enabled_only=True)
+
+        total_topics = len(topics)
+        graph = GraphService()
+        topic_results = []
+
+        for i, t in enumerate(topics):
+            if progress_callback:
+                progress_callback(
+                    f"处理主题 {i + 1}/{total_topics}: {t.name[:20]}...",
+                    20 + int((i + 1) / total_topics * 40),
+                    100,
+                )
+            try:
+                topic_results.append(
+                    graph.sync_citations_for_topic(
+                        topic_id=t.id,
+                        paper_limit=20,
+                        edge_limit_per_paper=6,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to sync citations for topic %s",
+                    t.id,
+                )
+                continue
+
+        if progress_callback:
+            progress_callback("正在执行增量同步...", 70, 100)
+        incremental = graph.sync_incremental(paper_limit=50, edge_limit_per_paper=6)
+
+        if progress_callback:
+            progress_callback("图维护完成", 95, 100)
+        return {
+            "topic_sync": topic_results,
+            "incremental": incremental,
+        }
+
+    task_id = global_tracker.submit("weekly_maintenance", "🔄 每周图维护", _fn, category="sync")
     return {"task_id": task_id, "message": "每周图维护已启动", "status": "running"}
 
 
@@ -79,7 +124,11 @@ def batch_process_unread(
         failed = 0
         try:
             global_tracker.start(
-                task_id, "batch_process", f"📚 批量处理未读论文 ({total} 篇)", total=total
+                task_id,
+                "batch_process",
+                f"📚 批量处理未读论文 ({total} 篇)",
+                total=total,
+                category="analysis",
             )
 
             with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
@@ -204,7 +253,9 @@ async def run_daily_report_once(background_tasks: BackgroundTasks):
 
     def _run_workflow_bg():
         task_id = f"daily_report_{_uuid.uuid4().hex[:8]}"
-        global_tracker.start(task_id, "daily_report", "📊 每日报告工作流", total=100)
+        global_tracker.start(
+            task_id, "daily_report", "📊 每日报告工作流", total=100, category="report"
+        )
 
         def _progress(msg: str, cur: int, tot: int):
             global_tracker.update(task_id, cur, msg, total=100)
@@ -235,7 +286,9 @@ async def run_daily_report_send_only(
 
     def _run_send_only_bg():
         task_id = f"report_send_{_uuid.uuid4().hex[:8]}"
-        global_tracker.start(task_id, "report_send", "📧 快速发送简报", total=100)
+        global_tracker.start(
+            task_id, "report_send", "📧 快速发送简报", total=100, category="report"
+        )
 
         def _progress(msg: str, cur: int, tot: int):
             global_tracker.update(task_id, cur, msg, total=100)
