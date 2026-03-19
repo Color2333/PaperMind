@@ -5,6 +5,7 @@
 from pathlib import Path
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
@@ -13,6 +14,18 @@ from packages.domain.schemas import AIExplainReq
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
+
+# 全局 HTTP 客户端复用（避免每次请求创建新客户端）
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """获取或创建全局 HTTP 客户端"""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
+    return _http_client
+
 
 router = APIRouter()
 
@@ -78,7 +91,6 @@ def recommended_papers(top_k: int = Query(default=10, ge=1, le=50)) -> dict:
 @router.get("/papers/proxy-arxiv-pdf/{arxiv_id:path}")
 async def proxy_arxiv_pdf(arxiv_id: str):
     """代理访问 arXiv PDF（解决 CORS 问题）"""
-    import httpx
 
     # 清理 arxiv_id（移除版本号）
     clean_id = arxiv_id.split("v")[0]
@@ -86,29 +98,27 @@ async def proxy_arxiv_pdf(arxiv_id: str):
 
     try:
         # 使用后端服务器访问 arXiv（绕过 CORS）
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(arxiv_url, follow_redirects=True)
+        client = _get_http_client()
+        response = await client.get(arxiv_url, follow_redirects=True)
 
-            if response.status_code == 404:
-                raise HTTPException(status_code=404, detail=f"arXiv 论文不存在：{clean_id}")
+        if response.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"arXiv 论文不存在：{clean_id}")
 
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=500, detail=f"arXiv 访问失败：{response.status_code}"
-                )
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"arXiv 访问失败：{response.status_code}")
 
-            # 返回 PDF 内容
-            from fastapi.responses import Response
+        # 返回 PDF 内容
+        from fastapi.responses import Response
 
-            return Response(
-                content=response.content,
-                media_type="application/pdf",
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Content-Disposition": f'inline; filename="{clean_id}.pdf"',
-                    "Cache-Control": "public, max-age=3600",
-                },
-            )
+        return Response(
+            content=response.content,
+            media_type="application/pdf",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Content-Disposition": f'inline; filename="{clean_id}.pdf"',
+                "Cache-Control": "public, max-age=3600",
+            },
+        )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="arXiv 请求超时")
     except httpx.RequestError as exc:
@@ -328,17 +338,33 @@ def analyze_paper_figures(
     def _analyze_fn(progress_callback=None):
         from packages.ai.figure_service import FigureService
 
+        if progress_callback:
+            progress_callback("正在提取图表...", 10, 100)
         svc = FigureService()
         results = svc.analyze_paper_figures(paper_id, pdf_path, max_figures)
+
+        total_figures = len(results)
+        if progress_callback and total_figures > 0:
+            progress_callback(f"正在生成解读 ({total_figures} 个图表)...", 50, 100)
+
         # 分析完成后，从 DB 获取带 id 的完整结果
         from packages.ai.figure_service import FigureService as FS2
 
         items = FS2.get_paper_analyses(paper_id)
-        for item in items:
+        for i, item in enumerate(items):
             if item.get("has_image"):
                 item["image_url"] = f"/papers/{paper_id}/figures/{item['id']}/image"
             else:
                 item["image_url"] = None
+            if progress_callback:
+                progress_callback(
+                    f"解读中 ({i + 1}/{total_figures})...",
+                    50 + int((i + 1) / total_figures * 45),
+                    100,
+                )
+
+        if progress_callback:
+            progress_callback("图表分析完成", 95, 100)
         return {"paper_id": str(paper_id), "count": len(items), "items": items}
 
     task_id = global_tracker.submit(

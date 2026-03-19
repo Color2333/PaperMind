@@ -1,12 +1,11 @@
-import { memo, useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { memo, useState, useCallback, useRef, useEffect, useMemo, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, XCircle, Loader2, Play, ChevronDown, ChevronRight } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+const ReactMarkdown = lazy(() => import("react-markdown"));
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import "katex/dist/katex.min.css";
 import { type StepItem } from "@/contexts/AgentSessionContext";
 import { getToolMeta, StepDataView } from "./AgentSteps";
 
@@ -53,9 +52,11 @@ const AssistantMessage = memo(function AssistantMessage({
   return (
     <div className="group py-2">
       <div className="prose-custom text-ink text-sm leading-relaxed">
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-          {markdownContent}
-        </ReactMarkdown>
+        <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+            {markdownContent}
+          </ReactMarkdown>
+        </Suspense>
       </div>
       {streaming && (
         <span className="bg-primary ml-0.5 inline-block h-4 w-[2px] animate-pulse rounded-full" />

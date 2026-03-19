@@ -144,6 +144,9 @@ def run_migrations() -> None:
         _safe_create_index(
             conn, "ix_generated_contents_created_at", "generated_contents", "created_at"
         )
+        # Citation 表索引 - 加速图谱查询
+        _safe_create_index(conn, "ix_citations_source_paper_id", "citations", "source_paper_id")
+        _safe_create_index(conn, "ix_citations_target_paper_id", "citations", "target_paper_id")
 
         # image_analyses 表（如果不存在则创建）
         try:

@@ -2,7 +2,7 @@
  * 引文分析面板 — 单篇引用详情 / 主题网络 / 深度溯源
  * @author Color2333
  */
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import { Button, Badge } from "@/components/ui";
 import { useToast } from "@/contexts/ToastContext";
@@ -10,7 +10,7 @@ import {
   graphApi, paperApi, topicApi, actionApi, ingestApi,
   type CollectionAction, type ImportTaskStatus, type ReferenceImportEntry,
 } from "@/services/api";
-import ForceGraph2D from "react-force-graph-2d";
+const ForceGraph2D = lazy(() => import("react-force-graph-2d"));
 import {
   Search, Network, FileText, Rss, Clock, Loader2,
   ArrowDown, ArrowUp, ChevronDown, ChevronRight, Star,
@@ -585,7 +585,7 @@ function RichCitationListView({ data }: { data: CitationDetail }) {
           <div className="space-y-2">
             {data.references.map((entry, i) => (
               <RichCitationCard
-                key={i}
+                key={entry.scholar_id || `ref-${i}`}
                 entry={entry}
                 idx={i}
                 selected={selected.has(i)}
@@ -612,7 +612,7 @@ function RichCitationListView({ data }: { data: CitationDetail }) {
               const globalIdx = data.references.length + i;
               return (
                 <RichCitationCard
-                  key={i}
+                  key={entry.scholar_id || `cited-${i}`}
                   entry={entry}
                   idx={globalIdx}
                   selected={selected.has(globalIdx)}
@@ -798,7 +798,7 @@ function ImportProgressModal({
           {done && task && task.results.length > 0 && (
             <div className="max-h-52 overflow-y-auto rounded-xl border border-border">
               {task.results.map((r, i) => (
-                <div key={i} className="flex items-center gap-2 border-b border-border/50 px-3 py-2 last:border-0">
+                <div key={r.title || `result-${i}`} className="flex items-center gap-2 border-b border-border/50 px-3 py-2 last:border-0">
                   {r.status === "imported" && <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />}
                   {r.status === "skipped" && <SkipForward className="h-3.5 w-3.5 shrink-0 text-warning" />}
                   {r.status === "failed" && <XCircle className="h-3.5 w-3.5 shrink-0 text-error" />}
@@ -901,31 +901,33 @@ function PaperCitationGraphView({ detail }: { detail: CitationDetail }) {
         <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[#22c55e]" /> 已入库</span>
       </div>
       <div ref={containerRef} className="h-[500px] w-full rounded-xl border border-border bg-page overflow-hidden">
-        <ForceGraph2D
-          graphData={graphData}
-          width={dimensions.width}
-          height={dimensions.height}
-          nodeLabel="label"
-          nodeColor={nodeColor as any}
-          nodeRelSize={5}
-          linkDirectionalArrowLength={4}
-          linkDirectionalArrowRelPos={1}
-          linkColor={() => "rgba(148,163,184,0.3)"}
-          cooldownTicks={80}
-          nodeCanvasObjectMode={() => "after"}
-          nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-            if (!node.x || !node.y) return;
-            const label = node.label || "";
-            const fontSize = Math.max(10 / globalScale, 2);
-            ctx.font = `${fontSize}px Sans-serif`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "top";
-            ctx.fillStyle = "rgba(30,41,59,0.8)";
-            if (globalScale > 1.5 || node.group === "center") {
-              ctx.fillText(label.slice(0, 30), node.x, node.y + 6);
-            }
-          }}
-        />
+        <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="h-5 w-5 animate-spin text-ink-tertiary" /></div>}>
+          <ForceGraph2D
+            graphData={graphData}
+            width={dimensions.width}
+            height={dimensions.height}
+            nodeLabel="label"
+            nodeColor={nodeColor as any}
+            nodeRelSize={5}
+            linkDirectionalArrowLength={4}
+            linkDirectionalArrowRelPos={1}
+            linkColor={() => "rgba(148,163,184,0.3)"}
+            cooldownTicks={80}
+            nodeCanvasObjectMode={() => "after"}
+            nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+              if (!node.x || !node.y) return;
+              const label = node.label || "";
+              const fontSize = Math.max(10 / globalScale, 2);
+              ctx.font = `${fontSize}px Sans-serif`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              ctx.fillStyle = "rgba(30,41,59,0.8)";
+              if (globalScale > 1.5 || node.group === "center") {
+                ctx.fillText(label.slice(0, 30), node.x, node.y + 6);
+              }
+            }}
+          />
+        </Suspense>
       </div>
     </Section>
   );
@@ -1056,32 +1058,34 @@ function TopicNetworkGraphView({ data }: { data: TopicCitationNetwork }) {
         <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[#8b5cf6]" /> 外部</span>
       </div>
       <div ref={containerRef} className="h-[600px] w-full rounded-xl border border-border bg-page overflow-hidden">
-        <ForceGraph2D
-          graphData={graphData}
-          width={dimensions.width}
-          height={dimensions.height}
-          nodeLabel="label"
-          nodeColor={nodeColor as any}
-          nodeRelSize={5}
-          linkDirectionalArrowLength={4}
-          linkDirectionalArrowRelPos={1}
-          linkColor={() => "rgba(148,163,184,0.25)"}
-          cooldownTicks={100}
-          nodeCanvasObjectMode={() => "after"}
-          nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-            if (!node.x || !node.y) return;
-            const label = node.label || "";
-            const isHub = node.group === "hub";
-            const fontSize = Math.max((isHub ? 12 : 10) / globalScale, 2);
-            ctx.font = `${isHub ? "bold " : ""}${fontSize}px Sans-serif`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "top";
-            ctx.fillStyle = isHub ? "#92400e" : "rgba(30,41,59,0.7)";
-            if (globalScale > 1.2 || isHub) {
-              ctx.fillText(label, node.x, node.y + 6);
-            }
-          }}
-        />
+        <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="h-5 w-5 animate-spin text-ink-tertiary" /></div>}>
+          <ForceGraph2D
+            graphData={graphData}
+            width={dimensions.width}
+            height={dimensions.height}
+            nodeLabel="label"
+            nodeColor={nodeColor as any}
+            nodeRelSize={5}
+            linkDirectionalArrowLength={4}
+            linkDirectionalArrowRelPos={1}
+            linkColor={() => "rgba(148,163,184,0.25)"}
+            cooldownTicks={100}
+            nodeCanvasObjectMode={() => "after"}
+            nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+              if (!node.x || !node.y) return;
+              const label = node.label || "";
+              const isHub = node.group === "hub";
+              const fontSize = Math.max((isHub ? 12 : 10) / globalScale, 2);
+              ctx.font = `${isHub ? "bold " : ""}${fontSize}px Sans-serif`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              ctx.fillStyle = isHub ? "#92400e" : "rgba(30,41,59,0.7)";
+              if (globalScale > 1.2 || isHub) {
+                ctx.fillText(label, node.x, node.y + 6);
+              }
+            }}
+          />
+        </Suspense>
       </div>
 
       {data.key_external_papers && data.key_external_papers.length > 0 && (
@@ -1120,7 +1124,7 @@ function CitationTreeView({ data }: { data: CitationTree }) {
               {data.ancestors.map((edge, i) => {
                 const node = data.nodes.find((n) => n.id === edge.source);
                 return (
-                  <div key={i} className="flex items-center gap-3 rounded-xl bg-page px-4 py-2.5">
+                  <div key={edge.source || `ancestor-${i}`} className="flex items-center gap-3 rounded-xl bg-page px-4 py-2.5">
                     <Badge variant="info">L{edge.depth}</Badge>
                     <PaperLink id={edge.source} title={node?.title || edge.source} className="flex-1 truncate" />
                     {node?.year && <span className="text-xs text-ink-tertiary">{node.year}</span>}
@@ -1145,7 +1149,7 @@ function CitationTreeView({ data }: { data: CitationTree }) {
               {data.descendants.map((edge, i) => {
                 const node = data.nodes.find((n) => n.id === edge.target);
                 return (
-                  <div key={i} className="flex items-center gap-3 rounded-xl bg-page px-4 py-2.5">
+                  <div key={edge.target || `descendant-${i}`} className="flex items-center gap-3 rounded-xl bg-page px-4 py-2.5">
                     <Badge variant="success">L{edge.depth}</Badge>
                     <PaperLink id={edge.target} title={node?.title || edge.target} className="flex-1 truncate" />
                     {node?.year && <span className="text-xs text-ink-tertiary">{node.year}</span>}

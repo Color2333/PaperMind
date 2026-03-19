@@ -26,10 +26,7 @@ import {
   Check,
 } from "lucide-react";
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/build/pdf.worker.min.mjs",
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
 
 interface PdfReaderProps {
   paperId: string;
@@ -473,7 +470,7 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
               const cfg = actionLabels[r.action];
               return (
                 <div
-                  key={i}
+                  key={`ai-result-${r.action}-${i}`}
                   className="mb-4 overflow-hidden rounded-xl border border-white/[.08] bg-gradient-to-b from-white/[.04] to-white/[.02]"
                 >
                   {/* 卡片头部 */}

@@ -6,9 +6,12 @@ LLM 提供者抽象层 - OpenAI / Anthropic / ZhipuAI / Pseudo
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 import re
+import socket
 import threading
 import time
 from collections.abc import Iterator
@@ -17,12 +20,49 @@ from dataclasses import dataclass
 from packages.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-# 配置缓存（TTL 30 秒，避免每次 LLM 调用都查库）
 _config_cache: LLMConfig | None = None
 _config_cache_ts: float = 0.0
 _CONFIG_TTL = 30.0
 _cache_lock = threading.Lock()
+
+
+async def _retry_with_backoff(
+    fn,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0,
+) -> any:
+    """指数退避重试（仅对网络错误和超时重试）
+
+    Args:
+        fn: 异步可调用对象
+        max_retries: 最大重试次数
+        base_delay: 基础延迟秒数
+        max_delay: 最大延迟秒数
+    """
+    import socket
+
+    import httpx
+
+    for attempt in range(max_retries + 1):
+        try:
+            return await fn()
+        except (httpx.TimeoutException, httpx.NetworkError, socket.gaierror, ConnectionError) as e:
+            if attempt == max_retries:
+                raise
+            # 指数退避 + 随机抖动
+            delay = min(base_delay * (2**attempt) + random.uniform(0, 0.5), max_delay)
+            logger.warning(
+                "LLM call failed (attempt %d/%d): %s, retrying in %.1fs",
+                attempt + 1,
+                max_retries,
+                str(e)[:100],
+                delay,
+            )
+            await asyncio.sleep(delay)
+        except Exception:
+            # 其他错误不重试，直接抛出
+            raise
 
 
 @dataclass
@@ -527,43 +567,77 @@ class LLMClient:
         model_override: str | None = None,
         max_tokens: int | None = None,
     ) -> LLMResult:
-        try:
-            model = self._resolve_model(stage, model_override, cfg)
-            base_url = self._resolve_base_url(cfg)
-            client = _get_openai_client(cfg.api_key or "", base_url)
-            kwargs: dict = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            if max_tokens is not None:
-                kwargs["max_tokens"] = max_tokens
-            response = client.chat.completions.create(**kwargs)
-            msg = response.choices[0].message
-            content = msg.content or ""
-            rc = getattr(msg, "reasoning_content", None) or ""
-            # GLM-4.7 等推理模型可能把输出放在 reasoning_content 中
-            if not content and rc:
-                content = rc
-            usage = response.usage
-            in_tokens = usage.prompt_tokens if usage else None
-            out_tokens = usage.completion_tokens if usage else None
-            in_cost, out_cost = self._estimate_cost(
-                model=model,
-                input_tokens=in_tokens,
-                output_tokens=out_tokens,
-            )
-            return LLMResult(
-                content=content,
-                input_tokens=in_tokens,
-                output_tokens=out_tokens,
-                input_cost_usd=in_cost,
-                output_cost_usd=out_cost,
-                total_cost_usd=in_cost + out_cost,
-                reasoning_content=rc if rc else None,
-            )
-        except Exception as exc:
-            logger.warning("OpenAI-compatible call failed: %s", exc)
-            return self._pseudo_summary(prompt, stage, cfg, model_override)
+        """OpenAI 兼容调用（带指数退避重试）"""
+        import httpx
+
+        max_retries = 3
+        base_delay = 1.0
+        max_delay = 30.0
+        last_exception = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                model = self._resolve_model(stage, model_override, cfg)
+                base_url = self._resolve_base_url(cfg)
+                client = _get_openai_client(cfg.api_key or "", base_url)
+                kwargs: dict = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+                if max_tokens is not None:
+                    kwargs["max_tokens"] = max_tokens
+                response = client.chat.completions.create(**kwargs)
+                msg = response.choices[0].message
+                content = msg.content or ""
+                rc = getattr(msg, "reasoning_content", None) or ""
+                # GLM-4.7 等推理模型可能把输出放在 reasoning_content 中
+                if not content and rc:
+                    content = rc
+                usage = response.usage
+                in_tokens = usage.prompt_tokens if usage else None
+                out_tokens = usage.completion_tokens if usage else None
+                in_cost, out_cost = self._estimate_cost(
+                    model=model,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                )
+                return LLMResult(
+                    content=content,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                    input_cost_usd=in_cost,
+                    output_cost_usd=out_cost,
+                    total_cost_usd=in_cost + out_cost,
+                    reasoning_content=rc if rc else None,
+                )
+            except (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                socket.gaierror,
+                ConnectionError,
+            ) as e:
+                last_exception = e
+                if attempt == max_retries:
+                    break
+                # 指数退避 + 随机抖动
+                delay = min(base_delay * (2**attempt) + random.uniform(0, 0.5), max_delay)
+                logger.warning(
+                    "OpenAI-compatible call failed (attempt %d/%d): %s, retrying in %.1fs",
+                    attempt + 1,
+                    max_retries,
+                    str(e)[:100],
+                    delay,
+                )
+                time.sleep(delay)
+            except Exception as exc:
+                logger.warning("OpenAI-compatible call failed: %s", exc)
+                return self._pseudo_summary(prompt, stage, cfg, model_override)
+
+        # 所有重试失败，返回伪结果
+        logger.error(
+            "OpenAI-compatible call failed after %d retries: %s", max_retries, last_exception
+        )
+        return self._pseudo_summary(prompt, stage, cfg, model_override)
 
     def _embed_openai_compatible(self, text: str, cfg: LLMConfig) -> list[float] | None:
         if not text:

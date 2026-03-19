@@ -1,4 +1,4 @@
-import { memo, useState, Suspense } from "react";
+import { memo, useState, Suspense, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -53,10 +53,10 @@ function PaperListView({ papers, label }: { papers: Array<Record<string, unknown
   return (
     <div className="space-y-1">
       <p className="text-ink-secondary px-2 py-1 text-[11px]">{label}</p>
-      {papers.slice(0, 5).map((p, i) => (
+      {papers.slice(0, 5).map((p) => (
         <button
           type="button"
-          key={i}
+          key={String(p.id ?? "")}
           onClick={() => p.id && navigate(`/papers/${String(p.id)}`)}
           className="bg-surface hover:bg-hover flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors"
         >
@@ -78,10 +78,10 @@ function IngestResultView({ data }: { data: Record<string, unknown> }) {
       </div>
       {Array.isArray(data.papers) && (data.papers as Array<Record<string, unknown>>).length > 0 && (
         <div className="space-y-1">
-          {(data.papers as Array<Record<string, unknown>>).slice(0, 3).map((p, i) => (
+          {(data.papers as Array<Record<string, unknown>>).slice(0, 3).map((p) => (
             <button
               type="button"
-              key={i}
+              key={String(p.id ?? "")}
               onClick={() => p.id && navigate(`/papers/${String(p.id)}`)}
               className="bg-surface hover:bg-hover flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[10px] transition-colors"
             >
@@ -285,6 +285,8 @@ const ArxivCandidateSelector = memo(function ArxivCandidateSelector({
 const StepDataView = memo(function StepDataView({ data, toolName }: { data: Record<string, unknown>; toolName: string }) {
   const navigate = useNavigate();
 
+  const jsonPreview = useMemo(() => JSON.stringify(data, null, 2), [data]);
+
   if (toolName === "search_papers" && Array.isArray(data.papers)) {
     return <PaperListView papers={data.papers as Array<Record<string, unknown>>} label={`找到 ${(data.papers as unknown[]).length} 篇论文`} />;
   }
@@ -328,8 +330,8 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
           <div className="border-border-light border-t pt-2">
             <p className="text-ink-tertiary mb-1 text-[10px] font-medium">引用 {evidence.length} 篇论文</p>
             <div className="flex flex-wrap gap-1">
-              {evidence.slice(0, 8).map((e, i) => (
-                <button type="button" key={i} onClick={() => e.paper_id && navigate(`/papers/${String(e.paper_id)}`)} className="bg-surface text-ink-secondary hover:bg-hover hover:text-primary max-w-[200px] truncate rounded px-1.5 py-0.5 text-[9px] transition-colors" title={String(e.title ?? "")}>
+              {evidence.slice(0, 8).map((e) => (
+                <button type="button" key={String(e.paper_id ?? "")} onClick={() => e.paper_id && navigate(`/papers/${String(e.paper_id)}`)} className="bg-surface text-ink-secondary hover:bg-hover hover:text-primary max-w-[200px] truncate rounded px-1.5 py-0.5 text-[9px] transition-colors" title={String(e.title ?? "")}>
                   {String(e.title ?? "").slice(0, 40)}{String(e.title ?? "").length > 40 ? "..." : ""}
                 </button>
               ))}
@@ -343,8 +345,8 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
     const topics = data.topics as Array<Record<string, unknown>>;
     return (
       <div className="space-y-1">
-        {topics.map((t, i) => (
-          <div key={i} className="bg-surface flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px]">
+        {topics.map((t) => (
+          <div key={String(t.name ?? "")} className="bg-surface flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px]">
             <Hash className="text-primary h-3 w-3 shrink-0" />
             <span className="text-ink font-medium">{String(t.name ?? "")}</span>
             {t.paper_count !== undefined && <span className="text-ink-tertiary">{String(t.paper_count)} 篇</span>}
@@ -362,8 +364,8 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
     const items = data.timeline as Array<Record<string, unknown>>;
     return (
       <div className="max-h-48 space-y-1 overflow-y-auto">
-        {items.map((p, i) => (
-          <button type="button" key={i} onClick={() => p.paper_id && navigate(`/papers/${String(p.paper_id)}`)} className="bg-surface hover:bg-hover flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors">
+        {items.map((p) => (
+          <button type="button" key={String(p.paper_id ?? "")} onClick={() => p.paper_id && navigate(`/papers/${String(p.paper_id)}`)} className="bg-surface hover:bg-hover flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors">
             <span className="text-primary shrink-0 font-mono text-[10px]">{String(p.year ?? "?")}</span>
             <span className="text-ink truncate">{String(p.title ?? "")}</span>
           </button>
@@ -377,8 +379,8 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
     if (items.length > 0) {
       return (
         <div className="space-y-1">
-          {items.map((p, i) => (
-            <button type="button" key={i} onClick={() => p.id && navigate(`/papers/${String(p.id)}`)} className="bg-surface hover:bg-hover flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors">
+          {items.map((p) => (
+            <button type="button" key={String(p.id ?? "")} onClick={() => p.id && navigate(`/papers/${String(p.id)}`)} className="bg-surface hover:bg-hover flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors">
               <Star className="h-3 w-3 shrink-0 text-amber-500" />
               <span className="text-ink truncate">{String(p.title ?? "")}</span>
             </button>
@@ -402,8 +404,8 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
     const suggestions = data.suggestions as Array<Record<string, unknown>>;
     return (
       <div className="space-y-1.5">
-        {suggestions.map((s, i) => (
-          <div key={i} className="bg-surface rounded-lg px-2.5 py-2 text-[11px]">
+        {suggestions.map((s) => (
+          <div key={String(s.name ?? "")} className="bg-surface rounded-lg px-2.5 py-2 text-[11px]">
             <p className="text-ink font-medium">{String(s.name ?? "")}</p>
             <p className="text-primary mt-0.5 font-mono text-[10px]">{String(s.query ?? "")}</p>
             {s.reason !== undefined && <p className="text-ink-tertiary mt-0.5 text-[10px]">{String(s.reason)}</p>}
@@ -425,9 +427,9 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
     const steps = Array.isArray(data.reasoning_steps) ? (data.reasoning_steps as Array<Record<string, unknown>>) : [];
     return (
       <div className="max-h-48 space-y-1.5 overflow-y-auto">
-        {steps.slice(0, 6).map((s, i) => (
-          <div key={i} className="bg-surface rounded-lg px-2.5 py-1.5 text-[11px]">
-            <p className="text-ink font-medium">{String(s.step_name ?? s.claim ?? `步骤 ${i + 1}`)}</p>
+        {steps.slice(0, 6).map((s) => (
+          <div key={String(s.step_name ?? s.claim ?? "")} className="bg-surface rounded-lg px-2.5 py-1.5 text-[11px]">
+            <p className="text-ink font-medium">{String(s.step_name ?? s.claim ?? "步骤")}</p>
             {s.evidence !== undefined && <p className="text-ink-tertiary mt-0.5 truncate text-[10px]">{String(s.evidence)}</p>}
           </div>
         ))}
@@ -438,8 +440,8 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
     const figs = data.figures as Array<Record<string, unknown>>;
     return (
       <div className="space-y-1">
-        {figs.map((f, i) => (
-          <div key={i} className="bg-surface rounded-lg px-2.5 py-1.5 text-[11px]">
+        {figs.map((f) => (
+          <div key={String(f.figure_type ?? "")} className="bg-surface rounded-lg px-2.5 py-1.5 text-[11px]">
             <p className="text-ink font-medium">{String(f.figure_type ?? "图表")} — p.{String(f.page ?? "?")}</p>
             <p className="text-ink-tertiary mt-0.5 truncate text-[10px]">{String(f.description ?? f.analysis ?? "")}</p>
           </div>
@@ -452,9 +454,9 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
     const gaps = Array.isArray(analysis.research_gaps) ? (analysis.research_gaps as Array<Record<string, unknown>>) : [];
     return (
       <div className="space-y-1.5">
-        {gaps.slice(0, 5).map((g, i) => (
-          <div key={i} className="bg-surface rounded-lg px-2.5 py-1.5 text-[11px]">
-            <p className="text-ink font-medium">{String(g.gap_title ?? g.title ?? `空白 ${i + 1}`)}</p>
+        {gaps.slice(0, 5).map((g) => (
+          <div key={String(g.gap_title ?? g.title ?? "")} className="bg-surface rounded-lg px-2.5 py-1.5 text-[11px]">
+            <p className="text-ink font-medium">{String(g.gap_title ?? g.title ?? "空白")}</p>
             <p className="text-ink-tertiary mt-0.5 truncate text-[10px]">{String(g.description ?? g.evidence ?? "")}</p>
           </div>
         ))}
@@ -482,7 +484,7 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
       </div>
     );
   }
-  return <pre className="bg-surface text-ink-secondary max-h-40 overflow-auto rounded-lg p-2.5 text-[11px]">{JSON.stringify(data, null, 2)}</pre>;
+  return <pre className="bg-surface text-ink-secondary max-h-40 overflow-auto rounded-lg p-2.5 text-[11px]">{jsonPreview}</pre>;
 });
 
 export { getToolMeta, ArxivCandidateSelector, StepDataView, ActionConfirmCard };

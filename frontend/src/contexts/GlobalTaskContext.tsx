@@ -2,7 +2,7 @@
  * 全局任务追踪 — 跨页面可见的实时任务进度
  * @author Color2333
  */
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useToast } from "@/contexts/ToastContext";
 
 export interface ActiveTask {
@@ -17,7 +17,20 @@ export interface ActiveTask {
   finished: boolean;
   success: boolean;
   error: string | null;
+  category?: string;
+  created_at?: number;
 }
+
+export const TASK_CATEGORY_CONFIG = {
+  collection: { icon: "📥", color: "text-blue-500", bg: "bg-blue-500/10", label: "收集" },
+  analysis: { icon: "🔬", color: "text-purple-500", bg: "bg-purple-500/10", label: "分析" },
+  generation: { icon: "✨", color: "text-amber-500", bg: "bg-amber-500/10", label: "生成" },
+  sync: { icon: "🔄", color: "text-green-500", bg: "bg-green-500/10", label: "同步" },
+  report: { icon: "📊", color: "text-pink-500", bg: "bg-pink-500/10", label: "报告" },
+  general: { icon: "⚙️", color: "text-gray-500", bg: "bg-gray-500/10", label: "通用" },
+} as const;
+
+export type TaskCategory = keyof typeof TASK_CATEGORY_CONFIG;
 
 interface GlobalTaskCtx {
   tasks: ActiveTask[];
@@ -85,11 +98,13 @@ export function GlobalTaskProvider({ children }: { children: React.ReactNode }) 
     };
   }, [fetchTasks]);
 
-  const activeTasks = tasks.filter((t) => !t.finished);
+  const activeTasks = useMemo(() => tasks.filter((t) => !t.finished), [tasks]);
   const hasRunning = activeTasks.length > 0;
 
+  const value = useMemo(() => ({ tasks, activeTasks, hasRunning }), [tasks, activeTasks, hasRunning]);
+
   return (
-    <Ctx.Provider value={{ tasks, activeTasks, hasRunning }}>
+    <Ctx.Provider value={value}>
       {children}
     </Ctx.Provider>
   );

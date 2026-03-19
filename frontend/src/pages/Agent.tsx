@@ -649,7 +649,7 @@ const PaperListView = memo(function PaperListView({
       <div className="max-h-56 space-y-1 overflow-y-auto">
         {papers.slice(0, 30).map((p, i) => (
           <div
-            key={i}
+            key={String(p.id ?? "")}
             className="bg-surface hover:bg-hover flex items-start gap-2 rounded-lg px-2.5 py-2 text-[11px] transition-colors"
           >
             <span className="bg-primary/10 text-primary mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold">
@@ -757,8 +757,8 @@ const IngestResultView = memo(function IngestResultView({
         <div className="space-y-1">
           <p className="text-success text-[10px] font-medium">已入库 ({ingested.length})</p>
           <div className="max-h-32 space-y-0.5 overflow-y-auto">
-            {ingested.map((p, i) => (
-              <div key={i} className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px]">
+            {ingested.map((p) => (
+              <div key={String(p.arxiv_id ?? p.title ?? "")} className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px]">
                 <CheckCircle2 className="text-success h-3 w-3 shrink-0" />
                 <span className="text-ink truncate">{String(p.title ?? p.arxiv_id ?? "")}</span>
               </div>
@@ -772,9 +772,9 @@ const IngestResultView = memo(function IngestResultView({
         <div className="space-y-1">
           <p className="text-error text-[10px] font-medium">失败 ({failed.length})</p>
           <div className="max-h-24 space-y-0.5 overflow-y-auto">
-            {failed.map((p, i) => (
+            {failed.map((p) => (
               <div
-                key={i}
+                key={String(p.arxiv_id ?? p.title ?? "")}
                 className="bg-error/5 flex items-center gap-1.5 rounded px-2 py-1 text-[11px]"
               >
                 <XCircle className="text-error h-3 w-3 shrink-0" />

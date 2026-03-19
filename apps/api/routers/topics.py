@@ -136,12 +136,22 @@ def manual_fetch_topic(topic_id: str) -> dict:
         topic_name = topic.name
 
     def _fetch_fn(progress_callback=None):
-        return run_topic_ingest(topic_id)
+        # 分阶段报告进度：抓取 (0-50%) -> 处理 (50-100%)
+        def _stage_callback(msg, cur, tot):
+            # 将内部进度映射到 0-50% 范围
+            progress_callback(f"抓取：{msg}", int(cur / tot * 50), 100)
+
+        result = run_topic_ingest(topic_id, progress_callback=_stage_callback)
+
+        if progress_callback:
+            progress_callback("处理完成", 100, 100)
+        return result
 
     task_id = global_tracker.submit(
         task_type="fetch",
-        title=f"抓取: {topic_name[:30]}",
+        title=f"抓取：{topic_name[:30]}",
         fn=_fetch_fn,
+        category="collection",
     )
     return {
         "status": "started",
@@ -232,9 +242,9 @@ def ingest_references(body: ReferenceImportReq) -> dict:
 @router.get("/ingest/references/status/{task_id}")
 def ingest_references_status(task_id: str) -> dict:
     """查询参考文献导入任务进度"""
-    from packages.ai.pipelines import get_import_task
+    from packages.domain.task_tracker import global_tracker
 
-    task = get_import_task(task_id)
+    task = global_tracker.get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
     return task

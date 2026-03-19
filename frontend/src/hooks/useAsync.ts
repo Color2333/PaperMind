@@ -2,7 +2,7 @@
  * 通用异步请求 Hook
  * @author Color2333
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 interface AsyncState<T> {
   data: T | null;
@@ -17,15 +17,27 @@ export function useAsync<T>() {
     error: null,
   });
 
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const execute = useCallback(async (asyncFn: () => Promise<T>) => {
     setState({ data: null, loading: true, error: null });
     try {
       const result = await asyncFn();
-      setState({ data: result, loading: false, error: null });
+      if (mountedRef.current) {
+        setState({ data: result, loading: false, error: null });
+      }
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : "未知错误";
-      setState({ data: null, loading: false, error: message });
+      if (mountedRef.current) {
+        setState({ data: null, loading: false, error: message });
+      }
       throw err;
     }
   }, []);
@@ -47,17 +59,29 @@ export function useAutoLoad<T>(asyncFn: () => Promise<T>, deps: unknown[] = []) 
     error: null,
   });
 
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const reload = useCallback(async () => {
-    setState(prev => ({ ...prev, loading: true, error: null }));
+    setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const result = await asyncFn();
-      setState({ data: result, loading: false, error: null });
+      if (mountedRef.current) {
+        setState({ data: result, loading: false, error: null });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "未知错误";
-      setState({ data: null, loading: false, error: message });
+      if (mountedRef.current) {
+        setState({ data: null, loading: false, error: message });
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asyncFn, ...deps]);
 
   return { ...state, reload };
 }

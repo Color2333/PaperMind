@@ -2,7 +2,7 @@
  * Wiki - Manus 风格结构化知识百科
  * @author Color2333
  */
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { Card, CardHeader, Button, Tabs, Spinner, Empty } from "@/components/ui";
 import { wikiApi, generatedApi, tasksApi } from "@/services/api";
 import type {
@@ -19,7 +19,7 @@ import type {
   GeneratedContent,
   TaskStatus,
 } from "@/types";
-import Markdown from "@/components/Markdown";
+const Markdown = lazy(() => import("@/components/Markdown"));
 import {
   Search,
   BookOpen,
@@ -39,6 +39,7 @@ import {
   Link2,
   ExternalLink,
   Quote,
+  Loader2,
 } from "lucide-react";
 
 const wikiTabs = [
@@ -432,21 +433,21 @@ function TopicWikiView({
         <Card>
           <CardHeader title="概述" action={<Compass className="text-primary h-5 w-5" />} />
           <div className="prose-custom">
-            <Markdown>{content.overview}</Markdown>
+            <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}><Markdown>{content.overview}</Markdown></Suspense>
           </div>
         </Card>
       )}
 
       {/* 章节 */}
       {content.sections?.length > 0 &&
-        content.sections.map((sec, idx) => <SectionCard key={idx} section={sec} index={idx} />)}
+        content.sections.map((sec, idx) => <SectionCard key={sec.title || `section-${idx}`} section={sec} index={idx} />)}
 
       {/* 方法论演化 */}
       {content.methodology_evolution && (
         <Card>
           <CardHeader title="方法论演化" action={<TrendingUp className="text-accent h-5 w-5" />} />
           <div className="prose-custom">
-            <Markdown>{content.methodology_evolution}</Markdown>
+            <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}><Markdown>{content.methodology_evolution}</Markdown></Suspense>
           </div>
         </Card>
       )}
@@ -462,7 +463,7 @@ function TopicWikiView({
           <CardHeader title="关键发现" action={<Lightbulb className="text-warning h-5 w-5" />} />
           <div className="space-y-3">
             {content.key_findings.map((finding, i) => (
-              <div key={i} className="bg-warning/5 flex gap-3 rounded-lg p-3">
+              <div key={`${finding}-${i}`} className="bg-warning/5 flex gap-3 rounded-lg p-3">
                 <span className="bg-warning/10 text-warning flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold">
                   {i + 1}
                 </span>
@@ -492,7 +493,7 @@ function TopicWikiView({
           <div className="grid gap-3 sm:grid-cols-2">
             {timeline.seminal.slice(0, 8).map((s, i) => (
               <div
-                key={i}
+                key={`${s.title}-${i}`}
                 className="border-border hover:border-primary/30 hover:bg-primary/3 flex items-start gap-3 rounded-lg border p-3 transition-colors"
               >
                 <span className="bg-primary/10 text-primary flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold">
@@ -522,7 +523,7 @@ function TopicWikiView({
                 const name = typeof stage === "string" ? stage : stage.name;
                 const desc = typeof stage === "string" ? "" : stage.description;
                 return (
-                  <div key={i} className="relative pl-8">
+                  <div key={`${name}-${i}`} className="relative pl-8">
                     <div className="bg-accent/10 absolute top-1 left-0 flex h-6 w-6 items-center justify-center rounded-full">
                       <span className="text-accent text-xs font-bold">{i + 1}</span>
                     </div>
@@ -552,7 +553,7 @@ function TopicWikiView({
           />
           <div className="space-y-2">
             {content.future_directions.map((dir, i) => (
-              <div key={i} className="bg-success/5 flex gap-3 rounded-lg p-3">
+              <div key={`dir-${i}`} className="bg-success/5 flex gap-3 rounded-lg p-3">
                 <Compass className="text-success mt-0.5 h-4 w-4 shrink-0" />
                 <p className="text-ink text-sm">{dir}</p>
               </div>
@@ -567,7 +568,7 @@ function TopicWikiView({
           <CardHeader title="开放问题" action={<AlertCircle className="text-error h-5 w-5" />} />
           <div className="space-y-2">
             {survey.summary.open_questions.map((q: string, i: number) => (
-              <div key={i} className="border-error/10 bg-error/3 flex gap-3 rounded-lg border p-3">
+              <div key={`question-${i}`} className="border-error/10 bg-error/3 flex gap-3 rounded-lg border p-3">
                 <span className="text-error/60 text-sm font-medium">Q{i + 1}</span>
                 <p className="text-ink text-sm">{q}</p>
               </div>
@@ -582,7 +583,7 @@ function TopicWikiView({
           <CardHeader title="推荐阅读" action={<BookMarked className="text-primary h-5 w-5" />} />
           <div className="space-y-3">
             {content.reading_list.map((item, i) => (
-              <ReadingListItem key={i} item={item} index={i} />
+              <ReadingListItem key={item.title || `reading-${i}`} item={item} index={i} />
             ))}
           </div>
         </Card>
@@ -623,7 +624,7 @@ function PaperWikiView({
         <Card>
           <CardHeader title="核心摘要" action={<BookOpen className="text-primary h-5 w-5" />} />
           <div className="prose-custom">
-            <Markdown>{content.summary}</Markdown>
+            <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}><Markdown>{content.summary}</Markdown></Suspense>
           </div>
         </Card>
       )}
@@ -634,7 +635,7 @@ function PaperWikiView({
           <CardHeader title="主要贡献" action={<Star className="text-warning h-5 w-5" />} />
           <div className="space-y-2">
             {content.contributions.map((c, i) => (
-              <div key={i} className="bg-warning/5 flex gap-3 rounded-lg p-3">
+              <div key={`contribution-${i}`} className="bg-warning/5 flex gap-3 rounded-lg p-3">
                 <span className="bg-warning/10 text-warning flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold">
                   {i + 1}
                 </span>
@@ -650,7 +651,7 @@ function PaperWikiView({
         <Card>
           <CardHeader title="方法论" action={<Layers className="text-accent h-5 w-5" />} />
           <div className="prose-custom">
-            <Markdown>{content.methodology}</Markdown>
+            <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}><Markdown>{content.methodology}</Markdown></Suspense>
           </div>
         </Card>
       )}
@@ -663,7 +664,7 @@ function PaperWikiView({
             action={<TrendingUp className="text-success h-5 w-5" />}
           />
           <div className="prose-custom">
-            <Markdown>{content.significance}</Markdown>
+            <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}><Markdown>{content.significance}</Markdown></Suspense>
           </div>
         </Card>
       )}
@@ -699,7 +700,7 @@ function PaperWikiView({
           <CardHeader title="局限性" action={<AlertCircle className="text-error h-5 w-5" />} />
           <div className="space-y-2">
             {content.limitations.map((lim, i) => (
-              <div key={i} className="border-error/10 bg-error/3 flex gap-3 rounded-lg border p-3">
+              <div key={`limitation-${i}`} className="border-error/10 bg-error/3 flex gap-3 rounded-lg border p-3">
                 <AlertCircle className="text-error/60 mt-0.5 h-4 w-4 shrink-0" />
                 <p className="text-ink text-sm">{lim}</p>
               </div>
@@ -713,7 +714,7 @@ function PaperWikiView({
         <Card>
           <CardHeader title="相关工作分析" />
           <div className="prose-custom">
-            <Markdown>{content.related_work_analysis}</Markdown>
+            <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}><Markdown>{content.related_work_analysis}</Markdown></Suspense>
           </div>
         </Card>
       )}
@@ -724,7 +725,7 @@ function PaperWikiView({
           <CardHeader title="推荐阅读" action={<BookMarked className="text-primary h-5 w-5" />} />
           <div className="space-y-3">
             {content.reading_suggestions.map((item, i) => (
-              <ReadingListItem key={i} item={item} index={i} />
+              <ReadingListItem key={item.title || `suggestion-${i}`} item={item} index={i} />
             ))}
           </div>
         </Card>
@@ -753,7 +754,7 @@ function SectionCard({ section, index }: { section: WikiSection; index: number }
         </div>
       )}
       <div className="prose-custom">
-        <Markdown>{section.content}</Markdown>
+        <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}><Markdown>{section.content}</Markdown></Suspense>
       </div>
     </Card>
   );
@@ -768,14 +769,14 @@ function CitationContextsCard({ contexts }: { contexts: string[] }) {
         description="论文之间的引用语境"
         action={<Link2 className="text-accent h-5 w-5" />}
       />
-      <div className="space-y-2">
-        {contexts.slice(0, 15).map((ctx, i) => (
-          <div key={i} className="border-border bg-page/50 flex gap-3 rounded-lg border p-3">
-            <Quote className="text-accent/60 mt-0.5 h-4 w-4 shrink-0" />
-            <p className="text-ink-secondary text-sm italic">{ctx}</p>
+          <div className="space-y-2">
+            {contexts.slice(0, 15).map((ctx, i) => (
+              <div key={`context-${i}`} className="border-border bg-page/50 flex gap-3 rounded-lg border p-3">
+                <Quote className="text-accent/60 mt-0.5 h-4 w-4 shrink-0" />
+                <p className="text-ink-secondary text-sm italic">{ctx}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
     </Card>
   );
 }
@@ -792,10 +793,11 @@ function PdfExcerptsCard({ excerpts }: { excerpts: PdfExcerpt[] }) {
       />
       <div className="space-y-3">
         {excerpts.map((ex, i) => (
-          <div key={i} className="border-border rounded-lg border p-3">
+          <div key={ex.title || `excerpt-${i}`} className="border-border rounded-lg border p-3">
             <div className="flex items-center justify-between">
               <p className="text-ink text-sm font-medium">{ex.title}</p>
               <button
+                type="button"
                 onClick={() => setExpanded((prev) => ({ ...prev, [i]: !prev[i] }))}
                 className="text-primary text-xs hover:underline"
               >
@@ -826,7 +828,7 @@ function ScholarMetadataCard({ items }: { items: ScholarMetadataItem[] }) {
       <div className="grid gap-3 sm:grid-cols-2">
         {items.map((item, i) => (
           <div
-            key={i}
+            key={item.title || `item-${i}`}
             className="border-border hover:border-primary/30 rounded-lg border p-3 transition-colors"
           >
             <p className="text-ink text-sm leading-tight font-medium">{item.title}</p>
@@ -861,7 +863,7 @@ function TimelineView({ entries }: { entries: TimelineEntry[] }) {
   return (
     <div className="space-y-3">
       {entries.slice(0, 12).map((entry, i) => (
-        <div key={i} className="relative flex gap-4 pl-4">
+        <div key={entry.title || `entry-${i}`} className="relative flex gap-4 pl-4">
           <div className="bg-primary absolute top-2 left-0 h-2 w-2 rounded-full" />
           {i < entries.length - 1 && (
             <div className="bg-primary/20 absolute top-4 left-[3px] h-full w-px" />
@@ -947,7 +949,7 @@ function MarkdownArticle({
     <Card className="animate-fade-in">
       <CardHeader title={title} action={<BookOpen className="text-primary h-5 w-5" />} />
       <div className="prose-custom">
-        <Markdown>{markdown}</Markdown>
+        <Suspense fallback={<div className="flex items-center justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-ink-tertiary" /></div>}><Markdown>{markdown}</Markdown></Suspense>
       </div>
     </Card>
   );

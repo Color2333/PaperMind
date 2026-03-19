@@ -21,8 +21,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 完成后保留 2 分钟供前端展示
-_FINISHED_TTL = 120
+# 完成后保留 5 分钟供前端展示（让用户能看到更多历史）
+_FINISHED_TTL = 600
 
 
 @dataclass
@@ -30,9 +30,11 @@ class TaskInfo:
     task_id: str
     task_type: str
     title: str
+    category: str = "general"  # collection/analysis/generation/sync/report
     current: int = 0
     total: int = 0
     message: str = ""
+    created_at: float = field(default_factory=time.time)  # 创建时间戳
     started_at: float = field(default_factory=time.time)
     finished: bool = False
     success: bool = True
@@ -44,10 +46,12 @@ class TaskInfo:
         return {
             "task_id": self.task_id,
             "task_type": self.task_type,
+            "category": self.category,
             "title": self.title,
             "current": self.current,
             "total": self.total,
             "message": self.message,
+            "created_at": self.created_at,
             "elapsed_seconds": round(elapsed, 1),
             "progress_pct": round(self.current / self.total * 100) if self.total > 0 else 0,
             "finished": self.finished,
@@ -72,13 +76,16 @@ class TaskTracker:
 
     # ---------- 生命周期管理（纯追踪） ----------
 
-    def start(self, task_id: str, task_type: str, title: str, total: int = 0) -> TaskInfo:
+    def start(
+        self, task_id: str, task_type: str, title: str, total: int = 0, category: str = "general"
+    ) -> TaskInfo:
         """注册一个任务，开始追踪"""
         task = TaskInfo(
             task_id=task_id,
             task_type=task_type,
             title=title,
             total=total,
+            category=category,
         )
         with self._lock:
             self._cleanup()
@@ -105,6 +112,17 @@ class TaskTracker:
                 task.error = error
                 task.current = task.total
 
+    def cancel(self, task_id: str) -> bool:
+        """标记任务为取消状态"""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task and not task.finished:
+                task.finished = True
+                task.success = False
+                task.error = "用户取消"
+                return True
+            return False
+
     # ---------- 提交执行（追踪 + 后台线程） ----------
 
     def submit(
@@ -114,6 +132,7 @@ class TaskTracker:
         fn: Callable[..., Any],
         *args: Any,
         total: int = 100,
+        category: str = "general",
         **kwargs: Any,
     ) -> str:
         """
@@ -123,7 +142,7 @@ class TaskTracker:
         返回 task_id
         """
         task_id = f"{task_type}_{uuid.uuid4().hex[:8]}"
-        self.start(task_id, task_type, title, total=total)
+        self.start(task_id, task_type, title, total=total, category=category)
 
         def _run():
             try:

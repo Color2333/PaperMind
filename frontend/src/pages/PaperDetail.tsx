@@ -893,7 +893,7 @@ export default function PaperDetail() {
                       <ul className="space-y-1.5">
                         {skimReport.innovations.map((item, i) => (
                           <li
-                            key={i}
+                            key={`${item}-${i}`}
                             className="bg-page text-ink-secondary flex items-start gap-2 rounded-xl px-3 py-2.5 text-sm"
                           >
                             <CheckCircle2 className="text-success mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -950,9 +950,9 @@ export default function PaperDetail() {
                           <Shield className="h-4 w-4 text-red-500" /> 审稿风险
                         </h4>
                         <ul className="space-y-1.5">
-                          {deepReport.reviewer_risks.map((risk, i) => (
+                          {deepReport.reviewer_risks.map((risk) => (
                             <li
-                              key={i}
+                              key={risk}
                               className="text-ink-secondary flex items-start gap-2 rounded-xl bg-red-500/5 px-3 py-2.5 text-sm dark:bg-red-500/10"
                             >
                               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
@@ -1295,7 +1295,7 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
           </h4>
           <div className="space-y-2">
             {steps.map((step, i) => (
-              <ReasoningStepCard key={i} step={step} index={i} />
+              <ReasoningStepCard key={step.step} step={step} index={i} />
             ))}
           </div>
         </div>
@@ -1341,7 +1341,7 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
             <ul className="space-y-1.5">
               {strengths.map((s, i) => (
                 <li
-                  key={i}
+                  key={`strength-${i}`}
                   className="text-ink-secondary flex items-start gap-2 rounded-xl bg-green-500/5 px-3 py-2.5 text-sm dark:bg-green-500/10"
                 >
                   <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
@@ -1359,7 +1359,7 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
             <ul className="space-y-1.5">
               {weaknesses.map((w, i) => (
                 <li
-                  key={i}
+                  key={`weakness-${i}`}
                   className="text-ink-secondary flex items-start gap-2 rounded-xl bg-red-500/5 px-3 py-2.5 text-sm dark:bg-red-500/10"
                 >
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
@@ -1379,7 +1379,7 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
           <ul className="space-y-1.5">
             {suggestions.map((f, i) => (
               <li
-                key={i}
+                key={`suggestion-${i}`}
                 className="text-ink-secondary flex items-start gap-2 rounded-xl bg-amber-500/5 px-3 py-2.5 text-sm dark:bg-amber-500/10"
               >
                 <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />

@@ -79,9 +79,13 @@ const Ctx = createContext<AgentSessionCtx | null>(null);
 export function AgentSessionProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
-  const [confirmingActions, setConfirmingActions] = useState<Set<string>>(new Set());
+  const [pendingActionIds, setPendingActionIds] = useState<string[]>([]);
+  const [confirmingActionIds, setConfirmingActionIds] = useState<string[]>([]);
   const [canvas, setCanvas] = useState<CanvasData | null>(null);
+
+  // 从数组派生 Set，避免每次渲染都创建新对象
+  const pendingActions = useMemo(() => new Set(pendingActionIds), [pendingActionIds]);
+  const confirmingActions = useMemo(() => new Set(confirmingActionIds), [confirmingActionIds]);
 
   const { activeId, createConversation, saveMessages } = useConversationCtx();
   const justCreatedRef = useRef(false);
@@ -176,7 +180,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
     } else {
       setItems([]);
     }
-    setPendingActions(new Set());
+    setPendingActionIds([]);
     setCanvas(null);
   }, [activeId]);
 
@@ -227,7 +231,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   }, [items, buildSavePayload, saveMessages]);
 
   /* ---- 工具函数 ---- */
-  const applyPendingText = (copy: ChatItem[], pendingText: string): void => {
+  const applyPendingText = useCallback((copy: ChatItem[], pendingText: string): void => {
     const lastIdx = copy.length - 1;
     if (lastIdx < 0) {
       if (pendingText) {
@@ -253,7 +257,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         timestamp: new Date(),
       });
     }
-  };
+  }, []);
 
   /* ---- SSE 事件处理 ---- */
   const processSSE = useCallback(
@@ -393,7 +397,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         case "action_confirm": {
           const pending = drainBuffer();
           const actionId = data.id as string;
-          setPendingActions((prev) => new Set(prev).add(actionId));
+          setPendingActionIds((prev) => [...prev, actionId]);
           setItems((prev) => {
             const copy = [...prev];
             applyPendingText(copy, pending);
@@ -554,7 +558,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         }
       }
     },
-    [scheduleFlush, drainBuffer]
+    [scheduleFlush, drainBuffer, applyPendingText]
   );
 
   /**
@@ -694,12 +698,8 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   /* ---- 确认/拒绝操作 ---- */
   const handleConfirm = useCallback(
     async (actionId: string) => {
-      setConfirmingActions((prev) => new Set(prev).add(actionId));
-      setPendingActions((prev) => {
-        const n = new Set(prev);
-        n.delete(actionId);
-        return n;
-      });
+      setConfirmingActionIds((prev) => [...prev, actionId]);
+      setPendingActionIds((prev) => prev.filter((id) => id !== actionId));
       cancelStream();
       setLoading(true);
       try {
@@ -720,11 +720,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         ]);
         setLoading(false);
       } finally {
-        setConfirmingActions((prev) => {
-          const n = new Set(prev);
-          n.delete(actionId);
-          return n;
-        });
+        setConfirmingActionIds((prev) => prev.filter((id) => id !== actionId));
       }
     },
     [startStream, cancelStream]
@@ -732,11 +728,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
 
   const handleReject = useCallback(
     async (actionId: string) => {
-      setPendingActions((prev) => {
-        const n = new Set(prev);
-        n.delete(actionId);
-        return n;
-      });
+      setPendingActionIds((prev) => prev.filter((id) => id !== actionId));
       cancelStream();
       setLoading(true);
       try {
@@ -800,7 +792,6 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       confirmingActions,
       canvas,
       hasPendingConfirm,
-      setCanvas,
       sendMessage,
       handleConfirm,
       handleReject,

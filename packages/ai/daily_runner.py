@@ -112,12 +112,13 @@ def _process_paper(paper_id, force_deep: bool = False, deep_read_quota: int | No
     return result
 
 
-def run_topic_ingest(topic_id: str) -> dict:
+def run_topic_ingest(topic_id: str, progress_callback: callable | None = None) -> dict:
     """
     单独处理一个主题的抓取 + 处理 - 智能精读限额
 
     Args:
         topic_id: 主题 ID
+        progress_callback: 可选的进度回调函数，签名 callback(message, current, total)
 
     Returns:
         dict: 处理结果统计
@@ -146,12 +147,15 @@ def run_topic_ingest(topic_id: str) -> dict:
             attempts += 1
             try:
                 # 返回详细统计信息
+                if progress_callback:
+                    progress_callback("正在抓取论文...", 10, 100)
                 result = pipelines.ingest_arxiv_with_stats(
                     query=topic.query,
                     max_results=topic.max_results_per_run,
                     topic_id=topic.id,
                     action_type=ActionType.auto_collect,
                     days_back=days_back,
+                    progress_callback=progress_callback,
                 )
                 ids = result["inserted_ids"]
                 new_count = result["new_count"]
@@ -177,6 +181,8 @@ def run_topic_ingest(topic_id: str) -> dict:
                 topic_name,
                 len(ids),
             )
+            if progress_callback:
+                progress_callback("没有新论文", 100, 100)
             return {
                 "topic_id": topic_id,
                 "topic_name": topic_name,
@@ -202,17 +208,26 @@ def run_topic_ingest(topic_id: str) -> dict:
 
     # 第一步：全部论文并行粗读 + 嵌入（不精读）
     logger.info("第一步：并行粗读 + 嵌入...")
+    if progress_callback:
+        progress_callback("开始粗读 + 嵌入...", 30, 100)
     skim_results = []
 
+    total_papers = len(papers_data)
     with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
         futs = {
             pool.submit(_process_paper, paper_id, force_deep=False, deep_read_quota=0): paper_id
             for paper_id, _ in papers_data
         }
-        for fut in as_completed(futs):
+        for i, fut in enumerate(as_completed(futs)):
             try:
                 result = fut.result()
                 skim_results.append(result)
+                if progress_callback:
+                    progress_callback(
+                        f"粗读中 ({i + 1}/{total_papers})...",
+                        30 + int((i + 1) / total_papers * 40),
+                        100,
+                    )
             except Exception as exc:
                 paper_id = futs[fut]
                 logger.warning(
@@ -223,6 +238,8 @@ def run_topic_ingest(topic_id: str) -> dict:
 
     # 第二步：按粗读分数排序，选前 N 篇精读
     logger.info("第二步：选择高分论文进行精读...")
+    if progress_callback:
+        progress_callback("选择高分论文...", 70, 100)
     # 只用 ID 和分数排序，不再引用 ORM 对象
     scored_papers = [
         (r, paper_id)
@@ -233,6 +250,7 @@ def run_topic_ingest(topic_id: str) -> dict:
 
     # 精读前 N 篇
     deep_read_count = 0
+    max_scored = len(scored_papers)
     for i, (result, paper_id) in enumerate(scored_papers):
         if deep_read_count >= max_deep_reads:
             logger.info(
@@ -260,6 +278,12 @@ def run_topic_ingest(topic_id: str) -> dict:
             if acquire_api("llm", timeout=60.0):
                 pipelines.deep_dive(UUID(paper_id))  # type: ignore[arg-type]
                 deep_read_count += 1
+                if progress_callback:
+                    progress_callback(
+                        f"精读中 ({deep_read_count}/{max_deep_reads})...",
+                        70 + int((i + 1) / max_scored * 30),
+                        100,
+                    )
                 logger.info("✅ 精读完成 (%d/%d)", deep_read_count, max_deep_reads)
             else:
                 logger.warning("等待 API 许可超时，跳过精读")
@@ -269,6 +293,9 @@ def run_topic_ingest(topic_id: str) -> dict:
                 str(paper_id)[:8],
                 exc,
             )
+
+    if progress_callback:
+        progress_callback("处理完成", 100, 100)
 
     return {
         "topic_id": topic_id,

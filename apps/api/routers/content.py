@@ -98,6 +98,7 @@ def start_topic_wiki_task(
         fn=_run_topic_wiki_task,
         keyword=keyword,
         limit=limit,
+        category="generation",
     )
     return {"task_id": task_id, "status": "pending"}
 
@@ -181,13 +182,19 @@ def daily_brief(req: DailyBriefRequest) -> dict:
 
     def _generate_fn(progress_callback=None):
         # publish() 内部已写入 generated_content 表，无需重复
-        return brief_service.publish(recipient=recipient)
+        if progress_callback:
+            progress_callback("正在生成每日简报...", 20, 100)
+        result = brief_service.publish(recipient=recipient)
+        if progress_callback:
+            progress_callback("简报生成完成", 95, 100)
+        return result
 
     task_id = global_tracker.submit(
         task_type="daily_brief",
         title="📰 生成每日简报",
         fn=_generate_fn,
         total=100,
+        category="generation",
     )
     return {
         "task_id": task_id,

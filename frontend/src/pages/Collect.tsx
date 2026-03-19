@@ -527,7 +527,7 @@ export default function Collect() {
             <div className="mt-5 space-y-3">
               {results.map((r, i) => (
                 <SearchResultCard
-                  key={i}
+                  key={`result-${r.query}-${i}`}
                   result={r}
                   onToggle={() =>
                     setResults((prev) =>
@@ -684,7 +684,8 @@ export default function Collect() {
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
                       {suggestions.map((s, i) => (
                         <button
-                          key={i}
+                          key={s.name || `suggestion-${i}`}
+                          type="button"
                           onClick={() => applySuggestion(s)}
                           className="border-border bg-surface hover:border-primary/30 flex items-start gap-2 rounded-xl border p-3 text-left transition-all hover:shadow-sm"
                         >

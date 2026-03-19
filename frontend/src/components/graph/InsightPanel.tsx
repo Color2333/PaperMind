@@ -421,7 +421,7 @@ function ResearchGapsContent({ data }: { data: ResearchGapsResponse }) {
             <AlertTriangle className="h-3.5 w-3.5 text-warning" /> 识别到 {research_gaps.length} 个研究空白
           </p>
           <div className="space-y-3">
-            {research_gaps.map((gap, i) => <GapCard key={i} gap={gap} index={i} />)}
+            {research_gaps.map((gap, i) => <GapCard key={gap.gap_title || `gap-${i}`} gap={gap} index={i} />)}
           </div>
         </div>
       )}
@@ -445,7 +445,7 @@ function ResearchGapsContent({ data }: { data: ResearchGapsResponse }) {
               </thead>
               <tbody>
                 {method_comparison.methods.map((m, i) => (
-                  <tr key={i} className="border-b border-border/50 transition-colors hover:bg-hover">
+                  <tr key={m.name || `method-${i}`} className="border-b border-border/50 transition-colors hover:bg-hover">
                     <td className="px-3 py-2 font-medium text-ink">{m.name}</td>
                     {method_comparison.dimensions.map((dim) => (
                       <td key={dim} className="px-3 py-2 text-center">
@@ -463,7 +463,7 @@ function ResearchGapsContent({ data }: { data: ResearchGapsResponse }) {
               <p className="mb-2 text-xs font-semibold text-warning">未被探索的方法组合</p>
               <ul className="space-y-1">
                 {method_comparison.underexplored_combinations.map((c, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-ink-secondary">
+                  <li key={`combination-${i}`} className="flex items-start gap-2 text-sm text-ink-secondary">
                     <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />{c}
                   </li>
                 ))}
@@ -482,7 +482,7 @@ function ResearchGapsContent({ data }: { data: ResearchGapsResponse }) {
             </p>
             <ul className="space-y-1">
               {trend_analysis.hot_directions.map((d, i) => (
-                <li key={i} className="text-sm text-ink-secondary">• {d}</li>
+                <li key={`hot-${i}`} className="text-sm text-ink-secondary">• {d}</li>
               ))}
             </ul>
           </div>
@@ -494,7 +494,7 @@ function ResearchGapsContent({ data }: { data: ResearchGapsResponse }) {
             </p>
             <ul className="space-y-1">
               {trend_analysis.declining_areas.map((d, i) => (
-                <li key={i} className="text-sm text-ink-secondary">• {d}</li>
+                <li key={`declining-${i}`} className="text-sm text-ink-secondary">• {d}</li>
               ))}
             </ul>
           </div>
@@ -506,7 +506,7 @@ function ResearchGapsContent({ data }: { data: ResearchGapsResponse }) {
             </p>
             <ul className="space-y-1">
               {trend_analysis.emerging_opportunities.map((d, i) => (
-                <li key={i} className="text-sm text-ink-secondary">• {d}</li>
+                <li key={`emerging-${i}`} className="text-sm text-ink-secondary">• {d}</li>
               ))}
             </ul>
           </div>

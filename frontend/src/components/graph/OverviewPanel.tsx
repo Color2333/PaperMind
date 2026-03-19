@@ -2,15 +2,15 @@
  * 全局概览面板 — 统计 / 力导向图 / PageRank / 前沿 / 桥接 / 共引
  * @author Color2333
  */
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import { Badge, Spinner } from "@/components/ui";
 import { graphApi } from "@/services/api";
 import { useToast } from "@/contexts/ToastContext";
-import ForceGraph2D from "react-force-graph-2d";
+const ForceGraph2D = lazy(() => import("react-force-graph-2d"));
 import {
   FileText, Network, Layers, Tag, Share2, Star, Zap,
-  Compass, RotateCw,
+  Compass, RotateCw, Loader2,
 } from "lucide-react";
 import type {
   LibraryOverview, OverviewNode, BridgesResponse,
@@ -113,25 +113,28 @@ function OverviewContent({
       {/* 全局力导向图 */}
       <Section title="全局引用网络" icon={<Share2 className="h-4 w-4 text-primary" />} desc="节点大小 = PageRank 影响力，颜色 = 主题">
         <div ref={graphRef} className="relative overflow-hidden rounded-xl bg-page" style={{ height: gh }}>
-          <ForceGraph2D
-            width={gw}
-            height={gh}
-            graphData={graphData}
-            nodeRelSize={4}
-            nodeLabel={(n: OverviewNode & { val: number }) => `${n.title}\nPageRank: ${n.pagerank.toFixed(4)}\n引用: ${n.in_degree} 被引: ${n.out_degree}`}
-            nodeColor={(n: OverviewNode) => {
-              const t = n.topics[0];
-              if (!t) return "#94a3b8";
-              const hash = [...t].reduce((a, c) => a + c.charCodeAt(0), 0);
-              const hues = [210, 150, 30, 330, 270, 60, 0, 180];
-              return `hsl(${hues[hash % hues.length]}, 65%, 55%)`;
-            }}
-            linkColor={() => "rgba(148,163,184,0.15)"}
-            linkWidth={0.5}
-            onNodeClick={(node: OverviewNode) => { window.location.href = `/papers/${node.id}`; }}
-            cooldownTicks={80}
-            enableZoomInteraction
-          />
+          <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="h-5 w-5 animate-spin text-ink-tertiary" /></div>}>
+            <ForceGraph2D
+              width={gw}
+              height={gh}
+              graphData={graphData}
+              nodeRelSize={4}
+              nodeLabel={(n) => { const node = n as OverviewNode & { val: number }; return `${node.title}\nPageRank: ${node.pagerank.toFixed(4)}\n引用: ${node.in_degree} 被引: ${node.out_degree}`; }}
+              nodeColor={(n) => {
+                const node = n as OverviewNode;
+                const t = node.topics[0];
+                if (!t) return "#94a3b8";
+                const hash = [...t].reduce((a, c) => a + c.charCodeAt(0), 0);
+                const hues = [210, 150, 30, 330, 270, 60, 0, 180];
+                return `hsl(${hues[hash % hues.length]}, 65%, 55%)`;
+              }}
+              linkColor={() => "rgba(148,163,184,0.15)"}
+              linkWidth={0.5}
+              onNodeClick={(node) => { window.location.href = `/papers/${(node as OverviewNode).id}`; }}
+              cooldownTicks={80}
+              enableZoomInteraction
+            />
+          </Suspense>
           <button onClick={onRefresh} className="absolute right-3 top-3 rounded-lg bg-surface/80 p-2 text-ink-tertiary hover:text-primary transition-colors" title="刷新">
             <RotateCw className="h-4 w-4" />
           </button>
@@ -215,7 +218,7 @@ function OverviewContent({
         <Section title="共引聚类" icon={<Layers className="h-4 w-4 text-info" />} desc="被相同论文引用的研究会自动聚在一起">
           <div className="space-y-3">
             {cocitation.clusters.slice(0, 8).map((cl, i) => (
-              <div key={i} className="rounded-xl border border-border bg-page p-4">
+              <div key={`cluster-${i}`} className="rounded-xl border border-border bg-page p-4">
                 <div className="mb-2 flex items-center gap-2">
                   <Badge variant="info">聚类 {i + 1}</Badge>
                   <span className="text-xs text-ink-tertiary">{cl.size} 篇论文</span>

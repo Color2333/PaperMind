@@ -151,19 +151,35 @@ def fetch_category(
         from packages.storage.db import session_scope
         from packages.storage.repositories import PaperRepository
 
+        if progress_callback:
+            progress_callback("正在获取论文列表...", 10, 100)
         client = ArxivClient()
         papers = client.fetch_latest(
             query=f"cat:{category_code}",
             max_results=sub.daily_limit,
             days_back=7,
         )
+
+        total_papers = len(papers)
+        if progress_callback:
+            progress_callback(f"开始入库 ({total_papers} 篇)...", 50, 100)
+
         count = 0
         with session_scope() as session:
             paper_repo = PaperRepository(session)
-            for p in papers:
+            for i, p in enumerate(papers):
                 paper_repo.upsert_paper(p)
                 count += 1
+                if progress_callback:
+                    progress_callback(
+                        f"入库中 ({i + 1}/{total_papers})...",
+                        50 + int((i + 1) / total_papers * 40),
+                        100,
+                    )
             repo.update_run_status(category_code, count)
+
+        if progress_callback:
+            progress_callback("抓取完成", 95, 100)
         return {"fetched": count}
 
     task_id = global_tracker.submit(
