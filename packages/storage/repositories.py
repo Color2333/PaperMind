@@ -378,10 +378,12 @@ class PaperRepository:
 
         by_source_q = (
             select(
-                func.coalesce(Paper.metadata_json["source"].astext, "unknown").label("source"),
+                func.coalesce(func.json_extract(Paper.metadata_json, "$.source"), "unknown").label(
+                    "source"
+                ),
                 func.count().label("count"),
             )
-            .group_by(Paper.metadata_json["source"].astext)
+            .group_by(func.json_extract(Paper.metadata_json, "$.source"))
             .order_by(func.count().desc())
         )
         source_rows = self.session.execute(by_source_q).all()
@@ -435,11 +437,13 @@ class PaperRepository:
 
         by_venue_q = (
             select(
-                func.coalesce(Paper.metadata_json["venue"].astext, "未知").label("venue"),
+                func.coalesce(func.json_extract(Paper.metadata_json, "$.venue"), "未知").label(
+                    "venue"
+                ),
                 func.count().label("count"),
             )
-            .where(Paper.metadata_json["venue"].astext != None)
-            .group_by(Paper.metadata_json["venue"].astext)
+            .where(func.json_extract(Paper.metadata_json, "$.venue") != None)
+            .group_by(func.json_extract(Paper.metadata_json, "$.venue"))
             .order_by(func.count().desc())
             .limit(15)
         )
