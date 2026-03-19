@@ -42,6 +42,7 @@ def latest(
     search: str | None = Query(default=None),
     sort_by: str = Query(default="created_at"),
     sort_order: str = Query(default="desc"),
+    category: str | None = Query(default=None),
 ) -> dict:
     with session_scope() as session:
         repo = PaperRepository(session)
@@ -53,8 +54,11 @@ def latest(
             status=status,
             date_str=date,
             search=search.strip() if search else None,
-            sort_by=sort_by if sort_by in ("created_at", "publication_date", "title") else "created_at",
+            sort_by=sort_by
+            if sort_by in ("created_at", "publication_date", "title")
+            else "created_at",
             sort_order=sort_order if sort_order in ("asc", "desc") else "desc",
+            category=category,
         )
         resp = paper_list_response(papers, repo)
         resp["total"] = total
@@ -121,8 +125,9 @@ def paper_detail(paper_id: UUID) -> dict:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         topic_map = repo.get_topic_names_for_papers([str(p.id)])
         # 查询已有分析报告
-        from packages.storage.models import AnalysisReport as AR
         from sqlalchemy import select as _sel
+
+        from packages.storage.models import AnalysisReport as AR
 
         ar = session.execute(_sel(AR).where(AR.paper_id == str(p.id))).scalar_one_or_none()
         skim_data = None
@@ -277,9 +282,10 @@ def get_paper_figures(paper_id: UUID) -> dict:
 @router.get("/papers/{paper_id}/figures/{figure_id}/image")
 def get_figure_image(paper_id: UUID, figure_id: str):
     """返回图表原始图片文件"""
+    from sqlalchemy import select
+
     from packages.storage.db import session_scope
     from packages.storage.models import ImageAnalysis
-    from sqlalchemy import select
 
     with session_scope() as session:
         row = session.execute(
@@ -305,7 +311,6 @@ def analyze_paper_figures(
     max_figures: int = Query(default=10, ge=1, le=30),
 ) -> dict:
     """提取并解读论文中的图表（异步任务）"""
-    from packages.domain.task_tracker import global_tracker
 
     # 先验证论文和 PDF
     with session_scope() as session:

@@ -101,6 +101,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.user = payload
         return await call_next(request)
 
+
 # ---------- 启动时检查认证配置 ----------
 
 settings = get_settings()
@@ -118,6 +119,7 @@ app = FastAPI(title=settings.app_name)
 app.add_middleware(RequestLogMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # Starlette 内置跳过 text/event-stream
+
 
 @app.exception_handler(AppError)
 async def app_error_handler(_request: Request, exc: AppError):
@@ -150,19 +152,23 @@ from apps.api.routers import (  # noqa: E402
     agent,
     auth,
     content,
+    cs_feeds,
     graph,
     jobs,
     papers,
     pipelines,
-    settings as settings_router,
     system,
     topics,
     writing,
+)
+from apps.api.routers import (
+    settings as settings_router,
 )
 
 app.include_router(system.router)
 app.include_router(papers.router)
 app.include_router(topics.router)
+app.include_router(cs_feeds.router)
 app.include_router(graph.router)
 app.include_router(agent.router)
 app.include_router(content.router)

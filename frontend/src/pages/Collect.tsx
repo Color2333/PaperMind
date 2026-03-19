@@ -31,13 +31,16 @@ import {
   Hash,
   Zap,
   Play,
+  Layers,
 } from "lucide-react";
 import { ingestApi, topicApi } from "@/services/api";
 import { useToast } from "@/contexts/ToastContext";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import type { Topic, TopicCreate, TopicUpdate, ScheduleFrequency, KeywordSuggestion, IngestPaper, TopicFetchResult } from "@/types";
+import CSFeeds from "./CSFeeds";
 
 type SortBy = "submittedDate" | "relevance" | "lastUpdatedDate";
+type ActiveTab = "search" | "subscriptions" | "csfeeds";
 
 interface SearchResult {
   ingested: number;
@@ -78,6 +81,9 @@ function relativeTime(iso: string): string {
 export default function Collect() {
   const { toast } = useToast();
   const navigate = useNavigate();
+
+  // ========== Tab 切换 ==========
+  const [activeTab, setActiveTab] = useState<ActiveTab>("search");
 
   // ========== 即时搜索 ==========
   const [query, setQuery] = useState("");
@@ -255,13 +261,52 @@ export default function Collect() {
     <div className="animate-fade-in space-y-6">
       {/* 页面头 */}
       <div className="page-hero rounded-2xl p-6">
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-primary/10 p-2.5"><Download className="h-5 w-5 text-primary" /></div>
-          <div>
-            <h1 className="text-2xl font-bold text-ink">论文收集</h1>
-            <p className="mt-0.5 text-sm text-ink-secondary">搜索下载论文 · 创建订阅自动收集 · 随时手动触发抓取</p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-primary/10 p-2.5"><Download className="h-5 w-5 text-primary" /></div>
+            <div>
+              <h1 className="text-2xl font-bold text-ink">论文收集</h1>
+              <p className="mt-0.5 text-sm text-ink-secondary">搜索下载论文 · 创建订阅自动收集</p>
+            </div>
           </div>
         </div>
+      </div>
+
+      {/* Tab 切换 */}
+      <div className="flex gap-2 p-1.5 bg-surface rounded-xl border border-border w-fit mx-auto">
+        <button
+          onClick={() => setActiveTab("search")}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+            activeTab === "search"
+              ? "bg-primary text-white shadow-sm"
+              : "text-ink-secondary hover:text-ink hover:bg-muted"
+          }`}
+        >
+          <Search className="h-4 w-4" />
+          即时搜索
+        </button>
+        <button
+          onClick={() => setActiveTab("subscriptions")}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+            activeTab === "subscriptions"
+              ? "bg-primary text-white shadow-sm"
+              : "text-ink-secondary hover:text-ink hover:bg-muted"
+          }`}
+        >
+          <Rss className="h-4 w-4" />
+          主题订阅
+        </button>
+        <button
+          onClick={() => setActiveTab("csfeeds")}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+            activeTab === "csfeeds"
+              ? "bg-primary text-white shadow-sm"
+              : "text-ink-secondary hover:text-ink hover:bg-muted"
+          }`}
+        >
+          <Layers className="h-4 w-4" />
+          分类订阅
+        </button>
       </div>
 
       {/* 错误 */}
@@ -276,6 +321,7 @@ export default function Collect() {
       {/* ================================================================
        * 即时搜索区
        * ================================================================ */}
+      {activeTab === "search" && (
       <div className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
         <div className="mb-5 flex items-center gap-2">
           <div className="rounded-xl bg-primary/8 p-2"><Search className="h-4 w-4 text-primary" /></div>
@@ -320,10 +366,10 @@ export default function Collect() {
           </label>
           {query.trim() && (
             <button
-              onClick={() => { setFormName(query.trim()); setFormQuery(query.trim()); setFormMax(maxResults); setShowForm(true); }}
+              onClick={() => { setFormName(query.trim()); setFormQuery(query.trim()); setFormMax(maxResults); setShowForm(true); setActiveTab("subscriptions"); }}
               className="flex items-center gap-1.5 rounded-lg bg-primary/8 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
             >
-              <Clock className="h-3 w-3" /> 存为自动订阅
+              <Clock className="h-3 w-3" /> 存为订阅
             </button>
           )}
         </div>
@@ -337,10 +383,12 @@ export default function Collect() {
           </div>
         )}
       </div>
+      )}
 
       {/* ================================================================
        * 自动订阅管理
        * ================================================================ */}
+      {activeTab === "subscriptions" && (
       <div className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
         <div className="mb-5 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -467,6 +515,12 @@ export default function Collect() {
           </div>
         )}
       </div>
+      )}
+
+      {/* ================================================================
+       * 分类订阅
+       * ================================================================ */}
+      {activeTab === "csfeeds" && <CSFeeds />}
 
       <ConfirmDialog
         open={!!confirmDeleteId}

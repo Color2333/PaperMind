@@ -174,6 +174,19 @@ export const topicApi = {
     post<{ suggestions: KeywordSuggestion[] }>("/topics/suggest-keywords", { description }),
   stats: () => get<TopicStatsResponse>("/topics/stats"),
   distribution: () => get<PaperDistributionResponse>("/topics/distribution"),
+  csCategories: () => get<{ categories: { code: string; name: string; description: string }[] }>("/cs/categories"),
+  csFeeds: () => get<{ feeds: { category_code: string; category_name: string; daily_limit: number; enabled: boolean; status: string; last_run_at: string | null; last_run_count: number }[] }>("/cs/feeds"),
+  csFeedCreate: (req: { category_codes: string[]; daily_limit: number }) =>
+    post<{ created: number; feeds: { category_code: string; daily_limit: number; enabled: boolean }[] }>("/cs/feeds", req),
+  csFeedUpdate: (categoryCode: string, req: { daily_limit?: number; enabled?: boolean }) => {
+    const params = new URLSearchParams();
+    if (req.daily_limit !== undefined) params.set("daily_limit", String(req.daily_limit));
+    if (req.enabled !== undefined) params.set("enabled", String(req.enabled));
+    return patch<{ category_code: string; daily_limit: number; enabled: boolean }>(`/cs/feeds/${categoryCode}?${params}`);
+  },
+  csFeedFetch: (categoryCode: string) =>
+    post<{ status: string; fetched?: number; message?: string }>(`/cs/feeds/${categoryCode}/fetch`),
+  csFeedDelete: (categoryCode: string) => del<{ deleted: boolean }>(`/cs/feeds/${categoryCode}`),
 };
 
 /* ========== 论文 ========== */
@@ -188,6 +201,7 @@ export const paperApi = {
     search?: string;
     sortBy?: string;
     sortOrder?: string;
+    category?: string;
   } = {}) => {
     const params = new URLSearchParams();
     params.set("page", String(opts.page || 1));
@@ -199,6 +213,7 @@ export const paperApi = {
     if (opts.search) params.append("search", opts.search);
     if (opts.sortBy) params.append("sort_by", opts.sortBy);
     if (opts.sortOrder) params.append("sort_order", opts.sortOrder);
+    if (opts.category) params.append("category", opts.category);
     return get<PaperListResponse>(`/papers/latest?${params}`);
   },
   folderStats: () => get<FolderStats>("/papers/folder-stats"),

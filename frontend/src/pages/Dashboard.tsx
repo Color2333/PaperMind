@@ -80,6 +80,7 @@ export default function Dashboard() {
   const [today, setToday] = useState<TodaySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [costDays, setCostDays] = useState<number>(7);
 
   async function loadData() {
     setLoading(true);
@@ -87,7 +88,7 @@ export default function Dashboard() {
     try {
       const [s, c, r, t] = await Promise.all([
         systemApi.status(),
-        metricsApi.costs(7),
+        metricsApi.costs(costDays),
         pipelineApi.runs(10),
         todayApi.summary().catch(() => null),
       ]);
@@ -102,7 +103,7 @@ export default function Dashboard() {
     }
   }
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); }, [costDays]);
 
   if (loading) return <StatCardSkeleton />;
   if (error) {
@@ -187,7 +188,7 @@ export default function Dashboard() {
         />
         <StatCard
           icon={<Zap className="h-5 w-5" />}
-          label="7日 Token"
+          label={costDays > 0 ? `${costDays}日 Token` : "历史 Token"}
           value={fmtTokens((costs?.input_tokens ?? 0) + (costs?.output_tokens ?? 0))}
           sub={`${costs?.calls ?? 0} 次调用`}
           color="success"
@@ -199,7 +200,25 @@ export default function Dashboard() {
         {/* 左侧：成本分析 + 活动记录 */}
         <div className="space-y-6 lg:col-span-2">
           {/* Token 用量分析 */}
-          <SectionCard title="Token 用量分析" icon={<BarChart3 className="h-4 w-4 text-primary" />}>
+          <SectionCard 
+            title="Token 用量分析" 
+            icon={<BarChart3 className="h-4 w-4 text-primary" />}
+            action={
+              <div className="flex items-center rounded-lg border border-border bg-page p-0.5">
+                {[{ label: "1d", days: 1 }, { label: "7d", days: 7 }, { label: "30d", days: 30 }, { label: "历史", days: 0 }].map(opt => (
+                  <button
+                    key={opt.days}
+                    onClick={() => setCostDays(opt.days)}
+                    className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                      costDays === opt.days ? "bg-primary text-white" : "text-ink-tertiary hover:text-ink"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            }
+          >
             {costs && costs.by_stage.length > 0 ? (
               <div className="space-y-5">
                 {/* 总量概览 */}
@@ -376,12 +395,15 @@ export default function Dashboard() {
 
 /* ========== 子组件 ========== */
 
-function SectionCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+function SectionCard({ title, icon, action, children }: { title: string; icon: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-      <div className="mb-4 flex items-center gap-2">
-        {icon}
-        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {icon}
+          <h3 className="text-sm font-semibold text-ink">{title}</h3>
+        </div>
+        {action}
       </div>
       {children}
     </div>

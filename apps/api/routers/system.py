@@ -58,6 +58,6 @@ def system_status() -> dict:
 
 
 @router.get("/metrics/costs")
-def cost_metrics(days: int = Query(default=7, ge=1, le=90)) -> dict:
+def cost_metrics(days: int = Query(default=7, ge=0, le=3650)) -> dict:
     with session_scope() as session:
         return PromptTraceRepository(session).summarize_costs(days=days)

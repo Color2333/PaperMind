@@ -7,9 +7,9 @@ from datetime import date, datetime, timedelta
 
 import httpx
 
+from packages.ai.rate_limiter import acquire_api, record_rate_limit_error
 from packages.config import get_settings
 from packages.domain.schemas import PaperCreate
-from packages.ai.rate_limiter import acquire_api, record_rate_limit_error
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 logger = logging.getLogger(__name__)
@@ -161,6 +161,58 @@ class ArxivClient:
         response.raise_for_status()
         target.write_bytes(response.content)
         return str(target)
+
+    def fetch_categories(self) -> list[dict]:
+        """从 arXiv API 获取 CS 分类列表，失败时返回常用 CS 分类"""
+        FALLBACK_CS_CATEGORIES = [
+            {"code": "cs.CV", "name": "Computer Vision and Pattern Recognition", "description": ""},
+            {"code": "cs.LG", "name": "Machine Learning", "description": ""},
+            {"code": "cs.CL", "name": "Computation and Language", "description": ""},
+            {"code": "cs.AI", "name": "Artificial Intelligence", "description": ""},
+            {"code": "cs.NE", "name": "Neural and Evolutionary Computing", "description": ""},
+            {"code": "cs.CL", "name": "Computational Linguistics", "description": ""},
+            {"code": "cs.IR", "name": "Information Retrieval", "description": ""},
+            {"code": "cs.IT", "name": "Information Theory", "description": ""},
+            {"code": "cs.CR", "name": "Cryptography and Security", "description": ""},
+            {"code": "cs.DS", "name": "Data Structures and Algorithms", "description": ""},
+            {"code": "cs.DB", "name": "Databases", "description": ""},
+            {"code": "cs.DC", "name": "Distributed Computing", "description": ""},
+            {"code": "cs.SE", "name": "Software Engineering", "description": ""},
+            {"code": "cs.PL", "name": "Programming Languages", "description": ""},
+            {"code": "cs.HC", "name": "Human-Computer Interaction", "description": ""},
+            {"code": "cs.GR", "name": "Graphics", "description": ""},
+            {"code": "cs.RO", "name": "Robotics", "description": ""},
+            {"code": "cs.CY", "name": "Computers and Society", "description": ""},
+            {"code": "cs.SI", "name": "Social and Information Networks", "description": ""},
+            {"code": "cs.MA", "name": "Multiagent Systems", "description": ""},
+            {"code": "cs.MM", "name": "Multimedia", "description": ""},
+            {"code": "cs.OH", "name": "Other", "description": ""},
+            {"code": "cs.CC", "name": "Computational Complexity", "description": ""},
+            {"code": "cs.CE", "name": "Computational Engineering", "description": ""},
+            {"code": "cs.GT", "name": "Game Theory", "description": ""},
+            {"code": "cs.AR", "name": "Hardware and Architecture", "description": ""},
+        ]
+        try:
+            url = "https://arxiv.org/api/categories"
+            acquire_api("arxiv", timeout=30)
+            response = self.client.get(url, timeout=30)
+            response.raise_for_status()
+            root = ElementTree.fromstring(response.text)
+            categories = []
+            for cat in root.findall("category"):
+                code = cat.find("code").text or ""
+                if code.startswith("cs."):
+                    categories.append(
+                        {
+                            "code": code,
+                            "name": cat.find("name").text or "",
+                            "description": cat.find("description").text or "",
+                        }
+                    )
+            return categories
+        except Exception:
+            logger.warning("Failed to fetch categories from arXiv API, using fallback")
+            return FALLBACK_CS_CATEGORIES
 
     def _parse_atom(self, payload: str) -> list[PaperCreate]:
         root = ElementTree.fromstring(payload)

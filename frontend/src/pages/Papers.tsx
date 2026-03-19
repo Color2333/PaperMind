@@ -115,6 +115,8 @@ export default function Papers() {
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [statusFilter, setStatusFilter] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string | undefined>();
+  const [csFeeds, setCsFeeds] = useState<{ category_code: string; category_name: string }[]>([]);
 
   useEffect(() => {
     clearTimeout(searchTimerRef.current);
@@ -174,16 +176,18 @@ export default function Papers() {
         status: statusFilter || undefined,
         sortBy,
         sortOrder,
+        category: activeCategory || undefined,
       });
       setPapers(res.items);
       setTotal(res.total);
       setTotalPages(res.total_pages);
       setSelected(new Set());
     } catch { toast("error", "加载论文列表失败"); } finally { setLoading(false); }
-  }, [activeFolder, activeDate, activeActionId, page, pageSize, debouncedSearch, statusFilter, sortBy, sortOrder, toast]);
+  }, [activeFolder, activeDate, activeActionId, page, pageSize, debouncedSearch, statusFilter, sortBy, sortOrder, activeCategory, toast]);
 
   useEffect(() => { loadFolderStats(); }, [loadFolderStats]);
   useEffect(() => { loadPapers(); }, [loadPapers]);
+  useEffect(() => { topicApi.csFeeds().then(r => setCsFeeds(r.feeds || [])).catch(() => {}); }, []);
 
   /* 构建文件夹列表 */
   const folders = useMemo((): FolderItem[] => {
@@ -554,6 +558,20 @@ export default function Papers() {
 
               {/* 分隔线 */}
               <div className="h-4 w-px bg-border-light" />
+
+              {/* CS 分类筛选 */}
+              {csFeeds.length > 0 && (
+                <select
+                  value={activeCategory || ""}
+                  onChange={(e) => { setActiveCategory(e.target.value || undefined); setPage(1); }}
+                  className="h-7 cursor-pointer rounded-lg border border-border bg-surface px-2 text-[11px] text-ink-secondary focus:border-primary focus:outline-none"
+                >
+                  <option value="">全部分类</option>
+                  {csFeeds.map(f => (
+                    <option key={f.category_code} value={f.category_code}>{f.category_code}</option>
+                  ))}
+                </select>
+              )}
 
               {/* 排序字段 */}
               <select

@@ -12,6 +12,7 @@ from sqlalchemy import Integer, Select, delete, func, select
 from sqlalchemy.orm import Session
 
 from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
+from packages.domain.math_utils import cosine_distance as _cosine_distance
 from packages.domain.schemas import DeepDiveReport, PaperCreate, SkimReport
 from packages.storage.models import (
     ActionPaper,
@@ -21,6 +22,8 @@ from packages.storage.models import (
     AnalysisReport,
     Citation,
     CollectionAction,
+    CSCategory,
+    CSFeedSubscription,
     DailyReportConfig,
     EmailConfig,
     GeneratedContent,
@@ -32,9 +35,6 @@ from packages.storage.models import (
     SourceCheckpoint,
     TopicSubscription,
 )
-
-
-from packages.domain.math_utils import cosine_distance as _cosine_distance
 
 
 class BaseQuery:
@@ -501,6 +501,7 @@ class PaperRepository:
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        category: str | None = None,
     ) -> tuple[list[Paper], int]:
         """分页查询论文，返回 (papers, total_count)"""
         filters = []
@@ -538,6 +539,9 @@ class PaperRepository:
                 filters.append(Paper.created_at < day_end)
             except ValueError:
                 pass
+
+        if category:
+            filters.append(Paper.metadata_json.contains({"categories": [category]}))
 
         base_q = select(Paper)
         count_q = select(func.count()).select_from(Paper)
@@ -819,38 +823,41 @@ class PromptTraceRepository:
         )
 
     def summarize_costs(self, days: int = 7) -> dict:
-        since = datetime.now(UTC) - timedelta(days=max(days, 1))
+        since = None if days <= 0 else datetime.now(UTC) - timedelta(days=days)
+        base_filter = [] if since is None else [PromptTrace.created_at >= since]
+
         total_q = select(
             func.count(PromptTrace.id),
             func.coalesce(func.sum(PromptTrace.input_tokens), 0),
             func.coalesce(func.sum(PromptTrace.output_tokens), 0),
             func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
-        ).where(PromptTrace.created_at >= since)
+        )
+        if since:
+            total_q = total_q.where(*base_filter)
         count, in_tokens, out_tokens, total_cost = self.session.execute(total_q).one()
 
-        by_stage_q = (
-            select(
-                PromptTrace.stage,
-                func.count(PromptTrace.id),
-                func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
-                func.coalesce(func.sum(PromptTrace.input_tokens), 0),
-                func.coalesce(func.sum(PromptTrace.output_tokens), 0),
-            )
-            .where(PromptTrace.created_at >= since)
-            .group_by(PromptTrace.stage)
+        by_stage_q = select(
+            PromptTrace.stage,
+            func.count(PromptTrace.id),
+            func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
+            func.coalesce(func.sum(PromptTrace.input_tokens), 0),
+            func.coalesce(func.sum(PromptTrace.output_tokens), 0),
         )
-        by_model_q = (
-            select(
-                PromptTrace.provider,
-                PromptTrace.model,
-                func.count(PromptTrace.id),
-                func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
-                func.coalesce(func.sum(PromptTrace.input_tokens), 0),
-                func.coalesce(func.sum(PromptTrace.output_tokens), 0),
-            )
-            .where(PromptTrace.created_at >= since)
-            .group_by(PromptTrace.provider, PromptTrace.model)
+        if since:
+            by_stage_q = by_stage_q.where(*base_filter)
+        by_stage_q = by_stage_q.group_by(PromptTrace.stage)
+
+        by_model_q = select(
+            PromptTrace.provider,
+            PromptTrace.model,
+            func.count(PromptTrace.id),
+            func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
+            func.coalesce(func.sum(PromptTrace.input_tokens), 0),
+            func.coalesce(func.sum(PromptTrace.output_tokens), 0),
         )
+        if since:
+            by_model_q = by_model_q.where(*base_filter)
+        by_model_q = by_model_q.group_by(PromptTrace.provider, PromptTrace.model)
 
         by_stage = [
             {
@@ -1550,4 +1557,80 @@ class AgentPendingActionRepository:
         self.session.flush()
         return result.rowcount
 
-        return config
+
+class CSFeedRepository:
+    """arXiv CS 分类订阅 Repository"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get_categories(self) -> list[CSCategory]:
+        return list(self.session.execute(select(CSCategory)).scalars())
+
+    def upsert_category(self, code: str, name: str, description: str = "") -> CSCategory:
+        existing = self.session.execute(
+            select(CSCategory).where(CSCategory.code == code)
+        ).scalar_one_or_none()
+        if existing:
+            existing.name = name
+            existing.description = description
+            existing.cached_at = datetime.now(UTC)
+            return existing
+        cat = CSCategory(code=code, name=name, description=description)
+        self.session.add(cat)
+        self.session.commit()
+        return cat
+
+    def get_subscriptions(self) -> list[CSFeedSubscription]:
+        return list(self.session.execute(select(CSFeedSubscription)).scalars())
+
+    def get_subscription(self, category_code: str) -> CSFeedSubscription | None:
+        return self.session.execute(
+            select(CSFeedSubscription).where(CSFeedSubscription.category_code == category_code)
+        ).scalar_one_or_none()
+
+    def upsert_subscription(
+        self, category_code: str, daily_limit: int, enabled: bool = True
+    ) -> CSFeedSubscription:
+        existing = self.get_subscription(category_code)
+        if existing:
+            existing.daily_limit = daily_limit
+            existing.enabled = enabled
+            self.session.commit()
+            return existing
+        sub = CSFeedSubscription(
+            category_code=category_code, daily_limit=daily_limit, enabled=enabled
+        )
+        self.session.add(sub)
+        self.session.commit()
+        return sub
+
+    def delete_subscription(self, category_code: str) -> bool:
+        sub = self.get_subscription(category_code)
+        if sub:
+            self.session.delete(sub)
+            self.session.commit()
+            return True
+        return False
+
+    def update_run_status(self, category_code: str, count: int):
+        sub = self.get_subscription(category_code)
+        if sub:
+            sub.last_run_at = datetime.now(UTC)
+            sub.last_run_count = count
+            sub.status = "active"
+            self.session.commit()
+
+    def set_cool_down(self, category_code: str, until: datetime):
+        sub = self.get_subscription(category_code)
+        if sub:
+            sub.status = "cool_down"
+            sub.cool_down_until = until
+            self.session.commit()
+
+    def get_active_subscriptions(self) -> list[CSFeedSubscription]:
+        return list(
+            self.session.execute(
+                select(CSFeedSubscription).where(CSFeedSubscription.enabled == True)
+            ).scalars()
+        )

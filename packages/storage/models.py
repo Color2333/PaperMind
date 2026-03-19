@@ -7,7 +7,6 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
-    Integer,
     JSON,
     Boolean,
     Date,
@@ -16,6 +15,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -446,3 +446,30 @@ class DailyReportConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+class CSCategory(Base):
+    """arXiv 计算机科学分类"""
+
+    __tablename__ = "cs_categories"
+
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)  # "cs.CV"
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    cached_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class CSFeedSubscription(Base):
+    """arXiv CS 分类订阅"""
+
+    __tablename__ = "cs_feed_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    category_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    daily_limit: Mapped[int] = mapped_column(Integer, default=30)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")  # active | cool_down | paused
+    cool_down_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
