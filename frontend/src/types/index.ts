@@ -95,6 +95,10 @@ export interface PaperDistributionStats {
 export interface PaperDistributionResponse {
   by_year: { year: string; count: number }[];
   by_source: { source: string; raw_source: string; count: number }[];
+  by_status: { status: string; raw_status: string; count: number }[];
+  by_month: { month: string; count: number }[];
+  by_venue: { venue: string; count: number }[];
+  by_action_source: { source: string; raw_source: string; count: number }[];
 }
 
 /* ========== 抓取任务 ========== */

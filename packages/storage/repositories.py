@@ -363,6 +363,8 @@ class PaperRepository:
 
     def paper_distribution_stats(self) -> dict:
         """论文分布统计：按发表年份分布 + 按来源分布"""
+        from packages.timezone import user_today_start_utc
+
         by_year_q = (
             select(
                 func.coalesce(func.strftime("%Y", Paper.publication_date), "未知").label("year"),
@@ -394,7 +396,90 @@ class PaperRepository:
             for r in source_rows
         ]
 
-        return {"by_year": by_year, "by_source": by_source}
+        by_status_q = select(Paper.read_status, func.count()).group_by(Paper.read_status)
+        status_rows = self.session.execute(by_status_q).all()
+        status_label: dict[str, str] = {
+            "unread": "未读",
+            "skimmed": "已粗读",
+            "deep_read": "已精读",
+        }
+        by_status = [
+            {
+                "status": status_label.get(r[0].value, r[0].value),
+                "raw_status": r[0].value,
+                "count": r[1],
+            }
+            for r in status_rows
+        ]
+
+        user_today_utc = user_today_start_utc()
+        by_month_rows: list[dict] = []
+        for i in range(11, -1, -1):
+            month_start = user_today_utc - timedelta(days=30 * i)
+            month_label = month_start.strftime("%Y-%m")
+            month_start_day = month_start.replace(day=1)
+            if month_start.month == 12:
+                month_end = month_start.replace(year=month_start.year + 1, month=1, day=1)
+            else:
+                month_end = month_start.replace(month=month_start.month + 1, day=1)
+            count_q = (
+                select(func.count())
+                .select_from(Paper)
+                .where(
+                    Paper.created_at >= month_start_day,
+                    Paper.created_at < month_end,
+                )
+            )
+            count = self.session.execute(count_q).scalar() or 0
+            by_month_rows.append({"month": month_label, "count": count})
+
+        by_venue_q = (
+            select(
+                func.coalesce(Paper.metadata_json["venue"].astext, "未知").label("venue"),
+                func.count().label("count"),
+            )
+            .where(Paper.metadata_json["venue"].astext != None)
+            .group_by(Paper.metadata_json["venue"].astext)
+            .order_by(func.count().desc())
+            .limit(15)
+        )
+        venue_rows = self.session.execute(by_venue_q).all()
+        by_venue = [{"venue": r[0], "count": r[1]} for r in venue_rows if r[0]]
+
+        action_source_q = (
+            select(
+                CollectionAction.action_type,
+                func.sum(CollectionAction.paper_count).label("total"),
+            )
+            .group_by(CollectionAction.action_type)
+            .order_by(func.sum(CollectionAction.paper_count).desc())
+        )
+        action_rows = self.session.execute(action_source_q).all()
+        action_label: dict[str, str] = {
+            "initial_import": "初始导入",
+            "manual_collect": "手动收集",
+            "auto_collect": "自动收集",
+            "agent_collect": "Agent收集",
+            "subscription_ingest": "订阅抓取",
+            "reference_import": "参考文献",
+        }
+        by_action_source = [
+            {
+                "source": action_label.get(r[0].value, r[0].value),
+                "raw_source": r[0].value,
+                "count": r[1] or 0,
+            }
+            for r in action_rows
+        ]
+
+        return {
+            "by_year": by_year,
+            "by_source": by_source,
+            "by_status": by_status,
+            "by_month": by_month_rows,
+            "by_venue": by_venue,
+            "by_action_source": by_action_source,
+        }
 
     def list_paginated(
         self,

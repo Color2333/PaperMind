@@ -14,13 +14,27 @@ import {
   RefreshCw,
   Calendar,
   Globe,
+  TrendingDown,
+  Activity,
+  Layers,
 } from "lucide-react";
+
+const STATUS_COLORS: Record<string, string> = {
+  "unread": "bg-muted-foreground/30",
+  "skimmed": "bg-yellow-500",
+  "deep_read": "bg-primary",
+};
 
 const SOURCE_COLORS: Record<string, string> = {
   arxiv: "bg-red-500",
   "semantic_scholar": "bg-blue-500",
   reference_import: "bg-green-500",
   unknown: "bg-gray-500",
+  "initial_import": "bg-purple-500",
+  "manual_collect": "bg-orange-500",
+  "auto_collect": "bg-cyan-500",
+  "agent_collect": "bg-pink-500",
+  "subscription_ingest": "bg-indigo-500",
 };
 
 function TopicCard({ stat }: { stat: TopicStats }) {
@@ -108,20 +122,19 @@ function CitationBar({ stat, max }: { stat: TopicStats; max: number }) {
 function YearDistribution({ data }: { data: PaperDistributionResponse }) {
   const years = data.by_year.filter(y => y.year !== "未知").sort((a, b) => b.year.localeCompare(a.year));
   const maxCount = Math.max(...years.map(y => y.count), 1);
-  const total = years.reduce((sum, y) => sum + y.count, 0);
 
   return (
     <div className="bg-card rounded-lg border p-4 space-y-3">
       <div className="flex items-center gap-2">
         <Calendar className="w-4 h-4 text-muted-foreground" />
         <h3 className="font-medium text-sm">论文年份分布</h3>
-        <span className="text-xs text-muted-foreground ml-auto">{total} 篇有年份</span>
+        <span className="text-xs text-muted-foreground ml-auto">{years.reduce((s, y) => s + y.count, 0)} 篇</span>
       </div>
       {years.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-4">暂无年份数据</p>
       ) : (
         <div className="space-y-1.5">
-          {years.slice(0, 10).map((y) => (
+          {years.slice(0, 8).map((y) => (
             <div key={y.year} className="flex items-center gap-3">
               <span className="text-xs w-12">{y.year}</span>
               <div className="flex-1 h-5 bg-muted rounded overflow-hidden">
@@ -147,7 +160,7 @@ function SourceDistribution({ data }: { data: PaperDistributionResponse }) {
     <div className="bg-card rounded-lg border p-4 space-y-3">
       <div className="flex items-center gap-2">
         <Globe className="w-4 h-4 text-muted-foreground" />
-        <h3 className="font-medium text-sm">论文来源分布</h3>
+        <h3 className="font-medium text-sm">论文来源</h3>
         <span className="text-xs text-muted-foreground ml-auto">{total} 篇</span>
       </div>
       {sources.length === 0 ? (
@@ -165,6 +178,139 @@ function SourceDistribution({ data }: { data: PaperDistributionResponse }) {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function MonthlyTrend({ data }: { data: PaperDistributionResponse }) {
+  const months = data.by_month;
+  const maxCount = Math.max(...months.map(m => m.count), 1);
+
+  return (
+    <div className="bg-card rounded-lg border p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Activity className="w-4 h-4 text-muted-foreground" />
+        <h3 className="font-medium text-sm">月度入库趋势</h3>
+        <span className="text-xs text-muted-foreground ml-auto">近12个月</span>
+      </div>
+      {months.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">暂无数据</p>
+      ) : (
+        <div className="flex items-end gap-1 h-20">
+          {months.map((m) => (
+            <div key={m.month} className="flex-1 flex flex-col items-center gap-1">
+              <div
+                className="w-full bg-gradient-to-t from-indigo-500 to-indigo-400 rounded-sm"
+                style={{ height: `${Math.max((m.count / maxCount) * 64, 2)}px` }}
+              />
+              <span className="text-[9px] text-muted-foreground">{m.month.slice(5)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VenueDistribution({ data }: { data: PaperDistributionResponse }) {
+  const venues = data.by_venue;
+  const maxCount = Math.max(...venues.map(v => v.count), 1);
+
+  return (
+    <div className="bg-card rounded-lg border p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Layers className="w-4 h-4 text-muted-foreground" />
+        <h3 className="font-medium text-sm">顶会/期刊分布</h3>
+        <span className="text-xs text-muted-foreground ml-auto">Top 15</span>
+      </div>
+      {venues.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">暂无数据</p>
+      ) : (
+        <div className="space-y-1.5">
+          {venues.map((v) => (
+            <div key={v.venue} className="flex items-center gap-3">
+              <span className="text-xs w-20 truncate">{v.venue}</span>
+              <div className="flex-1 h-4 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-500"
+                  style={{ width: `${(v.count / maxCount) * 100}%` }}
+                />
+              </div>
+              <span className="text-xs w-8 text-right">{v.count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActionSourceStats({ data }: { data: PaperDistributionResponse }) {
+  const actions = data.by_action_source;
+  const total = actions.reduce((sum, a) => sum + a.count, 0);
+
+  return (
+    <div className="bg-card rounded-lg border p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <TrendingDown className="w-4 h-4 text-muted-foreground" />
+        <h3 className="font-medium text-sm">入库来源统计</h3>
+        <span className="text-xs text-muted-foreground ml-auto">{total} 篇</span>
+      </div>
+      {actions.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">暂无数据</p>
+      ) : (
+        <div className="space-y-2">
+          {actions.map((a) => (
+            <div key={a.raw_source} className="flex items-center gap-3">
+              <div className={`w-2 h-2 rounded-full ${SOURCE_COLORS[a.raw_source] || "bg-gray-500"}`} />
+              <span className="text-xs flex-1">{a.source}</span>
+              <span className="text-xs font-medium">{a.count}</span>
+              <span className="text-xs text-muted-foreground w-10 text-right">
+                {total > 0 ? ((a.count / total) * 100).toFixed(0) : 0}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReadStatusOverview({ data }: { data: PaperDistributionResponse }) {
+  const statuses = data.by_status;
+  const total = statuses.reduce((sum, s) => sum + s.count, 0);
+
+  return (
+    <div className="bg-card rounded-lg border p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <BookOpen className="w-4 h-4 text-muted-foreground" />
+        <h3 className="font-medium text-sm">阅读状态概览</h3>
+        <span className="text-xs text-muted-foreground ml-auto">{total} 篇</span>
+      </div>
+      {statuses.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">暂无数据</p>
+      ) : (
+        <>
+          <div className="h-2 bg-muted rounded-full overflow-hidden flex">
+            {statuses.map((s) => (
+              <div
+                key={s.raw_status}
+                className={`${STATUS_COLORS[s.raw_status] || "bg-gray-500"} h-full`}
+                style={{ width: `${total > 0 ? (s.count / total) * 100 : 0}%` }}
+              />
+            ))}
+          </div>
+          <div className="flex justify-between text-xs">
+            {statuses.map((s) => (
+              <div key={s.raw_status} className="flex items-center gap-1">
+                <div className={`w-2 h-2 rounded-full ${STATUS_COLORS[s.raw_status] || "bg-gray-500"}`} />
+                <span className="text-muted-foreground">{s.status}</span>
+                <span className="font-medium">{s.count}</span>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -257,10 +403,18 @@ export default function Statistics() {
       </div>
 
       {distData && (
-        <div className="grid grid-cols-2 gap-4">
-          <YearDistribution data={distData} />
-          <SourceDistribution data={distData} />
-        </div>
+        <>
+          <MonthlyTrend data={distData} />
+          <div className="grid grid-cols-2 gap-4">
+            <YearDistribution data={distData} />
+            <SourceDistribution data={distData} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <VenueDistribution data={distData} />
+            <ActionSourceStats data={distData} />
+          </div>
+          <ReadStatusOverview data={distData} />
+        </>
       )}
 
       {topics.length > 0 && (
