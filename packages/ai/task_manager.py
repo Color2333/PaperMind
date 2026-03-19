@@ -2,15 +2,17 @@
 后台任务管理器 - 管理 wiki/brief 等耗时生成任务
 @author Color2333
 """
+
 from __future__ import annotations
 
 import logging
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +90,7 @@ class TaskManager:
             try:
                 info.result = fn(
                     *args,
-                    progress_callback=lambda p, m: self._update_progress(
-                        task_id, p, m
-                    ),
+                    progress_callback=lambda p, m: self._update_progress(task_id, p, m),
                     **kwargs,
                 )
                 info.status = TaskStatus.COMPLETED
@@ -107,9 +107,7 @@ class TaskManager:
         thread.start()
         return task_id
 
-    def _update_progress(
-        self, task_id: str, progress: float, message: str
-    ):
+    def _update_progress(self, task_id: str, progress: float, message: str):
         with self._tasks_lock:
             info = self._tasks.get(task_id)
             if info:
@@ -128,7 +126,9 @@ class TaskManager:
             return info.result if info else None
 
     def list_tasks(
-        self, task_type: str | None = None, limit: int = 20,
+        self,
+        task_type: str | None = None,
+        limit: int = 20,
     ) -> list[dict]:
         with self._tasks_lock:
             tasks = list(self._tasks.values())
@@ -142,9 +142,9 @@ class TaskManager:
         cutoff = time.time() - max_age_seconds
         with self._tasks_lock:
             expired = [
-                tid for tid, t in self._tasks.items()
-                if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
-                and t.updated_at < cutoff
+                tid
+                for tid, t in self._tasks.items()
+                if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED) and t.updated_at < cutoff
             ]
             for tid in expired:
                 del self._tasks[tid]

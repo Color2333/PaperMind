@@ -55,50 +55,51 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <div className="w-full max-w-md px-4">
         {/* Logo 和标题 */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-4">
-            <Lock className="w-8 h-8 text-primary" />
+        <div className="mb-8 text-center">
+          <div className="bg-primary/10 mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl">
+            <Lock className="text-primary h-8 w-8" />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-2">PaperMind</h1>
-          <p className="text-slate-400 text-sm">请输入访问密码</p>
+          <h1 className="mb-2 text-2xl font-bold text-white">PaperMind</h1>
+          <p className="text-sm text-slate-400">请输入访问密码</p>
         </div>
 
         {/* 登录表单 */}
-        <form onSubmit={handleSubmit} className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-6 shadow-xl border border-slate-700/50">
+        <form
+          onSubmit={handleSubmit}
+          className="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6 shadow-xl backdrop-blur-sm"
+        >
           <div className="relative">
             <input
               type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="访问密码"
-              className="w-full px-4 py-3 pr-12 bg-slate-900/50 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+              className="focus:ring-primary w-full rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-3 pr-12 text-white placeholder-slate-500 transition-all focus:border-transparent focus:ring-2 focus:outline-none"
               disabled={loading}
               autoFocus
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+              className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-500 transition-colors hover:text-slate-300"
             >
-              {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
             </button>
           </div>
 
-          {error && (
-            <p className="mt-3 text-sm text-red-400 text-center">{error}</p>
-          )}
+          {error && <p className="mt-3 text-center text-sm text-red-400">{error}</p>}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-4 py-3 bg-primary hover:bg-primary-hover disabled:bg-slate-600 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
+            className="bg-primary hover:bg-primary-hover mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-medium text-white transition-colors disabled:bg-slate-600"
           >
             {loading ? (
               <>
-                <Loader2 className="w-5 h-5 animate-spin" />
+                <Loader2 className="h-5 w-5 animate-spin" />
                 <span>验证中...</span>
               </>
             ) : (
@@ -108,7 +109,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
         </form>
 
         {/* 底部提示 */}
-        <p className="text-center mt-6 text-slate-500 text-xs">
+        <p className="mt-6 text-center text-xs text-slate-500">
           PaperMind · AI 驱动的学术论文研究平台
         </p>
       </div>

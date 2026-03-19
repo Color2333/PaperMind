@@ -8,14 +8,16 @@
 - 统一 start / update / finish 生命周期
 - 线程安全 + 自动清理过期任务
 """
+
 from __future__ import annotations
 
 import logging
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +129,9 @@ class TaskTracker:
             try:
                 result = fn(
                     *args,
-                    progress_callback=lambda msg, cur, tot: self.update(task_id, cur, msg, total=tot or total),
+                    progress_callback=lambda msg, cur, tot: self.update(
+                        task_id, cur, msg, total=tot or total
+                    ),
                     **kwargs,
                 )
                 with self._lock:
@@ -170,7 +174,8 @@ class TaskTracker:
         """清除完成超过 TTL 的任务"""
         now = time.time()
         expired = [
-            tid for tid, t in self._tasks.items()
+            tid
+            for tid, t in self._tasks.items()
             if t.finished and (now - t.started_at) > _FINISHED_TTL
         ]
         for tid in expired:

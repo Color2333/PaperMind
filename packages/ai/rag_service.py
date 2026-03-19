@@ -2,9 +2,9 @@
 RAG 检索增强生成服务
 @author Color2333
 """
+
 from __future__ import annotations
 
-import json
 import logging
 from uuid import UUID
 
@@ -26,18 +26,12 @@ class RAGService:
     def __init__(self) -> None:
         self.llm = LLMClient()
 
-    def ask(
-        self, question: str, top_k: int = 5
-    ) -> AskResponse:
+    def ask(self, question: str, top_k: int = 5) -> AskResponse:
         with session_scope() as session:
             repo = PaperRepository(session)
-            lexical = repo.full_text_candidates(
-                query=question, limit=max(top_k, 8)
-            )
+            lexical = repo.full_text_candidates(query=question, limit=max(top_k, 8))
             qvec = self.llm.embed_text(question)
-            semantic = repo.semantic_candidates(
-                query_vector=qvec, limit=max(top_k, 8)
-            )
+            semantic = repo.semantic_candidates(query_vector=qvec, limit=max(top_k, 8))
             candidates = []
             seen: set[str] = set()
             for p in lexical + semantic:
@@ -52,21 +46,13 @@ class RAGService:
                     cited_paper_ids=[],
                 )
             paper_ids = [p.id for p in candidates[:top_k]]
-            report_ctx = AnalysisRepository(
-                session
-            ).contexts_for_papers(paper_ids)
+            report_ctx = AnalysisRepository(session).contexts_for_papers(paper_ids)
             contexts = []
             evidence = []
             for p in candidates[:top_k]:
                 rpt = report_ctx.get(p.id, "") or ""
-                snippet = (
-                    f"{p.abstract[:260]}\n{rpt[:320]}"
-                )
-                contexts.append(
-                    f"{p.title}\n"
-                    f"{p.abstract[:500]}\n"
-                    f"{rpt[:1200]}"
-                )
+                snippet = f"{p.abstract[:260]}\n{rpt[:320]}"
+                contexts.append(f"{p.title}\n{p.abstract[:500]}\n{rpt[:1200]}")
                 evidence.append(
                     {
                         "paper_id": p.id,
@@ -76,9 +62,7 @@ class RAGService:
                     }
                 )
             prompt = build_rag_prompt(question, contexts)
-            decision = CostGuardService(
-                session, self.llm
-            ).choose_model(
+            decision = CostGuardService(session, self.llm).choose_model(
                 stage="rag",
                 prompt=prompt,
                 default_model=self.llm.settings.llm_model_skim,
@@ -90,9 +74,7 @@ class RAGService:
             )
             answer = result.content
             if result.parsed_json:
-                answer = str(
-                    result.parsed_json.get("answer", answer)
-                )
+                answer = str(result.parsed_json.get("answer", answer))
             PromptTraceRepository(session).create(
                 stage="rag",
                 provider=self.llm.provider,
@@ -139,7 +121,7 @@ class RAGService:
                 if pid not in all_cited:
                     all_cited.append(pid)
             seen_ids = {e.get("paper_id") for e in all_evidence}
-            for e in (resp.evidence or []):
+            for e in resp.evidence or []:
                 if e.get("paper_id") not in seen_ids:
                     all_evidence.append(e)
                     seen_ids.add(e.get("paper_id"))
@@ -192,15 +174,11 @@ class RAGService:
             logger.warning("RAG eval failed: %s", exc)
         return {"sufficient": True}
 
-    def similar_papers(
-        self, paper_id: UUID, top_k: int = 5
-    ) -> list[UUID]:
+    def similar_papers(self, paper_id: UUID, top_k: int = 5) -> list[UUID]:
         with session_scope() as session:
             repo = PaperRepository(session)
             paper = repo.get_by_id(paper_id)
             if not paper.embedding:
                 return []
-            peers = repo.similar_by_embedding(
-                paper.embedding, exclude=paper_id, limit=top_k
-            )
+            peers = repo.similar_by_embedding(paper.embedding, exclude=paper_id, limit=top_k)
             return [p.id for p in peers]

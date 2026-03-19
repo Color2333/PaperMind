@@ -2,6 +2,7 @@
 邮箱发送服务 - 支持每日简报邮件发送
 @author Color2333
 """
+
 from __future__ import annotations
 
 import logging

@@ -2,10 +2,10 @@
 推荐引擎 + 热点趋势检测
 @author Color2333
 """
+
 from __future__ import annotations
 
 import logging
-import math
 import threading
 import time
 from collections import Counter
@@ -65,10 +65,7 @@ class RecommendationService:
             read_papers = repo.list_by_read_status_with_embedding(
                 statuses=["skimmed", "deep_read"], limit=200
             )
-            vectors = [
-                list(p.embedding) for p in read_papers
-                if p.embedding
-            ]
+            vectors = [list(p.embedding) for p in read_papers if p.embedding]
         if not vectors:
             return []
         return _mean_vector(vectors)
@@ -88,20 +85,21 @@ class RecommendationService:
                 if not p.embedding:
                     continue
                 meta = p.metadata_json or {}
-                candidates.append({
-                    "embedding": list(p.embedding),
-                    "id": str(p.id),
-                    "title": p.title,
-                    "arxiv_id": p.arxiv_id,
-                    "abstract": (p.abstract or "")[:300],
-                    "publication_date": (
-                        str(p.publication_date)
-                        if p.publication_date else None
-                    ),
-                    "keywords": meta.get("keywords", []),
-                    "categories": meta.get("categories", []),
-                    "title_zh": meta.get("title_zh", ""),
-                })
+                candidates.append(
+                    {
+                        "embedding": list(p.embedding),
+                        "id": str(p.id),
+                        "title": p.title,
+                        "arxiv_id": p.arxiv_id,
+                        "abstract": (p.abstract or "")[:300],
+                        "publication_date": (
+                            str(p.publication_date) if p.publication_date else None
+                        ),
+                        "keywords": meta.get("keywords", []),
+                        "categories": meta.get("categories", []),
+                        "title_zh": meta.get("title_zh", ""),
+                    }
+                )
 
         profile_dim = len(profile)
         scored: list[tuple[float, dict]] = []
@@ -125,9 +123,7 @@ class TrendService:
         """在 session 内提取论文的 metadata_json"""
         return [p.metadata_json or {} for p in papers]
 
-    def detect_hot_keywords(
-        self, days: int = 7, top_k: int = 15
-    ) -> list[dict]:
+    def detect_hot_keywords(self, days: int = 7, top_k: int = 15) -> list[dict]:
         """分析近 N 天论文的关键词频率（5 分钟缓存）"""
         cache_key = f"hot_keywords:{days}:{top_k}"
         hit = _cached(cache_key)
@@ -147,8 +143,7 @@ class TrendService:
                 keyword_counter[cat] += 1
 
         result = [
-            {"keyword": kw, "count": count}
-            for kw, count in keyword_counter.most_common(top_k)
+            {"keyword": kw, "count": count} for kw, count in keyword_counter.most_common(top_k)
         ]
         _set_cache(cache_key, result)
         return result
@@ -161,12 +156,8 @@ class TrendService:
 
         with session_scope() as session:
             repo = PaperRepository(session)
-            recent_papers = repo.list_recent_since(
-                recent_cutoff, limit=500
-            )
-            older_papers = repo.list_recent_between(
-                old_cutoff, recent_cutoff, limit=500
-            )
+            recent_papers = repo.list_recent_since(recent_cutoff, limit=500)
+            older_papers = repo.list_recent_between(old_cutoff, recent_cutoff, limit=500)
             recent_metas = self._extract_metadata(recent_papers)
             older_metas = self._extract_metadata(older_papers)
             recent_count = len(recent_papers)
@@ -185,28 +176,25 @@ class TrendService:
         emerging = []
         for kw, count in recent_kw.most_common(30):
             old_count = older_kw.get(kw, 0)
-            if count >= 2 and (
-                old_count == 0
-                or count / max(old_count, 1) >= 1.5
-            ):
-                emerging.append({
-                    "keyword": kw,
-                    "recent_count": count,
-                    "previous_count": old_count,
-                    "growth": (
-                        "新出现" if old_count == 0
-                        else f"+{round((count / old_count - 1) * 100)}%"
-                    ),
-                })
+            if count >= 2 and (old_count == 0 or count / max(old_count, 1) >= 1.5):
+                emerging.append(
+                    {
+                        "keyword": kw,
+                        "recent_count": count,
+                        "previous_count": old_count,
+                        "growth": (
+                            "新出现"
+                            if old_count == 0
+                            else f"+{round((count / old_count - 1) * 100)}%"
+                        ),
+                    }
+                )
 
         return {
             "period_days": days,
             "recent_paper_count": recent_count,
             "older_paper_count": older_count,
-            "hot_keywords": [
-                {"keyword": kw, "count": c}
-                for kw, c in recent_kw.most_common(10)
-            ],
+            "hot_keywords": [{"keyword": kw, "count": c} for kw, c in recent_kw.most_common(10)],
             "emerging_trends": emerging[:10],
         }
 
@@ -217,17 +205,14 @@ class TrendService:
             return hit
         # 用用户时区的"今天 0:00"作为起始点，转为 UTC 与数据库比较
         from packages.timezone import user_today_start_utc
+
         today_start = user_today_start_utc()
         week_start = today_start - timedelta(days=7)
 
         with session_scope() as session:
             repo = PaperRepository(session)
-            today_count = len(
-                repo.list_recent_since(today_start, limit=100)
-            )
-            week_count = len(
-                repo.list_recent_since(week_start, limit=500)
-            )
+            today_count = len(repo.list_recent_since(today_start, limit=100))
+            week_count = len(repo.list_recent_since(week_start, limit=500))
             total_count = repo.count_all()
 
         recommendations = RecommendationService().recommend(top_k=5)

@@ -38,7 +38,8 @@ def _topic_dict(t, session=None) -> dict:
     }
     if session is not None:
         from sqlalchemy import func, select
-        from packages.storage.models import PaperTopic, CollectionAction
+
+        from packages.storage.models import CollectionAction, PaperTopic
 
         # 论文计数
         cnt = session.scalar(

@@ -14,9 +14,9 @@ PaperMind 开发环境一键初始化脚本
 """
 
 import os
-import sys
-import subprocess
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 

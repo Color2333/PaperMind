@@ -103,17 +103,21 @@ export default function Dashboard() {
     }
   }
 
-  useEffect(() => { loadData(); }, [costDays]);
+  useEffect(() => {
+    loadData();
+  }, [costDays]);
 
   if (loading) return <StatCardSkeleton />;
   if (error) {
     return (
       <div className="flex flex-col items-center py-20">
-        <div className="rounded-2xl bg-error-light p-6">
-          <XCircle className="mx-auto h-10 w-10 text-error" />
+        <div className="bg-error-light rounded-2xl p-6">
+          <XCircle className="text-error mx-auto h-10 w-10" />
         </div>
-        <p className="mt-4 text-sm text-error">{error}</p>
-        <Button variant="secondary" className="mt-4" onClick={loadData}>重试</Button>
+        <p className="text-error mt-4 text-sm">{error}</p>
+        <Button variant="secondary" className="mt-4" onClick={loadData}>
+          重试
+        </Button>
       </div>
     );
   }
@@ -121,7 +125,7 @@ export default function Dashboard() {
   const isHealthy = status?.health?.status === "ok";
   const todayNew = today?.today_new ?? 0;
   const weekNew = today?.week_new ?? 0;
-  const totalPapers = today?.total_papers ?? (status?.counts?.papers_latest_200 ?? 0);
+  const totalPapers = today?.total_papers ?? status?.counts?.papers_latest_200 ?? 0;
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -129,22 +133,26 @@ export default function Dashboard() {
       <div className="page-hero rounded-2xl p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-primary/10 p-2.5"><Activity className="h-5 w-5 text-primary" /></div>
+            <div className="bg-primary/10 rounded-xl p-2.5">
+              <Activity className="text-primary h-5 w-5" />
+            </div>
             <div>
-              <h1 className="text-2xl font-bold text-ink">Dashboard</h1>
-              <p className="mt-0.5 text-sm text-ink-secondary">系统总览与运行状态</p>
+              <h1 className="text-ink text-2xl font-bold">Dashboard</h1>
+              <p className="text-ink-secondary mt-0.5 text-sm">系统总览与运行状态</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             {hasRunning && (
-              <div className="flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+              <div className="bg-primary/10 text-primary flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 <span>{activeTasks.length} 个任务运行中</span>
               </div>
             )}
-            <div className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium ${
-              isHealthy ? "bg-success-light text-success" : "bg-error-light text-error"
-            }`}>
+            <div
+              className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium ${
+                isHealthy ? "bg-success-light text-success" : "bg-error-light text-error"
+              }`}
+            >
               <span className={`h-2 w-2 rounded-full ${isHealthy ? "bg-success" : "bg-error"}`} />
               {isHealthy ? "系统正常" : "系统异常"}
             </div>
@@ -200,17 +208,24 @@ export default function Dashboard() {
         {/* 左侧：成本分析 + 活动记录 */}
         <div className="space-y-6 lg:col-span-2">
           {/* Token 用量分析 */}
-          <SectionCard 
-            title="Token 用量分析" 
-            icon={<BarChart3 className="h-4 w-4 text-primary" />}
+          <SectionCard
+            title="Token 用量分析"
+            icon={<BarChart3 className="text-primary h-4 w-4" />}
             action={
-              <div className="flex items-center rounded-lg border border-border bg-page p-0.5">
-                {[{ label: "1d", days: 1 }, { label: "7d", days: 7 }, { label: "30d", days: 30 }, { label: "历史", days: 0 }].map(opt => (
+              <div className="border-border bg-page flex items-center rounded-lg border p-0.5">
+                {[
+                  { label: "1d", days: 1 },
+                  { label: "7d", days: 7 },
+                  { label: "30d", days: 30 },
+                  { label: "历史", days: 0 },
+                ].map((opt) => (
                   <button
                     key={opt.days}
                     onClick={() => setCostDays(opt.days)}
                     className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                      costDays === opt.days ? "bg-primary text-white" : "text-ink-tertiary hover:text-ink"
+                      costDays === opt.days
+                        ? "bg-primary text-white"
+                        : "text-ink-tertiary hover:text-ink"
                     }`}
                   >
                     {opt.label}
@@ -223,92 +238,117 @@ export default function Dashboard() {
               <div className="space-y-5">
                 {/* 总量概览 */}
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="rounded-xl bg-page p-3 text-center">
-                    <p className="text-lg font-bold text-ink">{fmtTokens((costs.input_tokens ?? 0) + (costs.output_tokens ?? 0))}</p>
-                    <p className="text-[10px] text-ink-tertiary">总 Token</p>
+                  <div className="bg-page rounded-xl p-3 text-center">
+                    <p className="text-ink text-lg font-bold">
+                      {fmtTokens((costs.input_tokens ?? 0) + (costs.output_tokens ?? 0))}
+                    </p>
+                    <p className="text-ink-tertiary text-[10px]">总 Token</p>
                   </div>
-                  <div className="rounded-xl bg-page p-3 text-center">
-                    <p className="text-lg font-bold text-info">{fmtTokens(costs.input_tokens ?? 0)}</p>
-                    <p className="text-[10px] text-ink-tertiary">输入</p>
+                  <div className="bg-page rounded-xl p-3 text-center">
+                    <p className="text-info text-lg font-bold">
+                      {fmtTokens(costs.input_tokens ?? 0)}
+                    </p>
+                    <p className="text-ink-tertiary text-[10px]">输入</p>
                   </div>
-                  <div className="rounded-xl bg-page p-3 text-center">
-                    <p className="text-lg font-bold text-warning">{fmtTokens(costs.output_tokens ?? 0)}</p>
-                    <p className="text-[10px] text-ink-tertiary">输出</p>
+                  <div className="bg-page rounded-xl p-3 text-center">
+                    <p className="text-warning text-lg font-bold">
+                      {fmtTokens(costs.output_tokens ?? 0)}
+                    </p>
+                    <p className="text-ink-tertiary text-[10px]">输出</p>
                   </div>
                 </div>
 
                 {/* 按阶段 */}
                 <div className="space-y-3">
-                  <p className="text-xs font-medium uppercase tracking-widest text-ink-tertiary">按阶段</p>
+                  <p className="text-ink-tertiary text-xs font-medium tracking-widest uppercase">
+                    按阶段
+                  </p>
                   {costs.by_stage.map((s) => {
                     const stageTotal = (s.input_tokens ?? 0) + (s.output_tokens ?? 0);
-                    const maxTokens = Math.max(...costs.by_stage.map((x) => (x.input_tokens ?? 0) + (x.output_tokens ?? 0)), 1);
+                    const maxTokens = Math.max(
+                      ...costs.by_stage.map((x) => (x.input_tokens ?? 0) + (x.output_tokens ?? 0)),
+                      1
+                    );
                     const pct = Math.max((stageTotal / maxTokens) * 100, 3);
                     return (
                       <div key={s.stage} className="group">
                         <div className="mb-1 flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <Zap className="h-3 w-3 text-warning" />
-                            <span className="text-sm text-ink">{STAGE_LABELS[s.stage] || s.stage}</span>
+                            <Zap className="text-warning h-3 w-3" />
+                            <span className="text-ink text-sm">
+                              {STAGE_LABELS[s.stage] || s.stage}
+                            </span>
                           </div>
                           <div className="flex items-baseline gap-3">
-                            <span className="text-sm font-semibold text-ink">{fmtTokens(stageTotal)}</span>
-                            <span className="text-[10px] text-ink-tertiary">{s.calls}次</span>
+                            <span className="text-ink text-sm font-semibold">
+                              {fmtTokens(stageTotal)}
+                            </span>
+                            <span className="text-ink-tertiary text-[10px]">{s.calls}次</span>
                           </div>
                         </div>
-                        <div className="flex h-2 w-full overflow-hidden rounded-full bg-page">
+                        <div className="bg-page flex h-2 w-full overflow-hidden rounded-full">
                           <div
-                            className="bar-animate h-full rounded-l-full bg-info/70"
-                            style={{ width: `${maxTokens > 0 ? Math.max(((s.input_tokens ?? 0) / maxTokens) * 100, 1) : 1}%` }}
+                            className="bar-animate bg-info/70 h-full rounded-l-full"
+                            style={{
+                              width: `${maxTokens > 0 ? Math.max(((s.input_tokens ?? 0) / maxTokens) * 100, 1) : 1}%`,
+                            }}
                           />
                           <div
-                            className="bar-animate h-full rounded-r-full bg-warning/70"
-                            style={{ width: `${maxTokens > 0 ? Math.max(((s.output_tokens ?? 0) / maxTokens) * 100, 1) : 1}%` }}
+                            className="bar-animate bg-warning/70 h-full rounded-r-full"
+                            style={{
+                              width: `${maxTokens > 0 ? Math.max(((s.output_tokens ?? 0) / maxTokens) * 100, 1) : 1}%`,
+                            }}
                           />
                         </div>
                       </div>
                     );
                   })}
-                  <div className="flex items-center gap-4 text-[10px] text-ink-tertiary">
-                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-info/70" />输入</span>
-                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-warning/70" />输出</span>
+                  <div className="text-ink-tertiary flex items-center gap-4 text-[10px]">
+                    <span className="flex items-center gap-1">
+                      <span className="bg-info/70 inline-block h-2 w-2 rounded-full" />
+                      输入
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="bg-warning/70 inline-block h-2 w-2 rounded-full" />
+                      输出
+                    </span>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="py-8 text-center text-sm text-ink-tertiary">暂无 Token 数据</div>
+              <div className="text-ink-tertiary py-8 text-center text-sm">暂无 Token 数据</div>
             )}
           </SectionCard>
 
           {/* 最近活动 */}
-          <SectionCard title="最近活动" icon={<Activity className="h-4 w-4 text-primary" />}>
+          <SectionCard title="最近活动" icon={<Activity className="text-primary h-4 w-4" />}>
             {runs.length > 0 ? (
               <div className="space-y-2">
                 {runs.map((run, index) => (
                   <div
                     key={run.id}
-                    className="group flex items-center gap-3 rounded-xl bg-page p-3 transition-all hover:bg-hover cursor-pointer"
+                    className="group bg-page hover:bg-hover flex cursor-pointer items-center gap-3 rounded-xl p-3 transition-all"
                     onClick={() => navigate("/pipelines")}
                   >
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium text-ink-tertiary bg-border-light">
+                    <span className="text-ink-tertiary bg-border-light flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium">
                       {index + 1}
                     </span>
                     <RunStatusDot status={run.status} />
                     <div className="min-w-0 flex-1">
                       <div className="mb-0.5 flex items-center gap-2">
-                        <p className="truncate text-sm font-medium text-ink">
+                        <p className="text-ink truncate text-sm font-medium">
                           {PIPELINE_LABELS[run.pipeline_name] || run.pipeline_name}
                         </p>
                         {run.elapsed_ms != null && (
-                          <span className="shrink-0 text-[10px] text-ink-tertiary">
+                          <span className="text-ink-tertiary shrink-0 text-[10px]">
                             {formatDuration(run.elapsed_ms)}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-ink-tertiary">
+                      <div className="text-ink-tertiary flex items-center gap-2 text-[10px]">
                         <span>{timeAgo(run.created_at)}</span>
                         {run.error_message && (
-                          <span className="truncate text-error">{run.error_message}</span>
+                          <span className="text-error truncate">{run.error_message}</span>
                         )}
                       </div>
                     </div>
@@ -317,9 +357,9 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="py-12 text-center">
-                <Activity className="mx-auto h-10 w-10 text-ink-tertiary mb-3" />
-                <p className="text-sm text-ink-tertiary">暂无活动记录</p>
-                <p className="mt-1 text-xs text-ink-tertiary">运行任务后会在这里显示</p>
+                <Activity className="text-ink-tertiary mx-auto mb-3 h-10 w-10" />
+                <p className="text-ink-tertiary text-sm">暂无活动记录</p>
+                <p className="text-ink-tertiary mt-1 text-xs">运行任务后会在这里显示</p>
               </div>
             )}
           </SectionCard>
@@ -331,31 +371,36 @@ export default function Dashboard() {
           {hasRunning && activeTasks.length > 0 && (
             <SectionCard
               title="运行中"
-              icon={<Loader2 className="h-4 w-4 text-primary animate-spin" />}
+              icon={<Loader2 className="text-primary h-4 w-4 animate-spin" />}
             >
               <div className="space-y-3">
                 {activeTasks.slice(0, 3).map((task) => (
-                  <div key={task.task_id} className="rounded-xl bg-page p-3">
+                  <div key={task.task_id} className="bg-page rounded-xl p-3">
                     <div className="mb-2 flex items-center justify-between">
-                      <h4 className="text-xs font-semibold text-ink truncate flex-1 mr-2">{task.title}</h4>
-                      <span className="text-[10px] text-primary font-medium">{task.progress_pct}%</span>
+                      <h4 className="text-ink mr-2 flex-1 truncate text-xs font-semibold">
+                        {task.title}
+                      </h4>
+                      <span className="text-primary text-[10px] font-medium">
+                        {task.progress_pct}%
+                      </span>
                     </div>
-                    <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-page">
+                    <div className="bg-page mb-2 h-1.5 w-full overflow-hidden rounded-full">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-primary to-info transition-all duration-300"
+                        className="from-primary to-info h-full rounded-full bg-gradient-to-r transition-all duration-300"
                         style={{ width: `${task.progress_pct}%` }}
                       />
                     </div>
-                    <p className="text-[10px] text-ink-secondary truncate">{task.message}</p>
+                    <p className="text-ink-secondary truncate text-[10px]">{task.message}</p>
                     {task.elapsed_seconds > 0 && (
-                      <p className="mt-1 text-[10px] text-ink-tertiary">
-                        {Math.floor(task.elapsed_seconds / 60)}:{(task.elapsed_seconds % 60).toString().padStart(2, '0')}
+                      <p className="text-ink-tertiary mt-1 text-[10px]">
+                        {Math.floor(task.elapsed_seconds / 60)}:
+                        {(task.elapsed_seconds % 60).toString().padStart(2, "0")}
                       </p>
                     )}
                   </div>
                 ))}
                 {activeTasks.length > 3 && (
-                  <p className="text-center text-[10px] text-ink-tertiary">
+                  <p className="text-ink-tertiary text-center text-[10px]">
                     还有 {activeTasks.length - 3} 个任务...
                   </p>
                 )}
@@ -365,7 +410,7 @@ export default function Dashboard() {
 
           {/* 推荐论文 */}
           {today && today.recommendations.length > 0 && (
-            <SectionCard title="推荐阅读" icon={<Sparkles className="h-4 w-4 text-warning" />}>
+            <SectionCard title="推荐阅读" icon={<Sparkles className="text-warning h-4 w-4" />}>
               <div className="space-y-2">
                 {today.recommendations.slice(0, 4).map((rec) => (
                   <button
@@ -373,11 +418,11 @@ export default function Dashboard() {
                     onClick={() => navigate(`/papers/${rec.id}`)}
                     className="block w-full text-left"
                   >
-                    <div className="rounded-xl bg-page p-3 transition-colors hover:bg-hover">
-                      <p className="mb-1 text-xs font-medium text-ink line-clamp-2">
+                    <div className="bg-page hover:bg-hover rounded-xl p-3 transition-colors">
+                      <p className="text-ink mb-1 line-clamp-2 text-xs font-medium">
                         {rec.title_zh || rec.title}
                       </p>
-                      <p className="text-[10px] text-ink-tertiary">
+                      <p className="text-ink-tertiary text-[10px]">
                         相似度 {(rec.similarity * 100).toFixed(0)}%
                       </p>
                     </div>
@@ -388,20 +433,29 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-
     </div>
   );
 }
 
 /* ========== 子组件 ========== */
 
-function SectionCard({ title, icon, action, children }: { title: string; icon: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
+function SectionCard({
+  title,
+  icon,
+  action,
+  children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+    <div className="border-border bg-surface rounded-2xl border p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           {icon}
-          <h3 className="text-sm font-semibold text-ink">{title}</h3>
+          <h3 className="text-ink text-sm font-semibold">{title}</h3>
         </div>
         {action}
       </div>
@@ -411,7 +465,12 @@ function SectionCard({ title, icon, action, children }: { title: string; icon: R
 }
 
 function StatCard({
-  icon, label, value, sub, color, onClick,
+  icon,
+  label,
+  value,
+  sub,
+  color,
+  onClick,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -430,15 +489,19 @@ function StatCard({
   return (
     <button
       onClick={onClick}
-      className={`hover-lift stat-gradient-${color} group rounded-2xl border border-border bg-surface p-5 text-left shadow-sm transition-all`}
+      className={`hover-lift stat-gradient-${color} group border-border bg-surface rounded-2xl border p-5 text-left shadow-sm transition-all`}
     >
       <div className="flex items-center justify-between">
-        <div className={`rounded-xl p-2.5 ${iconColors[color]} bg-white/60 dark:bg-white/5`}>{icon}</div>
-        {onClick && <ArrowUpRight className="h-4 w-4 text-ink-tertiary opacity-0 transition-opacity group-hover:opacity-100" />}
+        <div className={`rounded-xl p-2.5 ${iconColors[color]} bg-white/60 dark:bg-white/5`}>
+          {icon}
+        </div>
+        {onClick && (
+          <ArrowUpRight className="text-ink-tertiary h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
+        )}
       </div>
-      <p className="mt-3 text-2xl font-bold tracking-tight text-ink">{value}</p>
-      <p className="mt-0.5 text-xs text-ink-tertiary">{label}</p>
-      <p className="text-xs text-ink-secondary">{sub}</p>
+      <p className="text-ink mt-3 text-2xl font-bold tracking-tight">{value}</p>
+      <p className="text-ink-tertiary mt-0.5 text-xs">{label}</p>
+      <p className="text-ink-secondary text-xs">{sub}</p>
     </button>
   );
 }

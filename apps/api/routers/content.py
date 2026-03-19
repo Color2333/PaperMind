@@ -4,7 +4,7 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from apps.api.deps import brief_date, brief_service, cache, graph_service, iso_dt, settings
+from apps.api.deps import brief_service, cache, graph_service, iso_dt
 from packages.domain.schemas import DailyBriefRequest
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope

@@ -11,8 +11,19 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import { briefApi, generatedApi, tasksApi } from "@/services/api";
 import type { GeneratedContentListItem, GeneratedContent } from "@/types";
 import {
-  Newspaper, Send, CheckCircle2, Mail, FileText, Calendar, Clock,
-  Trash2, ChevronRight, Sparkles, Plus, RefreshCw, X,
+  Newspaper,
+  Send,
+  CheckCircle2,
+  Mail,
+  FileText,
+  Calendar,
+  Clock,
+  Trash2,
+  ChevronRight,
+  Sparkles,
+  Plus,
+  RefreshCw,
+  X,
 } from "lucide-react";
 
 export default function DailyBrief() {
@@ -35,18 +46,26 @@ export default function DailyBrief() {
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
-    try { const res = await generatedApi.list("daily_brief", 50); setHistory(res.items); }
-    catch { toast("error", "加载历史简报失败"); } finally { setHistoryLoading(false); }
+    try {
+      const res = await generatedApi.list("daily_brief", 50);
+      setHistory(res.items);
+    } catch {
+      toast("error", "加载历史简报失败");
+    } finally {
+      setHistoryLoading(false);
+    }
   }, [toast]);
 
-  useEffect(() => { loadHistory(); }, [loadHistory]);
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
 
   // 自动加载最新一份
   useEffect(() => {
     if (history.length > 0 && !selectedContent) {
       handleView(history[0]);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history]);
 
   // 事件委托：点击简报中的论文卡片跳转到详情页
@@ -66,7 +85,10 @@ export default function DailyBrief() {
   }, [navigate, selectedContent]);
 
   const handleGenerate = async () => {
-    setLoading(true); setError(null); setGenDone(false); setTaskProgress("正在提交任务...");
+    setLoading(true);
+    setError(null);
+    setGenDone(false);
+    setTaskProgress("正在提交任务...");
     try {
       const data: Record<string, string> = {};
       if (date) data.date = date;
@@ -90,8 +112,14 @@ export default function DailyBrief() {
             const status = await tasksApi.getStatus(taskId);
             const pct = Math.round(status.progress * 100);
             setTaskProgress(status.message || `生成中... ${pct}%`);
-            if (status.status === "completed") { resolve(); return; }
-            if (status.status === "failed") { reject(new Error(status.error || "生成失败")); return; }
+            if (status.status === "completed") {
+              resolve();
+              return;
+            }
+            if (status.status === "failed") {
+              reject(new Error(status.error || "生成失败"));
+              return;
+            }
           } catch {
             // 轮询出错不中断，继续重试
           }
@@ -114,15 +142,26 @@ export default function DailyBrief() {
   };
 
   const handleView = async (item: GeneratedContentListItem) => {
-    setDetailLoading(true); setSelectedContent(null);
-    try { setSelectedContent(await generatedApi.detail(item.id)); }
-    catch { toast("error", "加载简报内容失败"); } finally { setDetailLoading(false); }
+    setDetailLoading(true);
+    setSelectedContent(null);
+    try {
+      setSelectedContent(await generatedApi.detail(item.id));
+    } catch {
+      toast("error", "加载简报内容失败");
+    } finally {
+      setDetailLoading(false);
+    }
   };
 
   const handleDelete = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    try { await generatedApi.delete(id); setHistory((p) => p.filter((h) => h.id !== id)); if (selectedContent?.id === id) setSelectedContent(null); }
-    catch { toast("error", "删除简报失败"); }
+    try {
+      await generatedApi.delete(id);
+      setHistory((p) => p.filter((h) => h.id !== id));
+      if (selectedContent?.id === id) setSelectedContent(null);
+    } catch {
+      toast("error", "删除简报失败");
+    }
   };
 
   const fmtDate = (iso: string) => {
@@ -130,22 +169,31 @@ export default function DailyBrief() {
     if (isNaN(d.getTime())) return iso;
     const now = new Date();
     const isToday = d.toDateString() === now.toDateString();
-    const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
     const isYesterday = d.toDateString() === yesterday.toDateString();
-    if (isToday) return `今天 ${d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
-    if (isYesterday) return `昨天 ${d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
-    return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    if (isToday)
+      return `今天 ${d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+    if (isYesterday)
+      return `昨天 ${d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+    return (
+      d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" }) +
+      " " +
+      d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+    );
   };
 
   return (
     <div className="animate-fade-in flex h-full flex-col">
       {/* 顶栏 */}
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
+      <div className="border-border flex shrink-0 items-center justify-between border-b px-6 py-4">
         <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-primary/10 p-2"><Newspaper className="h-5 w-5 text-primary" /></div>
+          <div className="bg-primary/10 rounded-xl p-2">
+            <Newspaper className="text-primary h-5 w-5" />
+          </div>
           <div>
-            <h1 className="text-lg font-bold text-ink">研究简报</h1>
-            <p className="text-xs text-ink-tertiary">自动汇总最新研究进展</p>
+            <h1 className="text-ink text-lg font-bold">研究简报</h1>
+            <p className="text-ink-tertiary text-xs">自动汇总最新研究进展</p>
           </div>
         </div>
         <Button
@@ -159,38 +207,56 @@ export default function DailyBrief() {
 
       {/* 生成面板（可折叠） */}
       {showGenPanel && (
-        <div className="shrink-0 border-b border-border bg-surface/50 px-6 py-4">
+        <div className="border-border bg-surface/50 shrink-0 border-b px-6 py-4">
           <div className="flex flex-wrap items-end gap-4">
             <div className="space-y-1">
-              <label className="flex items-center gap-1 text-[11px] font-medium text-ink-secondary">
+              <label className="text-ink-secondary flex items-center gap-1 text-[11px] font-medium">
                 <Calendar className="h-3 w-3" /> 日期
               </label>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className="h-9 rounded-lg border border-border bg-page px-3 text-xs text-ink focus:border-primary focus:outline-none" />
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="border-border bg-page text-ink focus:border-primary h-9 rounded-lg border px-3 text-xs focus:outline-none"
+              />
             </div>
             <div className="space-y-1">
-              <label className="flex items-center gap-1 text-[11px] font-medium text-ink-secondary">
+              <label className="text-ink-secondary flex items-center gap-1 text-[11px] font-medium">
                 <Mail className="h-3 w-3" /> 邮件通知
               </label>
-              <input type="email" value={recipient} onChange={(e) => setRecipient(e.target.value)}
+              <input
+                type="email"
+                value={recipient}
+                onChange={(e) => setRecipient(e.target.value)}
                 placeholder="可选"
-                className="h-9 w-48 rounded-lg border border-border bg-page px-3 text-xs text-ink placeholder:text-ink-placeholder focus:border-primary focus:outline-none" />
+                className="border-border bg-page text-ink placeholder:text-ink-placeholder focus:border-primary h-9 w-48 rounded-lg border px-3 text-xs focus:outline-none"
+              />
             </div>
-            <Button icon={loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} onClick={handleGenerate} loading={loading}>
+            <Button
+              icon={
+                loading ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )
+              }
+              onClick={handleGenerate}
+              loading={loading}
+            >
               生成
             </Button>
           </div>
-          {error && <p className="mt-2 text-xs text-error">{error}</p>}
+          {error && <p className="text-error mt-2 text-xs">{error}</p>}
           {taskProgress && !error && (
-            <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-secondary">
+            <p className="text-ink-secondary mt-2 flex items-center gap-1.5 text-xs">
               <RefreshCw className="h-3 w-3 animate-spin" />
               {taskProgress}
             </p>
           )}
           {genDone && !loading && (
             <div className="mt-2 flex items-center gap-2">
-              <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-              <span className="text-xs text-success">生成成功</span>
+              <CheckCircle2 className="text-success h-3.5 w-3.5" />
+              <span className="text-success text-xs">生成成功</span>
             </div>
           )}
         </div>
@@ -199,17 +265,19 @@ export default function DailyBrief() {
       {/* 主体：左侧列表 + 右侧内容 */}
       <div className="flex min-h-0 flex-1">
         {/* 左侧历史列表 */}
-        <div className="w-56 shrink-0 overflow-y-auto border-r border-border bg-page/30 lg:w-64">
-          <div className="px-3 pb-2 pt-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
+        <div className="border-border bg-page/30 w-56 shrink-0 overflow-y-auto border-r lg:w-64">
+          <div className="px-3 pt-3 pb-2">
+            <p className="text-ink-tertiary text-[10px] font-semibold tracking-wider uppercase">
               历史简报 ({history.length})
             </p>
           </div>
           {historyLoading ? (
-            <div className="p-4"><Spinner text="" /></div>
+            <div className="p-4">
+              <Spinner text="" />
+            </div>
           ) : history.length === 0 ? (
-            <div className="px-3 py-8 text-center text-xs text-ink-tertiary">
-              <Newspaper className="mx-auto mb-2 h-8 w-8 text-ink-tertiary/20" />
+            <div className="text-ink-tertiary px-3 py-8 text-center text-xs">
+              <Newspaper className="text-ink-tertiary/20 mx-auto mb-2 h-8 w-8" />
               暂无简报
             </div>
           ) : (
@@ -222,22 +290,31 @@ export default function DailyBrief() {
                     tabIndex={0}
                     key={item.id}
                     onClick={() => handleView(item)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleView(item); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleView(item);
+                    }}
                     className={`group flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all ${
-                      active
-                        ? "bg-primary/10 text-primary"
-                        : "text-ink hover:bg-surface"
+                      active ? "bg-primary/10 text-primary" : "text-ink hover:bg-surface"
                     }`}
                   >
-                    <FileText className={`h-3.5 w-3.5 shrink-0 ${active ? "text-primary" : "text-ink-tertiary"}`} />
+                    <FileText
+                      className={`h-3.5 w-3.5 shrink-0 ${active ? "text-primary" : "text-ink-tertiary"}`}
+                    />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium">{item.title.replace("Daily Brief: ", "")}</p>
-                      <p className="mt-0.5 text-[10px] text-ink-tertiary">{fmtDate(item.created_at)}</p>
+                      <p className="truncate text-xs font-medium">
+                        {item.title.replace("Daily Brief: ", "")}
+                      </p>
+                      <p className="text-ink-tertiary mt-0.5 text-[10px]">
+                        {fmtDate(item.created_at)}
+                      </p>
                     </div>
                     <button
                       aria-label="删除"
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(item.id); }}
-                      className="shrink-0 rounded p-0.5 text-ink-tertiary opacity-0 transition-opacity hover:text-error group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDeleteId(item.id);
+                      }}
+                      className="text-ink-tertiary hover:text-error shrink-0 rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -259,11 +336,13 @@ export default function DailyBrief() {
           {!detailLoading && selectedContent && (
             <div className="animate-fade-in">
               {/* 内容头 */}
-              <div className="border-b border-border px-8 py-5">
-                <h2 className="text-xl font-bold text-ink">{selectedContent.title}</h2>
-                <p className="mt-1 text-xs text-ink-tertiary">
+              <div className="border-border border-b px-8 py-5">
+                <h2 className="text-ink text-xl font-bold">{selectedContent.title}</h2>
+                <p className="text-ink-tertiary mt-1 text-xs">
                   <Clock className="mr-1 inline h-3 w-3" />
-                  {new Date(selectedContent.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}
+                  {new Date(selectedContent.created_at).toLocaleString("zh-CN", {
+                    timeZone: "Asia/Shanghai",
+                  })}
                 </p>
               </div>
 
@@ -272,15 +351,21 @@ export default function DailyBrief() {
                 <div
                   ref={briefRef}
                   className="brief-content"
-                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(selectedContent.markdown, { ADD_ATTR: ["data-paper-id", "data-arxiv-id"] }) }}
+                  dangerouslySetInnerHTML={{
+                    __html: DOMPurify.sanitize(selectedContent.markdown, {
+                      ADD_ATTR: ["data-paper-id", "data-arxiv-id"],
+                    }),
+                  }}
                 />
               </div>
             </div>
           )}
 
           {!detailLoading && !selectedContent && (
-            <div className="flex h-full flex-col items-center justify-center text-ink-tertiary">
-              <div className="rounded-2xl bg-page p-6"><Sparkles className="h-10 w-10 text-ink-tertiary/20" /></div>
+            <div className="text-ink-tertiary flex h-full flex-col items-center justify-center">
+              <div className="bg-page rounded-2xl p-6">
+                <Sparkles className="text-ink-tertiary/20 h-10 w-10" />
+              </div>
               <p className="mt-4 text-sm">点击「生成新简报」或从左侧选择查看</p>
             </div>
           )}
@@ -296,7 +381,12 @@ export default function DailyBrief() {
         description="确定要删除这份研究简报吗？"
         variant="danger"
         confirmLabel="删除"
-        onConfirm={async () => { if (confirmDeleteId) { await handleDelete(confirmDeleteId); setConfirmDeleteId(null); } }}
+        onConfirm={async () => {
+          if (confirmDeleteId) {
+            await handleDelete(confirmDeleteId);
+            setConfirmDeleteId(null);
+          }
+        }}
         onCancel={() => setConfirmDeleteId(null)}
       />
     </div>

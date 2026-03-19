@@ -13,11 +13,10 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import UTC, datetime
-from typing import Callable
+from collections.abc import Callable
+from datetime import datetime
 
 from packages.config import get_settings
-from packages.timezone import user_date_str
 from packages.domain.exceptions import ConfigError, ServiceUnavailableError
 from packages.domain.service_base import ServiceBase
 from packages.storage.db import session_scope
@@ -26,6 +25,7 @@ from packages.storage.repositories import (
     EmailConfigRepository,
     PaperRepository,
 )
+from packages.timezone import user_date_str
 
 logger = logging.getLogger(__name__)
 

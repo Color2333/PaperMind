@@ -3,11 +3,11 @@ OpenAlex API 客户端
 高速率引用数据源（10 req/s, 100k/day），覆盖 4.7 亿论文
 @author Color2333
 """
+
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
 
 import httpx
 
@@ -48,8 +48,10 @@ class OpenAlexClient:
             try:
                 resp = self.client.get(path, params=params)
                 if resp.status_code == 429:
-                    delay = _RETRY_DELAY * (2 ** attempt)
-                    logger.warning("OpenAlex 429, retry %d/%d in %.1fs", attempt + 1, _MAX_RETRIES, delay)
+                    delay = _RETRY_DELAY * (2**attempt)
+                    logger.warning(
+                        "OpenAlex 429, retry %d/%d in %.1fs", attempt + 1, _MAX_RETRIES, delay
+                    )
                     time.sleep(delay)
                     continue
                 if resp.status_code == 404:
@@ -69,7 +71,9 @@ class OpenAlexClient:
     # 论文查找
     # ------------------------------------------------------------------
 
-    def _resolve_work(self, *, arxiv_id: str | None = None, title: str | None = None) -> dict | None:
+    def _resolve_work(
+        self, *, arxiv_id: str | None = None, title: str | None = None
+    ) -> dict | None:
         """通过 arXiv ID 或标题找到 OpenAlex Work"""
         if arxiv_id:
             clean = arxiv_id.split("v")[0] if "v" in arxiv_id else arxiv_id
@@ -78,18 +82,23 @@ class OpenAlexClient:
                 return data
 
         if title:
-            data = self._get("/works", params={
-                "filter": f'title.search:"{title[:200]}"',
-                "per_page": 1,
-                "select": "id,title,publication_year,cited_by_count,primary_location,referenced_works,related_works",
-            })
+            data = self._get(
+                "/works",
+                params={
+                    "filter": f'title.search:"{title[:200]}"',
+                    "per_page": 1,
+                    "select": "id,title,publication_year,cited_by_count,primary_location,referenced_works,related_works",
+                },
+            )
             if data:
                 results = data.get("results", [])
                 if results:
                     return results[0]
         return None
 
-    def _resolve_work_id(self, *, arxiv_id: str | None = None, title: str | None = None) -> str | None:
+    def _resolve_work_id(
+        self, *, arxiv_id: str | None = None, title: str | None = None
+    ) -> str | None:
         work = self._resolve_work(arxiv_id=arxiv_id, title=title)
         if work:
             return work.get("id")
@@ -100,7 +109,11 @@ class OpenAlexClient:
     # ------------------------------------------------------------------
 
     def fetch_edges_by_title(
-        self, title: str, limit: int = 8, *, arxiv_id: str | None = None,
+        self,
+        title: str,
+        limit: int = 8,
+        *,
+        arxiv_id: str | None = None,
     ) -> list[CitationEdge]:
         work = self._resolve_work(arxiv_id=arxiv_id, title=title)
         if not work:
@@ -116,19 +129,26 @@ class OpenAlexClient:
             for rw in ref_works:
                 t = (rw.get("title") or "").strip()
                 if t:
-                    edges.append(CitationEdge(source_title=title, target_title=t, context="reference"))
+                    edges.append(
+                        CitationEdge(source_title=title, target_title=t, context="reference")
+                    )
 
         # 被引用（cited_by → 用 filter 查询）
-        cited_data = self._get("/works", params={
-            "filter": f"cites:{work_id}",
-            "per_page": min(limit, 50),
-            "select": "id,title",
-        })
+        cited_data = self._get(
+            "/works",
+            params={
+                "filter": f"cites:{work_id}",
+                "per_page": min(limit, 50),
+                "select": "id,title",
+            },
+        )
         if cited_data:
             for cw in (cited_data.get("results") or [])[:limit]:
                 t = (cw.get("title") or "").strip()
                 if t:
-                    edges.append(CitationEdge(source_title=t, target_title=title, context="citation"))
+                    edges.append(
+                        CitationEdge(source_title=t, target_title=title, context="citation")
+                    )
 
         return edges
 
@@ -161,11 +181,14 @@ class OpenAlexClient:
                     results.append(info)
 
         # 被引
-        cited_data = self._get("/works", params={
-            "filter": f"cites:{work_id}",
-            "per_page": min(cite_limit, 50),
-            "select": "id,title,publication_year,cited_by_count,primary_location,authorships,abstract_inverted_index",
-        })
+        cited_data = self._get(
+            "/works",
+            params={
+                "filter": f"cites:{work_id}",
+                "per_page": min(cite_limit, 50),
+                "select": "id,title,publication_year,cited_by_count,primary_location,authorships,abstract_inverted_index",
+            },
+        )
         if cited_data:
             for cw in (cited_data.get("results") or [])[:cite_limit]:
                 info = self._work_to_rich_info(cw, direction="citation")
@@ -189,15 +212,17 @@ class OpenAlexClient:
             src = loc.get("source") or {}
             if src:
                 venue = src.get("display_name", "")
-            results.append({
-                "title": (work.get("title") or "").strip(),
-                "year": work.get("publication_year"),
-                "citationCount": work.get("cited_by_count"),
-                "influentialCitationCount": None,
-                "venue": venue or None,
-                "fieldsOfStudy": [],
-                "tldr": None,
-            })
+            results.append(
+                {
+                    "title": (work.get("title") or "").strip(),
+                    "year": work.get("publication_year"),
+                    "citationCount": work.get("cited_by_count"),
+                    "influentialCitationCount": None,
+                    "venue": venue or None,
+                    "fieldsOfStudy": [],
+                    "tldr": None,
+                }
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -212,16 +237,19 @@ class OpenAlexClient:
         # OpenAlex 的 filter 一次最多支持 ~50 个 ID
         all_works: list[dict] = []
         for i in range(0, len(openalex_ids), 50):
-            batch = openalex_ids[i:i + 50]
+            batch = openalex_ids[i : i + 50]
             id_filter = "|".join(batch)
             select = "id,title,publication_year,cited_by_count,primary_location"
             if detailed:
                 select += ",authorships,abstract_inverted_index"
-            data = self._get("/works", params={
-                "filter": f"openalex:{id_filter}",
-                "per_page": 50,
-                "select": select,
-            })
+            data = self._get(
+                "/works",
+                params={
+                    "filter": f"openalex:{id_filter}",
+                    "per_page": 50,
+                    "select": select,
+                },
+            )
             if data:
                 all_works.extend(data.get("results") or [])
         return all_works
@@ -247,7 +275,7 @@ class OpenAlexClient:
 
         # 提取 venue
         venue = None
-        src = (loc.get("source") or {})
+        src = loc.get("source") or {}
         if src:
             venue = src.get("display_name")
 

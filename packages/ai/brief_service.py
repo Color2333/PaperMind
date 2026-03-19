@@ -11,14 +11,14 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from jinja2 import Template
-from packages.config import get_settings
-from packages.timezone import user_date_str
+from sqlalchemy import select
 
+from packages.config import get_settings
 from packages.integrations.notifier import NotificationService
 from packages.storage.db import session_scope
-from packages.storage.repositories import PaperRepository, AnalysisRepository
-from sqlalchemy import select
-from packages.storage.models import PaperTopic, TopicSubscription, AnalysisReport
+from packages.storage.models import AnalysisReport, PaperTopic, TopicSubscription
+from packages.storage.repositories import AnalysisRepository, PaperRepository
+from packages.timezone import user_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +351,6 @@ class DailyBriefService:
             RecommendationService,
             TrendService,
         )
-        from packages.config import get_settings
 
         settings = get_settings()
 

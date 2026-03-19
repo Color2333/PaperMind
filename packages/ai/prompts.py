@@ -21,9 +21,7 @@ def build_skim_prompt(title: str, abstract: str) -> str:
     )
 
 
-def build_deep_prompt(
-    title: str, extracted_pages: str
-) -> str:
+def build_deep_prompt(title: str, extracted_pages: str) -> str:
     return (
         "你是审稿专家。请用中文输出严格 JSON：\n"
         '{"method_summary":"方法总结", '
@@ -36,13 +34,8 @@ def build_deep_prompt(
     )
 
 
-def build_rag_prompt(
-    question: str, contexts: list[str]
-) -> str:
-    joined = "\n\n".join(
-        f"[ctx{i + 1}] {ctx}"
-        for i, ctx in enumerate(contexts)
-    )
+def build_rag_prompt(question: str, contexts: list[str]) -> str:
+    joined = "\n\n".join(f"[ctx{i + 1}] {ctx}" for i, ctx in enumerate(contexts))
     return (
         "请基于上下文回答问题，输出严格 JSON："
         '{"answer":"...", "confidence":0.0}\n'
@@ -56,15 +49,10 @@ def build_survey_prompt(
     seminal: list[dict],
 ) -> str:
     milestone_text = "\n".join(
-        f"- {m['year']}: {m['title']} "
-        f"(score={m['seminal_score']:.3f})"
-        for m in milestones[:20]
+        f"- {m['year']}: {m['title']} (score={m['seminal_score']:.3f})" for m in milestones[:20]
     )
     seminal_text = "\n".join(
-        f"- {m['title']} "
-        f"(year={m['year']}, "
-        f"score={m['seminal_score']:.3f})"
-        for m in seminal[:10]
+        f"- {m['title']} (year={m['year']}, score={m['seminal_score']:.3f})" for m in seminal[:10]
     )
     return (
         "你是科研综述作者。请输出严格 JSON：\n"
@@ -96,14 +84,11 @@ def build_topic_wiki_prompt(
         )
 
     milestone_text = "\n".join(
-        f"- {m['year']}: {m['title']} "
-        f"(seminal_score={m['seminal_score']:.3f})"
+        f"- {m['year']}: {m['title']} (seminal_score={m['seminal_score']:.3f})"
         for m in milestones[:15]
     )
     seminal_text = "\n".join(
-        f"- {s['title']} "
-        f"(year={s['year']}, score={s['seminal_score']:.3f})"
-        for s in seminal[:10]
+        f"- {s['title']} (year={s['year']}, score={s['seminal_score']:.3f})" for s in seminal[:10]
     )
 
     survey_hint = ""
@@ -124,7 +109,7 @@ def build_topic_wiki_prompt(
         '  "overview": "主题概述（1000-2000字，涵盖定义、重要性、'
         '核心思想、发展脉络，需深入展开）",\n'
         '  "sections": [\n'
-        '    {\n'
+        "    {\n"
         '      "title": "章节标题",\n'
         '      "content": "章节内容（800-1500字，引用具体论文，'
         '用[P1][P2]标记引用来源，深度分析）"\n'
@@ -176,12 +161,8 @@ def build_paper_wiki_prompt(
             f"\nAbstract: {p.get('abstract', 'N/A')[:300]}\n"
         )
 
-    ancestor_text = "\n".join(
-        f"- {a}" for a in ancestors[:15]
-    ) or "暂无引用数据"
-    descendant_text = "\n".join(
-        f"- {d}" for d in descendants[:15]
-    ) or "暂无被引数据"
+    ancestor_text = "\n".join(f"- {a}" for a in ancestors[:15]) or "暂无引用数据"
+    descendant_text = "\n".join(f"- {d}" for d in descendants[:15]) or "暂无被引数据"
 
     return (
         "你是一位学术百科编辑。请基于以下论文信息，撰写一篇"
@@ -343,9 +324,7 @@ def build_research_gaps_prompt(
     )
 
 
-def build_evolution_prompt(
-    keyword: str, year_buckets: list[dict]
-) -> str:
+def build_evolution_prompt(keyword: str, year_buckets: list[dict]) -> str:
     lines = []
     for x in year_buckets:
         lines.append(
@@ -398,8 +377,7 @@ def build_wiki_outline_prompt(
     pdf_section = ""
     for i, ex in enumerate(pdf_excerpts, 1):
         pdf_section += (
-            f"\n[PDF{i}] {ex.get('title', 'N/A')}\n"
-            f"Excerpt: {ex.get('excerpt', '')[:600]}\n"
+            f"\n[PDF{i}] {ex.get('title', 'N/A')}\nExcerpt: {ex.get('excerpt', '')[:600]}\n"
         )
 
     return (
@@ -411,7 +389,7 @@ def build_wiki_outline_prompt(
         "{\n"
         '  "title": "文章标题",\n'
         '  "outline": [\n'
-        '    {\n'
+        "    {\n"
         '      "section_title": "章节标题",\n'
         '      "key_points": ["要点1", "要点2"],\n'
         '      "source_refs": ["[P1]", "[P3]"]\n'

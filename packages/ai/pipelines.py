@@ -29,7 +29,6 @@ from packages.storage.repositories import (
     PaperRepository,
     PipelineRunRepository,
     PromptTraceRepository,
-    SourceCheckpointRepository,
 )
 
 logger = logging.getLogger(__name__)

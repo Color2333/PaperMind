@@ -6,8 +6,8 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from packages.config import get_settings
-from packages.storage.db import Base
 from packages.storage import models  # noqa: F401
+from packages.storage.db import Base
 
 config = context.config
 settings = get_settings()

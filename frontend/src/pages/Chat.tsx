@@ -8,13 +8,7 @@ import { Card, Button } from "@/components/ui";
 import { ragApi } from "@/services/api";
 import type { ChatMessage } from "@/types";
 import { uid } from "@/lib/utils";
-import {
-  Send,
-  Sparkles,
-  User,
-  BookOpen,
-  Trash2,
-} from "lucide-react";
+import { Send, Sparkles, User, BookOpen, Trash2 } from "lucide-react";
 
 export default function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -84,10 +78,8 @@ export default function Chat() {
       {/* 标题栏 */}
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-ink">AI Chat</h1>
-          <p className="mt-1 text-sm text-ink-secondary">
-            基于 RAG 的跨论文智能问答
-          </p>
+          <h1 className="text-ink text-2xl font-bold">AI Chat</h1>
+          <p className="text-ink-secondary mt-1 text-sm">基于 RAG 的跨论文智能问答</p>
         </div>
         {messages.length > 0 && (
           <Button
@@ -104,19 +96,16 @@ export default function Chat() {
       {/* 消息区域 */}
       <div
         ref={scrollRef}
-        className="flex-1 space-y-4 overflow-y-auto rounded-2xl border border-border bg-surface p-6"
+        className="border-border bg-surface flex-1 space-y-4 overflow-y-auto rounded-2xl border p-6"
       >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center">
-            <div className="rounded-2xl bg-primary-light p-4">
-              <Sparkles className="h-8 w-8 text-primary" />
+            <div className="bg-primary-light rounded-2xl p-4">
+              <Sparkles className="text-primary h-8 w-8" />
             </div>
-            <h2 className="mt-4 text-lg font-semibold text-ink">
-              PaperMind AI
-            </h2>
-            <p className="mt-2 max-w-md text-center text-sm text-ink-secondary">
-              基于你收录的论文进行智能问答。
-              支持跨文档检索，自动引用来源论文。
+            <h2 className="text-ink mt-4 text-lg font-semibold">PaperMind AI</h2>
+            <p className="text-ink-secondary mt-2 max-w-md text-center text-sm">
+              基于你收录的论文进行智能问答。 支持跨文档检索，自动引用来源论文。
             </p>
             <div className="mt-6 grid max-w-lg gap-2">
               {[
@@ -127,7 +116,7 @@ export default function Chat() {
                 <button
                   key={q}
                   onClick={() => setInput(q)}
-                  className="rounded-xl border border-border bg-page px-4 py-3 text-left text-sm text-ink-secondary transition-colors hover:border-primary/30 hover:bg-hover hover:text-ink"
+                  className="border-border bg-page text-ink-secondary hover:border-primary/30 hover:bg-hover hover:text-ink rounded-xl border px-4 py-3 text-left text-sm transition-colors"
                 >
                   {q}
                 </button>
@@ -138,19 +127,17 @@ export default function Chat() {
           messages.map((msg) => (
             <div
               key={msg.id}
-              className={`flex gap-3 animate-fade-in ${
-                msg.role === "user" ? "justify-end" : ""
-              }`}
+              className={`animate-fade-in flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}
             >
               {msg.role === "assistant" && (
-                <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-light">
-                  <Sparkles className="h-4 w-4 text-primary" />
+                <div className="bg-primary-light mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
+                  <Sparkles className="text-primary h-4 w-4" />
                 </div>
               )}
               <div
                 className={`max-w-[75%] ${
                   msg.role === "user"
-                    ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-white"
+                    ? "bg-primary rounded-2xl rounded-br-md px-4 py-3 text-white"
                     : "space-y-2"
                 }`}
               >
@@ -158,8 +145,8 @@ export default function Chat() {
                   <p className="text-sm leading-relaxed">{msg.content}</p>
                 ) : (
                   <>
-                    <div className="rounded-2xl rounded-bl-md bg-page px-4 py-3">
-                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+                    <div className="bg-page rounded-2xl rounded-bl-md px-4 py-3">
+                      <p className="text-ink text-sm leading-relaxed whitespace-pre-wrap">
                         {msg.content}
                       </p>
                     </div>
@@ -169,7 +156,7 @@ export default function Chat() {
                         {msg.cited_paper_ids.map((cid) => (
                           <span
                             key={cid}
-                            className="inline-flex items-center gap-1 rounded-full bg-info-light px-2.5 py-1 text-xs text-info"
+                            className="bg-info-light text-info inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs"
                           >
                             <BookOpen className="h-3 w-3" />
                             {cid.slice(0, 8)}...
@@ -180,14 +167,14 @@ export default function Chat() {
                     {/* Evidence */}
                     {msg.evidence && msg.evidence.length > 0 && (
                       <details className="px-1">
-                        <summary className="cursor-pointer text-xs text-ink-tertiary hover:text-ink-secondary">
+                        <summary className="text-ink-tertiary hover:text-ink-secondary cursor-pointer text-xs">
                           查看 {msg.evidence.length} 条证据
                         </summary>
                         <div className="mt-2 space-y-1.5">
                           {msg.evidence.map((ev, i) => (
                             <div
                               key={i}
-                              className="rounded-lg bg-hover p-2.5 text-xs text-ink-secondary"
+                              className="bg-hover text-ink-secondary rounded-lg p-2.5 text-xs"
                             >
                               {JSON.stringify(ev, null, 2)}
                             </div>
@@ -199,8 +186,8 @@ export default function Chat() {
                 )}
               </div>
               {msg.role === "user" && (
-                <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-hover">
-                  <User className="h-4 w-4 text-ink-secondary" />
+                <div className="bg-hover mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
+                  <User className="text-ink-secondary h-4 w-4" />
                 </div>
               )}
             </div>
@@ -209,18 +196,18 @@ export default function Chat() {
 
         {/* 加载中提示 */}
         {loading && (
-          <div className="flex gap-3 animate-fade-in">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-light">
-              <Sparkles className="h-4 w-4 text-primary" />
+          <div className="animate-fade-in flex gap-3">
+            <div className="bg-primary-light flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
+              <Sparkles className="text-primary h-4 w-4" />
             </div>
-            <div className="rounded-2xl rounded-bl-md bg-page px-4 py-3">
+            <div className="bg-page rounded-2xl rounded-bl-md px-4 py-3">
               <div className="flex items-center gap-2">
                 <div className="flex gap-1">
-                  <span className="h-2 w-2 animate-pulse-soft rounded-full bg-primary" />
-                  <span className="h-2 w-2 animate-pulse-soft rounded-full bg-primary [animation-delay:0.2s]" />
-                  <span className="h-2 w-2 animate-pulse-soft rounded-full bg-primary [animation-delay:0.4s]" />
+                  <span className="animate-pulse-soft bg-primary h-2 w-2 rounded-full" />
+                  <span className="animate-pulse-soft bg-primary h-2 w-2 rounded-full [animation-delay:0.2s]" />
+                  <span className="animate-pulse-soft bg-primary h-2 w-2 rounded-full [animation-delay:0.4s]" />
                 </div>
-                <span className="text-sm text-ink-secondary">正在思考...</span>
+                <span className="text-ink-secondary text-sm">正在思考...</span>
               </div>
             </div>
           </div>
@@ -229,7 +216,7 @@ export default function Chat() {
 
       {/* 输入区域 */}
       <div className="mt-4">
-        <div className="flex items-end gap-3 rounded-2xl border border-border bg-surface p-3 shadow-sm transition-colors focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10">
+        <div className="border-border bg-surface focus-within:border-primary/40 focus-within:ring-primary/10 flex items-end gap-3 rounded-2xl border p-3 shadow-sm transition-colors focus-within:ring-2">
           <textarea
             ref={inputRef}
             value={input}
@@ -237,7 +224,7 @@ export default function Chat() {
             onKeyDown={handleKeyDown}
             placeholder="输入你的问题..."
             rows={1}
-            className="max-h-32 flex-1 resize-none bg-transparent text-sm text-ink placeholder:text-ink-placeholder focus:outline-none"
+            className="text-ink placeholder:text-ink-placeholder max-h-32 flex-1 resize-none bg-transparent text-sm focus:outline-none"
             style={{
               height: "auto",
               minHeight: "24px",
@@ -258,7 +245,7 @@ export default function Chat() {
             <Send className="h-4 w-4" />
           </Button>
         </div>
-        <p className="mt-2 text-center text-xs text-ink-tertiary">
+        <p className="text-ink-tertiary mt-2 text-center text-xs">
           基于 RAG 检索增强生成，回答可能不完全准确，请以原始论文为准
         </p>
       </div>

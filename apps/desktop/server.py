@@ -3,6 +3,7 @@ PaperMind Desktop Server — PyInstaller 入口
 Tauri sidecar 调用此二进制，自动选端口 + 内嵌 scheduler。
 @author Color2333
 """
+
 from __future__ import annotations
 
 import json
@@ -47,6 +48,7 @@ def _apply_env_overrides(data_dir: Path, env_file: Path | None) -> None:
     if env_file and env_file.is_file():
         os.environ["PAPERMIND_ENV_FILE"] = str(env_file)
         from dotenv import load_dotenv
+
         load_dotenv(env_file, override=True)
         logger.info("Loaded .env from %s", env_file)
 
@@ -54,6 +56,7 @@ def _apply_env_overrides(data_dir: Path, env_file: Path | None) -> None:
 def _start_scheduler() -> None:
     """后台线程运行 APScheduler（复用 worker 逻辑）"""
     from apps.worker.main import run_worker
+
     t = threading.Thread(target=run_worker, daemon=True, name="scheduler")
     t.start()
     logger.info("Embedded scheduler started on background thread")
@@ -74,7 +77,9 @@ def main() -> None:
 
     os.environ["API_HOST"] = "127.0.0.1"
     os.environ["API_PORT"] = str(port)
-    os.environ["CORS_ALLOW_ORIGINS"] = f"tauri://localhost,https://tauri.localhost,http://127.0.0.1:{port}"
+    os.environ["CORS_ALLOW_ORIGINS"] = (
+        f"tauri://localhost,https://tauri.localhost,http://127.0.0.1:{port}"
+    )
 
     # Tauri 通过 stdout 读取端口号（协议：首行 JSON）
     sys.stdout.write(json.dumps({"port": port}) + "\n")
@@ -86,6 +91,7 @@ def main() -> None:
     _start_scheduler()
 
     import uvicorn
+
     from apps.api.main import app
 
     def _handle_signal(sig, _frame):

@@ -2,6 +2,7 @@
 Agent 工具注册表和执行函数
 @author Color2333
 """
+
 from __future__ import annotations
 
 import logging
@@ -57,6 +58,7 @@ class ToolResult:
 @dataclass
 class ToolProgress:
     """工具执行中间进度事件"""
+
     message: str
     current: int = 0
     total: int = 0
@@ -366,10 +368,19 @@ TOOL_REGISTRY: list[ToolDef] = [
                 "action": {
                     "type": "string",
                     "enum": [
-                        "zh_to_en", "en_to_zh", "zh_polish", "en_polish",
-                        "compress", "expand", "logic_check", "deai",
-                        "fig_caption", "table_caption",
-                        "experiment_analysis", "reviewer", "chart_recommend",
+                        "zh_to_en",
+                        "en_to_zh",
+                        "zh_polish",
+                        "en_polish",
+                        "compress",
+                        "expand",
+                        "logic_check",
+                        "deai",
+                        "fig_caption",
+                        "table_caption",
+                        "experiment_analysis",
+                        "reviewer",
+                        "chart_recommend",
                     ],
                     "description": "写作操作类型",
                 },
@@ -445,10 +456,7 @@ def _get_tool_handlers() -> dict:
     }
 
 
-
-def execute_tool_stream(
-    name: str, arguments: dict
-) -> Iterator[ToolProgress | ToolResult]:
+def execute_tool_stream(name: str, arguments: dict) -> Iterator[ToolProgress | ToolResult]:
     """流式执行工具，yield 进度事件和最终结果"""
     fn = _get_tool_handlers().get(name)
     if not fn:
@@ -468,9 +476,7 @@ def execute_tool_stream(
 def _search_papers(keyword: str, limit: int = 20) -> ToolResult:
     try:
         with session_scope() as session:
-            papers = PaperRepository(session).full_text_candidates(
-                query=keyword, limit=limit
-            )
+            papers = PaperRepository(session).full_text_candidates(query=keyword, limit=limit)
             items = [
                 {
                     "id": str(p.id),
@@ -537,11 +543,14 @@ def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
             for sid in ids:
                 try:
                     sp = repo.get_by_id(sid)
-                    items.append({
-                        "id": str(sp.id), "title": sp.title,
-                        "arxiv_id": sp.arxiv_id,
-                        "read_status": sp.read_status.value,
-                    })
+                    items.append(
+                        {
+                            "id": str(sp.id),
+                            "title": sp.title,
+                            "arxiv_id": sp.arxiv_id,
+                            "read_status": sp.read_status.value,
+                        }
+                    )
                 except Exception:
                     items.append({"id": str(sid), "title": "未知论文"})
         titles = ", ".join(it["title"][:30] for it in items[:3])
@@ -560,7 +569,8 @@ def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
 
 
 def _ask_knowledge_base(
-    question: str, top_k: int = 5,
+    question: str,
+    top_k: int = 5,
 ) -> Iterator[ToolProgress | ToolResult]:
     """迭代 RAG：多轮检索 + 自动评估答案质量"""
     with session_scope() as session:
@@ -621,9 +631,7 @@ def _get_citation_tree(paper_id: str, depth: int = 2) -> ToolResult:
     if err:
         return err
     try:
-        result = GraphService().citation_tree(
-            root_paper_id=paper_id, depth=depth
-        )
+        result = GraphService().citation_tree(root_paper_id=paper_id, depth=depth)
         node_count = len(result.get("nodes", []))
         edge_count = len(result.get("edges", []))
         return ToolResult(
@@ -641,7 +649,9 @@ def _get_timeline(keyword: str, limit: int = 100) -> ToolResult:
         result = GraphService().timeline(keyword=keyword, limit=limit)
         tl = result.get("timeline", [])
         years = sorted(set(p.get("year") for p in tl if p.get("year")))
-        year_range = f"{years[0]}-{years[-1]}" if len(years) >= 2 else (str(years[0]) if years else "无")
+        year_range = (
+            f"{years[0]}-{years[-1]}" if len(years) >= 2 else (str(years[0]) if years else "无")
+        )
         return ToolResult(
             success=True,
             data=result,
@@ -670,7 +680,7 @@ def _list_topics() -> ToolResult:
             ]
         enabled = sum(1 for t in items if t["enabled"])
         names = ", ".join(t["name"] for t in items[:5])
-        suffix = f"..." if len(items) > 5 else ""
+        suffix = "..." if len(items) > 5 else ""
         return ToolResult(
             success=True,
             data={"topics": items, "count": len(items)},
@@ -690,17 +700,17 @@ def _get_system_status() -> ToolResult:
 
         db_ok = check_db_connection()
         with session_scope() as session:
-            paper_count = session.execute(
-                sa_select(func.count()).select_from(Paper)
-            ).scalar() or 0
-            embedded_count = session.execute(
-                sa_select(func.count()).select_from(Paper).where(
-                    Paper.embedding.is_not(None)
-                )
-            ).scalar() or 0
-            topic_count = session.execute(
-                sa_select(func.count()).select_from(TopicSubscription)
-            ).scalar() or 0
+            paper_count = session.execute(sa_select(func.count()).select_from(Paper)).scalar() or 0
+            embedded_count = (
+                session.execute(
+                    sa_select(func.count()).select_from(Paper).where(Paper.embedding.is_not(None))
+                ).scalar()
+                or 0
+            )
+            topic_count = (
+                session.execute(sa_select(func.count()).select_from(TopicSubscription)).scalar()
+                or 0
+            )
             run_repo = PipelineRunRepository(session)
             runs = run_repo.list_latest(limit=10)
         return ToolResult(
@@ -722,8 +732,7 @@ def _get_system_status() -> ToolResult:
             },
             summary=(
                 f"论文 {paper_count} 篇（{embedded_count} 已向量化），"
-                f"主题 {topic_count} 个"
-                + ("" if db_ok else " ⚠️数据库异常")
+                f"主题 {topic_count} 个" + ("" if db_ok else " ⚠️数据库异常")
             ),
         )
     except Exception as exc:
@@ -750,15 +759,17 @@ def _search_arxiv(query: str, max_results: int = 20) -> ToolResult:
 
     candidates = []
     for i, p in enumerate(papers, 1):
-        candidates.append({
-            "index": i,
-            "arxiv_id": p.arxiv_id,
-            "title": p.title,
-            "abstract": (p.abstract or "")[:300],
-            "publication_date": str(p.publication_date) if p.publication_date else None,
-            "categories": (p.metadata or {}).get("categories", []),
-            "authors": (p.metadata or {}).get("authors", [])[:5],
-        })
+        candidates.append(
+            {
+                "index": i,
+                "arxiv_id": p.arxiv_id,
+                "title": p.title,
+                "abstract": (p.abstract or "")[:300],
+                "publication_date": str(p.publication_date) if p.publication_date else None,
+                "categories": (p.metadata or {}).get("categories", []),
+                "authors": (p.metadata or {}).get("authors", [])[:5],
+            }
+        )
 
     return ToolResult(
         success=True,
@@ -768,11 +779,12 @@ def _search_arxiv(query: str, max_results: int = 20) -> ToolResult:
 
 
 def _ingest_arxiv(
-    query: str, arxiv_ids: list[str] | None = None,
+    query: str,
+    arxiv_ids: list[str] | None = None,
 ) -> Iterator[ToolProgress | ToolResult]:
     """将用户选定的论文入库 → 自动分配主题 → 自动向量化 → 自动粗读"""
-    from packages.integrations.arxiv_client import ArxivClient
     from packages.domain.task_tracker import global_tracker
+    from packages.integrations.arxiv_client import ArxivClient
 
     pipelines = PaperPipelines()
     topic_name = query.strip()
@@ -796,7 +808,9 @@ def _ingest_arxiv(
             topic = topic_repo.get_by_name(topic_name)
             if not topic:
                 topic = topic_repo.upsert_topic(
-                    name=topic_name, query=topic_name, enabled=False,
+                    name=topic_name,
+                    query=topic_name,
+                    enabled=False,
                 )
                 is_new_topic = True
             topic_id = topic.id
@@ -809,13 +823,15 @@ def _ingest_arxiv(
     inserted_ids: list[str] = []
 
     global_tracker.start(
-        _task_id, "ingest",
+        _task_id,
+        "ingest",
         f"入库论文: {topic_name[:30]}",
         total=len(selected_set),
     )
     yield ToolProgress(
         message=f"正在下载 {len(selected_set)} 篇选中论文...",
-        current=0, total=len(selected_set),
+        current=0,
+        total=len(selected_set),
     )
 
     # 分批搜索获取论文元数据
@@ -837,8 +853,9 @@ def _ingest_arxiv(
 
     with session_scope() as session:
         repo = PaperRepository(session)
-        from packages.storage.repositories import PipelineRunRepository, ActionRepository
         from packages.domain.enums import ActionType
+        from packages.storage.repositories import ActionRepository, PipelineRunRepository
+
         run_repo = PipelineRunRepository(session)
         action_repo = ActionRepository(session)
         note = f"selected {len(arxiv_ids)} from query={query}"
@@ -855,26 +872,32 @@ def _ingest_arxiv(
                         repo.set_pdf_path(saved.id, pdf_path)
                     except Exception:
                         pass
-                    ingested_papers.append({
-                        "arxiv_id": paper.arxiv_id,
-                        "title": (paper.title or "")[:80],
-                        "status": "ok",
-                    })
+                    ingested_papers.append(
+                        {
+                            "arxiv_id": paper.arxiv_id,
+                            "title": (paper.title or "")[:80],
+                            "status": "ok",
+                        }
+                    )
                 except Exception as exc:
                     logger.warning("Ingest paper %s failed: %s", paper.arxiv_id, exc)
-                    failed_papers.append({
-                        "arxiv_id": paper.arxiv_id,
-                        "title": (paper.title or "")[:80],
-                        "error": str(exc)[:120],
-                        "status": "failed",
-                    })
+                    failed_papers.append(
+                        {
+                            "arxiv_id": paper.arxiv_id,
+                            "title": (paper.title or "")[:80],
+                            "error": str(exc)[:120],
+                            "status": "failed",
+                        }
+                    )
                 global_tracker.update(
-                    _task_id, current=idx,
+                    _task_id,
+                    current=idx,
                     message=f"入库 {idx}/{len(selected_papers)}: {(paper.title or '')[:40]}",
                 )
                 yield ToolProgress(
                     message=f"入库 {idx}/{len(selected_papers)}: {(paper.title or '')[:40]}",
-                    current=idx, total=len(selected_papers),
+                    current=idx,
+                    total=len(selected_papers),
                 )
 
             if inserted_ids:
@@ -896,21 +919,27 @@ def _ingest_arxiv(
         yield ToolResult(
             success=len(failed_papers) == 0,
             data={
-                "ingested": 0, "query": query, "suggest_subscribe": False,
+                "ingested": 0,
+                "query": query,
+                "suggest_subscribe": False,
                 "failed": failed_papers,
             },
-            summary=f"未能入库任何论文" + (f"，{len(failed_papers)} 篇失败" if failed_papers else ""),
+            summary="未能入库任何论文"
+            + (f"，{len(failed_papers)} 篇失败" if failed_papers else ""),
         )
         return
 
     total = len(inserted_ids)
     global_tracker.update(
-        _task_id, current=0, total=total,
+        _task_id,
+        current=0,
+        total=total,
         message=f"入库 {total} 篇，开始向量化和粗读...",
     )
     yield ToolProgress(
         message=f"入库 {total} 篇，开始向量化和粗读...",
-        current=0, total=total,
+        current=0,
+        total=total,
     )
 
     # 向量化 + 粗读（论文间 + 论文内双重并行）
@@ -947,16 +976,15 @@ def _ingest_arxiv(
                     label = "embed" if fut is fe else "skim"
                     logger.warning(
                         "%s %s failed: %s",
-                        label, pid_str[:8], exc,
+                        label,
+                        pid_str[:8],
+                        exc,
                     )
         return e_ok, s_ok
 
     embed_ok, skim_ok, done = 0, 0, 0
     with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
-        future_map = {
-            pool.submit(_process_one, pid_str): pid_str
-            for pid_str in inserted_ids
-        }
+        future_map = {pool.submit(_process_one, pid_str): pid_str for pid_str in inserted_ids}
         for fut in as_completed(future_map):
             pid_str = future_map[fut]
             done += 1
@@ -966,16 +994,16 @@ def _ingest_arxiv(
                 embed_ok += int(e_ok_i)
                 skim_ok += int(s_ok_i)
             except Exception as exc:
-                logger.warning(
-                    "paper %s failed: %s", pid_str[:8], exc
-                )
+                logger.warning("paper %s failed: %s", pid_str[:8], exc)
             global_tracker.update(
-                _task_id, current=done,
+                _task_id,
+                current=done,
                 message=f"嵌入+粗读 {done}/{total}: {title}",
             )
             yield ToolProgress(
                 message=f"完成 {done}/{total}: {title}",
-                current=done, total=total,
+                current=done,
+                total=total,
             )
 
     global_tracker.finish(_task_id, success=True)
@@ -1040,9 +1068,9 @@ def _manage_subscription(
             "topic": topic_name,
             "enabled": enabled,
             "schedule_frequency": schedule_frequency or "daily",
-            "schedule_time_beijing": (schedule_time_beijing
-                                      if schedule_time_beijing is not None
-                                      else 5),
+            "schedule_time_beijing": (
+                schedule_time_beijing if schedule_time_beijing is not None else 5
+            ),
         },
         summary=f"已{action}：{topic_name} {schedule_info}",
     )
@@ -1051,13 +1079,12 @@ def _manage_subscription(
 def _suggest_keywords(description: str) -> ToolResult:
     """AI 生成 arXiv 搜索关键词建议"""
     from packages.ai.keyword_service import KeywordService
+
     try:
         suggestions = KeywordService().suggest(description.strip())
     except Exception as exc:
         logger.exception("Keyword suggestion failed: %s", exc)
-        return ToolResult(
-            success=False, summary=f"关键词建议生成失败: {exc!s}"
-        )
+        return ToolResult(success=False, summary=f"关键词建议生成失败: {exc!s}")
     if not suggestions:
         return ToolResult(
             success=True,
@@ -1158,16 +1185,11 @@ def _generate_wiki(type: str, keyword_or_id: str):
 
     if type == "topic":
         with session_scope() as session:
-            papers = PaperRepository(session).full_text_candidates(
-                query=keyword_or_id, limit=3
-            )
+            papers = PaperRepository(session).full_text_candidates(query=keyword_or_id, limit=3)
             if not papers:
                 yield ToolResult(
                     success=False,
-                    summary=(
-                        f"知识库中没有与 '{keyword_or_id}' "
-                        "相关的论文，请先导入"
-                    ),
+                    summary=(f"知识库中没有与 '{keyword_or_id}' 相关的论文，请先导入"),
                 )
                 return
 
@@ -1177,13 +1199,15 @@ def _generate_wiki(type: str, keyword_or_id: str):
             task_type="topic_wiki",
             title=f"Wiki: {keyword_or_id}",
             fn=lambda progress_callback=None: gs.topic_wiki(
-                keyword=keyword_or_id, limit=120,
+                keyword=keyword_or_id,
+                limit=120,
                 progress_callback=progress_callback,
             ),
         )
         yield ToolProgress(
             message=f"已提交后台任务，正在为「{keyword_or_id}」生成 Wiki...",
-            current=1, total=10,
+            current=1,
+            total=10,
         )
 
         # 轮询进度
@@ -1224,7 +1248,7 @@ def _generate_wiki(type: str, keyword_or_id: str):
             except ValueError:
                 yield ToolResult(success=False, summary=f"论文 {keyword_or_id[:8]}... 不存在")
                 return
-        yield ToolProgress(message=f"正在为论文生成 Wiki...", current=1, total=2)
+        yield ToolProgress(message="正在为论文生成 Wiki...", current=1, total=2)
         result = GraphService().paper_wiki(paper_id=keyword_or_id)
         result["title"] = f"Wiki: {paper_title[:40]}"
         yield ToolProgress(message="Wiki 生成完毕，正在渲染...", current=2, total=2)
@@ -1255,9 +1279,7 @@ def _generate_daily_brief(recipient: str = ""):
 
     yield ToolProgress(message="正在保存简报...", current=3, total=4)
     notifier = NotificationService()
-    saved_path = notifier.save_brief_html(
-        f"daily_brief_{ts_file}.html", html_content
-    )
+    saved_path = notifier.save_brief_html(f"daily_brief_{ts_file}.html", html_content)
 
     email_sent = False
     clean_recipient = recipient.strip() if recipient else ""
@@ -1282,6 +1304,7 @@ def _generate_daily_brief(recipient: str = ""):
         except Exception as exc:
             logger.warning("简报保存到数据库失败 (attempt %d): %s", attempt + 1, exc)
             import time
+
             time.sleep(1)
 
     if not db_saved:
@@ -1415,7 +1438,9 @@ def _analyze_figures(paper_id: str, max_figures: int = 10) -> Iterator[ToolProgr
     svc = FigureService()
     try:
         results = svc.analyze_paper_figures(
-            UUID(paper_id), pdf_path, max_figures=max_figures,
+            UUID(paper_id),
+            pdf_path,
+            max_figures=max_figures,
         )
     except Exception as exc:
         yield ToolResult(success=False, summary=f"图表解读失败: {exc}")
@@ -1450,7 +1475,7 @@ def _analyze_figures(paper_id: str, max_figures: int = 10) -> Iterator[ToolProgr
 
 def _writing_assist(action: str, text: str) -> ToolResult:
     """学术写作助手"""
-    from packages.ai.writing_service import WritingService, TEMPLATE_MAP, WritingAction
+    from packages.ai.writing_service import TEMPLATE_MAP, WritingAction, WritingService
 
     try:
         wa = WritingAction(action)
