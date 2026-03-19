@@ -240,16 +240,32 @@ function MonthlyTrend({ data }: { data: PaperDistributionResponse }) {
       {months.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-6">暂无数据</p>
       ) : (
-        <div className="flex items-end gap-2 h-32">
-          {months.map((m, i) => (
-            <div key={m.month} className="flex-1 flex flex-col items-center gap-2">
-              <div
-                className={`w-full bg-gradient-to-t ${GRADIENT_COLORS[i % GRADIENT_COLORS.length]} rounded-t-lg shadow-lg`}
-                style={{ height: `${Math.max((m.count / maxCount) * 100, 5)}%` }}
-              />
-              <span className="text-[10px] text-muted-foreground font-mono">{m.month.slice(5)}</span>
-            </div>
-          ))}
+        <div className="relative h-32 w-full">
+          <div className="absolute inset-0 flex items-end gap-2">
+            {months.map((m, i) => {
+              const heightPct = Math.max((m.count / maxCount) * 100, 4);
+              return (
+                <div
+                  key={m.month}
+                  className="flex-1 flex flex-col items-center justify-end h-full"
+                >
+                  <div
+                    className={`w-full bg-gradient-to-t ${GRADIENT_COLORS[i % GRADIENT_COLORS.length]} rounded-t-lg shadow-md transition-all duration-300 hover:brightness-110`}
+                    style={{ height: `${heightPct}%` }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="absolute bottom-0 left-0 right-0 flex items-end gap-2 pointer-events-none">
+            {months.map((m) => (
+              <div key={m.month} className="flex-1 flex justify-center">
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {m.month.slice(5)}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
