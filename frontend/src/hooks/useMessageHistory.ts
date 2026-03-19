@@ -31,8 +31,7 @@ export function useMessageHistory() {
             const summaries = item.steps
               .filter((s) => s.status === "done" || s.status === "error")
               .map(
-                (s) =>
-                  `[工具: ${s.toolName}] ${s.success ? "成功" : "失败"}: ${s.summary || ""}`,
+                (s) => `[工具: ${s.toolName}] ${s.success ? "成功" : "失败"}: ${s.summary || ""}`
               )
               .join("\n");
             if (summaries) {
@@ -54,7 +53,7 @@ export function useMessageHistory() {
         case "artifact":
           messages.push({
             role: "assistant",
-            content: `[已生成内容: ${item.artifactTitle || "未命名"}]\n${(item.artifactContent || "").slice(0, 500)}`,
+            content: `[已生成内容: ${item.artifactTitle || "未命名"}]\n${item.artifactContent || ""}`,
           });
           break;
 
