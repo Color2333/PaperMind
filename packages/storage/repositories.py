@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Integer, Select, delete, func, select
 from sqlalchemy.orm import Session
 
 from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
@@ -229,11 +229,7 @@ class PaperRepository:
         # "最近 7 天" 用用户时区的今天 0 点往前推 7 天
         user_today_utc = user_today_start_utc()
         week_start_utc = user_today_utc - timedelta(days=7)
-        recent_q = (
-            select(func.count())
-            .select_from(Paper)
-            .where(Paper.created_at >= week_start_utc)
-        )
+        recent_q = select(func.count()).select_from(Paper).where(Paper.created_at >= week_start_utc)
         recent_7d = self.session.execute(recent_q).scalar() or 0
 
         # 有主题的论文 ID 集合
@@ -284,6 +280,121 @@ class PaperRepository:
             "by_status": by_status,
             "by_date": by_date,
         }
+
+    def topic_stats(self) -> dict:
+        """
+        返回主题维度统计：
+        - 每个主题的论文数、总引用数、活跃度（近30天新增）
+        - 每个主题的阅读状态分布
+        """
+        from packages.timezone import user_today_start_utc
+
+        user_today_utc = user_today_start_utc()
+        since_30d = user_today_utc - timedelta(days=30)
+
+        # 按主题聚合统计
+        topic_stats_q = (
+            select(
+                TopicSubscription.id,
+                TopicSubscription.name,
+                func.count(PaperTopic.paper_id).label("paper_count"),
+            )
+            .join(PaperTopic, TopicSubscription.id == PaperTopic.topic_id, isouter=True)
+            .group_by(TopicSubscription.id, TopicSubscription.name)
+        )
+        topic_rows = self.session.execute(topic_stats_q).all()
+
+        result = []
+        for row in topic_rows:
+            topic_id = row.id
+            topic_name = row.name
+            paper_count = row.paper_count or 0
+
+            # 该主题下所有论文的总引用数
+            citation_q = (
+                select(
+                    func.coalesce(
+                        func.sum(Paper.metadata_json["citation_count"].astext.cast(Integer)), 0
+                    )
+                )
+                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
+                .where(PaperTopic.topic_id == topic_id)
+            )
+            total_citations = self.session.execute(citation_q).scalar() or 0
+
+            # 近30天该主题的新增论文数（活跃度）
+            recent_q = (
+                select(func.count())
+                .select_from(Paper)
+                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
+                .where(PaperTopic.topic_id == topic_id)
+                .where(Paper.created_at >= since_30d)
+            )
+            recent_30d = self.session.execute(recent_q).scalar() or 0
+
+            # 该主题下论文的阅读状态分布
+            status_q = (
+                select(Paper.read_status, func.count())
+                .join(PaperTopic, Paper.id == PaperTopic.paper_id)
+                .where(PaperTopic.topic_id == topic_id)
+                .group_by(Paper.read_status)
+            )
+            status_rows = self.session.execute(status_q).all()
+            status_dist = {r[0].value: r[1] for r in status_rows}
+
+            result.append(
+                {
+                    "topic_id": topic_id,
+                    "topic_name": topic_name,
+                    "paper_count": paper_count,
+                    "total_citations": total_citations,
+                    "recent_30d": recent_30d,
+                    "status_dist": {
+                        "unread": status_dist.get("unread", 0),
+                        "skimmed": status_dist.get("skimmed", 0),
+                        "deep_read": status_dist.get("deep_read", 0),
+                    },
+                }
+            )
+
+        # 按论文数降序排列
+        result.sort(key=lambda x: x["paper_count"], reverse=True)
+        return {"topics": result}
+
+    def paper_distribution_stats(self) -> dict:
+        """论文分布统计：按发表年份分布 + 按来源分布"""
+        by_year_q = (
+            select(
+                func.coalesce(func.strftime("%Y", Paper.publication_date), "未知").label("year"),
+                func.count().label("count"),
+            )
+            .group_by(func.strftime("%Y", Paper.publication_date))
+            .order_by(func.strftime("%Y", Paper.publication_date).desc())
+        )
+        year_rows = self.session.execute(by_year_q).all()
+        by_year = [{"year": r[0], "count": r[1]} for r in year_rows]
+
+        by_source_q = (
+            select(
+                func.coalesce(Paper.metadata_json["source"].astext, "unknown").label("source"),
+                func.count().label("count"),
+            )
+            .group_by(Paper.metadata_json["source"].astext)
+            .order_by(func.count().desc())
+        )
+        source_rows = self.session.execute(by_source_q).all()
+        source_label: dict[str, str] = {
+            "arxiv": "arXiv",
+            "semantic_scholar": "Semantic Scholar",
+            "reference_import": "参考文献导入",
+            "unknown": "未知来源",
+        }
+        by_source = [
+            {"source": source_label.get(r[0], r[0]), "raw_source": r[0], "count": r[1]}
+            for r in source_rows
+        ]
+
+        return {"by_year": by_year, "by_source": by_source}
 
     def list_paginated(
         self,
@@ -785,7 +896,6 @@ class TopicRepository:
         schedule_time_utc: int = 21,
         enable_date_filter: bool = False,
         date_filter_days: int = 7,
-
     ) -> TopicSubscription:
         found = self.get_by_name(name)
         if found:
@@ -1345,6 +1455,5 @@ class AgentPendingActionRepository:
         result = self.session.execute(q)
         self.session.flush()
         return result.rowcount
-
 
         return config

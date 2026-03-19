@@ -38,6 +38,9 @@ import type {
   CocitationResponse,
   TodaySummary,
   FolderStats,
+  TopicStats,
+  TopicStatsResponse,
+  PaperDistributionResponse,
   PaperListResponse,
   FigureAnalysisItem,
   ReferenceImportEntry,
@@ -169,6 +172,8 @@ export const topicApi = {
     get<TopicFetchResult>(`/topics/${id}/fetch-status`),
   suggestKeywords: (description: string) =>
     post<{ suggestions: KeywordSuggestion[] }>("/topics/suggest-keywords", { description }),
+  stats: () => get<TopicStatsResponse>("/topics/stats"),
+  distribution: () => get<PaperDistributionResponse>("/topics/distribution"),
 };
 
 /* ========== 论文 ========== */

@@ -25,6 +25,7 @@ const Pipelines = lazy(() => import("@/pages/Pipelines"));
 const Operations = lazy(() => import("@/pages/Operations"));
 const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
+const Statistics = lazy(() => import("@/pages/Statistics"));
 
 import LoginPage from "@/pages/Login";
 import { isAuthenticated as checkAuth, clearAuth } from "@/services/api";
@@ -110,6 +111,7 @@ export default function App() {
           <Route path="/operations" element={<Suspense fallback={<PageFallback />}><Operations /></Suspense>} />
           <Route path="/email-settings" element={<Suspense fallback={<PageFallback />}><EmailSettings /></Suspense>} />
           <Route path="/writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
+          <Route path="/statistics" element={<Suspense fallback={<PageFallback />}><Statistics /></Suspense>} />
 
           {/* 常见拼写重定向 */}
           <Route path="/briefs" element={<Navigate to="/brief" replace />} />

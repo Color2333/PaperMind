@@ -70,6 +70,33 @@ export interface KeywordSuggestion {
   reason: string;
 }
 
+export interface TopicStats {
+  topic_id: string;
+  topic_name: string;
+  paper_count: number;
+  total_citations: number;
+  recent_30d: number;
+  status_dist: {
+    unread: number;
+    skimmed: number;
+    deep_read: number;
+  };
+}
+
+export interface TopicStatsResponse {
+  topics: TopicStats[];
+}
+
+export interface PaperDistributionStats {
+  by_year: { year: string; count: number }[];
+  by_source: { source: string; raw_source: string; count: number }[];
+}
+
+export interface PaperDistributionResponse {
+  by_year: { year: string; count: number }[];
+  by_source: { source: string; raw_source: string; count: number }[];
+}
+
 /* ========== 抓取任务 ========== */
 export interface TopicFetchResult {
   topic_id: string;

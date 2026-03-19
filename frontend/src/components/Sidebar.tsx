@@ -28,6 +28,7 @@ import {
   Search,
   Menu,
   X,
+  BarChart3,
   PenTool,
   Loader2,
   LogOut,
@@ -43,6 +44,7 @@ const TOOLS = [
   { to: "/wiki", icon: BookOpen, label: "Wiki", accent: false },
   { to: "/brief", icon: Newspaper, label: "研究简报", accent: false },
   { to: "/dashboard", icon: LayoutDashboard, label: "看板", accent: false },
+  { to: "/statistics", icon: BarChart3, label: "主题统计", accent: false },
 ];
 
 function useDarkMode() {
