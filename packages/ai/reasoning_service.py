@@ -3,6 +3,7 @@
 引导 LLM 进行分步推理，提供方法论推导链、实验验证链、创新性评估
 @author Color2333
 """
+
 from __future__ import annotations
 
 import logging

@@ -10,7 +10,7 @@ import uuid as _uuid
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, event, text, StaticPool
+from sqlalchemy import StaticPool, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from packages.config import get_settings

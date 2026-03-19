@@ -7,9 +7,8 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Lock
-from typing import Optional
 
 from packages.config import get_settings
 
@@ -31,7 +30,7 @@ class TokenBucket:
         self.last_update = time.time()
         self._lock = Lock()
 
-    def acquire(self, tokens: int = 1, timeout: Optional[float] = None) -> bool:
+    def acquire(self, tokens: int = 1, timeout: float | None = None) -> bool:
         """获取令牌
 
         Args:
@@ -116,7 +115,7 @@ class APIRateLimiter:
 
     def _get_current_time_slot(self) -> tuple:
         """获取当前时间段配置"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         hour = now.hour
 
         for start, end, concurrency, rate in self.TIME_SLOTS:
@@ -174,7 +173,7 @@ class APIRateLimiter:
             if self._active_tasks > 0:
                 self._active_tasks -= 1
 
-    def acquire(self, api_type: str = "llm", timeout: Optional[float] = None) -> bool:
+    def acquire(self, api_type: str = "llm", timeout: float | None = None) -> bool:
         """获取 API 调用许可
 
         Args:
@@ -238,7 +237,7 @@ class APIRateLimiter:
 
 
 # 全局单例
-_global_limiter: Optional[APIRateLimiter] = None
+_global_limiter: APIRateLimiter | None = None
 _limiter_lock = Lock()
 
 
@@ -254,7 +253,7 @@ def get_rate_limiter() -> APIRateLimiter:
     return _global_limiter
 
 
-def acquire_api(api_type: str = "llm", timeout: Optional[float] = 10.0) -> bool:
+def acquire_api(api_type: str = "llm", timeout: float | None = 10.0) -> bool:
     """便捷函数：获取 API 调用许可
 
     Args:

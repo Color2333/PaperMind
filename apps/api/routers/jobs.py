@@ -7,7 +7,6 @@ import uuid as _uuid
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
-from apps.api.deps import pipelines
 from packages.ai.daily_runner import run_daily_brief, run_daily_ingest, run_weekly_graph_maintenance
 from packages.domain.enums import ReadStatus
 from packages.domain.task_tracker import global_tracker
@@ -56,7 +55,7 @@ def batch_process_unread(
     import uuid
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    from packages.ai.daily_runner import _process_paper, PAPER_CONCURRENCY
+    from packages.ai.daily_runner import PAPER_CONCURRENCY, _process_paper
 
     # 先获取需要处理的论文数量
     with session_scope() as session:
@@ -200,6 +199,7 @@ def get_action_papers(
 async def run_daily_report_once(background_tasks: BackgroundTasks):
     """完整工作流（精读 + 生成 + 发邮件）— 后台执行"""
     import asyncio
+
     from packages.ai.auto_read_service import AutoReadService
 
     def _run_workflow_bg():

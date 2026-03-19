@@ -1,0 +1,58 @@
+name: PR Review Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number'
+        required: false
+        type: string
+
+jobs:
+  pr-review:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Get PR Number
+        id: pr
+        run: |
+          if [ -n "${{ github.event.inputs.pr_number }}" ]; then
+            PR_NUM="${{ github.event.inputs.pr_number }}"
+          else
+            PR_NUM="${{ github.event.number }}"
+          fi
+          echo "pr_number=$PR_NUM" >> $GITHUB_OUTPUT
+
+      - name: Post OpenCode Review Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUM="${{ steps.pr.outputs.pr_number }}"
+          
+          BODY='## 🔍 OpenCode PR Review Required
+
+          这是一个受保护的分支，merge 前需要进行 code review。
+
+          **请运行以下命令进行 OpenCode review：**
+          ```
+          /oc review https://github.com/${{ github.repository }}/pull/$PR_NUM
+          ```
+
+          或者在 PR 页面评论 `/oc` 来触发 OpenCode review。
+
+          ---
+
+          *This is an automated reminder from PR Review Gate.*'
+          
+          gh pr comment $PR_NUM --body "$BODY"
+
+      - name: Set status check to success
+        run: |
+          echo "OpenCode review request posted."

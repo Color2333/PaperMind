@@ -1074,20 +1074,26 @@ function EmailTab() {
                         disabled={submitting}
                         className="w-full rounded border border-border bg-surface px-2 py-1.5 text-xs text-ink placeholder:text-ink-placeholder"
                       />
-                      <div className="flex items-center gap-2">
-                        <label className="text-[10px] text-ink-secondary">发送时间（UTC）</label>
+                      {/* Cron 表达式配置 */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-medium text-ink-secondary">定时任务 Cron 表达式</label>
                         <input
-                          type="number"
-                          min={0}
-                          max={23}
-                          value={localConfig?.report_time_utc ?? dailyReportConfig.report_time_utc}
-                          onChange={(e) => handleInputChange("report_time_utc", parseInt(e.target.value) || 21)}
-                          onBlur={() => handleInputBlur("report_time_utc")}
+                          type="text"
+                          placeholder="0 4 * * *"
+                          value={localConfig?.cron_expression ?? dailyReportConfig.cron_expression ?? "0 4 * * *"}
+                          onChange={(e) => handleInputChange("cron_expression", e.target.value)}
+                          onBlur={() => handleInputBlur("cron_expression")}
                           disabled={submitting}
-                          className="w-16 rounded border border-border bg-surface px-2 py-0.5 text-center text-xs text-ink"
+                          className="w-full rounded border border-border bg-surface px-2 py-1.5 text-xs font-mono text-ink placeholder:text-ink-placeholder"
                         />
-                        <span className="text-[10px] text-ink-tertiary">（北京时间 = UTC + 8）</span>
+                        <p className="text-[9px] text-ink-tertiary">
+                          默认：<code className="font-mono">0 4 * * *</code>（UTC 4 点 = 北京时间 12 点）
+                          <br />
+                          格式：<code className="font-mono">分 时 日 月 周</code>
+                        </p>
                       </div>
+                      {/* 旧的 report_time_utc 保留但隐藏，向后兼容 */}
+                      <input type="hidden" value={localConfig?.report_time_utc ?? dailyReportConfig.report_time_utc} />
                     </div>
                   )}
                 </div>

@@ -3,6 +3,7 @@
 Prompt 模板来源：https://github.com/Leey21/awesome-ai-research-writing
 @author Color2333
 """
+
 from __future__ import annotations
 
 import logging
@@ -158,11 +159,10 @@ WRITING_TEMPLATES: list[WritingTemplate] = [
     ),
 ]
 
-TEMPLATE_MAP: dict[WritingAction, WritingTemplate] = {
-    t.action: t for t in WRITING_TEMPLATES
-}
+TEMPLATE_MAP: dict[WritingAction, WritingTemplate] = {t.action: t for t in WRITING_TEMPLATES}
 
 # Prompt 模板构建函数
+
 
 def _build_zh_to_en(text: str) -> str:
     return (
@@ -470,7 +470,9 @@ class WritingService:
 
         prompt = builder(text)
         result: LLMResult = self.llm.summarize_text(
-            prompt, stage="writing", max_tokens=max_tokens,
+            prompt,
+            stage="writing",
+            max_tokens=max_tokens,
         )
         self.llm.trace_result(
             result,
@@ -558,7 +560,9 @@ class WritingService:
 
         prompt = "\n".join(parts)
         result: LLMResult = self.llm.summarize_text(
-            prompt, stage="writing", max_tokens=max_tokens,
+            prompt,
+            stage="writing",
+            max_tokens=max_tokens,
         )
 
         last_user = ""

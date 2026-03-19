@@ -4,7 +4,7 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from apps.api.deps import brief_date, brief_service, cache, graph_service, iso_dt, settings
+from apps.api.deps import brief_service, cache, graph_service, iso_dt
 from packages.domain.schemas import DailyBriefRequest
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
@@ -168,7 +168,16 @@ def daily_brief(req: DailyBriefRequest) -> dict:
     """生成每日简报（异步任务）"""
     from packages.domain.task_tracker import global_tracker
 
-    recipient = req.recipient or settings.notify_default_to
+    # 如果没有指定收件人，从数据库读取配置
+    recipient = req.recipient
+    if not recipient:
+        from packages.storage.db import session_scope
+        from packages.storage.repositories import DailyReportConfigRepository
+
+        with session_scope() as session:
+            config = DailyReportConfigRepository(session).get_config()
+            if config.send_email_report and config.recipient_emails:
+                recipient = config.recipient_emails.split(",")[0]
 
     def _generate_fn(progress_callback=None):
         # publish() 内部已写入 generated_content 表，无需重复

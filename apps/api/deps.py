@@ -70,6 +70,7 @@ class TTLCache:
             for k in keys:
                 del self._store[k]
 
+
 cache = TTLCache()
 
 
@@ -97,6 +98,7 @@ def iso_dt(dt: datetime | None) -> str | None:
 
 def brief_date() -> str:
     from packages.timezone import user_date_str
+
     return user_date_str()
 
 

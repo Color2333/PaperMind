@@ -38,6 +38,9 @@ import type {
   CocitationResponse,
   TodaySummary,
   FolderStats,
+  TopicStats,
+  TopicStatsResponse,
+  PaperDistributionResponse,
   PaperListResponse,
   FigureAnalysisItem,
   ReferenceImportEntry,
@@ -96,8 +99,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     resp = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
-        ...(getAuthToken() ? { "Authorization": `Bearer ${getAuthToken()}` } : {}),
-        ...(options.headers as Record<string, string> || {}),
+        ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+        ...((options.headers as Record<string, string>) || {}),
       },
       ...options,
     });
@@ -130,15 +133,27 @@ function get<T>(path: string, opts?: { signal?: AbortSignal }) {
 }
 
 function post<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) {
-  return request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}), signal: opts?.signal });
+  return request<T>(path, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+    signal: opts?.signal,
+  });
 }
 
 function patch<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) {
-  return request<T>(path, { method: "PATCH", body: JSON.stringify(body ?? {}), signal: opts?.signal });
+  return request<T>(path, {
+    method: "PATCH",
+    body: JSON.stringify(body ?? {}),
+    signal: opts?.signal,
+  });
 }
 
 function put<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) {
-  return request<T>(path, { method: "PUT", body: JSON.stringify(body ?? {}), signal: opts?.signal });
+  return request<T>(path, {
+    method: "PUT",
+    body: JSON.stringify(body ?? {}),
+    signal: opts?.signal,
+  });
 }
 
 function del<T>(path: string, opts?: { signal?: AbortSignal }) {
@@ -151,39 +166,70 @@ export const systemApi = {
   status: () => get<SystemStatus>("/system/status"),
 };
 
-
 export const todayApi = {
   summary: () => get<TodaySummary>("/today"),
 };
 
 /* ========== 主题 ========== */
 export const topicApi = {
-  list: (enabledOnly = false) =>
-    get<{ items: Topic[] }>(`/topics?enabled_only=${enabledOnly}`),
+  list: (enabledOnly = false) => get<{ items: Topic[] }>(`/topics?enabled_only=${enabledOnly}`),
   create: (data: TopicCreate) => post<Topic>("/topics", data),
   update: (id: string, data: TopicUpdate) => patch<Topic>(`/topics/${id}`, data),
   delete: (id: string) => del<{ deleted: string }>(`/topics/${id}`),
-  fetch: (id: string) =>
-    post<TopicFetchResult>(`/topics/${id}/fetch`),
-  fetchStatus: (id: string) =>
-    get<TopicFetchResult>(`/topics/${id}/fetch-status`),
+  fetch: (id: string) => post<TopicFetchResult>(`/topics/${id}/fetch`),
+  fetchStatus: (id: string) => get<TopicFetchResult>(`/topics/${id}/fetch-status`),
   suggestKeywords: (description: string) =>
     post<{ suggestions: KeywordSuggestion[] }>("/topics/suggest-keywords", { description }),
+  stats: () => get<TopicStatsResponse>("/topics/stats"),
+  distribution: () => get<PaperDistributionResponse>("/topics/distribution"),
+  csCategories: () =>
+    get<{ categories: { code: string; name: string; description: string }[] }>("/cs/categories"),
+  csFeeds: () =>
+    get<{
+      feeds: {
+        category_code: string;
+        category_name: string;
+        daily_limit: number;
+        enabled: boolean;
+        status: string;
+        last_run_at: string | null;
+        last_run_count: number;
+      }[];
+    }>("/cs/feeds"),
+  csFeedCreate: (req: { category_codes: string[]; daily_limit: number }) =>
+    post<{
+      created: number;
+      feeds: { category_code: string; daily_limit: number; enabled: boolean }[];
+    }>("/cs/feeds", req),
+  csFeedUpdate: (categoryCode: string, req: { daily_limit?: number; enabled?: boolean }) => {
+    const params = new URLSearchParams();
+    if (req.daily_limit !== undefined) params.set("daily_limit", String(req.daily_limit));
+    if (req.enabled !== undefined) params.set("enabled", String(req.enabled));
+    return patch<{ category_code: string; daily_limit: number; enabled: boolean }>(
+      `/cs/feeds/${categoryCode}?${params}`
+    );
+  },
+  csFeedFetch: (categoryCode: string) =>
+    post<{ status: string; fetched?: number; message?: string }>(`/cs/feeds/${categoryCode}/fetch`),
+  csFeedDelete: (categoryCode: string) => del<{ deleted: boolean }>(`/cs/feeds/${categoryCode}`),
 };
 
 /* ========== 论文 ========== */
 export const paperApi = {
-  latest: (opts: {
-    page?: number;
-    pageSize?: number;
-    status?: string;
-    topicId?: string;
-    folder?: string;
-    date?: string;
-    search?: string;
-    sortBy?: string;
-    sortOrder?: string;
-  } = {}) => {
+  latest: (
+    opts: {
+      page?: number;
+      pageSize?: number;
+      status?: string;
+      topicId?: string;
+      folder?: string;
+      date?: string;
+      search?: string;
+      sortBy?: string;
+      sortOrder?: string;
+      category?: string;
+    } = {}
+  ) => {
     const params = new URLSearchParams();
     params.set("page", String(opts.page || 1));
     params.set("page_size", String(opts.pageSize || 20));
@@ -194,22 +240,25 @@ export const paperApi = {
     if (opts.search) params.append("search", opts.search);
     if (opts.sortBy) params.append("sort_by", opts.sortBy);
     if (opts.sortOrder) params.append("sort_order", opts.sortOrder);
+    if (opts.category) params.append("category", opts.category);
     return get<PaperListResponse>(`/papers/latest?${params}`);
   },
   folderStats: () => get<FolderStats>("/papers/folder-stats"),
   detail: (id: string) => get<Paper>(`/papers/${id}`),
   similar: (id: string, topK = 5) =>
-    get<{ paper_id: string; similar_ids: string[]; items?: { id: string; title: string; arxiv_id?: string; read_status?: string }[] }>(`/papers/${id}/similar?top_k=${topK}`),
+    get<{
+      paper_id: string;
+      similar_ids: string[];
+      items?: { id: string; title: string; arxiv_id?: string; read_status?: string }[];
+    }>(`/papers/${id}/similar?top_k=${topK}`),
   toggleFavorite: (id: string) =>
     patch<{ id: string; favorited: boolean }>(`/papers/${id}/favorite`),
-  getFigures: (id: string) =>
-    get<{ items: FigureAnalysisItem[] }>(`/papers/${id}/figures`),
+  getFigures: (id: string) => get<{ items: FigureAnalysisItem[] }>(`/papers/${id}/figures`),
   analyzeFigures: (id: string, maxFigures = 10) =>
     post<{ paper_id: string; count: number; items: FigureAnalysisItem[] }>(
-      `/papers/${id}/figures/analyze?max_figures=${maxFigures}`,
+      `/papers/${id}/figures/analyze?max_figures=${maxFigures}`
     ),
-  reasoningAnalysis: (id: string) =>
-    post<ReasoningAnalysisResponse>(`/papers/${id}/reasoning`),
+  reasoningAnalysis: (id: string) => post<ReasoningAnalysisResponse>(`/papers/${id}/reasoning`),
   pdfUrl: (id: string, arxivId?: string) => {
     const token = getAuthToken();
     const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
@@ -242,15 +291,15 @@ export const ingestApi = {
     entries: ReferenceImportEntry[];
     topic_ids?: string[];
   }) => post<{ task_id: string; total: number }>("/ingest/references", data),
-  importStatus: (taskId: string) =>
-    get<ImportTaskStatus>(`/ingest/references/status/${taskId}`),
+  importStatus: (taskId: string) => get<ImportTaskStatus>(`/ingest/references/status/${taskId}`),
 };
 
 /* ========== Pipeline ========== */
 export const pipelineApi = {
   skim: (paperId: string) => post<SkimReport>(`/pipelines/skim/${paperId}`),
   deep: (paperId: string) => post<DeepDiveReport>(`/pipelines/deep/${paperId}`),
-  embed: (paperId: string) => post<{ status: string; paper_id: string }>(`/pipelines/embed/${paperId}`),
+  embed: (paperId: string) =>
+    post<{ status: string; paper_id: string }>(`/pipelines/embed/${paperId}`),
   runs: (limit = 30) => get<{ items: PipelineRun[] }>(`/pipelines/runs?limit=${limit}`),
 };
 
@@ -264,9 +313,13 @@ export const citationApi = {
   syncPaper: (paperId: string, limit = 8) =>
     post<CitationSyncResult>(`/citations/sync/${paperId}?limit=${limit}`),
   syncTopic: (topicId: string, paperLimit = 30, edgeLimit = 6) =>
-    post<CitationSyncResult>(`/citations/sync/topic/${topicId}?paper_limit=${paperLimit}&edge_limit_per_paper=${edgeLimit}`),
+    post<CitationSyncResult>(
+      `/citations/sync/topic/${topicId}?paper_limit=${paperLimit}&edge_limit_per_paper=${edgeLimit}`
+    ),
   syncIncremental: (paperLimit = 40, edgeLimit = 6) =>
-    post<CitationSyncResult>(`/citations/sync/incremental?paper_limit=${paperLimit}&edge_limit_per_paper=${edgeLimit}`),
+    post<CitationSyncResult>(
+      `/citations/sync/incremental?paper_limit=${paperLimit}&edge_limit_per_paper=${edgeLimit}`
+    ),
 };
 
 /* ========== 行动记录 ========== */
@@ -281,9 +334,16 @@ export const actionApi = {
   },
   detail: (id: string) => get<CollectionAction>(`/actions/${id}`),
   papers: (id: string, limit = 200) =>
-    get<{ action_id: string; items: { id: string; title: string; arxiv_id: string; publication_date: string | null; read_status: string }[] }>(
-      `/actions/${id}/papers?limit=${limit}`
-    ),
+    get<{
+      action_id: string;
+      items: {
+        id: string;
+        title: string;
+        arxiv_id: string;
+        publication_date: string | null;
+        read_status: string;
+      }[];
+    }>(`/actions/${id}/papers?limit=${limit}`),
 };
 
 /* ========== 图谱 ========== */
@@ -295,24 +355,27 @@ export const graphApi = {
   quality: (keyword: string, limit = 120) =>
     get<GraphQuality>(`/graph/quality?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
   evolution: (keyword: string, limit = 160) =>
-    get<EvolutionResponse>(`/graph/evolution/weekly?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
+    get<EvolutionResponse>(
+      `/graph/evolution/weekly?keyword=${encodeURIComponent(keyword)}&limit=${limit}`
+    ),
   survey: (keyword: string, limit = 120) =>
     get<SurveyResponse>(`/graph/survey?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
   researchGaps: (keyword: string, limit = 120) =>
-    get<ResearchGapsResponse>(`/graph/research-gaps?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
-  citationDetail: (paperId: string) =>
-    get<CitationDetail>(`/graph/citation-detail/${paperId}`),
+    get<ResearchGapsResponse>(
+      `/graph/research-gaps?keyword=${encodeURIComponent(keyword)}&limit=${limit}`
+    ),
+  citationDetail: (paperId: string) => get<CitationDetail>(`/graph/citation-detail/${paperId}`),
   topicNetwork: (topicId: string) =>
     get<TopicCitationNetwork>(`/graph/citation-network/topic/${topicId}`),
   topicDeepTrace: (topicId: string) =>
     post<TopicCitationNetwork>(`/graph/citation-network/topic/${topicId}/deep-trace`),
-  overview: () => get<LibraryOverview>('/graph/overview'),
-  bridges: () => get<BridgesResponse>('/graph/bridges'),
+  overview: () => get<LibraryOverview>("/graph/overview"),
+  bridges: () => get<BridgesResponse>("/graph/bridges"),
   frontier: (days = 90) => get<FrontierResponse>(`/graph/frontier?days=${days}`),
   cocitationClusters: (minCocite = 2) =>
     get<CocitationResponse>(`/graph/cocitation-clusters?min_cocite=${minCocite}`),
   autoLink: (paperIds: string[]) =>
-    post<{ papers: number; edges_linked: number; errors: number }>('/graph/auto-link', paperIds),
+    post<{ papers: number; edges_linked: number; errors: number }>("/graph/auto-link", paperIds),
   similarityMap: (topicId?: string, limit = 200) =>
     get<SimilarityMapData>(`/graph/similarity-map?topic_id=${topicId || ""}&limit=${limit}`),
 };
@@ -345,7 +408,7 @@ export const jobApi = {
   weeklyGraphRun: () => post<Record<string, unknown>>("/jobs/graph/weekly-run-once"),
   batchProcessUnread: (maxPapers = 50) =>
     post<{ processed: number; failed: number; total: number; message: string }>(
-      `/jobs/batch-process-unread?max_papers=${maxPapers}`,
+      `/jobs/batch-process-unread?max_papers=${maxPapers}`
     ),
 };
 
@@ -365,7 +428,8 @@ import type {
 export const llmConfigApi = {
   list: () => get<{ items: LLMProviderConfig[] }>("/settings/llm-providers"),
   create: (data: LLMProviderCreate) => post<LLMProviderConfig>("/settings/llm-providers", data),
-  update: (id: string, data: LLMProviderUpdate) => patch<LLMProviderConfig>(`/settings/llm-providers/${id}`, data),
+  update: (id: string, data: LLMProviderUpdate) =>
+    patch<LLMProviderConfig>(`/settings/llm-providers/${id}`, data),
   delete: (id: string) => del<{ deleted: string }>(`/settings/llm-providers/${id}`),
   activate: (id: string) => post<LLMProviderConfig>(`/settings/llm-providers/${id}/activate`),
   deactivate: () => post<{ status: string }>("/settings/llm-providers/deactivate"),
@@ -373,14 +437,23 @@ export const llmConfigApi = {
 };
 
 /* ========== 写作助手 ========== */
-import type { WritingTemplate, WritingResult, WritingRefineMessage, WritingRefineResult } from "@/types";
+import type {
+  WritingTemplate,
+  WritingResult,
+  WritingRefineMessage,
+  WritingRefineResult,
+} from "@/types";
 
 export const writingApi = {
   templates: () => get<{ items: WritingTemplate[] }>("/writing/templates"),
   process: (action: string, text: string, maxTokens = 4096) =>
     post<WritingResult>("/writing/process", { action, content: text, max_tokens: maxTokens }),
   processMultimodal: (action: string, content: string, imageBase64: string) =>
-    post<WritingResult>("/writing/process-multimodal", { action, content, image_base64: imageBase64 }),
+    post<WritingResult>("/writing/process-multimodal", {
+      action,
+      content,
+      image_base64: imageBase64,
+    }),
   refine: (messages: WritingRefineMessage[], maxTokens = 4096) =>
     post<WritingRefineResult>("/writing/refine", { messages, max_tokens: maxTokens }),
 };
@@ -398,7 +471,7 @@ async function fetchSSE(url: string, init?: RequestInit): Promise<Response> {
     ...init,
     headers: {
       ...authHeaders,
-      ...(init?.headers as Record<string, string> || {}),
+      ...((init?.headers as Record<string, string>) || {}),
     },
   });
   if (!resp.ok) {
@@ -414,7 +487,11 @@ async function fetchSSE(url: string, init?: RequestInit): Promise<Response> {
 }
 
 export const agentApi = {
-  chat: async (messages: AgentMessage[], conversationId?: string, confirmedActionId?: string): Promise<Response> => {
+  chat: async (
+    messages: AgentMessage[],
+    conversationId?: string,
+    confirmedActionId?: string
+  ): Promise<Response> => {
     const url = `${getApiBase().replace(/\/\/+$/, "")}/agent/chat`;
     return fetchSSE(url, {
       method: "POST",
@@ -440,11 +517,15 @@ export const agentApi = {
 export const emailConfigApi = {
   list: () => get<EmailConfig[]>("/settings/email-configs"),
   create: (data: EmailConfigForm) => post<EmailConfig>("/settings/email-configs", data),
-  update: (id: string, data: Partial<EmailConfigForm>) => patch<EmailConfig>(`/settings/email-configs/${id}`, data),
+  update: (id: string, data: Partial<EmailConfigForm>) =>
+    patch<EmailConfig>(`/settings/email-configs/${id}`, data),
   delete: (id: string) => del<{ deleted: string }>(`/settings/email-configs/${id}`),
   activate: (id: string) => post<EmailConfig>(`/settings/email-configs/${id}/activate`),
   test: (id: string) => post<{ status: string }>(`/settings/email-configs/${id}/test`),
-  smtpPresets: () => get<Record<string, { smtp_server: string; smtp_port: number; smtp_use_tls: boolean }>>("/settings/smtp-presets"),
+  smtpPresets: () =>
+    get<Record<string, { smtp_server: string; smtp_port: number; smtp_use_tls: boolean }>>(
+      "/settings/smtp-presets"
+    ),
 };
 
 /* ========== 每日报告配置 ========== */
@@ -454,7 +535,10 @@ export const dailyReportApi = {
     put<{ config: DailyReportConfig }>("/settings/daily-report-config", data),
   runOnce: () => post<Record<string, unknown>>("/jobs/daily-report/run-once"),
   sendOnly: (recipientEmails?: string[]) =>
-    post<Record<string, unknown>>("/jobs/daily-report/send-only", recipientEmails ? { recipient_emails: recipientEmails } : {}),
+    post<Record<string, unknown>>(
+      "/jobs/daily-report/send-only",
+      recipientEmails ? { recipient_emails: recipientEmails } : {}
+    ),
   generateOnly: (useCache = false) =>
     post<{ html: string }>(`/jobs/daily-report/generate-only?use_cache=${useCache}`),
 };
@@ -466,22 +550,28 @@ export const tasksApi = {
     post<{ task_id: string; status: string }>(
       `/tasks/wiki/topic?keyword=${encodeURIComponent(keyword)}&limit=${limit}`
     ),
-  getStatus: (taskId: string) =>
-    get<TaskStatus>(`/tasks/${taskId}`),
-  getResult: (taskId: string) =>
-    get<Record<string, unknown>>(`/tasks/${taskId}/result`),
+  getStatus: (taskId: string) => get<TaskStatus>(`/tasks/${taskId}`),
+  getResult: (taskId: string) => get<Record<string, unknown>>(`/tasks/${taskId}/result`),
   list: (taskType?: string, limit = 20) =>
     get<{ tasks: TaskStatus[] }>(
       `/tasks?${taskType ? `task_type=${taskType}&` : ""}limit=${limit}`
     ),
-  track: (body: { action: string; task_id: string; task_type?: string; title?: string; total?: number; current?: number; message?: string; success?: boolean; error?: string }) =>
-    post<{ ok: boolean }>("/tasks/track", body),
+  track: (body: {
+    action: string;
+    task_id: string;
+    task_type?: string;
+    title?: string;
+    total?: number;
+    current?: number;
+    message?: string;
+    success?: boolean;
+    error?: string;
+  }) => post<{ ok: boolean }>("/tasks/track", body),
 };
 
 /* ========== 认证 ========== */
 
 export const authApi = {
-  login: (password: string) =>
-    post<LoginResponse>("/auth/login", { password }),
+  login: (password: string) => post<LoginResponse>("/auth/login", { password }),
   status: () => get<AuthStatusResponse>("/auth/status"),
 };

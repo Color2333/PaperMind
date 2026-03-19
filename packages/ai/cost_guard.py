@@ -2,6 +2,7 @@
 LLM 成本守卫 - 自动降级模型选择
 @author Color2333
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -47,9 +48,7 @@ class CostGuardService:
             output_tokens=expected_out,
         )
 
-        day_cost = float(
-            self.trace_repo.summarize_costs(days=1)["total_cost_usd"]
-        )
+        day_cost = float(self.trace_repo.summarize_costs(days=1)["total_cost_usd"])
         fallback = self.settings.llm_model_fallback
         budget_per_call = self.settings.per_call_budget_usd
         budget_daily = self.settings.daily_budget_usd

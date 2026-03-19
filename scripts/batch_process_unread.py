@@ -8,16 +8,13 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
+
+from sqlalchemy import select
 
 from packages.ai.pipelines import PaperPipelines
-from packages.config import get_settings
 from packages.storage.db import session_scope
-from packages.storage.models import Paper, AnalysisReport
-from packages.storage.repositories import AnalysisRepository
-from sqlalchemy import select
+from packages.storage.models import AnalysisReport, Paper
 
 logging.basicConfig(
     level=logging.INFO,

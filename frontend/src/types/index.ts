@@ -70,6 +70,37 @@ export interface KeywordSuggestion {
   reason: string;
 }
 
+export interface TopicStats {
+  topic_id: string;
+  topic_name: string;
+  paper_count: number;
+  total_citations: number;
+  recent_30d: number;
+  status_dist: {
+    unread: number;
+    skimmed: number;
+    deep_read: number;
+  };
+}
+
+export interface TopicStatsResponse {
+  topics: TopicStats[];
+}
+
+export interface PaperDistributionStats {
+  by_year: { year: string; count: number }[];
+  by_source: { source: string; raw_source: string; count: number }[];
+}
+
+export interface PaperDistributionResponse {
+  by_year: { year: string; count: number }[];
+  by_source: { source: string; raw_source: string; count: number }[];
+  by_status: { status: string; raw_status: string; count: number }[];
+  by_month: { month: string; count: number }[];
+  by_venue: { venue: string; count: number }[];
+  by_action_source: { source: string; raw_source: string; count: number }[];
+}
+
 /* ========== 抓取任务 ========== */
 export interface TopicFetchResult {
   topic_id: string;
@@ -861,7 +892,8 @@ export interface DailyReportConfig {
   deep_read_limit: number;
   send_email_report: boolean;
   recipient_emails: string[];
-  report_time_utc: number;
+  cron_expression: string;  // 新增：cron 表达式
+  report_time_utc: number;  // 保留：向后兼容
   include_paper_details: boolean;
   include_graph_insights: boolean;
 }

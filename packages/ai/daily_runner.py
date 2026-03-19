@@ -8,15 +8,14 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional
 from uuid import UUID
 
 from packages.ai.brief_service import DailyBriefService
 from packages.ai.graph_service import GraphService
 from packages.ai.pipelines import PaperPipelines
-from packages.ai.rate_limiter import acquire_api, get_rate_limiter
+from packages.ai.rate_limiter import acquire_api
 from packages.config import get_settings
-from packages.domain.enums import ActionType, ReadStatus
+from packages.domain.enums import ActionType
 from packages.storage.db import session_scope
 from packages.storage.models import TopicSubscription
 from packages.storage.repositories import (
@@ -30,9 +29,7 @@ logger = logging.getLogger(__name__)
 PAPER_CONCURRENCY = 3
 
 
-def _process_paper(
-    paper_id, force_deep: bool = False, deep_read_quota: Optional[int] = None
-) -> dict:
+def _process_paper(paper_id, force_deep: bool = False, deep_read_quota: int | None = None) -> dict:
     """
     单篇论文：embed ∥ skim 并行，智能精读
 
@@ -44,7 +41,6 @@ def _process_paper(
     Returns:
         dict: 处理结果 {skim_score, deep_read, success}
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     settings = get_settings()
     pipelines = PaperPipelines()
@@ -126,7 +122,6 @@ def run_topic_ingest(topic_id: str) -> dict:
     Returns:
         dict: 处理结果统计
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     pipelines = PaperPipelines()
     with session_scope() as session:
@@ -318,8 +313,21 @@ def run_daily_ingest() -> dict:
 
 
 def run_daily_brief() -> dict:
-    settings = get_settings()
-    return DailyBriefService().publish(recipient=settings.notify_default_to)
+    """生成每日简报，从数据库读取收件人配置"""
+    # 从数据库读取收件人
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import DailyReportConfigRepository
+
+    recipient = None
+    try:
+        with session_scope() as session:
+            config = DailyReportConfigRepository(session).get_config()
+            if config.send_email_report and config.recipient_emails:
+                recipient = config.recipient_emails.split(",")[0]
+    except Exception as e:
+        logger.warning(f"读取收件人配置失败：{e}")
+
+    return DailyBriefService().publish(recipient=recipient)
 
 
 def run_weekly_graph_maintenance() -> dict:

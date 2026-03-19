@@ -169,6 +169,6 @@ def get_task_result(task_id: str) -> dict:
     if not status:
         raise NotFoundError(f"Task {task_id} not found")
     if not status.get("finished"):
-        raise HTTPException(400, f"Task not finished yet")
+        raise HTTPException(400, "Task not finished yet")
     result = global_tracker.get_result(task_id)
     return result or {}

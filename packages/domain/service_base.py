@@ -12,11 +12,12 @@
         svc = MyService(session=session)
         svc.do_something()  # 与外部 session 共享事务
 """
+
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 from sqlalchemy.orm import Session
 

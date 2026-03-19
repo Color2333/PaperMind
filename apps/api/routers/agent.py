@@ -111,25 +111,31 @@ async def agent_chat(req: AgentChatRequest):
                     text_content += data.get("content", "")
                 elif event_type == "tool_result":
                     # 记录工具调用结果
-                    tool_calls_records.append({
-                        "name": data.get("name"),
-                        "success": data.get("success"),
-                        "summary": data.get("summary"),
-                        "data": data.get("data"),
-                    })
+                    tool_calls_records.append(
+                        {
+                            "name": data.get("name"),
+                            "success": data.get("success"),
+                            "summary": data.get("summary"),
+                            "data": data.get("data"),
+                        }
+                    )
                 elif event_type == "action_result":
                     # 记录用户确认的操作结果
-                    tool_calls_records.append({
-                        "action_id": data.get("id"),
-                        "success": data.get("success"),
-                        "summary": data.get("summary"),
-                        "data": data.get("data"),
-                    })
+                    tool_calls_records.append(
+                        {
+                            "action_id": data.get("id"),
+                            "success": data.get("success"),
+                            "summary": data.get("summary"),
+                            "data": data.get("data"),
+                        }
+                    )
             yield chunk
 
         # 流结束后保存助手响应
         if text_content or tool_calls_records:
-            _save_assistant_response(text_content, tool_calls_records if tool_calls_records else None)
+            _save_assistant_response(
+                text_content, tool_calls_records if tool_calls_records else None
+            )
 
     return StreamingResponse(
         stream_with_save(),
@@ -186,7 +192,7 @@ def get_conversation_messages(
 ) -> dict:
     """获取指定会话的所有消息"""
     from packages.storage.db import session_scope
-    from packages.storage.repositories import AgentMessageRepository, AgentConversationRepository
+    from packages.storage.repositories import AgentConversationRepository, AgentMessageRepository
 
     with session_scope() as session:
         conv_repo = AgentConversationRepository(session)

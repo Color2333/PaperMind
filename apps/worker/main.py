@@ -9,13 +9,14 @@ from __future__ import annotations
 import logging
 import signal
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
 from packages.ai.daily_runner import (
     run_daily_brief,
     run_topic_ingest,
@@ -65,6 +66,8 @@ stop_event = Event()
 _RETRY_MAX = settings.worker_retry_max
 _RETRY_DELAY = settings.worker_retry_base_delay
 
+cs_orchestrator = CSFeedOrchestrator()
+
 
 def _should_run(freq: str, time_utc: int, hour: int, weekday: int) -> bool:
     """判断当前 UTC 小时是否匹配主题的调度规则"""
@@ -81,7 +84,7 @@ def _should_run(freq: str, time_utc: int, hour: int, weekday: int) -> bool:
 
 def topic_dispatch_job() -> None:
     """每小时执行：检查哪些主题需要在当前小时触发"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     hour = now.hour
     weekday = now.weekday()  # 0=Monday
 
@@ -159,6 +162,12 @@ def weekly_graph_job() -> None:
     _write_heartbeat()
 
 
+def cs_feed_dispatch_job():
+    """每小时同步分类 + 执行订阅抓取"""
+    cs_orchestrator.sync_categories()
+    cs_orchestrator.run()
+
+
 def run_worker() -> None:
     """
     Worker 主函数 - UTC 时间智能调度
@@ -188,9 +197,28 @@ def run_worker() -> None:
     )
     logger.info("✅ 已添加：主题分发任务（每小时整点，UTC）")
 
-    # 每日简报（UTC 4 点生成，4 点半发送）
-    # 默认配置：DAILY_CRON=0 4 * * *
-    daily_trigger = CronTrigger.from_crontab(getattr(settings, "daily_cron", "0 4 * * *"))
+    # CS 分类订阅调度（每小时整点）
+    scheduler.add_job(
+        cs_feed_dispatch_job,
+        trigger=CronTrigger(minute=0),
+        id="cs_feed_dispatch",
+        replace_existing=True,
+    )
+    logger.info("✅ 已添加：CS分类订阅调度任务（每小时整点，UTC）")
+
+    # 每日简报（从数据库读取 cron 表达式）
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import DailyReportConfigRepository
+
+    try:
+        with session_scope() as session:
+            config = DailyReportConfigRepository(session).get_config()
+            daily_cron = config.cron_expression or "0 4 * * *"
+    except Exception as e:
+        logger.warning(f"从数据库读取 cron 失败：{e}，使用默认值")
+        daily_cron = "0 4 * * *"
+
+    daily_trigger = CronTrigger.from_crontab(daily_cron)
     scheduler.add_job(
         brief_job,
         trigger=daily_trigger,
@@ -198,9 +226,8 @@ def run_worker() -> None:
         replace_existing=True,
     )
     logger.info(
-        "✅ 已添加：每日简报任务（UTC %s，北京时间%s）",
-        getattr(settings, "daily_cron", "0 4 * * *"),
-        "12:00" if getattr(settings, "daily_cron", "").startswith("0 4") else "计算中",
+        "✅ 已添加：每日简报任务（cron: %s）",
+        daily_cron,
     )
 
     # 每周图谱维护（UTC 周日 22 点 = 北京时间周一 6 点）

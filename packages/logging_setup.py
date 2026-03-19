@@ -2,11 +2,11 @@
 统一日志配置 — API / Worker / 脚本共享同一格式
 @author Color2333
 """
+
 from __future__ import annotations
 
 import logging
 import sys
-
 
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

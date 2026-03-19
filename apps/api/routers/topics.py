@@ -38,7 +38,8 @@ def _topic_dict(t, session=None) -> dict:
     }
     if session is not None:
         from sqlalchemy import func, select
-        from packages.storage.models import PaperTopic, CollectionAction
+
+        from packages.storage.models import CollectionAction, PaperTopic
 
         # 论文计数
         cnt = session.scalar(
@@ -237,3 +238,34 @@ def ingest_references_status(task_id: str) -> dict:
     if not task:
         raise HTTPException(404, "Task not found")
     return task
+
+
+# ---------- 统计 ----------
+
+
+@router.get("/topics/stats")
+def topic_stats() -> dict:
+    """主题维度统计（30s 缓存）"""
+    from apps.api.deps import cache
+
+    cached = cache.get("topic_stats")
+    if cached is not None:
+        return cached
+    with session_scope() as session:
+        result = PaperRepository(session).topic_stats()
+    cache.set("topic_stats", result, ttl=30)
+    return result
+
+
+@router.get("/topics/distribution")
+def paper_distribution() -> dict:
+    """论文分布统计：年份分布 + 来源分布（30s 缓存）"""
+    from apps.api.deps import cache
+
+    cached = cache.get("paper_distribution")
+    if cached is not None:
+        return cached
+    with session_scope() as session:
+        result = PaperRepository(session).paper_distribution_stats()
+    cache.set("paper_distribution", result, ttl=30)
+    return result
