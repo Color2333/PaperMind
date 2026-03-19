@@ -68,19 +68,19 @@ DAILY_TEMPLATE = Template("""\
   .section { margin-bottom: 32px; }
   .section-title { font-size: 18px; font-weight: 700; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #e2e8f0; display: flex; align-items: center; gap: 8px; }
   .section-title::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); }
-  
+
   /* ===== 焦点区域 - 最高优先级 ===== */
   .focus-zone { background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border: 2px solid #22c55e; border-radius: 16px; padding: 20px; margin-bottom: 32px; }
   .focus-title { font-size: 20px; font-weight: 800; color: #15803d; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
   .focus-title::before { content: "🎯"; font-size: 24px; }
-  
+
   /* AI 洞察增强 */
   .ai-insight-box { background: #fff; border-radius: 12px; padding: 18px; border-left: 4px solid #22c55e; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
   .ai-insight-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
   .ai-insight-icon { font-size: 20px; }
   .ai-insight-title { font-weight: 700; color: #15803d; font-size: 15px; }
   .ai-insight-content { font-size: 14px; line-height: 1.8; color: #374151; }
-  
+
   /* 精读精选卡片增强 */
   .deep-card { background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%); border: 2px solid #c084fc; border-left: 4px solid #a855f7; border-radius: 14px; padding: 18px; margin-bottom: 16px; transition: all 0.2s; cursor: pointer; }
   .deep-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(168, 85, 247, 0.15); border-color: #a855f7; }
@@ -91,24 +91,24 @@ DAILY_TEMPLATE = Template("""\
   .deep-text { font-size: 13px; color: #4b5563; line-height: 1.7; margin: 0; }
   .risk-list { margin: 6px 0 0 18px; padding: 0; font-size: 12px; color: #b45309; }
   .risk-list li { margin-bottom: 4px; line-height: 1.5; }
-  
+
   /* 推荐卡片 */
   .rec-card { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #93c5fd; border-left: 3px solid #3b82f6; border-radius: 12px; padding: 16px; margin-bottom: 12px; transition: all 0.2s; cursor: pointer; }
   .rec-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15); border-color: #3b82f6; }
   .rec-title { font-weight: 600; font-size: 15px; color: #1a1a2e; line-height: 1.4; }
   .rec-meta { font-size: 12px; color: #6b7280; margin-top: 6px; display: flex; align-items: center; gap: 4px; }
   .rec-reason { font-size: 13px; color: #4b5563; margin-top: 8px; line-height: 1.6; font-style: italic; }
-  
+
   /* 热点标签增强 */
   .kw-tag { display: inline-flex !important; align-items: center; gap: 4px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #92400e; border-radius: 9999px; padding: 6px 14px !important; font-size: 13px !important; font-weight: 600; margin: 4px !important; border: 1px solid #f59e0b; transition: transform 0.2s; }
   .kw-tag:hover { transform: scale(1.05); }
   .kw-tag::before { content: "🔥"; font-size: 12px; }
-  
+
   /* 主题分组 */
   .topic-group { margin-bottom: 24px; background: #fff; border-radius: 12px; padding: 16px; border: 1px solid #e2e8f0; }
   .topic-name { font-size: 16px; font-weight: 700; color: #6366f1; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px dashed #e2e8f0; }
   .topic-name::before { content: "📁"; font-size: 16px; }
-  
+
   /* 普通论文卡片 */
   .paper-item { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-bottom: 10px; transition: all 0.2s; cursor: pointer; }
   .paper-item:hover { border-color: #a5b4fc; box-shadow: 0 2px 8px rgba(99, 102, 241, 0.08); transform: translateY(-1px); }
@@ -117,31 +117,31 @@ DAILY_TEMPLATE = Template("""\
   .paper-summary { font-size: 13px; color: #6b7280; margin-top: 8px; line-height: 1.6; max-height: 60px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; transition: max-height 0.3s; }
   .paper-item:hover .paper-summary { max-height: 200px; }
   .paper-id { font-size: 11px; color: #9ca3af; font-family: ui-monospace, monospace; }
-  
+
   /* 按钮增强 */
   .btn { display: inline-block; padding: 8px 16px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #fff !important; text-decoration: none; border-radius: 8px; font-size: 12px; font-weight: 600; margin-top: 8px; transition: all 0.2s; border: none; cursor: pointer; }
   .btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3); }
-  
+
   /* 分数徽章增强 */
   .score-badge { display: inline-flex !important; align-items: center; justify-content: center; border-radius: 9999px !important; font-weight: 800 !important; font-size: 11px !important; padding: 3px 8px !important; min-width: 48px; }
   .score-high { background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%) !important; color: #166534 !important; border: 1px solid #22c55e !important; }
   .score-mid { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%) !important; color: #92400e !important; border: 1px solid #f59e0b !important; }
   .score-low { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%) !important; color: #991b1b !important; border: 1px solid #ef4444 !important; }
-  
+
   /* 深度徽章 */
   .deep-badge { display: inline-flex !important; align-items: center; gap: 2px; background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%) !important; color: #6d28d9 !important; padding: 2px 8px !important; border-radius: 6px !important; font-size: 10px !important; font-weight: 700 !important; border: 1px solid #a855f7 !important; }
   .deep-badge::before { content: "✨"; font-size: 8px; }
-  
+
   /* 创新标签增强 */
   .innovation-tags { display: flex !important; flex-wrap: wrap !important; gap: 6px !important; margin-top: 8px !important; }
   .innovation-tag { display: inline-flex !important; align-items: center; gap: 4px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%) !important; color: #78350f !important; border-radius: 8px !important; padding: 4px 10px !important; font-size: 11px !important; font-weight: 600 !important; border: 1px solid #f59e0b !important; }
   .innovation-tag::before { content: "💡"; font-size: 10px; }
-  
+
   /* 页脚 */
   .footer { text-align: center; color: #9ca3af; font-size: 12px; margin-top: 48px; padding-top: 20px; border-top: 2px solid #e2e8f0; }
   .footer a { color: #6366f1; text-decoration: none; font-weight: 600; }
   .footer a:hover { text-decoration: underline; }
-  
+
   a { color: #6366f1; text-decoration: none; transition: color 0.2s; }
   a:hover { color: #4f46e5; }
 </style>
@@ -173,7 +173,7 @@ DAILY_TEMPLATE = Template("""\
 {% if ai_summary or deep_read_highlights %}
 <div class="focus-zone">
   <div class="focus-title">今日焦点</div>
-  
+
   {% if ai_summary %}
   <div class="ai-insight-box">
     <div class="ai-insight-header">
@@ -183,7 +183,7 @@ DAILY_TEMPLATE = Template("""\
     <div class="ai-insight-content">{{ ai_summary }}</div>
   </div>
   {% endif %}
-  
+
   {% if deep_read_highlights %}
   <div style="margin-top: 20px;">
     <div class="section-title" style="font-size: 16px; border-bottom: 1px dashed #c084fc;">

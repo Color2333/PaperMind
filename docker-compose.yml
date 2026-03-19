@@ -120,4 +120,3 @@ volumes:
   pm_logs:
     name: papermind_logs
   pm_pip_cache:
-

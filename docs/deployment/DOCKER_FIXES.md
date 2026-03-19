@@ -1,7 +1,7 @@
 # PaperMind Docker 部署问题修复报告
 
 > 修复日期：2026-02-26
-> 
+>
 > 修复目标：确保 Docker 部署顺利，解决前后端配置问题
 
 ---
@@ -23,11 +23,11 @@
 export function resolveApiBase(): string {
   if (!isTauri()) {
     if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
-    
+
     if (import.meta.env.DEV) {
       return "http://localhost:8000";
     }
-    
+
     // Docker 生产环境使用相对路径
     return "/api";
   }
@@ -66,19 +66,19 @@ cors_allow_origins: str = (
 location /api/ {
     # 去掉 /api 前缀，转发到后端
     rewrite ^/api/(.*) /$1 break;
-    
+
     # 后端服务地址（Docker 内部网络）
     proxy_pass http://backend:8000;
-    
+
     # WebSocket/SSE 支持
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
-    
+
     # 关闭缓冲（SSE 需要）
     proxy_buffering off;
     proxy_cache off;
-    
+
     # 超时设置
     proxy_read_timeout 120s;
 }
@@ -197,7 +197,7 @@ src/pages/Agent.tsx(346,42): error TS2552
 ...
 ```
 
-**影响**: 
+**影响**:
 - ❌ 不影响 Docker 构建（Dockerfile 使用 `npm run build` 会跳过类型检查）
 - ⚠️ 建议后续修复这些类型错误
 
@@ -221,7 +221,7 @@ result.get("saved_path", "N/A")  # Pylance 报错，但运行时正确
 
 **原因**: `result` 可能为 `None`，但实际逻辑中不会为 `None`
 
-**影响**: 
+**影响**:
 - ✅ 不影响运行
 - ✅ 不影响 Docker 构建
 

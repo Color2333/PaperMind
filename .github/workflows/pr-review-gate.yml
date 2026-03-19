@@ -35,7 +35,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUM="${{ steps.pr.outputs.pr_number }}"
-          
+
           BODY='## 🔍 OpenCode PR Review Required
 
           这是一个受保护的分支，merge 前需要进行 code review。
@@ -50,7 +50,7 @@ jobs:
           ---
 
           *This is an automated reminder from PR Review Gate.*'
-          
+
           gh pr comment $PR_NUM --body "$BODY"
 
       - name: Set status check to success

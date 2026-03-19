@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from packages.ai.pipelines import PaperPipelines
-from packages.ai.rate_limiter import acquire_api, get_rate_limiter
+from packages.ai.rate_limiter import acquire_api
 from packages.storage.db import session_scope
 from packages.storage.models import AnalysisReport, Paper
 
@@ -125,10 +125,10 @@ def main():
 示例:
   # 处理 20 篇（默认）
   python scripts/cleanup_unread.py
-  
+
   # 处理 50 篇，并发 5 个
   python scripts/cleanup_unread.py --limit 50 --concurrency 5
-  
+
   # 添加到 crontab（每天 UTC 14 点执行）
   0 14 * * * cd /path/to/PaperMind && /path/to/venv/bin/python scripts/cleanup_unread.py --limit 30
         """,
@@ -171,8 +171,6 @@ def main():
     # 批量处理
     results = []
     start_time = datetime.now(UTC)
-
-    limiter = get_rate_limiter()
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
         futures = {

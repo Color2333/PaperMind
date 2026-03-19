@@ -1,7 +1,7 @@
 # PaperMind Docker 部署指南 - 端口预留版
 
 > 适用于已有项目占用 3001 和 8001 端口的场景
-> 
+>
 > **端口规划**:
 > - 现有项目：3001(前端) + 8001(后端)
 > - PaperMind：**3002(前端) + 8002(后端)**
@@ -346,14 +346,14 @@ ufw allow from 192.168.1.0/24 to any port 8002
 server {
     listen 443 ssl;
     server_name your-domain.com;
-    
+
     ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    
+
     location / {
         proxy_pass http://localhost:3002;
     }
-    
+
     location /api/ {
         proxy_pass http://localhost:8002;
     }
@@ -414,7 +414,7 @@ services:
     image: prom/prometheus
     ports:
       - "9090:9090"
-  
+
   grafana:
     image: grafana/grafana
     ports:
