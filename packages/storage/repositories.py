@@ -314,7 +314,12 @@ class PaperRepository:
             citation_q = (
                 select(
                     func.coalesce(
-                        func.sum(Paper.metadata_json["citation_count"].astext.cast(Integer)), 0
+                        func.sum(
+                            func.cast(
+                                func.json_extract(Paper.metadata_json, "$.citation_count"), Integer
+                            )
+                        ),
+                        0,
                     )
                 )
                 .join(PaperTopic, Paper.id == PaperTopic.paper_id)
