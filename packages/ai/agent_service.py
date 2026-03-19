@@ -303,7 +303,7 @@ def _llm_loop(
         text_buf = ""
         tool_calls: list[StreamEvent] = []
 
-        for event in llm.chat_stream(openai_msgs, tools=tools, max_tokens=4096):
+        for event in llm.chat_stream(openai_msgs, tools=tools, max_tokens=8192):
             if event.type == "text_delta":
                 text_buf += event.content
                 yield _make_sse("text_delta", {"content": event.content})
