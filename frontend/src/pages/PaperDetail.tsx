@@ -277,13 +277,7 @@ export default function PaperDetail() {
     setReportTab("deep");
     try {
       const report = await pipelineApi.deep(id);
-      setDeepReport(report);
-      // 刷新论文信息，更新精读报告并清除旧缓存
-      const updated = await paperApi.detail(id);
-      setPaper(updated);
-      if (updated.deep_report) setSavedDeep(updated.deep_report);
-      // 清除新生成的报告，优先显示 savedDeep（从后端加载的最新数据）
-      setDeepReport(null);
+      setSavedDeep(report);
       toast("success", "精读完成");
     } catch {
       toast("error", "精读失败");
