@@ -7,11 +7,11 @@ LLM Prompt 模板
 def build_skim_prompt(title: str, abstract: str) -> str:
     return (
         "你是科研助手。请根据标题和摘要输出严格 JSON：\n"
-        '{"one_liner":"一句话中文总结", '
-        '"innovations":["创新点1","创新点2","创新点3"], '
+        '{"one_liner":"用一句话概括论文核心贡献", '
+        '"innovations":["从摘要中提取的创新点1","从摘要中提取的创新点2","从摘要中提取的创新点3"], '
         '"keywords":["keyword1","keyword2","keyword3","keyword4","keyword5"], '
-        '"title_zh":"中文标题翻译", '
-        '"abstract_zh":"中文摘要翻译（完整翻译，不要缩写）", '
+        '"title_zh":"中文标题", '
+        '"abstract_zh":"中文摘要", '
         '"relevance_score":0.0}\n'
         "要求：\n"
         "- one_liner、innovations、title_zh、abstract_zh 必须使用中文\n"
