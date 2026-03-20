@@ -567,6 +567,13 @@ class StreamingAgentLoop:
                 result = PaperMindToolResult(
                     success=item.success, data=item.data, summary=item.summary
                 )
+            elif hasattr(item, "success") and hasattr(item, "data") and hasattr(item, "summary"):
+                # agent_tools.ToolResult (不同模块的同名类)
+                result = PaperMindToolResult(
+                    success=item.success,
+                    data=item.data if item.data else {},
+                    summary=item.summary,
+                )
 
         # 构建 tool 消息
         tool_content: dict = {
@@ -700,6 +707,10 @@ class StreamingAgentLoop:
                 )
             elif isinstance(item, PaperMindToolResult):
                 result = item
+            elif hasattr(item, "success") and hasattr(item, "data") and hasattr(item, "summary"):
+                result = PaperMindToolResult(
+                    success=item.success, data=item.data or {}, summary=item.summary
+                )
 
         yield _make_sse(
             "action_result",
@@ -804,6 +815,10 @@ class StreamingAgentLoop:
                 )
             elif isinstance(item, PaperMindToolResult):
                 result = item
+            elif hasattr(item, "success") and hasattr(item, "data") and hasattr(item, "summary"):
+                result = PaperMindToolResult(
+                    success=item.success, data=item.data or {}, summary=item.summary
+                )
 
         yield _make_sse(
             "action_result",
