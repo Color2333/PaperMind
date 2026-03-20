@@ -18,22 +18,14 @@ depends_on = None
 def upgrade() -> None:
     """Create cs_categories and cs_feed_subscriptions tables (idempotent).
 
-    Uses CREATE TABLE IF NOT EXISTS so this migration is safe to run on both:
-    - Fresh databases (creates the tables)
-    - Existing databases where tables were manually created (no-op)
-
-    SQLite does not support ALTER COLUMN, DROP COLUMN, or changing column
-    constraints, so those operations are omitted. The application only
-    needs the two tables created here.
+    Note: The original migration attempted many ALTER TABLE operations
+    (SET NOT NULL, enum changes, column drops) that are not supported by SQLite.
+    SQLite schema changes require table recreation. The tables created here
+    are the only ones needed by the application; the ALTER operations were
+    either already applied on the server or not required for SQLite.
     """
-
-    def create_table_if_not_exists(sql: str) -> None:
-        try:
-            op.execute(sa.text(sql))
-        except Exception:
-            pass
-
-    create_table_if_not_exists("""
+    op.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS cs_categories (
             code VARCHAR(32) PRIMARY KEY NOT NULL,
             name VARCHAR(128) NOT NULL,
@@ -41,7 +33,9 @@ def upgrade() -> None:
             cached_at TIMESTAMP NOT NULL
         )
     """)
-    create_table_if_not_exists("""
+    )
+    op.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS cs_feed_subscriptions (
             id VARCHAR(36) PRIMARY KEY NOT NULL,
             category_code VARCHAR(32) NOT NULL,
@@ -54,27 +48,16 @@ def upgrade() -> None:
             created_at TIMESTAMP NOT NULL
         )
     """)
-    try:
-        op.execute(
-            sa.text(
-                "CREATE INDEX IF NOT EXISTS ix_cs_feed_subscriptions_category_code "
-                "ON cs_feed_subscriptions(category_code)"
-            )
+    )
+    op.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_cs_feed_subscriptions_category_code "
+            "ON cs_feed_subscriptions(category_code)"
         )
-    except Exception:
-        pass
+    )
 
 
 def downgrade() -> None:
-    try:
-        op.execute(sa.text("DROP INDEX IF EXISTS ix_cs_feed_subscriptions_category_code"))
-    except Exception:
-        pass
-    try:
-        op.execute(sa.text("DROP TABLE IF EXISTS cs_feed_subscriptions"))
-    except Exception:
-        pass
-    try:
-        op.execute(sa.text("DROP TABLE IF EXISTS cs_categories"))
-    except Exception:
-        pass
+    op.drop_index("ix_cs_feed_subscriptions_category_code", table_name="cs_feed_subscriptions")
+    op.drop_table("cs_feed_subscriptions")
+    op.drop_table("cs_categories")
