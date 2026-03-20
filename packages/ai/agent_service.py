@@ -7,19 +7,27 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
-from uuid import uuid4
+from typing import TYPE_CHECKING
 
+from packages.agent_core.context_compaction import (
+    CompactingStreamingAgentLoop,
+    CompactionConfig,
+    ContextCompactor,
+)
+from packages.agent_core.loop import StreamingAgentLoop
+from packages.agent_core.subagents import SubagentPool, SubagentRunner, get_subagent_pool
+from packages.agent_core.todos import PlannerMixin, TodoManager, get_todo_manager
 from packages.ai.agent_tools import (
     TOOL_REGISTRY,
-    ToolProgress,
-    ToolResult,
     execute_tool_stream,
     get_openai_tools,
 )
-from packages.integrations.llm_client import LLMClient, StreamEvent
+from packages.integrations.llm_client import LLMClient
 from packages.storage.db import session_scope
-from packages.storage.repositories import AgentPendingActionRepository, PromptTraceRepository
+from packages.storage.repositories import AgentPendingActionRepository
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -95,21 +103,12 @@ SYSTEM_PROMPT = """\
 10. **简洁回答**：不要长篇解释工具用途，直接执行任务。
 """
 
-_CONFIRM_TOOLS = {t.name for t in TOOL_REGISTRY if t.requires_confirm}
-
-_ACTION_TTL = 1800  # 30 分钟过期
+_ACTION_TTL = 1800  # 30 分钟
 
 
-def _cleanup_expired_actions():
-    """清理过期的 pending actions（数据库）"""
-    try:
-        with session_scope() as session:
-            repo = AgentPendingActionRepository(session)
-            deleted = repo.cleanup_expired(_ACTION_TTL)
-            if deleted > 0:
-                logger.info("清理 %d 个过期 pending_actions", deleted)
-    except Exception as exc:
-        logger.warning("清理过期 pending_actions 失败: %s", exc)
+def _make_sse(event: str, data: dict) -> str:
+    """格式化 SSE 事件"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _record_agent_usage(
@@ -129,6 +128,8 @@ def _record_agent_usage(
             output_tokens=output_tokens,
         )
         with session_scope() as session:
+            from packages.storage.repositories import PromptTraceRepository
+
             PromptTraceRepository(session).create(
                 stage="agent_chat",
                 provider=provider,
@@ -157,19 +158,16 @@ def _build_user_profile() -> str:
             paper_repo = PaperRepository(session)
             topic_repo = TopicRepository(session)
 
-            # 订阅主题
             topics = topic_repo.list_topics(enabled_only=True)
             if topics:
                 topic_names = [t.name for t in topics[:8]]
                 parts.append(f"关注领域：{', '.join(topic_names)}")
 
-            # 精读过的论文
             deep_read = paper_repo.list_by_read_status(ReadStatus.deep_read, limit=5)
             if deep_read:
                 titles = [p.title[:60] for p in deep_read]
                 parts.append(f"最近精读：{'; '.join(titles)}")
 
-            # 粗读过的论文数量
             skimmed = paper_repo.list_by_read_status(ReadStatus.skimmed, limit=200)
             unread = paper_repo.list_by_read_status(ReadStatus.unread, limit=200)
             parts.append(
@@ -215,227 +213,113 @@ def _build_messages(user_messages: list[dict]) -> list[dict]:
     return openai_msgs
 
 
-def _make_sse(event: str, data: dict) -> str:
-    """格式化 SSE 事件"""
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+def _cleanup_expired_actions() -> None:
+    """清理过期的 pending actions（数据库）"""
+    try:
+        with session_scope() as session:
+            repo = AgentPendingActionRepository(session)
+            deleted = repo.cleanup_expired(_ACTION_TTL)
+            if deleted > 0:
+                logger.info("清理 %d 个过期 pending_actions", deleted)
+    except Exception as exc:
+        logger.warning("清理过期 pending_actions 失败: %s", exc)
 
 
-def _execute_and_emit(
-    tool_name: str,
-    args: dict,
-    tool_call_id: str,
-    result_event: str = "tool_result",
-    action_id: str | None = None,
-) -> Iterator[tuple[str, ToolResult]]:
-    """执行工具并生成 SSE 事件流，返回 (sse_str, result) 的迭代器。
-    最后一个 yield 的第二个元素为最终的 ToolResult。"""
-    yield (
-        _make_sse(
-            "tool_start",
-            {
-                "id": tool_call_id,
-                "name": tool_name,
-                "args": args,
-            },
-        ),
-        ToolResult(success=False, summary=""),
-    )
-
-    result = ToolResult(success=False, summary="无结果")
-    for item in execute_tool_stream(tool_name, args):
-        if isinstance(item, ToolProgress):
-            yield (
-                _make_sse(
-                    "tool_progress",
-                    {
-                        "id": tool_call_id,
-                        "message": item.message,
-                        "current": item.current,
-                        "total": item.total,
-                    },
-                ),
-                result,
-            )
-        elif isinstance(item, ToolResult):
-            result = item
-
-    emit_data: dict = {
-        "id": action_id or tool_call_id,
-        "success": result.success,
-        "summary": result.summary,
-        "data": result.data,
-    }
-    if result_event == "tool_result":
-        emit_data["name"] = tool_name
-    yield _make_sse(result_event, emit_data), result
-
-
-def _build_tool_message(result: ToolResult, tool_call_id: str) -> dict:
-    """构建工具结果消息（含失败提示）"""
-    tool_content: dict = {
-        "success": result.success,
-        "summary": result.summary,
-        "data": result.data,
-    }
-    if not result.success:
-        tool_content["error_hint"] = (
-            "工具执行失败。请分析原因，告知用户，并建议替代方案。不要用相同参数重试。"
-        )
-    return {
-        "role": "tool",
-        "tool_call_id": tool_call_id,
-        "content": json.dumps(tool_content, ensure_ascii=False),
-    }
-
-
-def _llm_loop(
-    conversation: list[dict],
-    llm: LLMClient,
-    tools: list[dict],
-    max_rounds: int = 12,
-) -> Iterator[str]:
-    """
-    LLM 循环核心：流式调用 LLM，处理工具调用。
-    只读工具自动执行，写操作暂停等确认。
-    """
-    for round_idx in range(max_rounds):
-        openai_msgs = _build_messages(conversation)
-        text_buf = ""
-        tool_calls: list[StreamEvent] = []
-
-        for event in llm.chat_stream(openai_msgs, tools=tools, max_tokens=8192):
-            if event.type == "text_delta":
-                text_buf += event.content
-                yield _make_sse("text_delta", {"content": event.content})
-            elif event.type == "tool_call":
-                tool_calls.append(event)
-            elif event.type == "usage":
-                _record_agent_usage(
-                    provider=llm.provider,
-                    model=event.model,
-                    input_tokens=event.input_tokens,
-                    output_tokens=event.output_tokens,
-                )
-            elif event.type == "error":
-                yield _make_sse("error", {"message": event.content})
-                return
-
-        # 没有工具调用 → 对话结束
-        if not tool_calls:
-            break
-
-        # 记录 assistant 回复（含 tool_calls）
-        assistant_msg: dict = {
-            "role": "assistant",
-            "content": text_buf,
-            "tool_calls": [
-                {
-                    "id": tc.tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.tool_name,
-                        "arguments": tc.tool_arguments,
-                    },
+def _load_pending_action(action_id: str) -> dict | None:
+    """从数据库读取 pending action"""
+    try:
+        with session_scope() as session:
+            repo = AgentPendingActionRepository(session)
+            record = repo.get_by_id(action_id)
+            if record:
+                return {
+                    "action_id": action_id,
+                    "tool": record.tool_name,
+                    "args": record.tool_args,
+                    "tool_call_id": record.tool_call_id,
+                    "conversation": (record.conversation_state or {}).get("conversation", []),
                 }
-                for tc in tool_calls
-            ],
-        }
-        conversation.append(assistant_msg)
+    except Exception as exc:
+        logger.warning("读取 pending_action 失败: %s", exc)
+    return None
 
-        # 处理工具调用：优先检查确认类工具
-        confirm_calls = [tc for tc in tool_calls if tc.tool_name in _CONFIRM_TOOLS]
-        auto_calls = [tc for tc in tool_calls if tc.tool_name not in _CONFIRM_TOOLS]
 
-        # 有需要确认的工具时，先处理自动工具，再暂停
-        for tc in auto_calls:
-            try:
-                args = json.loads(tc.tool_arguments) if tc.tool_arguments else {}
-            except json.JSONDecodeError:
-                args = {}
+def _create_loop(
+    conversation: list[dict],
+) -> StreamingAgentLoop:
+    """创建配置好的 StreamingAgentLoop 实例"""
+    llm = LLMClient()
+    tools = get_openai_tools()
 
-            result = ToolResult(success=False, summary="")
-            for sse, r in _execute_and_emit(tc.tool_name, args, tc.tool_call_id):
-                yield sse
-                result = r
-            conversation.append(_build_tool_message(result, tc.tool_call_id))
+    def on_usage(provider: str, model: str, input_tokens: int, output_tokens: int) -> None:
+        _record_agent_usage(provider, model, input_tokens, output_tokens)
 
-        if confirm_calls:
-            # 一次只处理一个确认类工具
-            tc = confirm_calls[0]
-            try:
-                args = json.loads(tc.tool_arguments) if tc.tool_arguments else {}
-            except json.JSONDecodeError:
-                args = {}
-
-            action_id = f"act_{uuid4().hex[:12]}"
-            logger.info(
-                "确认操作挂起: %s [%s] args=%s",
-                action_id,
-                tc.tool_name,
-                args,
-            )
-            # 持久化到数据库
-            _cleanup_expired_actions()
-            try:
-                with session_scope() as session:
-                    repo = AgentPendingActionRepository(session)
-                    repo.create(
-                        action_id=action_id,
-                        tool_name=tc.tool_name,
-                        tool_args=args,
-                        tool_call_id=tc.tool_call_id,
-                        conversation_state={"conversation": conversation},
-                    )
-            except Exception as exc:
-                logger.warning("存储 pending_action 失败: %s", exc)
-            desc = _describe_action(tc.tool_name, args)
-            yield _make_sse(
-                "action_confirm",
-                {
-                    "id": action_id,
-                    "tool": tc.tool_name,
-                    "args": args,
-                    "description": desc,
-                },
-            )
-            return
-
-    yield _make_sse("done", {})
+    loop = StreamingAgentLoop(
+        llm=llm,
+        tools=tools,
+        tool_registry=TOOL_REGISTRY,
+        execute_fn=execute_tool_stream,
+        session_scope=session_scope,
+        on_usage=on_usage,
+    )
+    return loop
 
 
 def stream_chat(
     messages: list[dict],
     confirmed_action_id: str | None = None,
-) -> Iterator[str]:
+) -> tuple[Iterator[str], list[dict]]:
     """
-    Agent 主入口：接收消息列表，返回 SSE 事件流。
+    Agent 主入口：接收消息列表，返回 (SSE事件流, 更新后的conversation)。
+
+    注意：返回的 conversation 已包含所有 tool 消息和 assistant 回复，
+    可用于持久化或后续处理。
     """
-    llm = LLMClient()
-    tools = get_openai_tools()
-    conversation = list(messages)
+    _cleanup_expired_actions()
+    conversation = _build_messages(messages)
 
     # 处理确认操作
     if confirmed_action_id:
-        # 从数据库读取并删除
-        action = None
-        try:
-            with session_scope() as session:
-                repo = AgentPendingActionRepository(session)
-                action_record = repo.get_by_id(confirmed_action_id)
-                if action_record:
-                    action = {
-                        "tool": action_record.tool_name,
-                        "args": action_record.tool_args,
-                        "tool_call_id": action_record.tool_call_id,
-                        "conversation": (action_record.conversation_state or {}).get(
-                            "conversation", []
-                        ),
-                    }
-                    repo.delete(confirmed_action_id)
-        except Exception as exc:
-            logger.warning("读取 pending_action 失败: %s", exc)
-
+        action = _load_pending_action(confirmed_action_id)
         if not action:
+
+            def _err_iter():
+                yield _make_sse(
+                    "error",
+                    {
+                        "message": "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"
+                    },
+                )
+                yield _make_sse("done", {})
+
+            return _err_iter(), conversation
+
+        loop = _create_loop(conversation)
+
+        def _confirm_iter():
+            yield from loop.execute_and_continue(action, conversation)
+            yield _make_sse("done", {})
+
+        return _confirm_iter(), conversation
+
+    # 正常对话
+    loop = _create_loop(conversation)
+
+    def _chat_iter():
+        yield from loop.run(conversation)
+        yield _make_sse("done", {})
+
+    return _chat_iter(), conversation
+
+
+def confirm_action(action_id: str) -> tuple[Iterator[str], list[dict]]:
+    """确认执行挂起的操作并继续对话"""
+    logger.info("用户确认操作: %s", action_id)
+
+    action = _load_pending_action(action_id)
+    if not action:
+
+        def _err_iter():
             yield _make_sse(
                 "error",
                 {
@@ -443,194 +327,73 @@ def stream_chat(
                 },
             )
             yield _make_sse("done", {})
-            return
 
-        yield _make_sse(
-            "tool_start",
-            {
-                "id": action["tool_call_id"],
-                "name": action["tool"],
-                "args": action["args"],
-            },
-        )
-        result = ToolResult(success=False, summary="无结果")
-        for item in execute_tool_stream(action["tool"], action["args"]):
-            if isinstance(item, ToolProgress):
-                yield _make_sse(
-                    "tool_progress",
-                    {
-                        "id": action["tool_call_id"],
-                        "message": item.message,
-                        "current": item.current,
-                        "total": item.total,
-                    },
-                )
-            elif isinstance(item, ToolResult):
-                result = item
-        yield _make_sse(
-            "action_result",
-            {
-                "id": confirmed_action_id,
-                "success": result.success,
-                "summary": result.summary,
-                "data": result.data,
-            },
-        )
+        return _err_iter(), []
 
-        conversation = action.get("conversation", conversation)
-        conversation.append(
-            {
-                "role": "tool",
-                "tool_call_id": action["tool_call_id"],
-                "content": json.dumps(
-                    {
-                        "success": result.success,
-                        "summary": result.summary,
-                        "data": result.data,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
-        )
-
-        yield from _llm_loop(conversation, llm, tools)
-        yield _make_sse("done", {})
-        return
-
-    # 正常对话
-    yield from _llm_loop(conversation, llm, tools)
-    yield _make_sse("done", {})
-
-
-def confirm_action(action_id: str) -> Iterator[str]:
-    """确认执行挂起的操作并继续对话"""
-    logger.info("用户确认操作: %s", action_id)
-
-    # 从数据库读取并删除
-    action = None
+    # 删除 pending action
     try:
         with session_scope() as session:
             repo = AgentPendingActionRepository(session)
-            action_record = repo.get_by_id(action_id)
-            if action_record:
-                action = {
-                    "tool": action_record.tool_name,
-                    "args": action_record.tool_args,
-                    "tool_call_id": action_record.tool_call_id,
-                    "conversation": (action_record.conversation_state or {}).get(
-                        "conversation", []
-                    ),
-                }
-                repo.delete(action_id)
+            repo.delete(action_id)
     except Exception as exc:
-        logger.warning("读取 pending_action 失败: %s", exc)
-
-    if not action:
-        yield _make_sse(
-            "error",
-            {
-                "message": "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"
-            },
-        )
-        yield _make_sse("done", {})
-        return
-
-    result = ToolResult(success=False, summary="")
-    for sse, r in _execute_and_emit(
-        action["tool"],
-        action["args"],
-        action["tool_call_id"],
-        result_event="action_result",
-        action_id=action_id,
-    ):
-        yield sse
-        result = r
+        logger.warning("删除 pending_action 失败: %s", exc)
 
     conversation = action.get("conversation", [])
-    if conversation:
-        conversation.append(_build_tool_message(result, action["tool_call_id"]))
-        llm = LLMClient()
-        tools = get_openai_tools()
-        yield from _llm_loop(conversation, llm, tools)
+    loop = _create_loop(conversation)
 
-    yield _make_sse("done", {})
+    def _confirm_iter():
+        yield from loop.execute_confirmed_action(action, conversation)
+        yield _make_sse("done", {})
+
+    return _confirm_iter(), conversation
 
 
-def reject_action(action_id: str) -> Iterator[str]:
+def reject_action(action_id: str) -> tuple[Iterator[str], list[dict]]:
     """拒绝挂起的操作并让 LLM 给出替代建议"""
     logger.info("用户拒绝操作: %s", action_id)
 
-    # 从数据库读取并删除
-    action = None
-    try:
-        with session_scope() as session:
-            repo = AgentPendingActionRepository(session)
-            action_record = repo.get_by_id(action_id)
-            if action_record:
-                action = {
-                    "tool": action_record.tool_name,
-                    "args": action_record.tool_args,
-                    "tool_call_id": action_record.tool_call_id,
-                    "conversation": (action_record.conversation_state or {}).get(
-                        "conversation", []
-                    ),
-                }
+    action = _load_pending_action(action_id)
+
+    # 删除 pending action
+    if action:
+        try:
+            with session_scope() as session:
+                repo = AgentPendingActionRepository(session)
                 repo.delete(action_id)
-    except Exception as exc:
-        logger.warning("读取 pending_action 失败: %s", exc)
+        except Exception as exc:
+            logger.warning("删除 pending_action 失败: %s", exc)
 
-    yield _make_sse(
-        "action_result",
-        {
-            "id": action_id,
-            "success": False,
-            "summary": "用户已取消该操作",
-            "data": {},
-        },
-    )
+    conversation = action.get("conversation", []) if action else []
+    loop = _create_loop(conversation) if conversation else None
 
-    # 恢复对话，注入拒绝信息，让 LLM 给替代建议
-    if action and action.get("conversation"):
-        conversation = action["conversation"]
-        conversation.append(
+    def _reject_iter():
+        yield _make_sse(
+            "action_result",
             {
-                "role": "tool",
-                "tool_call_id": action["tool_call_id"],
-                "content": json.dumps(
-                    {
-                        "success": False,
-                        "summary": "用户拒绝了此操作，请提供替代方案或询问用户意见",
-                        "data": {},
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+                "id": action_id,
+                "success": False,
+                "summary": "用户已取消该操作",
+                "data": {},
+            },
         )
-        llm = LLMClient()
-        tools = get_openai_tools()
-        yield from _llm_loop(conversation, llm, tools)
+        if loop:
+            yield from loop.execute_rejected_action(action, conversation)
+        yield _make_sse("done", {})
 
-    yield _make_sse("done", {})
+    return _reject_iter(), conversation
 
 
-def _describe_action(tool_name: str, args: dict) -> str:
-    """生成操作描述"""
-    descriptions = {
-        "ingest_arxiv": lambda a: (
-            f"入库选中的 {len(a.get('arxiv_ids', []))} 篇论文（来源: {a.get('query', '?')}）"
-        ),
-        "skim_paper": lambda a: f"对论文 {a.get('paper_id', '?')[:8]}... 执行粗读分析",
-        "deep_read_paper": lambda a: f"对论文 {a.get('paper_id', '?')[:8]}... 执行精读分析",
-        "embed_paper": lambda a: f"对论文 {a.get('paper_id', '?')[:8]}... 执行向量化嵌入",
-        "generate_wiki": lambda a: (
-            f"生成 {a.get('type', '?')} 类型 Wiki（{a.get('keyword_or_id', '?')}）"
-        ),
-        "generate_daily_brief": lambda _: "生成每日研究简报",
-        "manage_subscription": lambda a: (
-            f"{'启用' if a.get('enabled') else '关闭'}主题「{a.get('topic_name', '?')}」的定时搜集"
-        ),
-    }
-    fn = descriptions.get(tool_name)
-    if fn:
-        return fn(args)
-    return f"执行 {tool_name}"
+__all__ = [
+    "stream_chat",
+    "confirm_action",
+    "reject_action",
+    "CompactingStreamingAgentLoop",
+    "ContextCompactor",
+    "CompactionConfig",
+    "TodoManager",
+    "PlannerMixin",
+    "get_todo_manager",
+    "SubagentPool",
+    "SubagentRunner",
+    "get_subagent_pool",
+]
