@@ -268,9 +268,12 @@ def _create_loop(
 def stream_chat(
     messages: list[dict],
     confirmed_action_id: str | None = None,
-) -> Iterator[str]:
+) -> tuple[Iterator[str], list[dict]]:
     """
-    Agent 主入口：接收消息列表，返回 SSE 事件流。
+    Agent 主入口：接收消息列表，返回 (SSE事件流, 更新后的conversation)。
+
+    注意：返回的 conversation 已包含所有 tool 消息和 assistant 回复，
+    可用于持久化或后续处理。
     """
     _cleanup_expired_actions()
     conversation = _build_messages(messages)
@@ -279,6 +282,44 @@ def stream_chat(
     if confirmed_action_id:
         action = _load_pending_action(confirmed_action_id)
         if not action:
+
+            def _err_iter():
+                yield _make_sse(
+                    "error",
+                    {
+                        "message": "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"
+                    },
+                )
+                yield _make_sse("done", {})
+
+            return _err_iter(), conversation
+
+        loop = _create_loop(conversation)
+
+        def _confirm_iter():
+            yield from loop.execute_and_continue(action, conversation)
+            yield _make_sse("done", {})
+
+        return _confirm_iter(), conversation
+
+    # 正常对话
+    loop = _create_loop(conversation)
+
+    def _chat_iter():
+        yield from loop.run(conversation)
+        yield _make_sse("done", {})
+
+    return _chat_iter(), conversation
+
+
+def confirm_action(action_id: str) -> tuple[Iterator[str], list[dict]]:
+    """确认执行挂起的操作并继续对话"""
+    logger.info("用户确认操作: %s", action_id)
+
+    action = _load_pending_action(action_id)
+    if not action:
+
+        def _err_iter():
             yield _make_sse(
                 "error",
                 {
@@ -286,32 +327,8 @@ def stream_chat(
                 },
             )
             yield _make_sse("done", {})
-            return
 
-        loop = _create_loop(conversation)
-        yield from loop.execute_and_continue(action, conversation)
-        return
-
-    # 正常对话
-    loop = _create_loop(conversation)
-    yield from loop.run(conversation)
-    yield _make_sse("done", {})
-
-
-def confirm_action(action_id: str) -> Iterator[str]:
-    """确认执行挂起的操作并继续对话"""
-    logger.info("用户确认操作: %s", action_id)
-
-    action = _load_pending_action(action_id)
-    if not action:
-        yield _make_sse(
-            "error",
-            {
-                "message": "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"
-            },
-        )
-        yield _make_sse("done", {})
-        return
+        return _err_iter(), []
 
     # 删除 pending action
     try:
@@ -323,10 +340,15 @@ def confirm_action(action_id: str) -> Iterator[str]:
 
     conversation = action.get("conversation", [])
     loop = _create_loop(conversation)
-    yield from loop.execute_confirmed_action(action, conversation)
+
+    def _confirm_iter():
+        yield from loop.execute_confirmed_action(action, conversation)
+        yield _make_sse("done", {})
+
+    return _confirm_iter(), conversation
 
 
-def reject_action(action_id: str) -> Iterator[str]:
+def reject_action(action_id: str) -> tuple[Iterator[str], list[dict]]:
     """拒绝挂起的操作并让 LLM 给出替代建议"""
     logger.info("用户拒绝操作: %s", action_id)
 
@@ -341,23 +363,24 @@ def reject_action(action_id: str) -> Iterator[str]:
         except Exception as exc:
             logger.warning("删除 pending_action 失败: %s", exc)
 
-    # 发送拒绝结果
-    yield _make_sse(
-        "action_result",
-        {
-            "id": action_id,
-            "success": False,
-            "summary": "用户已取消该操作",
-            "data": {},
-        },
-    )
+    conversation = action.get("conversation", []) if action else []
+    loop = _create_loop(conversation) if conversation else None
 
-    if action and action.get("conversation"):
-        conversation = action["conversation"]
-        loop = _create_loop(conversation)
-        yield from loop.execute_rejected_action(action, conversation)
-    else:
+    def _reject_iter():
+        yield _make_sse(
+            "action_result",
+            {
+                "id": action_id,
+                "success": False,
+                "summary": "用户已取消该操作",
+                "data": {},
+            },
+        )
+        if loop:
+            yield from loop.execute_rejected_action(action, conversation)
         yield _make_sse("done", {})
+
+    return _reject_iter(), conversation
 
 
 __all__ = [
