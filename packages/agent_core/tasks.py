@@ -18,10 +18,13 @@ import json
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+    from packages.domain.task_tracker import TaskTracker
 
 
 @dataclass
@@ -248,3 +251,101 @@ class TaskManager:
             except (ValueError, json.JSONDecodeError):
                 pass
         return sorted(ready, key=lambda x: x.id)
+
+
+# =============================================================================
+# PaperMind GlobalTracker 适配层
+# =============================================================================
+
+
+class GlobalTrackerAdapter:
+    """
+    PaperMind global_tracker 的统一接口适配器。
+
+    global_tracker 使用 (task_id, task_type, title, total, category) 签名，
+    而 agent_tools.py 里使用的是 (task_id, task_type, title, total=None) 签名。
+
+    本适配器提供统一接口，同时兼容两种调用方式。
+    """
+
+    def __init__(self, tracker: TaskTracker):
+        self._tracker = tracker
+
+    def start(
+        self,
+        task_id: str,
+        task_type: str,
+        title: str,
+        total: int = 0,
+        category: str = "general",
+    ) -> None:
+        """
+        开始追踪任务。
+        兼容 agent_tools.py 的 start(task_id, task_type, title, total=None) 签名。
+        """
+        self._tracker.start(
+            task_id=task_id,
+            task_type=task_type,
+            title=title,
+            total=total,
+            category=category,
+        )
+
+    def update(
+        self,
+        task_id: str,
+        current: int,
+        message: str = "",
+        total: int | None = None,
+    ) -> None:
+        """更新任务进度"""
+        self._tracker.update(task_id=task_id, current=current, message=message, total=total)
+
+    def finish(
+        self,
+        task_id: str,
+        success: bool = True,
+        error: str | None = None,
+    ) -> None:
+        """标记任务完成"""
+        self._tracker.finish(task_id=task_id, success=success, error=error)
+
+    def cancel(self, task_id: str) -> bool:
+        """取消任务"""
+        return self._tracker.cancel(task_id=task_id)
+
+    def submit(
+        self,
+        task_type: str,
+        title: str,
+        fn: Callable[..., Any],
+        *args: Any,
+        total: int = 100,
+        category: str = "general",
+        **kwargs: Any,
+    ) -> str:
+        """
+        提交后台任务。
+        兼容 agent_tools.py 的 submit(task_type, title, fn, *args, **kwargs) 签名。
+        """
+        return self._tracker.submit(
+            task_type=task_type,
+            title=title,
+            fn=fn,
+            total=total,
+            category=category,
+            *args,
+            **kwargs,
+        )
+
+    def get_active(self) -> list[dict]:
+        """获取所有活跃任务"""
+        return self._tracker.get_active()
+
+    def get_task(self, task_id: str) -> dict | None:
+        """查询单个任务状态"""
+        return self._tracker.get_task(task_id=task_id)
+
+    def get_result(self, task_id: str) -> Any | None:
+        """获取已完成任务的结果"""
+        return self._tracker.get_result(task_id=task_id)

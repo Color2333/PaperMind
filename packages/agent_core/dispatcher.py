@@ -22,10 +22,12 @@ ToolDispatcher — 工具注册与分发，参考 learn-claude-code s02
 from __future__ import annotations
 
 import inspect
+import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 from .tools.bash import run_bash
 from .tools.filesystem import run_edit, run_glob, run_grep, run_read, run_write
@@ -247,6 +249,217 @@ def make_default_dispatcher(
         )
 
     return dispatcher
+
+
+# =============================================================================
+# PaperMind 适配层：流式工具分发器
+# =============================================================================
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PaperMindToolResult:
+    """PaperMind 风格的工具结果"""
+
+    success: bool
+    data: dict = field(default_factory=dict)
+    summary: str = ""
+
+
+@dataclass
+class PaperMindToolProgress:
+    """PaperMind 风格的工具进度"""
+
+    message: str
+    current: int = 0
+    total: int = 0
+
+
+class StreamingToolDispatcher:
+    """
+    PaperMind 专用的流式工具分发器。
+
+    支持注册生成器式的 handler（返回 Iterator[ToolProgress | ToolResult]），
+    同时兼容普通同步 handler。
+
+    使用方式：
+        dispatcher = StreamingToolDispatcher()
+        dispatcher.register("search_papers", search_papers_handler)  # generator
+        dispatcher.register("bash", bash_handler)  # sync
+
+        # 流式执行
+        for item in dispatcher.dispatch_stream("search_papers", {"keyword": "AI"}):
+            if isinstance(item, PaperMindToolProgress):
+                print(f"进度: {item.message}")
+            elif isinstance(item, PaperMindToolResult):
+                print(f"完成: {item.summary}")
+    """
+
+    def __init__(self):
+        self._handlers: dict[str, Callable[..., Any]] = {}
+        self._tool_definitions: list[dict[str, Any]] = []
+        self._frozen = False
+
+    def register(
+        self,
+        name: str,
+        handler: Callable[..., Any],
+        description: str | None = None,
+        input_schema: dict[str, Any] | None = None,
+        requires_confirm: bool = False,
+    ) -> StreamingToolDispatcher:
+        """
+        注册一个工具 handler。
+
+        参数：
+            name: 工具名称
+            handler: 执行函数，可以是普通函数或生成器函数
+            description: 工具描述（默认从 handler docstring 提取）
+            input_schema: OpenAI function calling 格式的参数 schema
+            requires_confirm: 是否需要用户确认
+        """
+        if self._frozen:
+            raise RuntimeError(
+                "Cannot register tools after get_tool_definitions() was called. "
+                "Register all tools first."
+            )
+
+        self._handlers[name] = handler
+
+        if description is None:
+            description = self._extract_description(handler)
+
+        if input_schema is None:
+            input_schema = self._infer_schema(handler)
+
+        tool_def = {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": input_schema,
+            },
+        }
+        self._tool_definitions.append(tool_def)
+        return self
+
+    def register_many(
+        self,
+        tools: dict[str, Callable[..., Any]],
+    ) -> StreamingToolDispatcher:
+        """批量注册工具（不包含 requires_confirm）"""
+        for name, handler in tools.items():
+            self.register(name, handler)
+        return self
+
+    def dispatch_stream(
+        self,
+        name: str,
+        arguments: dict,
+    ) -> Iterator[PaperMindToolProgress | PaperMindToolResult]:
+        """
+        流式执行工具，yield 进度事件和最终结果。
+        兼容生成器 handler 和普通 handler。
+        """
+        handler = self._handlers.get(name)
+        if handler is None:
+            yield PaperMindToolResult(
+                success=False,
+                summary=f"未知工具: {name}",
+            )
+            return
+
+        try:
+            result = handler(**arguments)
+            if hasattr(result, "__next__"):
+                # 生成器函数
+                yield from result
+            else:
+                # 普通同步函数，直接包装为 ToolResult
+                if isinstance(result, PaperMindToolResult):
+                    yield result
+                elif isinstance(result, dict):
+                    yield PaperMindToolResult(success=True, data=result, summary="")
+                elif isinstance(result, str):
+                    yield PaperMindToolResult(success=True, summary=result)
+                else:
+                    yield PaperMindToolResult(success=True, summary=str(result))
+        except Exception as exc:
+            logger.exception("Tool %s failed: %s", name, exc)
+            yield PaperMindToolResult(success=False, summary=str(exc))
+
+    def get_tool_definitions(self) -> list[dict[str, Any]]:
+        """
+        返回 OpenAI function calling 格式的工具定义列表。
+        一旦调用，冻结注册——不能再添加工具。
+        """
+        self._frozen = True
+        return self._tool_definitions
+
+    def list_tools(self) -> list[str]:
+        """列出所有已注册工具名称"""
+        return list(self._handlers.keys())
+
+    def get_handler(self, name: str) -> Callable[..., Any] | None:
+        """获取工具 handler"""
+        return self._handlers.get(name)
+
+    def _extract_description(self, handler: Callable) -> str:
+        doc = inspect.getdoc(handler) or ""
+        return doc.split("\n")[0].strip() if doc else f"Tool: {handler.__name__}"
+
+    def _infer_schema(self, handler: Callable) -> dict[str, Any]:
+        """从 handler 签名推断参数 schema"""
+        sig = inspect.signature(handler)
+        properties: dict[str, dict[str, Any]] = {}
+        required: list[str] = []
+
+        for param_name, param in sig.parameters.items():
+            if param_name in ("self", "kwargs", "args"):
+                continue
+
+            annotation = param.annotation
+            if annotation is inspect.Parameter.empty:
+                param_type = "string"
+            else:
+                param_type = self._annotation_to_json_type(annotation)
+
+            prop: dict[str, Any] = {"type": param_type}
+            if param.default is not inspect.Parameter.empty:
+                prop["default"] = param.default
+
+            properties[param_name] = prop
+
+            if param.default is inspect.Parameter.empty and param_name != "self":
+                required.append(param_name)
+
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required if required else None,
+        }
+
+    @staticmethod
+    def _annotation_to_json_type(annotation: Any) -> str:
+        """将 Python 类型映射到 JSON Schema 类型"""
+        origin = getattr(annotation, "__origin__", None)
+
+        if origin is list:
+            return "array"
+        if origin is dict:
+            return "object"
+
+        name = getattr(annotation, "__name__", str(annotation))
+        mapping = {
+            "str": "string",
+            "int": "integer",
+            "float": "number",
+            "bool": "boolean",
+            "list": "array",
+            "dict": "object",
+        }
+        return mapping.get(name, "string")
 
 
 # sentinel for undefined
