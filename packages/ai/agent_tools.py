@@ -713,6 +713,14 @@ def _get_system_status() -> ToolResult:
             )
             run_repo = PipelineRunRepository(session)
             runs = run_repo.list_latest(limit=10)
+            recent_runs = [
+                {
+                    "pipeline": r.pipeline_name,
+                    "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+                    "created_at": str(r.created_at) if r.created_at else None,
+                }
+                for r in runs[:5]
+            ]
         return ToolResult(
             success=True,
             data={
@@ -720,15 +728,8 @@ def _get_system_status() -> ToolResult:
                 "paper_count": paper_count,
                 "embedded_count": embedded_count,
                 "topic_count": topic_count,
-                "recent_runs_count": len(runs),
-                "recent_runs": [
-                    {
-                        "pipeline": r.pipeline_name,
-                        "status": r.status.value if hasattr(r.status, "value") else str(r.status),
-                        "created_at": str(r.created_at) if r.created_at else None,
-                    }
-                    for r in runs[:5]
-                ],
+                "recent_runs_count": len(recent_runs),
+                "recent_runs": recent_runs,
             },
             summary=(
                 f"论文 {paper_count} 篇（{embedded_count} 已向量化），"
