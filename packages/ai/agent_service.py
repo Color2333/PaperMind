@@ -9,7 +9,14 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from packages.agent_core.context_compaction import (
+    CompactingStreamingAgentLoop,
+    CompactionConfig,
+    ContextCompactor,
+)
 from packages.agent_core.loop import StreamingAgentLoop
+from packages.agent_core.subagents import SubagentPool, SubagentRunner, get_subagent_pool
+from packages.agent_core.todos import PlannerMixin, TodoManager, get_todo_manager
 from packages.ai.agent_tools import (
     TOOL_REGISTRY,
     execute_tool_stream,
@@ -351,3 +358,19 @@ def reject_action(action_id: str) -> Iterator[str]:
         yield from loop.execute_rejected_action(action, conversation)
     else:
         yield _make_sse("done", {})
+
+
+__all__ = [
+    "stream_chat",
+    "confirm_action",
+    "reject_action",
+    "CompactingStreamingAgentLoop",
+    "ContextCompactor",
+    "CompactionConfig",
+    "TodoManager",
+    "PlannerMixin",
+    "get_todo_manager",
+    "SubagentPool",
+    "SubagentRunner",
+    "get_subagent_pool",
+]
