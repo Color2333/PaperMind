@@ -420,8 +420,39 @@ class PaperPipelines:
                 score = 0.5
             score = min(max(score, 0.0), 1.0)
             one_liner = str(parsed_json.get("one_liner", "")).strip() or llm_text[:140]
+
+            # 过滤 LLM 返回的字面占位符
+            PLACEHOLDER_KEYWORDS = {
+                "创新点",
+                "创新点1",
+                "创新点2",
+                "创新点3",
+                "keyword",
+                "keyword1",
+            }
+            FALLBACK_KEYWORDS = {
+                "中文标题",
+                "中文标题翻译",
+                "中文摘要",
+                "中文摘要翻译",
+                "一句话",
+                "一句话总结",
+                "一句话中文总结",
+            }
+            innovations = [
+                x
+                for x in innovations
+                if x.strip() and not any(pk in x for pk in PLACEHOLDER_KEYWORDS)
+            ]
             if not innovations:
                 innovations = [one_liner[:80]]
+            if not title_zh or any(fk in title_zh for fk in FALLBACK_KEYWORDS):
+                title_zh = ""
+            if not abstract_zh or any(fk in abstract_zh for fk in FALLBACK_KEYWORDS):
+                abstract_zh = ""
+            if not one_liner or any(fk in one_liner for fk in FALLBACK_KEYWORDS):
+                one_liner = llm_text[:140]
+
             return SkimReport(
                 one_liner=one_liner[:280],
                 innovations=[str(x)[:180] for x in innovations[:5]],

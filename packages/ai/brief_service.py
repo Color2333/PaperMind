@@ -50,6 +50,65 @@ def _parse_deep_dive(md: str) -> dict:
     return sections
 
 
+def _md_to_html(text: str) -> str:
+    """轻量 Markdown → HTML 转换（用于邮件模板）"""
+    if not text:
+        return ""
+    import re
+
+    lines = text.split("\n")
+    html_lines: list[str] = []
+    in_ul = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if in_ul:
+                html_lines.append("</ul>")
+                in_ul = False
+            html_lines.append("")
+            continue
+        # 标题
+        m = re.match(r"^#{1,3}\s+(.+)$", stripped)
+        if m:
+            if in_ul:
+                html_lines.append("</ul>")
+                in_ul = False
+            level = m.group(0).count("#")
+            tag = f"h{level + 2}"  # h3/h4/h5
+            inner = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", m.group(1))
+            inner = re.sub(r"\*(.+?)\*", r"<em>\1</em>", inner)
+            html_lines.append(f"<{tag}>{inner}</{tag}>")
+        # 无序列表
+        elif stripped.startswith("-"):
+            if not in_ul:
+                html_lines.append("<ul>")
+                in_ul = True
+            item = re.sub(r"^-\s+", "", stripped)
+            item = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", item)
+            item = re.sub(r"\*(.+?)\*", r"<em>\1</em>", item)
+            html_lines.append(f"<li>{item}</li>")
+        # 有序列表
+        elif re.match(r"^\d+\.\s+", stripped):
+            if in_ul:
+                html_lines.append("</ul>")
+                in_ul = False
+            item = re.sub(r"^\d+\.\s+", "", stripped)
+            item = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", item)
+            item = re.sub(r"\*(.+?)\*", r"<em>\1</em>", item)
+            html_lines.append(f"<li>{item}</li>")
+        # 段落
+        else:
+            if in_ul:
+                html_lines.append("</ul>")
+                in_ul = False
+            para = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", stripped)
+            para = re.sub(r"\*(.+?)\*", r"<em>\1</em>", para)
+            html_lines.append(f"<p>{para}</p>")
+    if in_ul:
+        html_lines.append("</ul>")
+    return "\n".join(html_lines)
+
+
 DAILY_TEMPLATE = Template("""\
 <!DOCTYPE html>
 <html lang="zh">
@@ -89,6 +148,13 @@ DAILY_TEMPLATE = Template("""\
   .deep-section { margin-top: 12px; }
   .deep-section-label { font-size: 12px; font-weight: 700; color: #7c3aed; margin-bottom: 6px; display: flex; align-items: center; gap: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
   .deep-text { font-size: 13px; color: #4b5563; line-height: 1.7; margin: 0; }
+  .deep-html { font-size: 13px; color: #374151; line-height: 1.8; }
+  .deep-html h3, .deep-html h4, .deep-html h5 { color: #7c3aed; font-weight: 700; margin: 12px 0 6px; }
+  .deep-html h3 { font-size: 15px; } .deep-html h4 { font-size: 14px; } .deep-html h5 { font-size: 13px; }
+  .deep-html p { margin: 0 0 8px; }
+  .deep-html ul, .deep-html ol { margin: 6px 0; padding-left: 20px; }
+  .deep-html li { margin-bottom: 4px; }
+  .deep-html strong { color: #1a1a2e; } .deep-html em { color: #4b5563; }
   .risk-list { margin: 6px 0 0 18px; padding: 0; font-size: 12px; color: #b45309; }
   .risk-list li { margin-bottom: 4px; line-height: 1.5; }
 
@@ -200,16 +266,10 @@ DAILY_TEMPLATE = Template("""\
         {% endif %}
       </div>
       <div class="paper-id">arXiv: <a href="https://arxiv.org/abs/{{ d.arxiv_id }}" target="_blank">{{ d.arxiv_id }}</a></div>
-      {% if d.method %}
+      {% if d.deep_dive_md_html %}
       <div class="deep-section">
-        <div class="deep-section-label">📐 方法</div>
-        <p class="deep-text">{{ d.method[:280] }}{% if d.method|length > 280 %}...{% endif %}</p>
-      </div>
-      {% endif %}
-      {% if d.experiments %}
-      <div class="deep-section">
-        <div class="deep-section-label">🧪 实验</div>
-        <p class="deep-text">{{ d.experiments[:280] }}{% if d.experiments|length > 280 %}...{% endif %}</p>
+        <div class="deep-section-label">📄 精读内容</div>
+        <div class="deep-html">{{ d.deep_dive_md_html|safe }}</div>
       </div>
       {% endif %}
       {% if d.risks %}
@@ -400,6 +460,7 @@ class DailyBriefService:
             deep_read_highlights = []
             for p, report in deep_read_papers[:5]:  # 取前 5 篇
                 sections = _parse_deep_dive(report.deep_dive_md)
+                md_html = _md_to_html(report.deep_dive_md or "")
                 deep_read_highlights.append(
                     {
                         "id": str(p.id),
@@ -409,6 +470,7 @@ class DailyBriefService:
                         "method": sections.get("method", ""),
                         "experiments": sections.get("experiments", ""),
                         "risks": (report.key_insights or {}).get("reviewer_risks", []),
+                        "deep_dive_md_html": md_html,
                     }
                 )
 
