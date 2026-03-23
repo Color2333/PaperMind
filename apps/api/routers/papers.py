@@ -324,6 +324,49 @@ def serve_paper_pdf(paper_id: UUID) -> FileResponse:
     )
 
 
+@router.get("/papers/{paper_id}/segments")
+def get_paper_segments(paper_id: UUID) -> dict:
+    """获取论文分段（用于全文对照翻译）"""
+    from packages.ai.pdf_parser import PdfTextExtractor
+
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            paper = repo.get_by_id(paper_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        pdf_path = paper.pdf_path
+
+    if not pdf_path:
+        raise HTTPException(status_code=404, detail="论文没有 PDF 文件")
+
+    full_path = Path(pdf_path)
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="PDF 文件不存在")
+
+    extractor = PdfTextExtractor()
+    text = extractor.extract_text(str(full_path), max_pages=30)
+
+    if not text:
+        return {"segments": []}
+
+    paragraphs: list[dict] = []
+    blocks = text.split("\n\n")
+    for i, block in enumerate(blocks):
+        block = block.strip()
+        if len(block) < 20:
+            continue
+        paragraphs.append(
+            {
+                "id": f"p-{i + 1}",
+                "type": "paragraph",
+                "content": block[:2000],
+            }
+        )
+
+    return {"segments": paragraphs}
+
+
 @router.post("/papers/{paper_id}/ai/explain")
 def ai_explain_text(paper_id: UUID, body: AIExplainReq) -> dict:
     """AI 解释/翻译选中文本"""

@@ -7,7 +7,10 @@ import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { paperApi } from "@/services/api";
-import Markdown from "@/components/Markdown";
+import { ToolPanel } from "./ToolPanel/ToolPanel";
+import { TranslationPanel } from "./ToolPanel/TranslationPanel";
+import { AggregationPanel } from "./ToolPanel/AggregationPanel";
+import { CanvasPanel } from "./ToolPanel/CanvasPanel";
 import {
   X,
   ZoomIn,
@@ -15,15 +18,8 @@ import {
   Maximize2,
   Minimize2,
   BookOpen,
-  Languages,
-  Lightbulb,
-  FileText,
   Loader2,
-  RotateCw,
   MessageSquareText,
-  Sparkles,
-  Copy,
-  Check,
 } from "lucide-react";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
@@ -33,14 +29,6 @@ interface PdfReaderProps {
   paperTitle: string;
   paperArxivId?: string;  // arXiv ID（用于在线链接）
   onClose: () => void;
-}
-
-type AiAction = "explain" | "translate" | "summarize";
-
-interface AiResult {
-  action: AiAction;
-  text: string;
-  result: string;
 }
 
 export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }: PdfReaderProps) {
@@ -53,9 +41,6 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
   /* AI 侧栏 */
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [selectedText, setSelectedText] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResults, setAiResults] = useState<AiResult[]>([]);
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   /* 页面输入 */
   const [pageInput, setPageInput] = useState("");
@@ -176,30 +161,6 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
     return () => document.removeEventListener("mouseup", handler);
   }, []);
 
-  /* AI 操作 */
-  const handleAiAction = useCallback(async (action: AiAction, text?: string) => {
-    const t = text || selectedText;
-    if (!t) return;
-    setAiPanelOpen(true);
-    setAiLoading(true);
-    try {
-      const res = await paperApi.aiExplain(paperId, t, action);
-      setAiResults((prev) => [{ action, text: t.slice(0, 100), result: res.result }, ...prev]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setAiResults((prev) => [{ action, text: t.slice(0, 100), result: `错误: ${msg}` }, ...prev]);
-    } finally {
-      setAiLoading(false);
-    }
-  }, [paperId, selectedText]);
-
-  /* 复制 AI 结果 */
-  const handleCopy = useCallback((idx: number, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedIdx(idx);
-    setTimeout(() => setCopiedIdx(null), 2000);
-  }, []);
-
   /**
    * 注册页面 ref
    */
@@ -210,12 +171,6 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
       pageRefs.current.delete(page);
     }
   }, []);
-
-  const actionLabels: Record<AiAction, { label: string; icon: React.ReactNode; color: string }> = {
-    explain: { label: "AI 解释", icon: <Lightbulb className="h-3.5 w-3.5" />, color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20" },
-    translate: { label: "翻译", icon: <Languages className="h-3.5 w-3.5" />, color: "text-blue-600 bg-blue-50 dark:bg-blue-900/20" },
-    summarize: { label: "总结", icon: <FileText className="h-3.5 w-3.5" />, color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20" },
-  };
 
   /* 生成页码数组 */
   const pages = useMemo(() => Array.from({ length: numPages }, (_, i) => i + 1), [numPages]);
@@ -271,20 +226,6 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
 
         {/* 右侧: AI 功能 & 关闭 */}
         <div className="flex items-center gap-1">
-          {selectedText && (
-            <div className="mr-2 flex items-center gap-1 rounded-full bg-white/10 px-2 py-1">
-              <span className="max-w-[120px] truncate text-xs text-white/60">{selectedText}</span>
-              <button onClick={() => handleAiAction("explain")} className="ai-action-btn bg-amber-500/20 text-amber-300 hover:bg-amber-500/30" title="AI 解释">
-                <Lightbulb className="h-3 w-3" />
-              </button>
-              <button onClick={() => handleAiAction("translate")} className="ai-action-btn bg-blue-500/20 text-blue-300 hover:bg-blue-500/30" title="翻译">
-                <Languages className="h-3 w-3" />
-              </button>
-              <button onClick={() => handleAiAction("summarize")} className="ai-action-btn bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30" title="总结">
-                <FileText className="h-3 w-3" />
-              </button>
-            </div>
-          )}
           <button
             onClick={() => setAiPanelOpen(!aiPanelOpen)}
             className={`toolbar-btn ${aiPanelOpen ? "bg-primary/30 text-primary" : ""}`}
@@ -388,119 +329,21 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
         </div>
       )}
 
-      {/* AI 侧边栏 */}
+      {/* ToolPanel */}
       <div
-        className={`relative mt-12 border-l border-white/10 bg-[#1e1e2e] transition-all duration-300 ${
+        className={`relative mt-12 border-l border-white/10 transition-all duration-300 ${
           aiPanelOpen ? "w-96" : "w-0"
         } overflow-hidden`}
       >
-        <div className="flex h-full w-96 flex-col">
-          {/* AI 面板头部 */}
-          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />
-              <span className="text-sm font-medium text-white/90">AI 阅读助手</span>
-            </div>
-            <button
-              onClick={() => setAiResults([])}
-              className="text-xs text-white/40 hover:text-white/60"
-              title="清空记录"
-            >
-              <RotateCw className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          {/* 快捷 AI 操作 */}
-          {selectedText && (
-            <div className="border-b border-white/10 px-4 py-3">
-              <p className="mb-2 text-xs text-white/40">选中文本</p>
-              <p className="mb-3 line-clamp-3 rounded-md bg-white/5 p-2 text-xs leading-relaxed text-white/70">{selectedText}</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleAiAction("explain")}
-                  disabled={aiLoading}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-amber-500/10 py-1.5 text-xs text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-50"
-                >
-                  <Lightbulb className="h-3.5 w-3.5" /> 解释
-                </button>
-                <button
-                  onClick={() => handleAiAction("translate")}
-                  disabled={aiLoading}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-500/10 py-1.5 text-xs text-blue-300 transition-colors hover:bg-blue-500/20 disabled:opacity-50"
-                >
-                  <Languages className="h-3.5 w-3.5" /> 翻译
-                </button>
-                <button
-                  onClick={() => handleAiAction("summarize")}
-                  disabled={aiLoading}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-500/10 py-1.5 text-xs text-emerald-300 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
-                >
-                  <FileText className="h-3.5 w-3.5" /> 总结
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* AI 结果列表 */}
-          <div className="flex-1 overflow-auto px-4 py-3">
-            {aiLoading && (
-              <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <span className="text-xs text-primary">AI 分析中...</span>
-              </div>
-            )}
-
-            {aiResults.length === 0 && !aiLoading && (
-              <div className="flex flex-col items-center gap-3 pt-12 text-center">
-                <MessageSquareText className="h-10 w-10 text-white/10" />
-                <div>
-                  <p className="text-sm text-white/40">选中论文文本</p>
-                  <p className="mt-1 text-xs text-white/20">即可使用 AI 解释、翻译、总结</p>
-                </div>
-                <div className="mt-4 space-y-1.5 text-left text-xs text-white/20">
-                  <p>快捷键：</p>
-                  <p>Ctrl +/- 缩放 &nbsp; Ctrl+0 重置</p>
-                  <p>Home/End 首/末页 &nbsp; Esc 关闭</p>
-                  <p>鼠标滚轮自由滚动阅读</p>
-                </div>
-              </div>
-            )}
-
-            {aiResults.map((r, i) => {
-              const cfg = actionLabels[r.action];
-              return (
-                <div
-                  key={`ai-result-${r.action}-${i}`}
-                  className="mb-4 overflow-hidden rounded-xl border border-white/[.08] bg-gradient-to-b from-white/[.04] to-white/[.02]"
-                >
-                  {/* 卡片头部 */}
-                  <div className="flex items-center justify-between border-b border-white/[.06] px-3.5 py-2">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${cfg.color}`}>
-                      {cfg.icon} {cfg.label}
-                    </span>
-                    <button
-                      onClick={() => handleCopy(i, r.result)}
-                      className="rounded-md p-1 text-white/20 transition-colors hover:bg-white/10 hover:text-white/50"
-                      title="复制内容"
-                    >
-                      {copiedIdx === i ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                    </button>
-                  </div>
-                  {/* 原文引用 */}
-                  <div className="border-b border-white/[.04] px-3.5 py-2">
-                    <p className="line-clamp-2 border-l-2 border-white/10 pl-2.5 text-[11px] leading-relaxed text-white/30 italic">
-                      {r.text}
-                    </p>
-                  </div>
-                  {/* AI 输出 - Markdown 渲染 */}
-                  <div className="px-3.5 py-3">
-                    <Markdown className="pdf-ai-markdown">{r.result}</Markdown>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        {aiPanelOpen && (
+          <ToolPanel selectedText={selectedText} paperId={paperId}>
+            {{
+              translation: <TranslationPanel selectedText={selectedText} paperId={paperId} />,
+              aggregation: <AggregationPanel selectedText={selectedText} paperId={paperId} />,
+              canvas: <CanvasPanel paperId={paperId} paperTitle={paperTitle} />,
+            }}
+          </ToolPanel>
+        )}
       </div>
     </div>
   );

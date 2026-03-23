@@ -157,8 +157,10 @@ from apps.api.routers import (  # noqa: E402
     jobs,
     papers,
     pipelines,
+    sensemaking,
     system,
     topics,
+    translate,
     writing,
 )
 from apps.api.routers import (
@@ -177,3 +179,5 @@ app.include_router(settings_router.router)
 app.include_router(writing.router)
 app.include_router(jobs.router)
 app.include_router(auth.router)
+app.include_router(sensemaking.router)
+app.include_router(translate.router)

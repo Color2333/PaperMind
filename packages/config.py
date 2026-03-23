@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     zhipu_api_key: str | None = None
     semantic_scholar_api_key: str | None = None
     openalex_email: str | None = None
+    ieee_api_key: str | None = None
 
     # Worker 调度
     worker_retry_max: int = 2
