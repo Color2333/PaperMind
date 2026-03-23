@@ -159,11 +159,13 @@ from apps.api.routers import (  # noqa: E402
     papers,
     pipelines,
     sensemaking,
-    settings as settings_router,
     system,
     topics,
     translate,
     writing,
+)
+from apps.api.routers import (
+    settings as settings_router,
 )
 
 app.include_router(system.router)
