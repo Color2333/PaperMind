@@ -393,7 +393,7 @@ alembic upgrade head
 - **[Semantic Scholar](https://www.semanticscholar.org)** — 引用数据来源
 - **[CSFeeds](https://csarxiv.org)** — 论文源订阅服务
 - **[learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)** — Agent Harness 工程体系启发，s01-s12 渐进式解构：Loop → Tools → Planning → Subagents → Skills → Context → Tasks → Background → Teams → Protocols → Autonomous
-- **PaperSenseMaking 认知重构框架** — 论文阅读「阅读→理解→重构」工作流设计灵感
+- **[PaperSenseMaking](https://github.com/edu-ai-builders/paper-sense-making)** — 论文阅读「阅读→理解→重构」工作流设计灵感
 
 ---
 
