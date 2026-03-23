@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -73,6 +74,7 @@ class IeeeClient:
         """
         settings = get_settings()
         self.api_key = api_key or os.getenv("IEEE_API_KEY")
+        self._lock = threading.Lock()
         self._client: httpx.Client | None = None
 
         if not self.api_key:
@@ -80,19 +82,21 @@ class IeeeClient:
 
     @property
     def client(self) -> httpx.Client:
-        """复用 httpx.Client 连接池"""
+        """复用 httpx.Client 连接池（线程安全）"""
         if self._client is None or self._client.is_closed:
-            headers = {}
-            if self.api_key:
-                headers["apikey"] = self.api_key
+            with self._lock:
+                if self._client is None or self._client.is_closed:
+                    headers = {}
+                    if self.api_key:
+                        headers["apikey"] = self.api_key
 
-            self._client = httpx.Client(
-                base_url=IEEE_API_BASE,
-                timeout=20,
-                headers=headers,
-                follow_redirects=True,
-            )
-            logger.info("IEEE Client 初始化完成")
+                    self._client = httpx.Client(
+                        base_url=IEEE_API_BASE,
+                        timeout=20,
+                        headers=headers,
+                        follow_redirects=True,
+                    )
+                    logger.info("IEEE Client 初始化完成")
         return self._client
 
     def _get(self, path: str, params: dict | None = None) -> dict | None:

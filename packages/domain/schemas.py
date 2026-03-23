@@ -13,6 +13,7 @@ class PaperCreate(BaseModel):
     doi: str | None = None  # DOI 号（可选，IEEE 论文常用）
 
     # 保留字段（向后兼容）- ArXiv 特定
+    # @deprecated: 使用 source_id + source 字段代替
     arxiv_id: str | None = None  # ArXiv ID（可选，仅 ArXiv 渠道使用）
 
     # 通用字段
@@ -20,6 +21,13 @@ class PaperCreate(BaseModel):
     abstract: str
     publication_date: date | None = None
     metadata: dict = Field(default_factory=dict)
+
+    @property
+    def normalized_arxiv_id(self) -> str | None:
+        """归一化的 arxiv_id 获取方法"""
+        if self.source == "arxiv":
+            return self.source_id or self.arxiv_id
+        return self.arxiv_id
 
 
 class SkimReport(BaseModel):

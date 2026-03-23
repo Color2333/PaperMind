@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,9 +32,21 @@ class ResultAggregator:
 
     def _find_existing(self, paper: PaperCreate) -> AggregatedPaper | None:
         for result in self.results:
+            # 优先匹配 DOI
             if result.paper.doi and paper.doi and result.paper.doi == paper.doi:
                 return result
+            # 其次匹配标题（归一化后）
+            if self._normalize_title(result.paper.title) == self._normalize_title(paper.title):
+                return result
+            # 最后匹配 arxiv_id
+            if (result.paper.normalized_arxiv_id and paper.normalized_arxiv_id and 
+                result.paper.normalized_arxiv_id == paper.normalized_arxiv_id):
+                return result
         return None
+
+    def _normalize_title(self, title: str) -> str:
+        """归一化标题：转小写、去空格、去标点"""
+        return re.sub(r'[^a-z0-9]', '', title.lower())
 
     def get_sorted_results(self) -> list[AggregatedPaper]:
         return sorted(self.results, key=lambda r: len(r.sources), reverse=True)

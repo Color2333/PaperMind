@@ -5,7 +5,7 @@
  * @author Color2333
  */
 
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
 
 export interface Channel {
   id: string;
@@ -21,9 +21,12 @@ export interface Channel {
 interface ChannelContextValue {
   channels: Channel[];
   defaultChannels: string[];
+  loading: boolean;
+  error: string | null;
   getChannel: (id: string) => Channel | undefined;
   updateChannelStatus: (id: string, status: Channel['status']) => void;
   setDefaultChannels: (channels: string[]) => void;
+  refreshChannels: () => Promise<void>;
 }
 
 const ChannelContext = createContext<ChannelContextValue | null>(null);
@@ -31,6 +34,31 @@ const ChannelContext = createContext<ChannelContextValue | null>(null);
 export function ChannelProvider({ children }: { children: ReactNode }) {
   const [channels, setChannels] = useState<Channel[]>(INITIAL_CHANNELS);
   const [defaultChannels, setDefaultChannels] = useState<string[]>(['arxiv']);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchChannels = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/papers/suggest-channels');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      setChannels(data.channels || INITIAL_CHANNELS);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载失败');
+      // 降级：使用默认渠道列表
+      setChannels(INITIAL_CHANNELS);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchChannels();
+  }, [fetchChannels]);
 
   const getChannel = useCallback(
     (id: string) => channels.find((c) => c.id === id),
@@ -55,9 +83,12 @@ export function ChannelProvider({ children }: { children: ReactNode }) {
       value={{
         channels,
         defaultChannels,
+        loading,
+        error,
         getChannel,
         updateChannelStatus,
         setDefaultChannels: setDefault,
+        refreshChannels: fetchChannels,
       }}
     >
       {children}

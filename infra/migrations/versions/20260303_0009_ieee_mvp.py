@@ -47,15 +47,24 @@ def upgrade() -> None:
     # 但为了安全，我们用更安全的方式：保留 arxiv_id 原样
 
     # 5. 数据迁移：将现有 arxiv_id 复制到 source_id
-    # 使用 SQLAlchemy 执行原生 SQL
+    # 分批更新，避免锁表（大数据量场景）
     conn = op.get_bind()
-    conn.execute(
-        sa.text("""
-            UPDATE papers 
-            SET source_id = arxiv_id, source = 'arxiv'
-            WHERE source_id IS NULL AND arxiv_id IS NOT NULL
-        """)
-    )
+    batch_size = 10000
+    offset = 0
+    
+    while True:
+        result = conn.execute(
+            sa.text("""
+                UPDATE papers 
+                SET source_id = arxiv_id, source = 'arxiv'
+                WHERE source_id IS NULL AND arxiv_id IS NOT NULL
+                LIMIT :batch_size OFFSET :offset
+            """),
+            {"batch_size": batch_size, "offset": offset}
+        )
+        if result.rowcount < batch_size:
+            break
+        offset += batch_size
 
     # 6. 设置 source 字段为 NOT NULL（所有记录都已设置默认值）
     with op.batch_alter_table("papers", schema=None) as batch_op:
