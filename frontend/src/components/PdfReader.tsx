@@ -3,7 +3,7 @@
  * @author Color2333
  */
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { Document, Page } from "react-pdf";
+import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { paperApi } from "@/services/api";
@@ -20,6 +20,12 @@ import {
   BookOpen,
   Loader2,
 } from "lucide-react";
+
+pdfjs.version = "5.4.296"; // Ensure version matches installed pdfjs-dist
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
+).href;
 
 interface PdfReaderProps {
   paperId: string;
