@@ -326,9 +326,7 @@ def serve_paper_pdf(paper_id: UUID) -> FileResponse:
 
 @router.get("/papers/{paper_id}/segments")
 def get_paper_segments(paper_id: UUID) -> dict:
-    """获取论文分段（用于全文对照翻译）"""
-    from packages.ai.pdf_parser import PdfTextExtractor
-
+    """获取论文分段（用于全文对照翻译）- 包含页码信息"""
     with session_scope() as session:
         repo = PaperRepository(session)
         try:
@@ -344,27 +342,39 @@ def get_paper_segments(paper_id: UUID) -> dict:
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="PDF 文件不存在")
 
-    extractor = PdfTextExtractor()
-    text = extractor.extract_text(str(full_path), max_pages=30)
+    try:
+        import fitz
 
-    if not text:
-        return {"segments": []}
+        doc = fitz.open(str(full_path))
+        paragraphs: list[dict] = []
+        para_idx = 0
+        max_pages = 30
 
-    paragraphs: list[dict] = []
-    blocks = text.split("\n\n")
-    for i, block in enumerate(blocks):
-        block = block.strip()
-        if len(block) < 20:
-            continue
-        paragraphs.append(
-            {
-                "id": f"p-{i + 1}",
-                "type": "paragraph",
-                "content": block[:2000],
-            }
-        )
+        for page_num in range(min(max_pages, len(doc))):
+            page = doc.load_page(page_num)
+            page_text = page.get_text("text").strip()
+            if not page_text:
+                continue
 
-    return {"segments": paragraphs}
+            blocks = page_text.split("\n\n")
+            for block in blocks:
+                block = block.strip()
+                if len(block) < 20:
+                    continue
+                para_idx += 1
+                paragraphs.append(
+                    {
+                        "id": f"p-{para_idx}",
+                        "type": "paragraph",
+                        "content": block[:2000],
+                        "pageNumber": page_num + 1,
+                    }
+                )
+
+        doc.close()
+        return {"segments": paragraphs}
+    except Exception as e:
+        return {"segments": [], "error": str(e)}
 
 
 @router.post("/papers/{paper_id}/ai/explain")
