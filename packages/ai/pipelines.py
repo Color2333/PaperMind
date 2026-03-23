@@ -15,7 +15,7 @@ from packages.ai.cost_guard import CostGuardService
 from packages.ai.pdf_parser import PdfTextExtractor
 from packages.ai.prompts import build_deep_prompt, build_skim_prompt
 from packages.ai.vision_reader import VisionPdfReader
-from packages.config import get_settings
+from packages.config import get_ieee_api_key, get_settings
 from packages.domain.enums import ActionType, ReadStatus
 from packages.domain.schemas import DeepDiveReport, PaperCreate, SkimReport
 from packages.domain.task_tracker import global_tracker
@@ -57,8 +57,9 @@ class PaperPipelines:
         self.pdf_extractor = PdfTextExtractor()
         # IEEE 客户端（MVP 阶段新增）
         self.ieee: IeeeClient | None = None
-        if self.settings.ieee_api_key:
-            self.ieee = IeeeClient(api_key=self.settings.ieee_api_key)
+        ieee_key = get_ieee_api_key()
+        if ieee_key:
+            self.ieee = IeeeClient(api_key=ieee_key)
             logger.info("IEEE 客户端已初始化")
         else:
             logger.warning("IEEE API Key 未配置，IEEE 摄取功能将不可用")
