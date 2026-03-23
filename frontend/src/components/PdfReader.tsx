@@ -52,19 +52,20 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, paperPdfP
 
   // 优先本地 PDF，没有则用 arXiv 在线代理
   const pdfUrl = useMemo(() => {
+    const token = localStorage.getItem('auth_token') || '';
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+    const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+
     // 有本地 PDF 优先使用
     if (paperPdfPath) {
-      const token = localStorage.getItem('auth_token') || '';
-      return `/papers/${paperId}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+      return `${base}/papers/${paperId}/pdf${tokenParam}`;
     }
     // 没有本地 PDF 但有 arXiv ID，用在线代理
     if (paperArxivId && !paperArxivId.startsWith('ss-')) {
-      const token = localStorage.getItem('auth_token') || '';
-      return `/papers/proxy-arxiv-pdf/${paperArxivId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+      return `${base}/papers/proxy-arxiv-pdf/${paperArxivId}${tokenParam}`;
     }
     // 最后尝试本地 PDF 端点
-    const token = localStorage.getItem('auth_token') || '';
-    return `/papers/${paperId}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    return `${base}/papers/${paperId}/pdf${tokenParam}`;
   }, [paperId, paperArxivId, paperPdfPath]);
 
   /**
