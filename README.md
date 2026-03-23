@@ -88,6 +88,15 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 
 ## ✨ 核心能力
 
+### 🧠 认知重构工作流 (PaperSenseMaking)
+
+「阅读→理解→重构」的完整论文工作流：
+
+- 📝 **Act 1 理解** —— 摘要+关键发现，厘清论文核心
+- ⚡ **Act 2 碰撞** —— 冲突+疑问，与已有知识对话
+- 🔄 **Act 3 重构** —— 前后对比+认知变化，形成新认知
+- 📖 **全文对照翻译** —— 段落级中英对照
+
 ### 🤖 AI Agent 对话
 
 你的智能研究助理，自然语言交互搞定一切：
@@ -384,6 +393,7 @@ alembic upgrade head
 - **[Semantic Scholar](https://www.semanticscholar.org)** — 引用数据来源
 - **[CSFeeds](https://csarxiv.org)** — 论文源订阅服务
 - **[learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)** — Agent Harness 工程体系启发，s01-s12 渐进式解构：Loop → Tools → Planning → Subagents → Skills → Context → Tasks → Background → Teams → Protocols → Autonomous
+- **PaperSenseMaking 认知重构框架** — 论文阅读「阅读→理解→重构」工作流设计灵感
 
 ---
 
