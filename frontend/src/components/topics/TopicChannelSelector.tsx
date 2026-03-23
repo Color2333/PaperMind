@@ -1,7 +1,7 @@
 /**
- * 主题渠道选择组件 - IEEE 集成完整版
- * 支持 ArXiv 和 IEEE 多渠道选择
- * 
+ * 主题渠道选择组件 - 多源聚合版
+ * 支持 ArXiv、IEEE、OpenAlex、Semantic Scholar、DBLP、bioRxiv 多渠道选择
+ *
  * @author Color2333
  */
 
@@ -13,6 +13,7 @@ interface ChannelOption {
   description: string;
   isFree: boolean;
   cost?: string;
+  category?: 'general' | 'cs' | 'biomed' | 'preprint';
 }
 
 interface TopicChannelSelectorProps {
@@ -22,18 +23,54 @@ interface TopicChannelSelectorProps {
 }
 
 const CHANNEL_OPTIONS: ChannelOption[] = [
+  // === 通用搜索渠道 ===
   {
     id: 'arxiv',
     name: 'ArXiv',
-    description: '免费开放获取，涵盖物理学、计算机科学等领域',
+    description: '免费开放获取，涵盖物理学、计算机科学、数学等领域，预印本为主',
     isFree: true,
+    category: 'general',
   },
+  {
+    id: 'openalex',
+    name: 'OpenAlex',
+    description: '全学科覆盖（2.5亿+论文），Google Scholar 替代，开源免费',
+    isFree: true,
+    category: 'general',
+  },
+  // === AI/ML 增强渠道 ===
+  {
+    id: 'semantic_scholar',
+    name: 'Semantic Scholar',
+    description: 'AI 驱动的学术搜索，提供影响力引用分析和 TL;DR 摘要',
+    isFree: true,  // 有免费额度
+    cost: '免费 100次/5分钟，需 API Key 提升限额',
+    category: 'cs',
+  },
+  // === CS 会议专用 ===
+  {
+    id: 'dblp',
+    name: 'DBLP',
+    description: '计算机科学会议论文权威索引（NeurIPS, ICML, CVPR, ACL 等）',
+    isFree: true,
+    category: 'cs',
+  },
+  // === IEEE 付费渠道 ===
   {
     id: 'ieee',
     name: 'IEEE Xplore',
-    description: '电气电子、计算机科学领域权威，需要 API Key',
+    description: '电气电子、计算机科学领域权威，正式出版物为主',
     isFree: false,
-    cost: '$129/月 或 50 次/天免费',
+    cost: '$129/月 或 50 次/天免费，需 API Key',
+    category: 'cs',
+  },
+  // === 预印本渠道 ===
+  {
+    id: 'biorxiv',
+    name: 'bioRxiv',
+    description: '生物学/生命科学预印本，追踪最新研究',
+    isFree: true,
+    category: 'preprint',
   },
 ];
 

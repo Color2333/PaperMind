@@ -6,15 +6,15 @@ from pydantic import BaseModel, Field
 
 class PaperCreate(BaseModel):
     """论文创建数据模型 - 支持多渠道（ArXiv / IEEE / DOI）"""
-    
+
     # 新增字段（多渠道兼容）- MVP 阶段可选
     source: str = "arxiv"  # 渠道标识：arxiv / ieee / doi
     source_id: str | None = None  # 渠道唯一 ID（arxiv_id / ieee_doc_id / doi）
     doi: str | None = None  # DOI 号（可选，IEEE 论文常用）
-    
+
     # 保留字段（向后兼容）- ArXiv 特定
     arxiv_id: str | None = None  # ArXiv ID（可选，仅 ArXiv 渠道使用）
-    
+
     # 通用字段
     title: str
     abstract: str

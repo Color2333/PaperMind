@@ -99,9 +99,11 @@ def get_settings() -> Settings:
 # IEEE_API_KEY=your_key
 # IEEE_DAILY_QUOTA_DEFAULT=10
 
+
 def get_ieee_api_key() -> str | None:
     """获取 IEEE API Key（从环境变量或 settings）"""
     import os
+
     # 优先从环境变量读取
     return os.getenv("IEEE_API_KEY")
 
@@ -109,4 +111,5 @@ def get_ieee_api_key() -> str | None:
 def get_ieee_enabled() -> bool:
     """检查 IEEE 是否启用"""
     import os
+
     return os.getenv("IEEE_API_ENABLED", "false").lower() == "true"

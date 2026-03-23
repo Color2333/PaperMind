@@ -119,10 +119,10 @@ async def proxy_arxiv_pdf(arxiv_id: str):
                 "Cache-Control": "public, max-age=3600",
             },
         )
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="arXiv 请求超时")
+    except httpx.TimeoutException as err:
+        raise HTTPException(status_code=504, detail="arXiv 请求超时") from err
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=500, detail=f"arXiv 访问失败：{str(exc)}")
+        raise HTTPException(status_code=500, detail=f"arXiv 访问失败：{str(exc)}") from exc
 
 
 @router.get("/papers/{paper_id}")
@@ -433,6 +433,7 @@ def paper_reasoning(paper_id: UUID) -> dict:
 
 # ========== IEEE 渠道专用路由（MVP 阶段新增）==========
 
+
 @router.post("/papers/ingest/ieee")
 def ingest_ieee_papers(
     query: str = Query(..., min_length=1, max_length=500, description="IEEE 搜索关键词"),
@@ -441,32 +442,33 @@ def ingest_ieee_papers(
 ) -> dict:
     """
     【MVP】IEEE 论文摄取接口
-    
+
     注意：
     - 需要 IEEE API Key 配置（.env 中设置 IEEE_API_KEY）
     - 手动触发，不影响现有 ArXiv 流程
     - IEEE PDF 暂不支持下载
-    
+
     Args:
         query: IEEE 搜索关键词
         max_results: 最大结果数（默认 20）
         topic_id: 可选的主题 ID
-    
+
     Returns:
         dict: {status, total_fetched, inserted_ids, new_count}
-    
+
     示例:
     ```bash
     curl -X POST "http://localhost:8002/papers/ingest/ieee?query=deep+learning&max_results=10"
     ```
     """
+    import logging
+
     from packages.ai.pipelines import PaperPipelines
     from packages.domain.enums import ActionType
-    import logging
-    
+
     logger = logging.getLogger(__name__)
     pipelines = PaperPipelines()
-    
+
     try:
         total, inserted_ids, new_count = pipelines.ingest_ieee(
             query=query,
@@ -474,7 +476,7 @@ def ingest_ieee_papers(
             topic_id=topic_id,
             action_type=ActionType.manual_collect,
         )
-        
+
         return {
             "status": "success",
             "total_fetched": total,
@@ -482,7 +484,7 @@ def ingest_ieee_papers(
             "new_count": new_count,
             "message": f"✅ IEEE 摄取完成：{new_count} 篇新论文",
         }
-    
+
     except RuntimeError as exc:
         # IEEE API Key 未配置
         logger.error("IEEE 摄取失败：%s", exc)
@@ -490,7 +492,7 @@ def ingest_ieee_papers(
             status_code=503,
             detail=f"IEEE 服务不可用：{str(exc)}。请在 .env 中设置 IEEE_API_KEY 环境变量。",
         ) from exc
-    
+
     except Exception as exc:
         logger.error("IEEE 摄取失败：%s", exc)
         raise HTTPException(
