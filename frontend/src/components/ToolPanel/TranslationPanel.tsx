@@ -24,6 +24,7 @@ interface TranslationPanelProps {
 }
 
 type ViewMode = 'selection' | 'bilingual';
+type TranslationMode = 'fast' | 'layout';
 
 export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdfPath }: TranslationPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('selection');
@@ -31,6 +32,7 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
   const [translating, setTranslating] = useState(false);
   const [numPages, setNumPages] = useState(0);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
+  const [translationMode, setTranslationMode] = useState<TranslationMode>('fast');
 
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
@@ -151,22 +153,37 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
 
   return (
     <div className="flex h-full flex-col">
-      {/* Tab 切换 */}
-      <div className="flex gap-2 border-b border-white/10 px-4 py-2">
-        <button
-          type="button"
-          onClick={() => setViewMode('selection')}
-          className={`text-xs ${viewMode === 'selection' ? 'text-primary' : 'text-white/40'}`}
-        >
-          划词翻译
-        </button>
-        <button
-          type="button"
-          onClick={handleTranslateFull}
-          className={`text-xs flex items-center gap-1 ${viewMode === 'bilingual' ? 'text-primary' : 'text-white/40'}`}
-        >
-          全文对照
-        </button>
+      {/* Tab 切换 + 模式选择 */}
+      <div className="flex items-center justify-between border-b border-white/10 px-4 py-2">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setViewMode('selection')}
+            className={`text-xs ${viewMode === 'selection' ? 'text-primary' : 'text-white/40'}`}
+          >
+            划词翻译
+          </button>
+          <button
+            type="button"
+            onClick={handleTranslateFull}
+            className={`text-xs flex items-center gap-1 ${viewMode === 'bilingual' ? 'text-primary' : 'text-white/40'}`}
+          >
+            全文对照
+          </button>
+        </div>
+
+        {/* 翻译模式选择 */}
+        {viewMode === 'bilingual' && (
+          <select
+            value={translationMode}
+            onChange={(e) => setTranslationMode(e.target.value as TranslationMode)}
+            className="rounded bg-white/10 px-2 py-1 text-xs text-white/80 outline-none"
+            title="翻译模式：快速（文本对照）或 布局保留（完整排版）"
+          >
+            <option value="fast">⚡ 快速翻译</option>
+            <option value="layout">📐 布局保留</option>
+          </select>
+        )}
       </div>
 
       {/* 划词翻译模式 */}
