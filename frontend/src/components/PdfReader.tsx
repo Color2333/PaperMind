@@ -19,10 +19,9 @@ import {
   Minimize2,
   BookOpen,
   Loader2,
-  MessageSquareText,
 } from "lucide-react";
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface PdfReaderProps {
   paperId: string;
@@ -39,7 +38,6 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
   const [loadError, setLoadError] = useState<string | null>(null);
 
   /* AI 侧栏 */
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [selectedText, setSelectedText] = useState("");
 
   /* 页面输入 */
@@ -224,25 +222,18 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
           </button>
         </div>
 
-        {/* 右侧: AI 功能 & 关闭 */}
+        {/* 右侧: 关闭 */}
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => setAiPanelOpen(!aiPanelOpen)}
-            className={`toolbar-btn ${aiPanelOpen ? "bg-primary/30 text-primary" : ""}`}
-            title="AI 助手面板"
-          >
-            <MessageSquareText className="h-4 w-4" />
-          </button>
           <button onClick={onClose} className="toolbar-btn hover:bg-red-500/20 hover:text-red-300" title="关闭 (Esc)">
             <X className="h-4 w-4" />
           </button>
         </div>
       </div>
 
-      {/* PDF 主体 - 连续滚动 */}
+      {/* PDF 主体 - 连续滚动 - 左半屏 */}
       <div
         ref={scrollRef}
-        className="mt-12 flex-1 overflow-auto pb-10"
+        className="flex-1 overflow-auto pb-10"
       >
         {loadError ? (
           <div className="flex h-full items-center justify-center">
@@ -315,7 +306,7 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
       {numPages > 0 && (
         <div
           className="absolute bottom-0 left-0 z-20 flex items-center justify-center gap-3 border-t border-white/10 bg-[#1e1e2e]/90 px-4 py-2 backdrop-blur-md"
-          style={{ right: aiPanelOpen ? "384px" : "0" }}
+          style={{ right: "50%" }}
         >
           <div className="h-1 flex-1 max-w-md overflow-hidden rounded-full bg-white/10">
             <div
@@ -329,21 +320,15 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
         </div>
       )}
 
-      {/* ToolPanel */}
-      <div
-        className={`relative mt-12 border-l border-white/10 transition-all duration-300 ${
-          aiPanelOpen ? "w-96" : "w-0"
-        } overflow-hidden`}
-      >
-        {aiPanelOpen && (
-          <ToolPanel selectedText={selectedText} paperId={paperId}>
-            {{
-              translation: <TranslationPanel selectedText={selectedText} paperId={paperId} />,
-              aggregation: <AggregationPanel selectedText={selectedText} paperId={paperId} />,
-              canvas: <CanvasPanel paperId={paperId} paperTitle={paperTitle} />,
-            }}
-          </ToolPanel>
-        )}
+      {/* 右侧面板 - 右半屏 */}
+      <div className="flex w-1/2 shrink-0">
+        <ToolPanel selectedText={selectedText} paperId={paperId}>
+          {{
+            translation: <TranslationPanel selectedText={selectedText} paperId={paperId} />,
+            aggregation: <AggregationPanel selectedText={selectedText} paperId={paperId} />,
+            canvas: <CanvasPanel paperId={paperId} paperTitle={paperTitle} />,
+          }}
+        </ToolPanel>
       </div>
     </div>
   );

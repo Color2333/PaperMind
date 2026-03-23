@@ -56,8 +56,8 @@ export function ToolPanel({ selectedText, paperId, children }: ToolPanelProps) {
   }
 
   return (
-    <div className="relative flex h-full flex-col border-l border-white/10 bg-[#1e1e2e] transition-all duration-300"
-         style={{ width: collapsed ? 48 : 384 }}>
+    <div className="relative flex h-full w-full flex-col border-l border-white/10 bg-[#1e1e2e] transition-all duration-300"
+         style={{ width: collapsed ? 48 : '100%' }}>
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
         <div className="flex items-center gap-2">
           {TABS.map(tab => (
