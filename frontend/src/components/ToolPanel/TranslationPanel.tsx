@@ -33,6 +33,7 @@ export function TranslationPanel({ selectedText, paperId }: TranslationPanelProp
   const [segments, setSegments] = useState<Segment[]>([]);
   const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsPdfDownload, setNeedsPdfDownload] = useState(false);
 
   const handleAiAction = useCallback(async (action: AiAction, text?: string) => {
     const t = text || selectedText;
@@ -63,7 +64,9 @@ export function TranslationPanel({ selectedText, paperId }: TranslationPanelProp
 
   const handleTranslateFull = useCallback(async () => {
     setMode('paragraph');
-    if (segments.length > 0) return;
+    if (segments.length > 0) {
+      return;
+    }
 
     setTranslating(true);
     setError(null);
@@ -76,7 +79,11 @@ export function TranslationPanel({ selectedText, paperId }: TranslationPanelProp
         const data = await res.json();
         setSegments(data.segments || []);
       } else if (res.status === 404) {
-        setError('论文分段功能暂不可用，请使用划词翻译');
+        const data = await res.json();
+        if (data.detail?.includes('没有 PDF') || data.detail?.includes('PDF 文件不存在')) {
+          setNeedsPdfDownload(true);
+        }
+        setError('请先下载 PDF 才能使用全文对照');
       } else {
         setError('加载分段失败，请稍后重试');
       }
@@ -87,6 +94,30 @@ export function TranslationPanel({ selectedText, paperId }: TranslationPanelProp
       setTranslating(false);
     }
   }, [paperId, segments.length]);
+
+  const handleDownloadPdf = async () => {
+    setTranslating(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('auth_token') || '';
+      const res = await fetch(`/papers/${paperId}/download-pdf`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setNeedsPdfDownload(false);
+        setError(null);
+        handleTranslateFull();
+      } else {
+        setError('PDF下载失败');
+      }
+    } catch (err) {
+      console.error('Failed to download PDF:', err);
+      setError('PDF下载失败');
+    } finally {
+      setTranslating(false);
+    }
+  };
 
   const handleTranslateSegments = useCallback(async () => {
     if (segments.length === 0) return;
@@ -149,6 +180,8 @@ export function TranslationPanel({ selectedText, paperId }: TranslationPanelProp
           handleTranslate={handleTranslateSegments}
           handleCopy={handleCopy}
           error={error}
+          needsPdfDownload={needsPdfDownload}
+          handleDownloadPdf={handleDownloadPdf}
         />
       )}
     </div>
@@ -269,16 +302,29 @@ interface ParagraphViewProps {
   handleTranslate: () => void;
   handleCopy: (idx: number, text: string) => void;
   error?: string | null;
+  needsPdfDownload?: boolean;
+  handleDownloadPdf?: () => void;
 }
 
-function ParagraphView({ segments, translating, handleTranslate, handleCopy, error }: ParagraphViewProps) {
+function ParagraphView({ segments, translating, handleTranslate, handleCopy, error, needsPdfDownload, handleDownloadPdf }: ParagraphViewProps) {
   const allTranslated = segments.length > 0 && segments.every(s => s.translation);
 
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-white/10 px-4 py-2">
         {segments.length === 0 ? (
-          <p className="text-xs text-white/40">点击上方"全文对照"加载分段</p>
+          error?.includes('PDF') ? (
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={translating}
+              className="w-full rounded-lg bg-blue-500/20 py-2 text-sm text-blue-300 hover:bg-blue-500/30 disabled:opacity-50"
+            >
+              {translating ? '下载中...' : '📥 下载 PDF'}
+            </button>
+          ) : (
+            <p className="text-xs text-white/40">点击上方"全文对照"加载分段</p>
+          )
         ) : !allTranslated ? (
           <button
             type="button"
@@ -297,13 +343,23 @@ function ParagraphView({ segments, translating, handleTranslate, handleCopy, err
         {error && (
           <div className="mb-4 flex flex-col items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-4 text-center">
             <p className="text-xs text-red-300">{error}</p>
-            <button
-              type="button"
-              onClick={handleTranslate}
-              className="text-xs text-red-400 underline hover:text-red-300"
-            >
-              重试
-            </button>
+            {needsPdfDownload && handleDownloadPdf ? (
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                className="text-xs text-blue-400 underline hover:text-blue-300"
+              >
+                下载 PDF
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleTranslate}
+                className="text-xs text-red-400 underline hover:text-red-300"
+              >
+                重试
+              </button>
+            )}
           </div>
         )}
         {translating && segments.length === 0 && (
