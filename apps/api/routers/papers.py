@@ -142,9 +142,9 @@ async def search_multi(
             {
                 "id": f"temp-{i}",
                 "title": r.paper.title,
-                "authors": r.paper.authors or [],
+                "authors": r.paper.metadata.get("authors", []),
                 "year": r.paper.publication_date.year if r.paper.publication_date else None,
-                "venue": r.paper.venue,
+                "venue": r.paper.metadata.get("venue"),
                 "abstract": r.paper.abstract,
                 "sources": r.sources,
             }
