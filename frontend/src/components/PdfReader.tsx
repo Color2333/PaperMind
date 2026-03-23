@@ -6,6 +6,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { paperApi } from "@/services/api";
 import { ToolPanel } from "./ToolPanel/ToolPanel";
 import { TranslationPanel } from "./ToolPanel/TranslationPanel";
@@ -21,7 +22,7 @@ import {
   Loader2,
 } from "lucide-react";
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 interface PdfReaderProps {
   paperId: string;
