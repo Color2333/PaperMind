@@ -155,16 +155,15 @@ from apps.api.routers import (  # noqa: E402
     cs_feeds,
     graph,
     jobs,
+    llm_configs,
     papers,
     pipelines,
     sensemaking,
+    settings as settings_router,
     system,
     topics,
     translate,
     writing,
-)
-from apps.api.routers import (
-    settings as settings_router,
 )
 
 app.include_router(system.router)
@@ -181,3 +180,4 @@ app.include_router(jobs.router)
 app.include_router(auth.router)
 app.include_router(sensemaking.router)
 app.include_router(translate.router)
+app.include_router(llm_configs.router)

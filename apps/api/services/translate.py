@@ -23,6 +23,10 @@ Text:
 
 Translation:"""
     result = llm.summarize_text(prompt, stage="translate", max_tokens=4096)
+    # 追踪 token 到数据库
+    llm.trace_result(
+        result, stage="translate", prompt_digest=f"translate to {target_lang}: {text[:50]}"
+    )
     return result.content
 
 
