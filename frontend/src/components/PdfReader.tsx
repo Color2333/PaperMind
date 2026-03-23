@@ -27,10 +27,11 @@ interface PdfReaderProps {
   paperId: string;
   paperTitle: string;
   paperArxivId?: string;  // arXiv ID（用于在线链接）
+  paperPdfPath?: string | null;  // 本地 PDF 路径
   onClose: () => void;
 }
 
-export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }: PdfReaderProps) {
+export default function PdfReader({ paperId, paperTitle, paperArxivId, paperPdfPath, onClose }: PdfReaderProps) {
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState(1.2);
@@ -46,11 +47,22 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, onClose }
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  // 混合加载：优先本地 PDF，没有则用后端代理访问 arXiv（解决 CORS 问题）
+  // 优先本地 PDF，没有则用 arXiv 在线代理
   const pdfUrl = useMemo(() => {
-    // 先尝试本地 PDF（如果有）
-    return paperApi.pdfUrl(paperId, paperArxivId);
-  }, [paperId, paperArxivId]);
+    // 有本地 PDF 优先使用
+    if (paperPdfPath) {
+      const token = localStorage.getItem('auth_token') || '';
+      return `/papers/${paperId}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    }
+    // 没有本地 PDF 但有 arXiv ID，用在线代理
+    if (paperArxivId && !paperArxivId.startsWith('ss-')) {
+      const token = localStorage.getItem('auth_token') || '';
+      return `/papers/proxy-arxiv-pdf/${paperArxivId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    }
+    // 最后尝试本地 PDF 端点
+    const token = localStorage.getItem('auth_token') || '';
+    return `/papers/${paperId}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  }, [paperId, paperArxivId, paperPdfPath]);
 
   /**
    * PDF 加载成功

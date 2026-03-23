@@ -1084,6 +1084,7 @@ export default function PaperDetail() {
             paperId={id!}
             paperTitle={paper.title}
             paperArxivId={paper.arxiv_id}
+            paperPdfPath={paper.pdf_path}
             onClose={() => setReaderOpen(false)}
           />
         </Suspense>
