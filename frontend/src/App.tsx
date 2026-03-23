@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ToastProvider } from "@/contexts/ToastContext";
+import { ChannelProvider } from "@/contexts/ChannelContext";
 import ToastContainer from "@/components/Toast";
 import { Loader2, FileQuestion } from "lucide-react";
 
@@ -93,6 +94,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+    <ChannelProvider>
     <ToastProvider>
     <BrowserRouter>
       <ToastContainer />
@@ -123,6 +125,7 @@ export default function App() {
       </Routes>
     </BrowserRouter>
     </ToastProvider>
+    </ChannelProvider>
     </ErrorBoundary>
   );
 }
