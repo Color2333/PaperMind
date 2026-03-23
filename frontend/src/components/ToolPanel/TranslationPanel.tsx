@@ -13,6 +13,7 @@ interface Segment {
   type: string;
   content: string;
   translation?: string;
+  pageNumber?: number;
 }
 
 interface TranslationPanelProps {
@@ -29,6 +30,7 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
   const [segments, setSegments] = useState<Segment[]>([]);
   const [translating, setTranslating] = useState(false);
   const [numPages, setNumPages] = useState(0);
+  const [currentPdfPage, setCurrentPdfPage] = useState(1);
 
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
@@ -39,14 +41,30 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
   }, [containerWidth]);
 
   const handleLeftScroll = useCallback(() => {
-    if (rightScrollRef.current && leftScrollRef.current) {
-      rightScrollRef.current.scrollTop = leftScrollRef.current.scrollTop;
-    }
-  }, []);
+    if (!leftScrollRef.current) return;
 
-  const handleRightScroll = useCallback(() => {
-    if (leftScrollRef.current && rightScrollRef.current) {
-      leftScrollRef.current.scrollTop = rightScrollRef.current.scrollTop;
+    const scrollTop = leftScrollRef.current.scrollTop;
+    const pageHeight = 842 * scale + 16 * scale;
+    const estimatedPage = Math.floor(scrollTop / pageHeight) + 1;
+    const newPage = Math.max(1, Math.min(estimatedPage, numPages));
+
+    if (newPage !== currentPdfPage) {
+      setCurrentPdfPage(newPage);
+    }
+
+    const targetPageAnchor = document.querySelector(`[data-trans-page="${newPage}"]`);
+    if (targetPageAnchor && rightScrollRef.current) {
+      const rightRect = rightScrollRef.current.getBoundingClientRect();
+      const anchorRect = targetPageAnchor.getBoundingClientRect();
+      const offsetTop = anchorRect.top + rightScrollRef.current.scrollTop - rightRect.top - 20;
+      rightScrollRef.current.scrollTo({ top: offsetTop, behavior: 'smooth' });
+    }
+  }, [scale, numPages, currentPdfPage]);
+
+  const scrollPdfToPage = useCallback((pageNum: number) => {
+    const pageEl = document.querySelector(`[data-page="${pageNum}"]`);
+    if (pageEl && leftScrollRef.current) {
+      pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, []);
 
@@ -210,7 +228,6 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
           {/* 右侧: 翻译 */}
           <div
             ref={rightScrollRef}
-            onScroll={handleRightScroll}
             className="w-full overflow-auto bg-[#1a1a2e]"
           >
             <div className="p-4">
@@ -225,8 +242,17 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
                 </div>
               )}
               {segments.map((seg, idx) => (
-                <div key={seg.id || idx} className="mb-6">
-                  <div className="text-xs text-white/30 mb-1">P{Math.floor(idx / 5) + 1}</div>
+                <button
+                  type="button"
+                  key={seg.id || idx}
+                  data-trans-page={seg.pageNumber}
+                  className="mb-6 w-full cursor-pointer rounded-lg p-2 text-left hover:bg-white/5 transition-colors"
+                  onClick={() => seg.pageNumber && scrollPdfToPage(seg.pageNumber)}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-primary/60">P{seg.pageNumber}</span>
+                    <span className="text-xs text-white/20">点击跳转</span>
+                  </div>
                   <p className="text-sm text-white/70 leading-relaxed mb-3">{seg.content}</p>
                   {seg.translation && (
                     <div className="border-l-2 border-primary/40 pl-3">
@@ -234,7 +260,7 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
                       <p className="text-sm text-primary/90 leading-relaxed">{seg.translation}</p>
                     </div>
                   )}
-                </div>
+                </button>
               ))}
             </div>
           </div>
