@@ -48,7 +48,8 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const res = await fetch(`/sensemaking/sessions?paper_id=${paperId}`, {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/sensemaking/sessions?paper_id=${paperId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -69,7 +70,8 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const schemaRes = await fetch('/sensemaking/schemas', {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const schemaRes = await fetch(`${base}/sensemaking/schemas`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!schemaRes.ok) return;
@@ -77,7 +79,7 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
       const defaultSchema = schemas.find((s: { user_id: string }) => s.user_id === 'default') || schemas[0];
       if (!defaultSchema) return;
 
-      const createRes = await fetch('/sensemaking/sessions', {
+      const createRes = await fetch(`${base}/sensemaking/sessions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -102,7 +104,8 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const res = await fetch(`/sensemaking/sessions/${currentSession.id}/act1`, {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/sensemaking/sessions/${currentSession.id}/act1`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -127,7 +130,8 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const res = await fetch(`/sensemaking/sessions/${currentSession.id}/act2`, {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/sensemaking/sessions/${currentSession.id}/act2`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -152,7 +156,8 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const res = await fetch(`/sensemaking/sessions/${currentSession.id}/act3`, {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/sensemaking/sessions/${currentSession.id}/act3`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,

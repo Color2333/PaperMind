@@ -25,7 +25,8 @@ export function AggregationPanel({ selectedText, paperId }: AggregationPanelProp
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const res = await fetch(`/papers/multi-source-search?query=${encodeURIComponent(query)}&channels=${channels.join(',')}`, {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/papers/multi-source-search?query=${encodeURIComponent(query)}&channels=${channels.join(',')}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },

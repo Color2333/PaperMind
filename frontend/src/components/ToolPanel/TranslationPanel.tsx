@@ -72,7 +72,8 @@ export function TranslationPanel({ selectedText, paperId }: TranslationPanelProp
     setError(null);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const res = await fetch(`/papers/${paperId}/segments`, {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/papers/${paperId}/segments`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -100,7 +101,8 @@ export function TranslationPanel({ selectedText, paperId }: TranslationPanelProp
     setError(null);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const res = await fetch(`/papers/${paperId}/download-pdf`, {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/papers/${paperId}/download-pdf`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -124,7 +126,8 @@ export function TranslationPanel({ selectedText, paperId }: TranslationPanelProp
     setTranslating(true);
     try {
       const token = localStorage.getItem('auth_token') || '';
-      const res = await fetch('/translate/segments', {
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/translate/segments`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
