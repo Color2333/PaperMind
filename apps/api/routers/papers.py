@@ -88,6 +88,90 @@ def recommended_papers(top_k: int = Query(default=10, ge=1, le=50)) -> dict:
     return {"items": RecommendationService().recommend(top_k=top_k)}
 
 
+@router.post("/papers/search-multi")
+async def search_multi(
+    query: str,
+    channels: list[str] = Query(default=["arxiv"]),
+    max_results_per_channel: int = Query(default=50, ge=1, le=100),
+    topic_id: str | None = Query(default=None),
+) -> dict:
+    """多渠道并行搜索论文"""
+    import asyncio
+    import logging
+
+    from packages.integrations.aggregator import ResultAggregator
+    from packages.integrations.registry import ChannelRegistry
+
+    logger = logging.getLogger(__name__)
+
+    ChannelRegistry.register_default_channels()
+
+    async def fetch_channel(ch: str) -> tuple[str, list, dict]:
+        try:
+            channel = ChannelRegistry.get(ch)
+            if not channel:
+                return ch, [], {"error": "channel not found"}
+            papers = await asyncio.to_thread(channel.fetch, query, max_results_per_channel)
+            return ch, papers, {"total": len(papers)}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Channel %s failed: %s", ch, exc)
+            return ch, [], {"error": str(exc)}
+
+    tasks = [fetch_channel(ch) for ch in channels]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    aggregator = ResultAggregator()
+    channel_stats: dict[str, dict[str, int | str]] = {}
+
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error("Channel task failed: %s", result)
+            continue
+        ch, papers, meta = result
+        channel_stats[ch] = {"total": 0, "new": 0, "duplicates": 0}
+        if "error" in meta:
+            channel_stats[ch]["error"] = meta["error"]
+        else:
+            channel_stats[ch]["total"] = meta.get("total", 0)
+            aggregator.add_results(ch, papers, meta)
+
+    aggregated = aggregator.get_sorted_results()
+
+    return {
+        "papers": [
+            {
+                "id": f"temp-{i}",
+                "title": r.paper.title,
+                "authors": r.paper.metadata.get("authors", []),
+                "year": r.paper.publication_date.year if r.paper.publication_date else None,
+                "venue": r.paper.metadata.get("venue"),
+                "abstract": r.paper.abstract,
+                "sources": r.sources,
+            }
+            for i, r in enumerate(aggregated)
+        ],
+        "channel_stats": channel_stats,
+    }
+
+
+@router.get("/papers/suggest-channels")
+def suggest_channels(query: str) -> dict:
+    """根据关键词推荐合适的渠道"""
+    from packages.integrations.registry import ChannelRegistry
+    from packages.worker.smart_router import suggest_channels as get_suggestion
+
+    ChannelRegistry.register_default_channels()
+    available = ChannelRegistry.list_channels()
+
+    recommended, alternatives, reasoning = get_suggestion(query, available)
+
+    return {
+        "recommended": recommended,
+        "alternatives": alternatives,
+        "reasoning": reasoning,
+    }
+
+
 @router.get("/papers/proxy-arxiv-pdf/{arxiv_id:path}")
 async def proxy_arxiv_pdf(arxiv_id: str):
     """代理访问 arXiv PDF（解决 CORS 问题）"""
@@ -119,10 +203,10 @@ async def proxy_arxiv_pdf(arxiv_id: str):
                 "Cache-Control": "public, max-age=3600",
             },
         )
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="arXiv 请求超时")
+    except httpx.TimeoutException as err:
+        raise HTTPException(status_code=504, detail="arXiv 请求超时") from err
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=500, detail=f"arXiv 访问失败：{str(exc)}")
+        raise HTTPException(status_code=500, detail=f"arXiv 访问失败：{str(exc)}") from exc
 
 
 @router.get("/papers/{paper_id}")
@@ -429,3 +513,73 @@ def paper_reasoning(paper_id: UUID) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ReasoningService().analyze(paper_id)
+
+
+# ========== IEEE 渠道专用路由（MVP 阶段新增）==========
+
+
+@router.post("/papers/ingest/ieee")
+def ingest_ieee_papers(
+    query: str = Query(..., min_length=1, max_length=500, description="IEEE 搜索关键词"),
+    max_results: int = Query(default=20, ge=1, le=100, description="最大结果数"),
+    topic_id: str | None = Query(default=None, description="可选的主题 ID"),
+) -> dict:
+    """
+    【MVP】IEEE 论文摄取接口
+
+    注意：
+    - 需要 IEEE API Key 配置（.env 中设置 IEEE_API_KEY）
+    - 手动触发，不影响现有 ArXiv 流程
+    - IEEE PDF 暂不支持下载
+
+    Args:
+        query: IEEE 搜索关键词
+        max_results: 最大结果数（默认 20）
+        topic_id: 可选的主题 ID
+
+    Returns:
+        dict: {status, total_fetched, inserted_ids, new_count}
+
+    示例:
+    ```bash
+    curl -X POST "http://localhost:8002/papers/ingest/ieee?query=deep+learning&max_results=10"
+    ```
+    """
+    import logging
+
+    from packages.ai.pipelines import PaperPipelines
+    from packages.domain.enums import ActionType
+
+    logger = logging.getLogger(__name__)
+    pipelines = PaperPipelines()
+
+    try:
+        total, inserted_ids, new_count = pipelines.ingest_ieee(
+            query=query,
+            max_results=max_results,
+            topic_id=topic_id,
+            action_type=ActionType.manual_collect,
+        )
+
+        return {
+            "status": "success",
+            "total_fetched": total,
+            "inserted_ids": inserted_ids,
+            "new_count": new_count,
+            "message": f"✅ IEEE 摄取完成：{new_count} 篇新论文",
+        }
+
+    except RuntimeError as exc:
+        # IEEE API Key 未配置
+        logger.error("IEEE 摄取失败：%s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"IEEE 服务不可用：{str(exc)}。请在 .env 中设置 IEEE_API_KEY 环境变量。",
+        ) from exc
+
+    except Exception as exc:
+        logger.error("IEEE 摄取失败：%s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"IEEE 摄取失败：{str(exc)}",
+        ) from exc

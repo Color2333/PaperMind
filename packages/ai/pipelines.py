@@ -20,6 +20,7 @@ from packages.domain.enums import ActionType, ReadStatus
 from packages.domain.schemas import DeepDiveReport, PaperCreate, SkimReport
 from packages.domain.task_tracker import global_tracker
 from packages.integrations.arxiv_client import ArxivClient
+from packages.integrations.ieee_client import IeeeClient
 from packages.integrations.llm_client import LLMClient
 from packages.integrations.semantic_scholar_client import SemanticScholarClient
 from packages.storage.db import session_scope
@@ -54,6 +55,13 @@ class PaperPipelines:
         self.llm = LLMClient()
         self.vision = VisionPdfReader()
         self.pdf_extractor = PdfTextExtractor()
+        # IEEE 客户端（MVP 阶段新增）
+        self.ieee: IeeeClient | None = None
+        if self.settings.ieee_api_key:
+            self.ieee = IeeeClient(api_key=self.settings.ieee_api_key)
+            logger.info("IEEE 客户端已初始化")
+        else:
+            logger.warning("IEEE API Key 未配置，IEEE 摄取功能将不可用")
 
     def _save_paper(self, repo, paper, topic_id=None, download_pdf=False):
         """入库 + 下载 PDF 的公共逻辑
@@ -273,6 +281,135 @@ class PaperPipelines:
             "inserted_ids": inserted_ids,
             "new_count": new_count,
         }
+
+    def ingest_ieee(
+        self,
+        query: str,
+        max_results: int = 20,
+        topic_id: str | None = None,
+        action_type: ActionType = ActionType.manual_collect,
+    ) -> tuple[int, list[str], int]:
+        """
+        搜索 IEEE 论文并入库（MVP 阶段新增）
+
+        注意：
+        - 不修改现有 ingest_arxiv 逻辑
+        - IEEE PDF 暂不支持下载
+        - 需要 IEEE API Key 配置
+
+        Args:
+            query: 搜索关键词
+            max_results: 最大结果数（默认 20）
+            topic_id: 可选的主题 ID
+            action_type: 行动类型（默认 manual_collect）
+
+        Returns:
+            (total_count, inserted_ids, new_papers_count)
+        """
+        if not self.ieee:
+            logger.error("IEEE 客户端未初始化，无法执行 IEEE 摄取")
+            raise RuntimeError("IEEE API Key 未配置，请在 .env 中设置 IEEE_API_KEY 环境变量")
+
+        inserted_ids: list[str] = []
+        new_papers_count = 0
+        total_fetched = 0
+
+        with session_scope() as session:
+            repo = PaperRepository(session)
+            run_repo = PipelineRunRepository(session)
+            action_repo = ActionRepository(session)
+
+            run = run_repo.start(
+                "ingest_ieee",
+                decision_note=f"query={query}",
+            )
+
+            try:
+                # 从 IEEE 获取论文
+                papers = self.ieee.fetch_by_keywords(
+                    query=query,
+                    max_results=max_results,
+                )
+                total_fetched = len(papers)
+
+                if not papers:
+                    logger.info("IEEE 摄取无新论文：%s", query)
+                    run_repo.finish(run.id)
+                    return 0, [], 0
+
+                # 去重：检查 DOI 是否已存在
+                dois = [p.doi for p in papers if p.doi]
+                existing_dois = repo.list_existing_dois(dois) if dois else set()
+
+                # 处理每篇论文
+                for paper in papers:
+                    # DOI 去重
+                    if paper.doi and paper.doi in existing_dois:
+                        logger.info(
+                            "IEEE 论文已存在（DOI 重复）: %s - %s", paper.doi, paper.title[:50]
+                        )
+                        continue
+
+                    # 入库
+                    saved = self._save_paper_ieee(repo, paper, topic_id)
+                    new_papers_count += 1
+                    inserted_ids.append(saved.id)
+
+                # 创建行动记录
+                if inserted_ids:
+                    action_repo.create_action(
+                        action_type=action_type,
+                        title=f"IEEE 收集：{query[:80]}",
+                        paper_ids=inserted_ids,
+                        query=query,
+                        topic_id=topic_id,
+                    )
+
+                    # 后台关联引用
+                    threading.Thread(
+                        target=_bg_auto_link,
+                        args=(inserted_ids,),
+                        daemon=True,
+                    ).start()
+
+                run_repo.finish(run.id)
+
+                logger.info(
+                    "✅ IEEE 摄取完成：%d 篇新论文（从 %d 篇中筛选）",
+                    new_papers_count,
+                    total_fetched,
+                )
+
+                return len(inserted_ids), inserted_ids, new_papers_count
+
+            except Exception as exc:
+                run_repo.fail(run.id, str(exc))
+                logger.error("IEEE 摄取失败：%s", exc)
+                raise
+
+    def _save_paper_ieee(self, repo, paper, topic_id=None):
+        """
+        IEEE 论文入库专用方法
+
+        Args:
+            repo: PaperRepository
+            paper: PaperCreate (IEEE 格式)
+            topic_id: 可选的主题 ID
+
+        Returns:
+            保存后的 Paper 对象
+        """
+        # IEEE 论文不下载 PDF（权限限制）
+        saved = repo.upsert_paper(paper)
+        if topic_id:
+            repo.link_to_topic(saved.id, topic_id)
+
+        logger.info(
+            "IEEE 论文入库：%s - %s",
+            paper.source_id,
+            paper.title[:50],
+        )
+        return saved
 
     def skim(self, paper_id: UUID) -> SkimReport:
         started = time.perf_counter()

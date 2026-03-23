@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 from uuid import UUID
 
 from packages.ai.brief_service import DailyBriefService
@@ -382,3 +383,175 @@ def run_weekly_graph_maintenance() -> dict:
         "topic_sync": topic_results,
         "incremental": incremental,
     }
+
+
+# ========== 完整版新增：多渠道调度支持 ==========
+
+
+def run_topic_ingest_v2(topic_id: str) -> dict:
+    """
+    单独处理一个主题的抓取 + 处理 - 支持多渠道（完整版）
+
+    新功能:
+    - 支持同时从 ArXiv 和 IEEE 抓取
+    - 独立 IEEE 配额控制
+    - 按渠道分别统计结果
+
+    Args:
+        topic_id: 主题 ID
+
+    Returns:
+        dict: 处理结果统计（包含 by_source 字段）
+    """
+
+    pipelines = PaperPipelines()
+    with session_scope() as session:
+        topic = session.get(TopicSubscription, topic_id)
+        if not topic:
+            return {"topic_id": topic_id, "status": "not_found"}
+
+        topic_name = topic.name
+        # 获取配置的渠道列表，默认只有 ArXiv
+        sources = getattr(topic, "sources", ["arxiv"])
+
+        # 按渠道分别抓取
+        all_results = {}
+        total_inserted = 0
+
+        for source in sources:
+            if source == "arxiv":
+                result = _ingest_from_arxiv(pipelines, topic, session)
+            elif source == "ieee":
+                result = _ingest_from_ieee(pipelines, topic, session)
+            else:
+                logger.warning("未知渠道：%s，跳过", source)
+                continue
+
+            all_results[source] = result
+            total_inserted += result.get("inserted", 0)
+
+        # 汇总统计
+        return {
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "sources": sources,
+            "total_inserted": total_inserted,
+            "by_source": all_results,
+        }
+
+
+def _ingest_from_arxiv(pipelines, topic, session) -> dict:
+    """ArXiv 渠道抓取（保持现有逻辑）"""
+    last_error: str | None = None
+    ids: list[str] = []
+    new_count: int = 0
+    attempts = 0
+
+    for _attempt in range(topic.retry_limit + 1):
+        attempts += 1
+        try:
+            result = pipelines.ingest_arxiv_with_stats(
+                query=topic.query,
+                max_results=topic.max_results_per_run,
+                topic_id=topic.id,
+                action_type=ActionType.auto_collect,
+            )
+            ids = result["inserted_ids"]
+            new_count = result["new_count"]
+            last_error = None
+            break
+        except Exception as exc:
+            last_error = str(exc)
+
+    if last_error is not None:
+        return {
+            "status": "failed",
+            "attempts": attempts,
+            "error": last_error,
+            "inserted": 0,
+        }
+
+    return {
+        "status": "ok",
+        "inserted": len(ids),
+        "new_count": new_count,
+    }
+
+
+def _ingest_from_ieee(pipelines, topic, session) -> dict:
+    """
+    IEEE 渠道抓取 - 独立配额控制
+
+    Args:
+        pipelines: PaperPipelines 实例
+        topic: TopicSubscription 对象
+        session: SQLAlchemy Session
+
+    Returns:
+        dict: 抓取结果统计
+    """
+    from packages.config import get_settings
+
+    settings = get_settings()
+
+    # 检查 IEEE 配额
+    ieee_quota = getattr(topic, "ieee_daily_quota", 10)
+    if ieee_quota <= 0:
+        logger.info("主题 [%s] IEEE 配额已用尽，跳过", topic.name)
+        return {"status": "quota_exhausted", "inserted": 0}
+
+    # 检查 IEEE API Key
+    api_key = getattr(topic, "ieee_api_key_override", None) or settings.ieee_api_key
+    if not api_key:
+        logger.warning("主题 [%s] IEEE API Key 未配置，跳过", topic.name)
+        return {"status": "no_api_key", "inserted": 0}
+
+    try:
+        # 使用 IEEE 渠道抓取
+        total, inserted_ids, new_count = pipelines.ingest_ieee(
+            query=topic.query,
+            max_results=min(ieee_quota, topic.max_results_per_run),
+            topic_id=topic.id,
+            action_type=ActionType.auto_collect,
+        )
+
+        return {
+            "status": "ok",
+            "inserted": len(inserted_ids),
+            "new_count": new_count,
+            "quota_used": 1,
+        }
+
+    except Exception as exc:
+        logger.error("IEEE 抓取失败：%s", exc)
+        return {"status": "failed", "error": str(exc), "inserted": 0}
+
+
+def _check_and_consume_ieee_quota(session, topic_id: str, date: date) -> bool:
+    """
+    检查并消耗 IEEE 配额
+
+    Args:
+        session: SQLAlchemy Session
+        topic_id: 主题 ID
+        date: 日期
+
+    Returns:
+        bool: True 表示成功消耗配额，False 表示配额不足
+    """
+    from packages.storage.repositories import IeeeQuotaRepository
+
+    quota_repo = IeeeQuotaRepository(session)
+    topic = session.get(TopicSubscription, topic_id)
+    if not topic:
+        return False
+
+    limit = getattr(topic, "ieee_daily_quota", 10)
+
+    # 检查配额
+    if not quota_repo.check_quota(topic_id, date, limit):
+        logger.warning("主题 [%s] IEEE 配额已用尽 (%d/%d)", topic.name, limit, limit)
+        return False
+
+    # 消耗配额
+    return quota_repo.consume_quota(topic_id, date, 1)
