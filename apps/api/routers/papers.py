@@ -154,6 +154,24 @@ async def search_multi(
     }
 
 
+@router.get("/papers/suggest-channels")
+def suggest_channels(query: str) -> dict:
+    """根据关键词推荐合适的渠道"""
+    from packages.integrations.registry import ChannelRegistry
+    from packages.worker.smart_router import suggest_channels as get_suggestion
+
+    ChannelRegistry.register_default_channels()
+    available = ChannelRegistry.list_channels()
+
+    recommended, alternatives, reasoning = get_suggestion(query, available)
+
+    return {
+        "recommended": recommended,
+        "alternatives": alternatives,
+        "reasoning": reasoning,
+    }
+
+
 @router.get("/papers/proxy-arxiv-pdf/{arxiv_id:path}")
 async def proxy_arxiv_pdf(arxiv_id: str):
     """代理访问 arXiv PDF（解决 CORS 问题）"""
