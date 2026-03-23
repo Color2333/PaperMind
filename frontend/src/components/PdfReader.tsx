@@ -21,7 +21,6 @@ import {
   Loader2,
 } from "lucide-react";
 
-pdfjs.version = "5.4.296"; // Ensure version matches installed pdfjs-dist
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url
