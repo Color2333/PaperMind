@@ -12,6 +12,8 @@
 """
 
 # 渠道适配器（完整版新增）
+# 聚合器
+from packages.integrations.aggregator import ResultAggregator
 from packages.integrations.arxiv_channel import ArxivChannel
 
 # 原始客户端
@@ -35,6 +37,8 @@ from packages.integrations.semantic_scholar_search_channel import SemanticSchola
 from packages.integrations.semantic_scholar_search_client import SemanticScholarSearchClient
 
 __all__ = [
+    # 聚合器
+    "ResultAggregator",
     # 渠道适配器
     "ChannelBase",
     "ArxivChannel",

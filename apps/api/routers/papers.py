@@ -88,6 +88,72 @@ def recommended_papers(top_k: int = Query(default=10, ge=1, le=50)) -> dict:
     return {"items": RecommendationService().recommend(top_k=top_k)}
 
 
+@router.post("/papers/search-multi")
+async def search_multi(
+    query: str,
+    channels: list[str] = Query(default=["arxiv"]),
+    max_results_per_channel: int = Query(default=50, ge=1, le=100),
+    topic_id: str | None = Query(default=None),
+) -> dict:
+    """多渠道并行搜索论文"""
+    import asyncio
+    import logging
+
+    from packages.integrations.aggregator import ResultAggregator
+    from packages.integrations.registry import ChannelRegistry
+
+    logger = logging.getLogger(__name__)
+
+    ChannelRegistry.register_default_channels()
+
+    async def fetch_channel(ch: str) -> tuple[str, list, dict]:
+        try:
+            channel = ChannelRegistry.get(ch)
+            if not channel:
+                return ch, [], {"error": "channel not found"}
+            papers = await asyncio.to_thread(channel.fetch, query, max_results_per_channel)
+            return ch, papers, {"total": len(papers)}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Channel %s failed: %s", ch, exc)
+            return ch, [], {"error": str(exc)}
+
+    tasks = [fetch_channel(ch) for ch in channels]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    aggregator = ResultAggregator()
+    channel_stats: dict[str, dict[str, int | str]] = {}
+
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error("Channel task failed: %s", result)
+            continue
+        ch, papers, meta = result
+        channel_stats[ch] = {"total": 0, "new": 0, "duplicates": 0}
+        if "error" in meta:
+            channel_stats[ch]["error"] = meta["error"]
+        else:
+            channel_stats[ch]["total"] = meta.get("total", 0)
+            aggregator.add_results(ch, papers, meta)
+
+    aggregated = aggregator.get_sorted_results()
+
+    return {
+        "papers": [
+            {
+                "id": f"temp-{i}",
+                "title": r.paper.title,
+                "authors": r.paper.authors or [],
+                "year": r.paper.publication_date.year if r.paper.publication_date else None,
+                "venue": r.paper.venue,
+                "abstract": r.paper.abstract,
+                "sources": r.sources,
+            }
+            for i, r in enumerate(aggregated)
+        ],
+        "channel_stats": channel_stats,
+    }
+
+
 @router.get("/papers/proxy-arxiv-pdf/{arxiv_id:path}")
 async def proxy_arxiv_pdf(arxiv_id: str):
     """代理访问 arXiv PDF（解决 CORS 问题）"""
