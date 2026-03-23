@@ -18,17 +18,15 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
+
+from sqlalchemy import select
 
 from packages.ai.pipelines import PaperPipelines
-from packages.ai.rate_limiter import acquire_api, get_rate_limiter
-from packages.config import get_settings
+from packages.ai.rate_limiter import acquire_api
 from packages.storage.db import session_scope
-from packages.storage.models import Paper, AnalysisReport
-from sqlalchemy import select
+from packages.storage.models import AnalysisReport, Paper
 
 # 配置日志
 logging.basicConfig(
@@ -127,10 +125,10 @@ def main():
 示例:
   # 处理 20 篇（默认）
   python scripts/cleanup_unread.py
-  
+
   # 处理 50 篇，并发 5 个
   python scripts/cleanup_unread.py --limit 50 --concurrency 5
-  
+
   # 添加到 crontab（每天 UTC 14 点执行）
   0 14 * * * cd /path/to/PaperMind && /path/to/venv/bin/python scripts/cleanup_unread.py --limit 30
         """,
@@ -158,7 +156,7 @@ def main():
 
     print(f"📊 找到 {len(papers)} 篇待处理论文")
     print(f"⚡ 并发数：{args.concurrency}")
-    print(f"📋 处理模式：粗读 + 嵌入 (不精读)")
+    print("📋 处理模式：粗读 + 嵌入 (不精读)")
     print()
 
     if args.dry_run:
@@ -172,9 +170,7 @@ def main():
 
     # 批量处理
     results = []
-    start_time = datetime.now(timezone.utc)
-
-    limiter = get_rate_limiter()
+    start_time = datetime.now(UTC)
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
         futures = {
@@ -192,7 +188,7 @@ def main():
                 partial = sum(1 for r in results if r["skim_success"] or r["embed_success"])
                 errors = sum(1 for r in results if r["error"])
 
-                elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+                elapsed = (datetime.now(UTC) - start_time).total_seconds()
                 eta = (elapsed / i * (len(papers) - i)) if i > 0 else 0
 
                 logger.info(
@@ -213,7 +209,7 @@ def main():
     both_ok = sum(1 for r in results if r["skim_success"] and r["embed_success"])
     errors = sum(1 for r in results if r["error"])
 
-    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+    elapsed = (datetime.now(UTC) - start_time).total_seconds()
 
     print(f"总处理：{total} 篇")
     print(f"✅ 嵌入成功：{embed_ok} ({embed_ok / total * 100:.1f}%)")

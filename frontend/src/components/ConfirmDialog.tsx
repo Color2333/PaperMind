@@ -1,6 +1,6 @@
 /**
  * 通用确认弹窗组件
- * @author Bamzc
+ * @author Color2333
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";

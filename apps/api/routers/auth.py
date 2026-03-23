@@ -32,15 +32,15 @@ async def login(request: LoginRequest):
     成功返回 JWT token
     """
     settings = get_settings()
-    
+
     # 如果未配置密码，返回错误
     if not settings.auth_password:
         raise HTTPException(status_code=403, detail="Authentication is disabled")
-    
+
     # 验证密码
     if not authenticate_user(request.password):
         raise HTTPException(status_code=401, detail="Incorrect password")
-    
+
     # 生成 token
     access_token = create_access_token(data={"sub": "papermind-user"})
     return LoginResponse(access_token=access_token)

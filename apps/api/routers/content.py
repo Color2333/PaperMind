@@ -4,7 +4,7 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from apps.api.deps import brief_date, brief_service, cache, graph_service, iso_dt, settings
+from apps.api.deps import brief_service, cache, graph_service, iso_dt
 from packages.domain.schemas import DailyBriefRequest
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
@@ -98,6 +98,7 @@ def start_topic_wiki_task(
         fn=_run_topic_wiki_task,
         keyword=keyword,
         limit=limit,
+        category="generation",
     )
     return {"task_id": task_id, "status": "pending"}
 
@@ -168,17 +169,32 @@ def daily_brief(req: DailyBriefRequest) -> dict:
     """生成每日简报（异步任务）"""
     from packages.domain.task_tracker import global_tracker
 
-    recipient = req.recipient or settings.notify_default_to
+    # 如果没有指定收件人，从数据库读取配置
+    recipient = req.recipient
+    if not recipient:
+        from packages.storage.db import session_scope
+        from packages.storage.repositories import DailyReportConfigRepository
+
+        with session_scope() as session:
+            config = DailyReportConfigRepository(session).get_config()
+            if config.send_email_report and config.recipient_emails:
+                recipient = config.recipient_emails.split(",")[0]
 
     def _generate_fn(progress_callback=None):
         # publish() 内部已写入 generated_content 表，无需重复
-        return brief_service.publish(recipient=recipient)
+        if progress_callback:
+            progress_callback("正在生成每日简报...", 20, 100)
+        result = brief_service.publish(recipient=recipient)
+        if progress_callback:
+            progress_callback("简报生成完成", 95, 100)
+        return result
 
     task_id = global_tracker.submit(
         task_type="daily_brief",
         title="📰 生成每日简报",
         fn=_generate_fn,
         total=100,
+        category="generation",
     )
     return {
         "task_id": task_id,

@@ -1,6 +1,6 @@
 """
 论文处理 Pipeline - 摄入 / 粗读 / 精读 / 向量化 / 参考文献导入
-@author Bamzc
+@author Color2333
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from packages.ai.vision_reader import VisionPdfReader
 from packages.config import get_settings
 from packages.domain.enums import ActionType, ReadStatus
 from packages.domain.schemas import DeepDiveReport, PaperCreate, SkimReport
+from packages.domain.task_tracker import global_tracker
 from packages.integrations.arxiv_client import ArxivClient
 from packages.integrations.ieee_client import IeeeClient
 from packages.integrations.llm_client import LLMClient
@@ -30,13 +31,9 @@ from packages.storage.repositories import (
     PaperRepository,
     PipelineRunRepository,
     PromptTraceRepository,
-    SourceCheckpointRepository,
 )
 
 logger = logging.getLogger(__name__)
-
-# 参考文献导入任务进度（内存缓存）
-_import_tasks: dict[str, dict] = {}
 
 
 def _bg_auto_link(paper_ids: list[str]) -> None:
@@ -52,6 +49,7 @@ def _bg_auto_link(paper_ids: list[str]) -> None:
 
 
 class PaperPipelines:
+    def __init__(self) -> None:
         self.settings = get_settings()
         self.arxiv = ArxivClient()
         self.llm = LLMClient()
@@ -64,6 +62,7 @@ class PaperPipelines:
             logger.info("IEEE 客户端已初始化")
         else:
             logger.warning("IEEE API Key 未配置，IEEE 摄取功能将不可用")
+
     def _save_paper(self, repo, paper, topic_id=None, download_pdf=False):
         """入库 + 下载 PDF 的公共逻辑
 
@@ -94,17 +93,22 @@ class PaperPipelines:
         topic_id: str | None = None,
         action_type: ActionType = ActionType.manual_collect,
         sort_by: str = "submittedDate",
+        days_back: int = 7,
+        progress_callback: callable | None = None,
     ) -> tuple[int, list[str], int]:
         """搜索 arXiv 并入库，upsert 去重。返回 (total_count, inserted_ids, new_papers_count)
 
         智能递归抓取：如果前 N 篇有重复，继续抓取更早的论文，直到找到 max_results 篇新论文
+
+        Args:
+            progress_callback: 可选的进度回调函数，签名 callback(message, current, total)
         """
         inserted_ids: list[str] = []
-        new_papers_count = 0
+        new_papers_count: int = 0
         total_fetched = 0
         batch_size = 20
-        max_pages = 5  # 最多抓取 5 批（100 篇），直到找到 max_results 篇新论文
-        total_arxiv_tokens = 0.0
+        max_pages = 10  # 最多抓取 10 批（200 篇），直到找到 max_results 篇新论文
+        arxiv_request_delay = 3.0  # arXiv API 建议请求间隔 3 秒
 
         with session_scope() as session:
             repo = PaperRepository(session)
@@ -124,13 +128,55 @@ class PaperPipelines:
                     needed = max_results - new_papers_count
                     this_batch = min(batch_size, needed + 20)  # 多抓 20 篇作为缓冲
 
+                    if progress_callback:
+                        progress_callback(f"抓取第 {page + 1}/{max_pages} 批", page + 1, max_pages)
+
                     papers = self.arxiv.fetch_latest(
                         query=query,
                         max_results=this_batch,
                         sort_by=sort_by,
                         start=start,
+                        days_back=days_back,
                     )
                     total_fetched += len(papers)
+
+                    # 添加请求间隔，避免触发 arXiv 限流
+                    if page < max_pages - 1 and papers:
+                        time.sleep(arxiv_request_delay)
+
+                    if not papers:
+                        break  # 没有更多论文了
+
+                    # 提前检查哪些论文已存在
+                    existing_arxiv_ids = repo.list_existing_arxiv_ids([p.arxiv_id for p in papers])
+
+                    # 只处理新论文
+                    for paper in papers:
+                        is_new = paper.arxiv_id not in existing_arxiv_ids
+                        if is_new:
+                            saved = self._save_paper(repo, paper, topic_id)
+                            new_papers_count += 1
+                            inserted_ids.append(saved.id)
+
+                            # 达到目标就停止
+                            if new_papers_count >= max_results:
+                                break
+
+                    # 日志
+                    new_in_batch = len(papers) - len(existing_arxiv_ids)
+                    logger.info(
+                        "第 %d 批：抓取 %d 篇，新论文 %d 篇（累计 %d/%d）",
+                        page + 1,
+                        len(papers),
+                        new_in_batch,
+                        new_papers_count,
+                        max_results,
+                    )
+                    total_fetched += len(papers)
+
+                    # 添加请求间隔，避免触发 arXiv 限流
+                    if page < max_pages - 1 and papers:
+                        time.sleep(arxiv_request_delay)
 
                     if not papers:
                         break  # 没有更多论文了
@@ -179,7 +225,7 @@ class PaperPipelines:
                     ).start()
 
                 logger.info(
-                    "✅ 抓取完成：共 %d 篇新论文（从 %d 篇中筛选）",
+                    "抓取完成：共 %d 篇新论文（从 %d 篇中筛选）",
                     new_papers_count,
                     total_fetched,
                 )
@@ -194,13 +240,19 @@ class PaperPipelines:
         max_results: int = 20,
         topic_id: str | None = None,
         action_type: ActionType = ActionType.subscription_ingest,
+        sort_by: str = "submittedDate",
+        days_back: int = 7,
+        progress_callback: callable | None = None,
     ) -> list[str]:
         """ingest_arxiv 的别名，返回 inserted_ids"""
-        _, ids = self.ingest_arxiv(
+        _, ids, _ = self.ingest_arxiv(
             query=query,
             max_results=max_results,
             topic_id=topic_id,
             action_type=action_type,
+            sort_by=sort_by,
+            days_back=days_back,
+            progress_callback=progress_callback,
         )
         return ids
 
@@ -210,6 +262,9 @@ class PaperPipelines:
         max_results: int = 20,
         topic_id: str | None = None,
         action_type: ActionType = ActionType.subscription_ingest,
+        sort_by: str = "submittedDate",
+        days_back: int = 7,
+        progress_callback: callable | None = None,
     ) -> dict:
         """ingest_arxiv 返回详细统计信息"""
         total_count, inserted_ids, new_count = self.ingest_arxiv(
@@ -217,6 +272,9 @@ class PaperPipelines:
             max_results=max_results,
             topic_id=topic_id,
             action_type=action_type,
+            sort_by=sort_by,
+            days_back=days_back,
+            progress_callback=progress_callback,
         )
         return {
             "total_count": total_count,
@@ -233,41 +291,39 @@ class PaperPipelines:
     ) -> tuple[int, list[str], int]:
         """
         搜索 IEEE 论文并入库（MVP 阶段新增）
-        
+
         注意：
         - 不修改现有 ingest_arxiv 逻辑
         - IEEE PDF 暂不支持下载
         - 需要 IEEE API Key 配置
-        
+
         Args:
             query: 搜索关键词
             max_results: 最大结果数（默认 20）
             topic_id: 可选的主题 ID
             action_type: 行动类型（默认 manual_collect）
-        
+
         Returns:
             (total_count, inserted_ids, new_papers_count)
         """
         if not self.ieee:
             logger.error("IEEE 客户端未初始化，无法执行 IEEE 摄取")
-            raise RuntimeError(
-                "IEEE API Key 未配置，请在 .env 中设置 IEEE_API_KEY 环境变量"
-            )
-        
+            raise RuntimeError("IEEE API Key 未配置，请在 .env 中设置 IEEE_API_KEY 环境变量")
+
         inserted_ids: list[str] = []
         new_papers_count = 0
         total_fetched = 0
-        
+
         with session_scope() as session:
             repo = PaperRepository(session)
             run_repo = PipelineRunRepository(session)
             action_repo = ActionRepository(session)
-            
+
             run = run_repo.start(
                 "ingest_ieee",
                 decision_note=f"query={query}",
             )
-            
+
             try:
                 # 从 IEEE 获取论文
                 papers = self.ieee.fetch_by_keywords(
@@ -275,28 +331,30 @@ class PaperPipelines:
                     max_results=max_results,
                 )
                 total_fetched = len(papers)
-                
+
                 if not papers:
                     logger.info("IEEE 摄取无新论文：%s", query)
                     run_repo.finish(run.id)
                     return 0, [], 0
-                
+
                 # 去重：检查 DOI 是否已存在
                 dois = [p.doi for p in papers if p.doi]
                 existing_dois = repo.list_existing_dois(dois) if dois else set()
-                
+
                 # 处理每篇论文
                 for paper in papers:
                     # DOI 去重
                     if paper.doi and paper.doi in existing_dois:
-                        logger.info("IEEE 论文已存在（DOI 重复）: %s - %s", paper.doi, paper.title[:50])
+                        logger.info(
+                            "IEEE 论文已存在（DOI 重复）: %s - %s", paper.doi, paper.title[:50]
+                        )
                         continue
-                    
+
                     # 入库
                     saved = self._save_paper_ieee(repo, paper, topic_id)
                     new_papers_count += 1
                     inserted_ids.append(saved.id)
-                
+
                 # 创建行动记录
                 if inserted_ids:
                     action_repo.create_action(
@@ -306,24 +364,24 @@ class PaperPipelines:
                         query=query,
                         topic_id=topic_id,
                     )
-                    
+
                     # 后台关联引用
                     threading.Thread(
                         target=_bg_auto_link,
                         args=(inserted_ids,),
                         daemon=True,
                     ).start()
-                
+
                 run_repo.finish(run.id)
-                
+
                 logger.info(
                     "✅ IEEE 摄取完成：%d 篇新论文（从 %d 篇中筛选）",
                     new_papers_count,
                     total_fetched,
                 )
-                
+
                 return len(inserted_ids), inserted_ids, new_papers_count
-                
+
             except Exception as exc:
                 run_repo.fail(run.id, str(exc))
                 logger.error("IEEE 摄取失败：%s", exc)
@@ -332,12 +390,12 @@ class PaperPipelines:
     def _save_paper_ieee(self, repo, paper, topic_id=None):
         """
         IEEE 论文入库专用方法
-        
+
         Args:
             repo: PaperRepository
             paper: PaperCreate (IEEE 格式)
             topic_id: 可选的主题 ID
-        
+
         Returns:
             保存后的 Paper 对象
         """
@@ -345,7 +403,7 @@ class PaperPipelines:
         saved = repo.upsert_paper(paper)
         if topic_id:
             repo.link_to_topic(saved.id, topic_id)
-        
+
         logger.info(
             "IEEE 论文入库：%s - %s",
             paper.source_id,
@@ -499,8 +557,39 @@ class PaperPipelines:
                 score = 0.5
             score = min(max(score, 0.0), 1.0)
             one_liner = str(parsed_json.get("one_liner", "")).strip() or llm_text[:140]
+
+            # 过滤 LLM 返回的字面占位符
+            PLACEHOLDER_KEYWORDS = {
+                "创新点",
+                "创新点1",
+                "创新点2",
+                "创新点3",
+                "keyword",
+                "keyword1",
+            }
+            FALLBACK_KEYWORDS = {
+                "中文标题",
+                "中文标题翻译",
+                "中文摘要",
+                "中文摘要翻译",
+                "一句话",
+                "一句话总结",
+                "一句话中文总结",
+            }
+            innovations = [
+                x
+                for x in innovations
+                if x.strip() and not any(pk in x for pk in PLACEHOLDER_KEYWORDS)
+            ]
             if not innovations:
                 innovations = [one_liner[:80]]
+            if not title_zh or any(fk in title_zh for fk in FALLBACK_KEYWORDS):
+                title_zh = ""
+            if not abstract_zh or any(fk in abstract_zh for fk in FALLBACK_KEYWORDS):
+                abstract_zh = ""
+            if not one_liner or any(fk in one_liner for fk in FALLBACK_KEYWORDS):
+                one_liner = llm_text[:140]
+
             return SkimReport(
                 one_liner=one_liner[:280],
                 innovations=[str(x)[:180] for x in innovations[:5]],
@@ -560,10 +649,6 @@ class PaperPipelines:
 # ==================== 参考文献一键导入引擎 ====================
 
 
-def get_import_task(task_id: str) -> dict | None:
-    return _import_tasks.get(task_id)
-
-
 class ReferenceImporter:
     """将引用详情中的外部论文批量导入到论文库"""
 
@@ -590,36 +675,39 @@ class ReferenceImporter:
         topic_ids: list[str] | None = None,
     ) -> str:
         """启动后台导入任务，返回 task_id"""
-        task_id = str(uuid4())
-        _import_tasks[task_id] = {
-            "task_id": task_id,
-            "status": "running",
-            "source_paper_id": source_paper_id,
-            "total": len(entries),
-            "completed": 0,
-            "imported": 0,
-            "skipped": 0,
-            "failed": 0,
-            "current": "",
-            "results": [],
-        }
-        threading.Thread(
-            target=self._run_import,
-            args=(task_id, source_paper_id, source_paper_title, entries, topic_ids or []),
-            daemon=True,
-        ).start()
-        return task_id
+
+        def _run_import_with_progress(progress_callback=None):
+            return self._run_import(
+                source_paper_id=source_paper_id,
+                source_paper_title=source_paper_title,
+                entries=entries,
+                topic_ids=topic_ids or [],
+                progress_callback=progress_callback,
+            )
+
+        return global_tracker.submit(
+            task_type="reference_import",
+            title=f"参考文献导入：{source_paper_title[:60]}",
+            fn=_run_import_with_progress,
+            total=len(entries),
+            category="collection",
+        )
 
     def _run_import(
         self,
-        task_id: str,
+        *,
         source_paper_id: str,
         source_paper_title: str,
         entries: list[dict],
         topic_ids: list[str],
-    ) -> None:
-        task = _import_tasks[task_id]
+        progress_callback=None,
+    ) -> dict:
+        """执行导入任务，返回导入结果统计"""
         inserted_ids: list[str] = []
+        skipped_count = 0
+        imported_count = 0
+        failed_count = 0
+        results: list[dict] = []
 
         try:
             # 1) 建立库内已有 arxiv_id 集合（用于去重）
@@ -646,10 +734,9 @@ class ReferenceImporter:
                 else:
                     ss_only_entries.append(entry)
 
-            task["skipped"] = len(skip_entries)
-            task["completed"] = len(skip_entries)
+            skipped_count = len(skip_entries)
             for e in skip_entries:
-                task["results"].append(
+                results.append(
                     {
                         "title": e.get("title", ""),
                         "status": "skipped",
@@ -660,22 +747,24 @@ class ReferenceImporter:
             # 3) 批量通过 arXiv API 拉取有 arxiv_id 的论文
             if arxiv_entries:
                 self._import_arxiv_batch(
-                    task,
                     arxiv_entries,
                     source_paper_id,
                     topic_ids,
                     inserted_ids,
                     existing_norms,
+                    results,
+                    progress_callback,
                 )
 
             # 4) 无 arxiv_id 的论文用 SS 元数据导入
             if ss_only_entries:
                 self._import_ss_batch(
-                    task,
                     ss_only_entries,
                     source_paper_id,
                     topic_ids,
                     inserted_ids,
+                    results,
+                    progress_callback,
                 )
 
             # 5) 记录 CollectionAction
@@ -684,7 +773,7 @@ class ReferenceImporter:
                     action_repo = ActionRepository(session)
                     action_repo.create_action(
                         action_type=ActionType.reference_import,
-                        title=f"参考文献导入: {source_paper_title[:60]}",
+                        title=f"参考文献导入：{source_paper_title[:60]}",
                         paper_ids=inserted_ids,
                         query=source_paper_id,
                     )
@@ -697,24 +786,36 @@ class ReferenceImporter:
                     daemon=True,
                 ).start()
 
-            task["status"] = "completed"
+            return {
+                "status": "completed",
+                "total": len(entries),
+                "imported": imported_count,
+                "skipped": skipped_count,
+                "failed": failed_count,
+                "results": results,
+            }
 
         except Exception as exc:
             logger.exception("Reference import failed: %s", exc)
-            task["status"] = "failed"
-            task["error"] = str(exc)
+            return {
+                "status": "failed",
+                "error": str(exc),
+                "results": results,
+            }
 
     def _import_arxiv_batch(
         self,
-        task: dict,
         entries: list[dict],
         source_paper_id: str,
         topic_ids: list[str],
         inserted_ids: list[str],
         existing_norms: set[str],
+        results: list[dict],
+        progress_callback=None,
     ) -> None:
         """批量从 arXiv 拉取完整论文数据"""
         arxiv_ids = [e["arxiv_id"] for e in entries]
+        imported_count = len(inserted_ids)
 
         # arXiv API 一次最多获取 50 个，分批处理
         batch_size = 30
@@ -731,9 +832,8 @@ class ReferenceImporter:
                 logger.warning("arXiv batch fetch failed: %s", exc)
             time.sleep(1)
 
-        for entry in entries:
+        for idx, entry in enumerate(entries):
             title = entry.get("title", "Unknown")
-            task["current"] = title[:50]
             arxiv_id = entry["arxiv_id"]
             norm = self._normalize_arxiv_id(arxiv_id)
 
@@ -789,8 +889,8 @@ class ReferenceImporter:
                         pass
                     inserted_ids.append(saved.id)
                     existing_norms.add(norm or "")
-                    task["imported"] += 1
-                    task["results"].append(
+                    imported_count += 1
+                    results.append(
                         {
                             "title": title,
                             "status": "imported",
@@ -800,8 +900,7 @@ class ReferenceImporter:
                     )
             except Exception as exc:
                 logger.warning("Import failed for %s: %s", title, exc)
-                task["failed"] += 1
-                task["results"].append(
+                results.append(
                     {
                         "title": title,
                         "status": "failed",
@@ -809,20 +908,23 @@ class ReferenceImporter:
                     }
                 )
 
-            task["completed"] += 1
+            # 更新进度
+            if progress_callback:
+                progress_callback(f"正在导入：{title[:50]}", imported_count, len(entries))
 
     def _import_ss_batch(
         self,
-        task: dict,
         entries: list[dict],
         source_paper_id: str,
         topic_ids: list[str],
         inserted_ids: list[str],
+        results: list[dict],
+        progress_callback=None,
     ) -> None:
         """用 Semantic Scholar 元数据导入没有 arXiv ID 的论文"""
-        for entry in entries:
+        imported_count = len(inserted_ids)
+        for idx, entry in enumerate(entries):
             title = entry.get("title", "Unknown")
-            task["current"] = title[:50]
             scholar_id = entry.get("scholar_id")
 
             # 尝试从 SS 获取更丰富的信息
@@ -884,8 +986,8 @@ class ReferenceImporter:
                         except Exception:
                             pass
                     inserted_ids.append(saved.id)
-                    task["imported"] += 1
-                    task["results"].append(
+                    imported_count += 1
+                    results.append(
                         {
                             "title": title,
                             "status": "imported",
@@ -895,8 +997,7 @@ class ReferenceImporter:
                     )
             except Exception as exc:
                 logger.warning("SS import failed for %s: %s", title, exc)
-                task["failed"] += 1
-                task["results"].append(
+                results.append(
                     {
                         "title": title,
                         "status": "failed",
@@ -904,7 +1005,9 @@ class ReferenceImporter:
                     }
                 )
 
-            task["completed"] += 1
+            # 更新进度
+            if progress_callback:
+                progress_callback(f"正在导入：{title[:50]}", imported_count, len(entries))
 
     @staticmethod
     def _build_paper_from_entry(

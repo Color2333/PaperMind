@@ -1,7 +1,7 @@
 /**
  * PaperMind 全流程 E2E 深度测试
  * 模拟真实用户操作：导航、输入、点击、滚动、验证
- * @author Bamzc
+ * @author Color2333
  */
 import { chromium } from "playwright";
 import { mkdirSync } from "fs";

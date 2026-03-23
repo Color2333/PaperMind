@@ -1,6 +1,6 @@
 /**
  * Tauri 桌面环境检测与 IPC 桥接
- * @author Bamzc
+ * @author Color2333
  */
 
 /** 是否运行在 Tauri 桌面环境中 */
@@ -104,18 +104,18 @@ export function resolveApiBase(): string {
   if (!isTauri()) {
     // 优先级：VITE_API_BASE > 环境变量推断 > 默认值
     if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
-    
+
     // Docker 环境：使用相对路径（Nginx 反向代理）
     if (import.meta.env.DEV) {
       // 开发环境：localhost
       return "http://localhost:8000";
     }
-    
+
     // 生产环境：使用相对路径，由 Nginx 代理
     // Docker 中前端访问后端不需要完整 URL
     return "/api";
   }
-  
+
   // Tauri 桌面环境
   if (_resolvedPort) {
     return `http://127.0.0.1:${_resolvedPort}`;
@@ -127,14 +127,20 @@ export function setApiPort(port: number): void {
   _resolvedPort = port;
 }
 
-export function waitForBackend(): Promise<number> {
+/** 等待后端就绪，最多等待 30 秒 */
+export function waitForBackend(timeoutMs = 30000): Promise<number> {
   if (_resolvedPort) return Promise.resolve(_resolvedPort);
 
   if (!_portPromise) {
-    _portPromise = new Promise((resolve) => {
+    _portPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`后端服务启动超时 (${timeoutMs / 1000}s)，请检查配置`));
+      }, timeoutMs);
+
       const poll = async () => {
         const port = await getApiPort();
         if (port) {
+          clearTimeout(timer);
           _resolvedPort = port;
           resolve(port);
         } else {
@@ -144,6 +150,7 @@ export function waitForBackend(): Promise<number> {
       poll();
 
       listen<number>("backend-ready", (port) => {
+        clearTimeout(timer);
         _resolvedPort = port;
         resolve(port);
       });

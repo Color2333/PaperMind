@@ -1,7 +1,8 @@
 """
 AI 关键词建议服务 - 自然语言 → arXiv 搜索关键词
-@author Bamzc
+@author Color2333
 """
+
 from __future__ import annotations
 
 import logging
@@ -59,9 +60,13 @@ class KeywordService:
         """生成关键词建议"""
         prompt = SUGGEST_PROMPT.format(description=description)
         result = self.llm.complete_json(
-            prompt, stage="keyword_suggest", max_tokens=4096,
+            prompt,
+            stage="keyword_suggest",
+            max_tokens=4096,
         )
-        self.llm.trace_result(result, stage="keyword_suggest", prompt_digest=f"suggest:{description[:80]}")
+        self.llm.trace_result(
+            result, stage="keyword_suggest", prompt_digest=f"suggest:{description[:80]}"
+        )
 
         parsed = result.parsed_json
         if parsed is None:

@@ -1,6 +1,6 @@
 # PaperMind 部署 Wiki
 
-> 📚 **完整的部署指南** - 从本地开发到生产环境，一站式搞定！  
+> 📚 **完整的部署指南** - 从本地开发到生产环境，一站式搞定！
 > 📅 最后更新：2026-03-02 | 版本：v3.1
 
 ---
@@ -216,7 +216,7 @@ docker compose ps
 # 预期输出：
 # NAME                  STATUS              PORTS
 # papermind-backend     Up (healthy)        0.0.0.0:8002->8000/tcp
-# papermind-worker      Up (healthy)        
+# papermind-worker      Up (healthy)
 # papermind-frontend    Up (healthy)        0.0.0.0:3002->80/tcp
 
 # 检查服务健康状态
@@ -255,14 +255,14 @@ services:
         reservations:
           cpus: '0.5'    # 预留 0.5 核
           memory: 512M   # 预留 512MB
-  
+
   worker:
     deploy:
       resources:
         limits:
           cpus: '2.0'
           memory: 2G
-  
+
   frontend:
     deploy:
       resources:
@@ -819,14 +819,14 @@ ufw allow from 192.168.1.0/24 to any port 8002
 server {
     listen 443 ssl;
     server_name your-domain.com;
-    
+
     ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    
+
     location / {
         proxy_pass http://localhost:3002;
     }
-    
+
     location /api/ {
         proxy_pass http://localhost:8002;
     }
@@ -893,7 +893,7 @@ services:
       - "9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-  
+
   grafana:
     image: grafana/grafana
     ports:

@@ -1,8 +1,9 @@
 """
 Wiki 生成上下文收集模块
 从多源聚合富化上下文供 Wiki 生成使用
-@author Bamzc
+@author Color2333
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,9 +38,7 @@ class WikiContextGatherer:
         self.llm = LLMClient()
         self.pdf_extractor = PdfTextExtractor()
 
-    def gather_topic_context(
-        self, keyword: str, limit: int = 120
-    ) -> dict:
+    def gather_topic_context(self, keyword: str, limit: int = 120) -> dict:
         """
         Returns {
             "paper_contexts": list[dict],   # title, year, abstract, analysis, has_embedding
@@ -59,13 +58,9 @@ class WikiContextGatherer:
                 citation_repo = CitationRepository(session)
 
                 half = max(limit // 2, 1)
-                full_text_papers = paper_repo.full_text_candidates(
-                    keyword, limit=half
-                )
+                full_text_papers = paper_repo.full_text_candidates(keyword, limit=half)
                 query_vector = self.llm.embed_text(keyword)
-                semantic_papers = paper_repo.semantic_candidates(
-                    query_vector, limit=half
-                )
+                semantic_papers = paper_repo.semantic_candidates(query_vector, limit=half)
 
                 seen: set[str] = set()
                 merged: list = []
@@ -106,9 +101,7 @@ class WikiContextGatherer:
                     if not path.exists():
                         continue
                     try:
-                        excerpt = self.pdf_extractor.extract_text(
-                            p.pdf_path, max_pages=12
-                        )
+                        excerpt = self.pdf_extractor.extract_text(p.pdf_path, max_pages=12)
                         if excerpt:
                             result["pdf_excerpts"].append(
                                 {"title": p.title or "", "excerpt": excerpt}
@@ -165,15 +158,15 @@ class WikiContextGatherer:
                     text = f"{paper.title or ''}\n{paper.abstract or ''}".strip()
                     vector = self.llm.embed_text(text)
                 if vector:
-                    related = paper_repo.similar_by_embedding(
-                        vector, UUID(paper_id), limit=5
-                    )
+                    related = paper_repo.similar_by_embedding(vector, UUID(paper_id), limit=5)
                     for r in related:
-                        result["related_papers"].append({
-                            "title": r.title or "",
-                            "year": _extract_year(r.publication_date),
-                            "abstract": r.abstract or "",
-                        })
+                        result["related_papers"].append(
+                            {
+                                "title": r.title or "",
+                                "year": _extract_year(r.publication_date),
+                                "abstract": r.abstract or "",
+                            }
+                        )
 
                 citations = citation_repo.list_for_paper_ids([paper_id])
                 citation_contexts: list[str] = []
@@ -190,10 +183,7 @@ class WikiContextGatherer:
 
                 all_related_ids = list(ancestor_ids | descendant_ids)
                 if all_related_ids:
-                    papers_by_id = {
-                        p.id: p
-                        for p in paper_repo.list_by_ids(all_related_ids)
-                    }
+                    papers_by_id = {p.id: p for p in paper_repo.list_by_ids(all_related_ids)}
                     for aid in ancestor_ids:
                         p = papers_by_id.get(aid)
                         if p and p.title:
@@ -208,10 +198,7 @@ class WikiContextGatherer:
                     if path.exists():
                         try:
                             result["pdf_excerpt"] = (
-                                self.pdf_extractor.extract_text(
-                                    paper.pdf_path, max_pages=12
-                                )
-                                or ""
+                                self.pdf_extractor.extract_text(paper.pdf_path, max_pages=12) or ""
                             )
                         except Exception as exc:
                             logger.warning(

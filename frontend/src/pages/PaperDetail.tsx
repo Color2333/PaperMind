@@ -1,6 +1,6 @@
 /**
  * Paper Detail - 论文详情（重构版：进度面板 + Tab 化报告 + 统一布局）
- * @author Bamzc
+ * @author Color2333
  */
 import { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
@@ -12,14 +12,49 @@ import { PaperDetailSkeleton } from "@/components/Skeleton";
 const Markdown = lazy(() => import("@/components/Markdown"));
 const PdfReader = lazy(() => import("@/components/PdfReader"));
 import { useToast } from "@/contexts/ToastContext";
-import { paperApi, pipelineApi, type FigureAnalysisItem } from "@/services/api";
-import type { Paper, SkimReport, DeepDiveReport, ReasoningChainResult } from "@/types";
+import { paperApi, pipelineApi } from "@/services/api";
+import type {
+  Paper,
+  SkimReport,
+  DeepDiveReport,
+  ReasoningChainResult,
+  FigureAnalysisItem,
+} from "@/types";
 import {
-  ArrowLeft, ExternalLink, Eye, BookOpen, Cpu, Star, AlertTriangle,
-  CheckCircle2, Lightbulb, FlaskConical, Microscope, Shield, Sparkles,
-  Link2, Tag, Folder, Heart, Image as ImageIcon, BarChart3, Table2,
-  FileCode2, Brain, ChevronDown, ChevronRight, TrendingUp, Target,
-  ThumbsUp, ThumbsDown, Zap, FileSearch, X, Loader2, Check, Download,
+  ArrowLeft,
+  ExternalLink,
+  Eye,
+  BookOpen,
+  Cpu,
+  Star,
+  AlertTriangle,
+  CheckCircle2,
+  Lightbulb,
+  FlaskConical,
+  Microscope,
+  Shield,
+  Sparkles,
+  Link2,
+  Tag,
+  Folder,
+  Heart,
+  Image as ImageIcon,
+  BarChart3,
+  Table2,
+  FileCode2,
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  TrendingUp,
+  Target,
+  ThumbsUp,
+  ThumbsDown,
+  Zap,
+  FileSearch,
+  X,
+  Loader2,
+  Check,
+  Download,
 } from "lucide-react";
 
 /* ================================================================
@@ -41,61 +76,91 @@ function PipelineProgress({
   const [stageIdx, setStageIdx] = useState(0);
 
   const stages =
-    type === "skim" ? SKIM_STAGES :
-    type === "deep" ? DEEP_STAGES :
-    type === "figure" ? FIGURE_STAGES :
-    type === "reasoning" ? ["构建推理链...", "分析方法推导...", "评估影响力...", "生成评估报告..."] :
-    ["计算向量嵌入..."];
+    type === "skim"
+      ? SKIM_STAGES
+      : type === "deep"
+        ? DEEP_STAGES
+        : type === "figure"
+          ? FIGURE_STAGES
+          : type === "reasoning"
+            ? ["构建推理链...", "分析方法推导...", "评估影响力...", "生成评估报告..."]
+            : ["计算向量嵌入..."];
 
   const estimate =
-    type === "skim" ? "10-20 秒" :
-    type === "deep" ? "30-60 秒" :
-    type === "figure" ? "30-60 秒" :
-    type === "reasoning" ? "20-40 秒" : "5-10 秒";
+    type === "skim"
+      ? "10-20 秒"
+      : type === "deep"
+        ? "30-60 秒"
+        : type === "figure"
+          ? "30-60 秒"
+          : type === "reasoning"
+            ? "20-40 秒"
+            : "5-10 秒";
 
   useEffect(() => {
     const progressTimer = setInterval(() => {
       setProgress((p) => (p < 90 ? p + Math.random() * 3 + 0.5 : p));
     }, 500);
-    const stageTimer = setInterval(() => {
-      setStageIdx((i) => (i < stages.length - 1 ? i + 1 : i));
-    }, type === "embed" ? 3000 : 8000);
-    return () => { clearInterval(progressTimer); clearInterval(stageTimer); };
+    const stageTimer = setInterval(
+      () => {
+        setStageIdx((i) => (i < stages.length - 1 ? i + 1 : i));
+      },
+      type === "embed" ? 3000 : 8000
+    );
+    return () => {
+      clearInterval(progressTimer);
+      clearInterval(stageTimer);
+    };
   }, [stages.length, type]);
 
   return (
-    <div className="animate-fade-in rounded-2xl border border-primary/20 bg-primary/5 p-5 dark:bg-primary/10">
+    <div className="animate-fade-in border-primary/20 bg-primary/5 dark:bg-primary/10 rounded-2xl border p-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="relative flex h-10 w-10 items-center justify-center">
             <svg className="h-10 w-10 -rotate-90" viewBox="0 0 36 36">
-              <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" strokeWidth="2" className="text-border" />
               <circle
-                cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" strokeWidth="2.5"
+                cx="18"
+                cy="18"
+                r="15.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="text-border"
+              />
+              <circle
+                cx="18"
+                cy="18"
+                r="15.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
                 className="text-primary transition-all duration-500"
                 strokeDasharray={`${progress} ${100 - progress}`}
                 strokeLinecap="round"
               />
             </svg>
-            <span className="absolute text-[10px] font-bold text-primary">{Math.round(progress)}%</span>
+            <span className="text-primary absolute text-[10px] font-bold">
+              {Math.round(progress)}%
+            </span>
           </div>
           <div>
-            <p className="text-sm font-medium text-ink">{stages[stageIdx]}</p>
-            <p className="text-xs text-ink-tertiary">预计 {estimate}</p>
+            <p className="text-ink text-sm font-medium">{stages[stageIdx]}</p>
+            <p className="text-ink-tertiary text-xs">预计 {estimate}</p>
           </div>
         </div>
         {onCancel && (
           <button
             onClick={onCancel}
-            className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs text-ink-tertiary transition-colors hover:bg-hover hover:text-ink"
+            className="text-ink-tertiary hover:bg-hover hover:text-ink flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs transition-colors"
           >
             <X className="h-3.5 w-3.5" /> 取消
           </button>
         )}
       </div>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-border">
+      <div className="bg-border mt-3 h-1.5 overflow-hidden rounded-full">
         <div
-          className="h-full rounded-full bg-gradient-to-r from-primary to-blue-400 transition-all duration-500"
+          className="from-primary h-full rounded-full bg-gradient-to-r to-blue-400 transition-all duration-500"
           style={{ width: `${progress}%` }}
         />
       </div>
@@ -110,8 +175,8 @@ function PipelineProgress({
 function TabLabel({ label, status }: { label: string; status: "idle" | "loading" | "done" }) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      {status === "loading" && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
-      {status === "done" && <Check className="h-3 w-3 text-success" />}
+      {status === "loading" && <Loader2 className="text-primary h-3 w-3 animate-spin" />}
+      {status === "done" && <Check className="text-success h-3 w-3" />}
       {label}
     </span>
   );
@@ -131,10 +196,19 @@ export default function PaperDetail() {
 
   const [skimReport, setSkimReport] = useState<SkimReport | null>(null);
   const [deepReport, setDeepReport] = useState<DeepDiveReport | null>(null);
-  const [savedSkim, setSavedSkim] = useState<{ summary_md: string; skim_score: number | null; key_insights: Record<string, unknown> } | null>(null);
-  const [savedDeep, setSavedDeep] = useState<{ deep_dive_md: string; key_insights: Record<string, unknown> } | null>(null);
+  const [savedSkim, setSavedSkim] = useState<{
+    summary_md: string;
+    skim_score: number | null;
+    key_insights: Record<string, unknown>;
+  } | null>(null);
+  const [savedDeep, setSavedDeep] = useState<{
+    deep_dive_md: string;
+    key_insights: Record<string, unknown>;
+  } | null>(null);
   const [similarIds, setSimilarIds] = useState<string[]>([]);
-  const [similarItems, setSimilarItems] = useState<{ id: string; title: string; arxiv_id?: string; read_status?: string }[]>([]);
+  const [similarItems, setSimilarItems] = useState<
+    { id: string; title: string; arxiv_id?: string; read_status?: string }[]
+  >([]);
 
   const [skimLoading, setSkimLoading] = useState(false);
   const [deepLoading, setDeepLoading] = useState(false);
@@ -172,7 +246,9 @@ export default function PaperDetail() {
         if (p.deep_report) setReportTab("deep");
         else if (p.skim_report) setReportTab("skim");
       })
-      .catch(() => { toast("error", "加载论文详情失败"); })
+      .catch(() => {
+        toast("error", "加载论文详情失败");
+      })
       .finally(() => setLoading(false));
   }, [id, toast]);
 
@@ -188,7 +264,11 @@ export default function PaperDetail() {
       setPaper(updated);
       if (updated.skim_report) setSavedSkim(updated.skim_report);
       toast("success", "粗读完成");
-    } catch { toast("error", "粗读失败"); } finally { setSkimLoading(false); }
+    } catch {
+      toast("error", "粗读失败");
+    } finally {
+      setSkimLoading(false);
+    }
   };
 
   const handleDeep = async () => {
@@ -197,15 +277,13 @@ export default function PaperDetail() {
     setReportTab("deep");
     try {
       const report = await pipelineApi.deep(id);
-      setDeepReport(report);
-      // 刷新论文信息，更新精读报告并清除旧缓存
-      const updated = await paperApi.detail(id);
-      setPaper(updated);
-      if (updated.deep_report) setSavedDeep(updated.deep_report);
-      // 清除新生成的报告，优先显示 savedDeep（从后端加载的最新数据）
-      setDeepReport(null);
+      setSavedDeep(report);
       toast("success", "精读完成");
-    } catch { toast("error", "精读失败"); } finally { setDeepLoading(false); }
+    } catch {
+      toast("error", "精读失败");
+    } finally {
+      setDeepLoading(false);
+    }
   };
 
   const handleEmbed = async () => {
@@ -215,7 +293,11 @@ export default function PaperDetail() {
       await pipelineApi.embed(id);
       setEmbedDone(true);
       toast("success", "嵌入完成");
-    } catch { toast("error", "嵌入失败"); } finally { setEmbedLoading(false); }
+    } catch {
+      toast("error", "嵌入失败");
+    } finally {
+      setEmbedLoading(false);
+    }
   };
 
   const handleSimilar = async () => {
@@ -226,7 +308,11 @@ export default function PaperDetail() {
       const res = await paperApi.similar(id);
       setSimilarIds(res.similar_ids);
       if (res.items) setSimilarItems(res.items);
-    } catch { toast("error", "获取相似论文失败"); } finally { setSimilarLoading(false); }
+    } catch {
+      toast("error", "获取相似论文失败");
+    } finally {
+      setSimilarLoading(false);
+    }
   };
 
   const handleAnalyzeFigures = async () => {
@@ -237,7 +323,11 @@ export default function PaperDetail() {
       const res = await paperApi.analyzeFigures(id, 10);
       setFigures(res.items);
       toast("success", `解读完成，共 ${res.items.length} 张图表`);
-    } catch { toast("error", "图表分析失败"); } finally { setFiguresAnalyzing(false); }
+    } catch {
+      toast("error", "图表分析失败");
+    } finally {
+      setFiguresAnalyzing(false);
+    }
   };
 
   const [autoAnalyzing, setAutoAnalyzing] = useState(false);
@@ -251,15 +341,22 @@ export default function PaperDetail() {
       if (!paper.has_embedding) {
         setAutoStage("向量嵌入中...");
         setEmbedLoading(true);
-        try { await pipelineApi.embed(id); setEmbedDone(true); } catch {}
+        try {
+          await pipelineApi.embed(id);
+          setEmbedDone(true);
+        } catch {}
         setEmbedLoading(false);
       }
 
       // Step 2: 粗读（不需要 PDF）
       if (!hasSkim) {
         setAutoStage("粗读分析中...");
-        setSkimLoading(true); setReportTab("skim");
-        try { const r = await pipelineApi.skim(id); setSkimReport(r); } catch {}
+        setSkimLoading(true);
+        setReportTab("skim");
+        try {
+          const r = await pipelineApi.skim(id);
+          setSkimReport(r);
+        } catch {}
         setSkimLoading(false);
       }
 
@@ -267,24 +364,36 @@ export default function PaperDetail() {
         // Step 3: 精读（需要 PDF）
         if (!hasDeep) {
           setAutoStage("精读分析中...");
-          setDeepLoading(true); setReportTab("deep");
-          try { const r = await pipelineApi.deep(id); setDeepReport(r); } catch {}
+          setDeepLoading(true);
+          setReportTab("deep");
+          try {
+            const r = await pipelineApi.deep(id);
+            setDeepReport(r);
+          } catch {}
           setDeepLoading(false);
         }
 
         // Step 4: 图表解读（需要 PDF）
         if (figures.length === 0) {
           setAutoStage("图表解读中...");
-          setFiguresAnalyzing(true); setReportTab("figures");
-          try { const r = await paperApi.analyzeFigures(id, 10); setFigures(r.items); } catch {}
+          setFiguresAnalyzing(true);
+          setReportTab("figures");
+          try {
+            const r = await paperApi.analyzeFigures(id, 10);
+            setFigures(r.items);
+          } catch {}
           setFiguresAnalyzing(false);
         }
 
         // Step 5: 推理链（需要 PDF）
         if (!reasoning) {
           setAutoStage("推理链分析中...");
-          setReasoningLoading(true); setReportTab("reasoning");
-          try { const r = await paperApi.reasoningAnalysis(id); setReasoning(r.reasoning); } catch {}
+          setReasoningLoading(true);
+          setReportTab("reasoning");
+          try {
+            const r = await paperApi.reasoningAnalysis(id);
+            setReasoning(r.reasoning);
+          } catch {}
           setReasoningLoading(false);
         }
       }
@@ -292,7 +401,10 @@ export default function PaperDetail() {
       setAutoStage("");
       toast("success", "深度分析完成");
       setReportTab("skim");
-    } finally { setAutoAnalyzing(false); setAutoStage(""); }
+    } finally {
+      setAutoAnalyzing(false);
+      setAutoStage("");
+    }
   };
 
   const handleReasoning = async () => {
@@ -303,7 +415,11 @@ export default function PaperDetail() {
       const res = await paperApi.reasoningAnalysis(id);
       setReasoning(res.reasoning);
       toast("success", "推理链分析完成");
-    } catch { toast("error", "推理链分析失败"); } finally { setReasoningLoading(false); }
+    } catch {
+      toast("error", "推理链分析失败");
+    } finally {
+      setReasoningLoading(false);
+    }
   };
 
   const handleToggleFavorite = useCallback(async () => {
@@ -311,10 +427,10 @@ export default function PaperDetail() {
     const prevFavorited = paper.favorited;
     try {
       const res = await paperApi.toggleFavorite(id);
-      setPaper((prev) => prev ? { ...prev, favorited: res.favorited } : prev);
+      setPaper((prev) => (prev ? { ...prev, favorited: res.favorited } : prev));
     } catch {
       toast("error", "收藏操作失败");
-      setPaper((prev) => prev ? { ...prev, favorited: prevFavorited } : prev);
+      setPaper((prev) => (prev ? { ...prev, favorited: prevFavorited } : prev));
     }
   }, [id, paper, toast]);
 
@@ -324,12 +440,19 @@ export default function PaperDetail() {
       <Empty
         title="论文不存在"
         description="该论文可能已被删除"
-        action={<Button variant="secondary" onClick={() => navigate("/papers")}>返回列表</Button>}
+        action={
+          <Button variant="secondary" onClick={() => navigate("/papers")}>
+            返回列表
+          </Button>
+        }
       />
     );
   }
 
-  const statusConfig: Record<string, { label: string; variant: "default" | "warning" | "success" }> = {
+  const statusConfig: Record<
+    string,
+    { label: string; variant: "default" | "warning" | "success" }
+  > = {
     unread: { label: "未读", variant: "default" },
     skimmed: { label: "已粗读", variant: "warning" },
     deep_read: { label: "已精读", variant: "success" },
@@ -342,24 +465,56 @@ export default function PaperDetail() {
   const hasReasoning = !!reasoning;
   const hasSimilar = similarIds.length > 0;
 
-  const skimStatus: "idle" | "loading" | "done" = skimLoading ? "loading" : hasSkim ? "done" : "idle";
-  const deepStatus: "idle" | "loading" | "done" = deepLoading ? "loading" : hasDeep ? "done" : "idle";
-  const figureStatus: "idle" | "loading" | "done" = figuresAnalyzing ? "loading" : hasFigures ? "done" : "idle";
-  const reasoningStatus: "idle" | "loading" | "done" = reasoningLoading ? "loading" : hasReasoning ? "done" : "idle";
-  const similarStatus: "idle" | "loading" | "done" = similarLoading ? "loading" : hasSimilar ? "done" : "idle";
+  const skimStatus: "idle" | "loading" | "done" = skimLoading
+    ? "loading"
+    : hasSkim
+      ? "done"
+      : "idle";
+  const deepStatus: "idle" | "loading" | "done" = deepLoading
+    ? "loading"
+    : hasDeep
+      ? "done"
+      : "idle";
+  const figureStatus: "idle" | "loading" | "done" = figuresAnalyzing
+    ? "loading"
+    : hasFigures
+      ? "done"
+      : "idle";
+  const reasoningStatus: "idle" | "loading" | "done" = reasoningLoading
+    ? "loading"
+    : hasReasoning
+      ? "done"
+      : "idle";
+  const similarStatus: "idle" | "loading" | "done" = similarLoading
+    ? "loading"
+    : hasSimilar
+      ? "done"
+      : "idle";
 
-  const anyPipelineRunning = skimLoading || deepLoading || figuresAnalyzing || reasoningLoading || embedLoading;
+  const anyPipelineRunning =
+    skimLoading || deepLoading || figuresAnalyzing || reasoningLoading || embedLoading;
 
   return (
     <div className="animate-fade-in space-y-6">
       {/* 页面头 */}
       <div className="flex items-center justify-between">
-        <button onClick={() => navigate("/papers")} className="flex items-center gap-1.5 text-sm text-ink-secondary transition-colors hover:text-ink">
+        <button
+          onClick={() => navigate("/papers")}
+          className="text-ink-secondary hover:text-ink flex items-center gap-1.5 text-sm transition-colors"
+        >
           <ArrowLeft className="h-4 w-4" /> 返回论文列表
         </button>
-        <button onClick={handleToggleFavorite} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-error/10" title={paper.favorited ? "取消收藏" : "收藏"}>
-          <Heart className={`h-5 w-5 transition-all ${paper.favorited ? "fill-red-500 text-red-500 scale-110" : "text-ink-tertiary"}`} />
-          <span className={paper.favorited ? "text-red-500" : "text-ink-tertiary"}>{paper.favorited ? "已收藏" : "收藏"}</span>
+        <button
+          onClick={handleToggleFavorite}
+          className="hover:bg-error/10 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors"
+          title={paper.favorited ? "取消收藏" : "收藏"}
+        >
+          <Heart
+            className={`h-5 w-5 transition-all ${paper.favorited ? "scale-110 fill-red-500 text-red-500" : "text-ink-tertiary"}`}
+          />
+          <span className={paper.favorited ? "text-red-500" : "text-ink-tertiary"}>
+            {paper.favorited ? "已收藏" : "收藏"}
+          </span>
         </button>
       </div>
 
@@ -369,41 +524,66 @@ export default function PaperDetail() {
           <Badge variant={sc.variant}>{sc.label}</Badge>
           {embedDone && <Badge variant="info">已向量化</Badge>}
           {paper.arxiv_id && (
-            <a href={`https://arxiv.org/abs/${paper.arxiv_id}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-primary hover:underline">
-              <ExternalLink className="h-3 w-3" />{paper.arxiv_id}
+            <a
+              href={`https://arxiv.org/abs/${paper.arxiv_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary flex items-center gap-1 text-xs hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              {paper.arxiv_id}
             </a>
           )}
         </div>
-        <h1 className="mt-3 text-2xl font-bold leading-snug text-ink">{paper.title}</h1>
-        {paper.title_zh && <p className="mt-1 text-base text-ink-secondary">{paper.title_zh}</p>}
+        <h1 className="text-ink mt-3 text-2xl leading-snug font-bold">{paper.title}</h1>
+        {paper.title_zh && <p className="text-ink-secondary mt-1 text-base">{paper.title_zh}</p>}
         {paper.abstract ? (
           <>
-            <p className="mt-4 text-sm leading-relaxed text-ink-secondary">{paper.abstract}</p>
+            <p className="text-ink-secondary mt-4 text-sm leading-relaxed">{paper.abstract}</p>
             {paper.abstract_zh && (
-              <div className="mt-3 rounded-xl border border-border bg-page p-4">
-                <p className="mb-1 text-xs font-medium text-ink-tertiary">中文翻译</p>
-                <p className="text-sm leading-relaxed text-ink-secondary">{paper.abstract_zh}</p>
+              <div className="border-border bg-page mt-3 rounded-xl border p-4">
+                <p className="text-ink-tertiary mb-1 text-xs font-medium">中文翻译</p>
+                <p className="text-ink-secondary text-sm leading-relaxed">{paper.abstract_zh}</p>
               </div>
             )}
           </>
         ) : paper.abstract_zh ? (
-          <p className="mt-4 text-sm leading-relaxed text-ink-secondary">{paper.abstract_zh}</p>
+          <p className="text-ink-secondary mt-4 text-sm leading-relaxed">{paper.abstract_zh}</p>
         ) : null}
-        {paper.publication_date && <p className="mt-3 text-sm text-ink-tertiary">发表日期: {paper.publication_date}</p>}
+        {paper.publication_date && (
+          <p className="text-ink-tertiary mt-3 text-sm">发表日期: {paper.publication_date}</p>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
-          {paper.topics && paper.topics.length > 0 && paper.topics.map((t) => (
-            <span key={t} className="inline-flex items-center gap-1 rounded-md bg-primary-light px-2.5 py-1 text-xs font-medium text-primary">
-              <Folder className="h-3 w-3" />{t}
-            </span>
-          ))}
-          {paper.keywords && paper.keywords.map((kw) => (
-            <span key={kw} className="inline-flex items-center gap-1 rounded-md bg-hover px-2.5 py-1 text-xs text-ink-secondary">
-              <Tag className="h-3 w-3" />{kw}
-            </span>
-          ))}
-          {paper.categories && paper.categories.map((c) => (
-            <span key={c} className="inline-flex items-center rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-ink-tertiary">{c}</span>
-          ))}
+          {paper.topics &&
+            paper.topics.length > 0 &&
+            paper.topics.map((t) => (
+              <span
+                key={t}
+                className="bg-primary-light text-primary inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium"
+              >
+                <Folder className="h-3 w-3" />
+                {t}
+              </span>
+            ))}
+          {paper.keywords &&
+            paper.keywords.map((kw) => (
+              <span
+                key={kw}
+                className="bg-hover text-ink-secondary inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs"
+              >
+                <Tag className="h-3 w-3" />
+                {kw}
+              </span>
+            ))}
+          {paper.categories &&
+            paper.categories.map((c) => (
+              <span
+                key={c}
+                className="border-border bg-surface text-ink-tertiary inline-flex items-center rounded-md border px-2 py-0.5 text-xs"
+              >
+                {c}
+              </span>
+            ))}
         </div>
       </Card>
 
@@ -414,15 +594,23 @@ export default function PaperDetail() {
           <button
             onClick={handleAutoAnalyze}
             disabled={autoAnalyzing}
-            className="flex w-full items-center gap-3 rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/5 to-primary/10 p-4 transition-all hover:from-primary/10 hover:to-primary/15 hover:shadow-md disabled:opacity-60"
+            className="border-primary/20 from-primary/5 to-primary/10 hover:from-primary/10 hover:to-primary/15 flex w-full items-center gap-3 rounded-2xl border bg-gradient-to-r p-4 transition-all hover:shadow-md disabled:opacity-60"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15 text-primary">
-              {autoAnalyzing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5" />}
+            <div className="bg-primary/15 text-primary flex h-10 w-10 items-center justify-center rounded-xl">
+              {autoAnalyzing ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Zap className="h-5 w-5" />
+              )}
             </div>
             <div className="text-left">
-              <p className="text-sm font-semibold text-ink">{autoAnalyzing ? autoStage || "分析中..." : "一键深度分析"}</p>
-              <p className="text-xs text-ink-tertiary">
-                {autoAnalyzing ? "请耐心等待，全部完成后自动停止" : `自动串联：嵌入 → 粗读${paper.pdf_path ? " → 精读 → 图表 → 推理链" : ""}`}
+              <p className="text-ink text-sm font-semibold">
+                {autoAnalyzing ? autoStage || "分析中..." : "一键深度分析"}
+              </p>
+              <p className="text-ink-tertiary text-xs">
+                {autoAnalyzing
+                  ? "请耐心等待，全部完成后自动停止"
+                  : `自动串联：嵌入 → 粗读${paper.pdf_path ? " → 精读 → 图表 → 推理链" : ""}`}
               </p>
             </div>
           </button>
@@ -437,7 +625,10 @@ export default function PaperDetail() {
               try {
                 toast("info", "正在下载 PDF...");
                 const res = await paperApi.downloadPdf(id);
-                toast("success", `PDF 已下载：${res.status === "exists" ? "文件已存在" : "下载成功"}`);
+                toast(
+                  "success",
+                  `PDF 已下载：${res.status === "exists" ? "文件已存在" : "下载成功"}`
+                );
                 // 刷新论文信息
                 const updated = await paperApi.detail(id);
                 setPaper(updated);
@@ -447,15 +638,19 @@ export default function PaperDetail() {
               }
             }}
             disabled={!paper.arxiv_id || paper.arxiv_id.startsWith("ss-")}
-            className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-4 transition-all hover:border-primary/30 hover:shadow-md disabled:opacity-50"
-            title={!paper.arxiv_id || paper.arxiv_id.startsWith("ss-") ? "该论文没有有效的 arXiv ID，无法下载 PDF" : "下载 PDF 到本地存储"}
+            className="border-border bg-surface hover:border-primary/30 flex items-center gap-3 rounded-2xl border p-4 transition-all hover:shadow-md disabled:opacity-50"
+            title={
+              !paper.arxiv_id || paper.arxiv_id.startsWith("ss-")
+                ? "该论文没有有效的 arXiv ID，无法下载 PDF"
+                : "下载 PDF 到本地存储"
+            }
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <div className="bg-primary/10 text-primary flex h-10 w-10 items-center justify-center rounded-xl">
               <Download className="h-5 w-5" />
             </div>
             <div className="text-left">
-              <p className="text-sm font-semibold text-ink">下载 PDF</p>
-              <p className="text-xs text-ink-tertiary">
+              <p className="text-ink text-sm font-semibold">下载 PDF</p>
+              <p className="text-ink-tertiary text-xs">
                 {paper.pdf_path ? "已下载" : "从 arXiv 获取"}
               </p>
             </div>
@@ -464,54 +659,80 @@ export default function PaperDetail() {
           {paper.pdf_path || (paper.arxiv_id && !paper.arxiv_id.startsWith("ss-")) ? (
             <button
               onClick={() => setReaderOpen(true)}
-              className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-4 transition-all hover:border-primary/30 hover:shadow-md"
+              className="border-border bg-surface hover:border-primary/30 flex items-center gap-3 rounded-2xl border p-4 transition-all hover:shadow-md"
             >
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-500">
                 <FileSearch className="h-5 w-5" />
               </div>
               <div className="text-left">
-                <p className="text-sm font-semibold text-ink">阅读原文</p>
-                <p className="text-xs text-ink-tertiary">
+                <p className="text-ink text-sm font-semibold">阅读原文</p>
+                <p className="text-ink-tertiary text-xs">
                   {paper.pdf_path ? "PDF 阅读器（本地）" : "PDF 阅读器（arXiv 在线）"}
                 </p>
               </div>
             </button>
           ) : (
-            <div className="flex items-center gap-3 rounded-2xl border border-dashed border-border bg-page/50 p-4 opacity-50">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-ink-tertiary/10 text-ink-tertiary">
+            <div className="border-border bg-page/50 flex items-center gap-3 rounded-2xl border border-dashed p-4 opacity-50">
+              <div className="bg-ink-tertiary/10 text-ink-tertiary flex h-10 w-10 items-center justify-center rounded-xl">
                 <FileSearch className="h-5 w-5" />
               </div>
               <div className="text-left">
-                <p className="text-sm font-semibold text-ink-tertiary">无 PDF</p>
-                <p className="text-xs text-ink-tertiary">引用同步入库，无原文</p>
+                <p className="text-ink-tertiary text-sm font-semibold">无 PDF</p>
+                <p className="text-ink-tertiary text-xs">引用同步入库，无原文</p>
               </div>
             </div>
           )}
           <button
             onClick={handleSkim}
             disabled={skimLoading}
-            className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-4 transition-all hover:border-primary/30 hover:shadow-md disabled:opacity-60"
+            className="border-border bg-surface hover:border-primary/30 flex items-center gap-3 rounded-2xl border p-4 transition-all hover:shadow-md disabled:opacity-60"
           >
-            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${hasSkim ? "bg-success/10 text-success" : "bg-amber-500/10 text-amber-500"}`}>
-              {skimLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : hasSkim ? <Check className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+            <div
+              className={`flex h-10 w-10 items-center justify-center rounded-xl ${hasSkim ? "bg-success/10 text-success" : "bg-amber-500/10 text-amber-500"}`}
+            >
+              {skimLoading ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : hasSkim ? (
+                <Check className="h-5 w-5" />
+              ) : (
+                <Eye className="h-5 w-5" />
+              )}
             </div>
             <div className="text-left">
-              <p className="text-sm font-semibold text-ink">{hasSkim ? "已粗读" : "粗读 (Skim)"}</p>
-              <p className="text-xs text-ink-tertiary">{skimLoading ? "分析中..." : "快速提取要点"}</p>
+              <p className="text-ink text-sm font-semibold">{hasSkim ? "已粗读" : "粗读 (Skim)"}</p>
+              <p className="text-ink-tertiary text-xs">
+                {skimLoading ? "分析中..." : "快速提取要点"}
+              </p>
             </div>
           </button>
           <button
             onClick={handleDeep}
             disabled={deepLoading || !paper.pdf_path}
-            className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-4 transition-all hover:border-primary/30 hover:shadow-md disabled:opacity-60"
+            className="border-border bg-surface hover:border-primary/30 flex items-center gap-3 rounded-2xl border p-4 transition-all hover:shadow-md disabled:opacity-60"
             title={!paper.pdf_path ? "需要先下载 PDF 才能精读" : ""}
           >
-            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${hasDeep ? "bg-success/10 text-success" : !paper.pdf_path ? "bg-ink-tertiary/10 text-ink-tertiary" : "bg-indigo-500/10 text-indigo-500"}`}>
-              {deepLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : hasDeep ? <Check className="h-5 w-5" /> : <BookOpen className="h-5 w-5" />}
+            <div
+              className={`flex h-10 w-10 items-center justify-center rounded-xl ${hasDeep ? "bg-success/10 text-success" : !paper.pdf_path ? "bg-ink-tertiary/10 text-ink-tertiary" : "bg-indigo-500/10 text-indigo-500"}`}
+            >
+              {deepLoading ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : hasDeep ? (
+                <Check className="h-5 w-5" />
+              ) : (
+                <BookOpen className="h-5 w-5" />
+              )}
             </div>
             <div className="text-left">
-              <p className="text-sm font-semibold text-ink">{hasDeep ? "已精读" : "精读 (Deep Read)"}</p>
-              <p className="text-xs text-ink-tertiary">{deepLoading ? "深度分析中..." : !paper.pdf_path ? "无 PDF，需先下载" : "方法论 + 实验 + 风险"}</p>
+              <p className="text-ink text-sm font-semibold">
+                {hasDeep ? "已精读" : "精读 (Deep Read)"}
+              </p>
+              <p className="text-ink-tertiary text-xs">
+                {deepLoading
+                  ? "深度分析中..."
+                  : !paper.pdf_path
+                    ? "无 PDF，需先下载"
+                    : "方法论 + 实验 + 风险"}
+              </p>
             </div>
           </button>
         </div>
@@ -521,43 +742,81 @@ export default function PaperDetail() {
           <button
             onClick={handleAnalyzeFigures}
             disabled={figuresAnalyzing || !paper.pdf_path}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium text-ink-secondary transition-all hover:border-primary/30 hover:text-ink disabled:opacity-50"
+            className="border-border bg-surface text-ink-secondary hover:border-primary/30 hover:text-ink inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-all disabled:opacity-50"
           >
-            {figuresAnalyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : hasFigures ? <Check className="h-3.5 w-3.5 text-success" /> : <ImageIcon className="h-3.5 w-3.5" />}
+            {figuresAnalyzing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : hasFigures ? (
+              <Check className="text-success h-3.5 w-3.5" />
+            ) : (
+              <ImageIcon className="h-3.5 w-3.5" />
+            )}
             {hasFigures ? `图表 (${figures.length})` : "图表解读"}
           </button>
           <button
             onClick={handleReasoning}
             disabled={reasoningLoading || !paper.pdf_path}
             title={!paper.pdf_path ? "需要 PDF 才能进行推理链分析" : ""}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium text-ink-secondary transition-all hover:border-primary/30 hover:text-ink disabled:opacity-50"
+            className="border-border bg-surface text-ink-secondary hover:border-primary/30 hover:text-ink inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-all disabled:opacity-50"
           >
-            {reasoningLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : hasReasoning ? <Check className="h-3.5 w-3.5 text-success" /> : <Brain className="h-3.5 w-3.5" />}
+            {reasoningLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : hasReasoning ? (
+              <Check className="text-success h-3.5 w-3.5" />
+            ) : (
+              <Brain className="h-3.5 w-3.5" />
+            )}
             {!paper.pdf_path ? "推理链 (无 PDF)" : "推理链分析"}
           </button>
           <button
             onClick={handleEmbed}
             disabled={embedLoading || embedDone === true}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium text-ink-secondary transition-all hover:border-primary/30 hover:text-ink disabled:opacity-50"
+            className="border-border bg-surface text-ink-secondary hover:border-primary/30 hover:text-ink inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-all disabled:opacity-50"
           >
-            {embedLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : embedDone ? <Check className="h-3.5 w-3.5 text-success" /> : <Cpu className="h-3.5 w-3.5" />}
+            {embedLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : embedDone ? (
+              <Check className="text-success h-3.5 w-3.5" />
+            ) : (
+              <Cpu className="h-3.5 w-3.5" />
+            )}
             {embedDone ? "已向量化" : "向量嵌入"}
           </button>
           <button
             onClick={handleSimilar}
             disabled={similarLoading || !paper.has_embedding}
             title={!paper.has_embedding ? "请先执行向量嵌入" : ""}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium text-ink-secondary transition-all hover:border-primary/30 hover:text-ink disabled:opacity-50"
+            className="border-border bg-surface text-ink-secondary hover:border-primary/30 hover:text-ink inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-all disabled:opacity-50"
           >
-            {similarLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+            {similarLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="h-3.5 w-3.5" />
+            )}
             {!paper.has_embedding ? "相似 (需嵌入)" : "相似论文"}
           </button>
         </div>
       </div>
 
       {/* ========== 进度面板（任何 pipeline 运行时展示） ========== */}
-      {skimLoading && <PipelineProgress type="skim" onCancel={() => { skimAbort.current?.abort(); setSkimLoading(false); }} />}
-      {deepLoading && <PipelineProgress type="deep" onCancel={() => { deepAbort.current?.abort(); setDeepLoading(false); }} />}
+      {skimLoading && (
+        <PipelineProgress
+          type="skim"
+          onCancel={() => {
+            skimAbort.current?.abort();
+            setSkimLoading(false);
+          }}
+        />
+      )}
+      {deepLoading && (
+        <PipelineProgress
+          type="deep"
+          onCancel={() => {
+            deepAbort.current?.abort();
+            setDeepLoading(false);
+          }}
+        />
+      )}
       {figuresAnalyzing && <PipelineProgress type="figure" />}
       {reasoningLoading && <PipelineProgress type="reasoning" />}
       {embedLoading && <PipelineProgress type="embed" />}
@@ -581,45 +840,58 @@ export default function PaperDetail() {
           {reportTab === "skim" && (
             <div className="animate-fade-in">
               {skimLoading ? null : savedSkim && !skimReport ? (
-                <Card className="rounded-2xl border-primary/20">
+                <Card className="border-primary/20 rounded-2xl">
                   <CardHeader
                     title="粗读报告"
-                    action={savedSkim.skim_score != null ? (
-                      <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1">
-                        <Star className="h-4 w-4 text-amber-500" />
-                        <span className="text-sm font-bold text-amber-600">{savedSkim.skim_score.toFixed(2)}</span>
-                      </div>
-                    ) : null}
+                    action={
+                      savedSkim.skim_score != null ? (
+                        <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1">
+                          <Star className="h-4 w-4 text-amber-500" />
+                          <span className="text-sm font-bold text-amber-600">
+                            {savedSkim.skim_score.toFixed(2)}
+                          </span>
+                        </div>
+                      ) : null
+                    }
                   />
-                  <div className="prose prose-sm max-w-none text-ink-secondary dark:prose-invert">
-                    <Suspense fallback={<div className="h-20 animate-pulse rounded bg-surface" />}>
+                  <div className="prose prose-sm text-ink-secondary dark:prose-invert max-w-none">
+                    <Suspense fallback={<div className="bg-surface h-20 animate-pulse rounded" />}>
                       <Markdown>{savedSkim.summary_md}</Markdown>
                     </Suspense>
                   </div>
                 </Card>
               ) : skimReport ? (
-                <Card className="rounded-2xl border-primary/20">
-                  <CardHeader title="粗读报告" action={
-                    <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1">
-                      <Sparkles className="h-4 w-4 text-amber-500" />
-                      <span className="text-sm font-bold text-amber-600">{skimReport.relevance_score.toFixed(2)}</span>
-                    </div>
-                  } />
+                <Card className="border-primary/20 rounded-2xl">
+                  <CardHeader
+                    title="粗读报告"
+                    action={
+                      <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1">
+                        <Sparkles className="h-4 w-4 text-amber-500" />
+                        <span className="text-sm font-bold text-amber-600">
+                          {skimReport.relevance_score.toFixed(2)}
+                        </span>
+                      </div>
+                    }
+                  />
                   <div className="space-y-4">
-                    <div className="rounded-xl bg-primary/5 p-4 dark:bg-primary/10">
+                    <div className="bg-primary/5 dark:bg-primary/10 rounded-xl p-4">
                       <div className="flex items-start gap-2">
-                        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                        <p className="text-sm font-medium text-ink">{skimReport.one_liner}</p>
+                        <Sparkles className="text-primary mt-0.5 h-4 w-4 shrink-0" />
+                        <p className="text-ink text-sm font-medium">{skimReport.one_liner}</p>
                       </div>
                     </div>
                     <div>
-                      <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink">
+                      <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
                         <Lightbulb className="h-4 w-4 text-amber-500" /> 创新点
                       </h4>
                       <ul className="space-y-1.5">
                         {skimReport.innovations.map((item, i) => (
-                          <li key={i} className="flex items-start gap-2 rounded-xl bg-page px-3 py-2.5 text-sm text-ink-secondary">
-                            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />{item}
+                          <li
+                            key={`${item}-${i}`}
+                            className="bg-page text-ink-secondary flex items-start gap-2 rounded-xl px-3 py-2.5 text-sm"
+                          >
+                            <CheckCircle2 className="text-success mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            {item}
                           </li>
                         ))}
                       </ul>
@@ -627,7 +899,10 @@ export default function PaperDetail() {
                   </div>
                 </Card>
               ) : (
-                <EmptyReport icon={<Eye className="h-8 w-8" />} label="点击「粗读」按钮快速提取论文要点" />
+                <EmptyReport
+                  icon={<Eye className="h-8 w-8" />}
+                  label="点击「粗读」按钮快速提取论文要点"
+                />
               )}
             </div>
           )}
@@ -638,8 +913,8 @@ export default function PaperDetail() {
               {deepLoading ? null : savedDeep && !deepReport ? (
                 <Card className="rounded-2xl border-blue-500/20">
                   <CardHeader title="精读报告" />
-                  <div className="prose prose-sm max-w-none text-ink-secondary dark:prose-invert">
-                    <Suspense fallback={<div className="h-20 animate-pulse rounded bg-surface" />}>
+                  <div className="prose prose-sm text-ink-secondary dark:prose-invert max-w-none">
+                    <Suspense fallback={<div className="bg-surface h-20 animate-pulse rounded" />}>
                       <Markdown>{savedDeep.deep_dive_md}</Markdown>
                     </Suspense>
                   </div>
@@ -648,18 +923,34 @@ export default function PaperDetail() {
                 <Card className="rounded-2xl border-blue-500/20">
                   <CardHeader title="精读报告" />
                   <div className="space-y-4">
-                    <ReportSection icon={<FlaskConical className="h-4 w-4 text-blue-500" />} title="方法论" content={deepReport.method_summary} />
-                    <ReportSection icon={<Microscope className="h-4 w-4 text-success" />} title="实验结果" content={deepReport.experiments_summary} />
-                    <ReportSection icon={<Sparkles className="h-4 w-4 text-amber-500" />} title="消融实验" content={deepReport.ablation_summary} />
+                    <ReportSection
+                      icon={<FlaskConical className="h-4 w-4 text-blue-500" />}
+                      title="方法论"
+                      content={deepReport.method_summary}
+                    />
+                    <ReportSection
+                      icon={<Microscope className="text-success h-4 w-4" />}
+                      title="实验结果"
+                      content={deepReport.experiments_summary}
+                    />
+                    <ReportSection
+                      icon={<Sparkles className="h-4 w-4 text-amber-500" />}
+                      title="消融实验"
+                      content={deepReport.ablation_summary}
+                    />
                     {deepReport.reviewer_risks.length > 0 && (
                       <div>
-                        <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink">
+                        <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
                           <Shield className="h-4 w-4 text-red-500" /> 审稿风险
                         </h4>
                         <ul className="space-y-1.5">
-                          {deepReport.reviewer_risks.map((risk, i) => (
-                            <li key={i} className="flex items-start gap-2 rounded-xl bg-red-500/5 px-3 py-2.5 text-sm text-ink-secondary dark:bg-red-500/10">
-                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />{risk}
+                          {deepReport.reviewer_risks.map((risk) => (
+                            <li
+                              key={risk}
+                              className="text-ink-secondary flex items-start gap-2 rounded-xl bg-red-500/5 px-3 py-2.5 text-sm dark:bg-red-500/10"
+                            >
+                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
+                              {risk}
                             </li>
                           ))}
                         </ul>
@@ -668,7 +959,14 @@ export default function PaperDetail() {
                   </div>
                 </Card>
               ) : (
-                <EmptyReport icon={<BookOpen className="h-8 w-8" />} label={paper.pdf_path ? "点击「精读」按钮进行深度分析" : "该论文没有 PDF 文件，无法精读（仅通过引用同步入库的论文）"} />
+                <EmptyReport
+                  icon={<BookOpen className="h-8 w-8" />}
+                  label={
+                    paper.pdf_path
+                      ? "点击「精读」按钮进行深度分析"
+                      : "该论文没有 PDF 文件，无法精读（仅通过引用同步入库的论文）"
+                  }
+                />
               )}
             </div>
           )}
@@ -681,14 +979,25 @@ export default function PaperDetail() {
                   <CardHeader title="图表解读" description={`共 ${figures.length} 张图表`} />
                   <div className="space-y-3">
                     {figures.map((fig, i) => (
-                      <div key={fig.id || `${fig.page_number}-${i}`} className="animate-fade-in" style={{ animationDelay: `${i * 80}ms` }}>
+                      <div
+                        key={fig.id || `${fig.page_number}-${i}`}
+                        className="animate-fade-in"
+                        style={{ animationDelay: `${i * 80}ms` }}
+                      >
                         <FigureCard figure={fig} index={i} paperId={id!} />
                       </div>
                     ))}
                   </div>
                 </Card>
               ) : (
-                <EmptyReport icon={<ImageIcon className="h-8 w-8" />} label={paper.pdf_path ? "点击「图表解读」按钮使用 Vision 模型分析 PDF" : "该论文没有 PDF 文件，无法解读图表"} />
+                <EmptyReport
+                  icon={<ImageIcon className="h-8 w-8" />}
+                  label={
+                    paper.pdf_path
+                      ? "点击「图表解读」按钮使用 Vision 模型分析 PDF"
+                      : "该论文没有 PDF 文件，无法解读图表"
+                  }
+                />
               )}
             </div>
           )}
@@ -698,11 +1007,21 @@ export default function PaperDetail() {
             <div className="animate-fade-in">
               {reasoningLoading ? null : reasoning ? (
                 <Card className="rounded-2xl border-purple-500/20">
-                  <CardHeader title="推理链深度分析" description="问题定义 → 方法推导 → 理论验证 → 实验评估 → 影响预测" />
+                  <CardHeader
+                    title="推理链深度分析"
+                    description="问题定义 → 方法推导 → 理论验证 → 实验评估 → 影响预测"
+                  />
                   <ReasoningPanel reasoning={reasoning} />
                 </Card>
               ) : (
-                <EmptyReport icon={<Brain className="h-8 w-8" />} label={paper.pdf_path ? "点击「推理链分析」按钮进行分步推理评估" : "该论文没有 PDF 文件，无法进行推理链分析"} />
+                <EmptyReport
+                  icon={<Brain className="h-8 w-8" />}
+                  label={
+                    paper.pdf_path
+                      ? "点击「推理链分析」按钮进行分步推理评估"
+                      : "该论文没有 PDF 文件，无法进行推理链分析"
+                  }
+                />
               )}
             </div>
           )}
@@ -712,23 +1031,40 @@ export default function PaperDetail() {
             <div className="animate-fade-in">
               {similarLoading ? null : similarIds.length > 0 ? (
                 <Card className="rounded-2xl">
-                  <CardHeader title="相似论文" description={`找到 ${similarIds.length} 篇相似论文`} />
+                  <CardHeader
+                    title="相似论文"
+                    description={`找到 ${similarIds.length} 篇相似论文`}
+                  />
                   <div className="space-y-2">
-                    {(similarItems.length > 0 ? similarItems : similarIds.map(sid => ({ id: sid, title: sid }))).map((item) => (
-                      <button key={item.id} onClick={() => navigate(`/papers/${item.id}`)} className="flex w-full items-center justify-between gap-3 rounded-xl bg-page px-4 py-3 text-left transition-colors hover:bg-hover">
+                    {(similarItems.length > 0
+                      ? similarItems
+                      : similarIds.map((sid) => ({ id: sid, title: sid }))
+                    ).map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => navigate(`/papers/${item.id}`)}
+                        className="bg-page hover:bg-hover flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition-colors"
+                      >
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-ink">{item.title}</p>
-                          {("arxiv_id" in item && (item as { arxiv_id?: string }).arxiv_id) ? (
-                            <p className="mt-0.5 truncate text-[10px] text-ink-tertiary">{(item as { arxiv_id?: string }).arxiv_id}</p>
+                          <p className="text-ink truncate text-sm font-medium">{item.title}</p>
+                          {"arxiv_id" in item && (item as { arxiv_id?: string }).arxiv_id ? (
+                            <p className="text-ink-tertiary mt-0.5 truncate text-[10px]">
+                              {(item as { arxiv_id?: string }).arxiv_id}
+                            </p>
                           ) : null}
                         </div>
-                        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-ink-tertiary" />
+                        <ExternalLink className="text-ink-tertiary h-3.5 w-3.5 shrink-0" />
                       </button>
                     ))}
                   </div>
                 </Card>
               ) : (
-                <EmptyReport icon={<Link2 className="h-8 w-8" />} label={embedDone ? "点击「相似论文」按钮查找" : "请先执行「向量嵌入」，再查找相似论文"} />
+                <EmptyReport
+                  icon={<Link2 className="h-8 w-8" />}
+                  label={
+                    embedDone ? "点击「相似论文」按钮查找" : "请先执行「向量嵌入」，再查找相似论文"
+                  }
+                />
               )}
             </div>
           )}
@@ -737,7 +1073,13 @@ export default function PaperDetail() {
 
       {/* PDF 阅读器 - 支持本地 PDF 或 arXiv 在线链接，懒加载避免首屏加载 pdf.js */}
       {readerOpen && (paper.pdf_path || paper.arxiv_id) && (
-        <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>}>
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+              <div className="border-primary h-8 w-8 animate-spin rounded-full border-4 border-t-transparent" />
+            </div>
+          }
+        >
           <PdfReader
             paperId={id!}
             paperTitle={paper.title}
@@ -756,9 +1098,9 @@ export default function PaperDetail() {
 
 function EmptyReport({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-page/50 py-16 text-center">
-      <div className="mb-3 text-ink-tertiary/50">{icon}</div>
-      <p className="text-sm text-ink-tertiary">{label}</p>
+    <div className="border-border bg-page/50 flex flex-col items-center justify-center rounded-2xl border border-dashed py-16 text-center">
+      <div className="text-ink-tertiary/50 mb-3">{icon}</div>
+      <p className="text-ink-tertiary text-sm">{label}</p>
     </div>
   );
 }
@@ -775,21 +1117,33 @@ const TYPE_ICONS: Record<string, React.ReactNode> = {
 };
 
 const TYPE_LABELS: Record<string, string> = {
-  figure: "图表", table: "表格", algorithm: "算法", equation: "公式",
+  figure: "图表",
+  table: "表格",
+  algorithm: "算法",
+  equation: "公式",
 };
 
-function FigureCard({ figure, index, paperId }: { figure: FigureAnalysisItem; index: number; paperId: string }) {
+function FigureCard({
+  figure,
+  index,
+  paperId,
+}: {
+  figure: FigureAnalysisItem;
+  index: number;
+  paperId: string;
+}) {
   const [expanded, setExpanded] = useState(index < 3);
   const [lightbox, setLightbox] = useState(false);
-  const imgUrl = figure.image_url && figure.id
-    ? paperApi.figureImageUrl(paperId, figure.id)
-    : null;
+  const imgUrl = figure.image_url && figure.id ? paperApi.figureImageUrl(paperId, figure.id) : null;
 
   return (
     <>
-      <div className="overflow-hidden rounded-xl border border-border bg-surface/50 transition-all hover:border-border/80">
-        <button onClick={() => setExpanded(!expanded)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-page">
+      <div className="border-border bg-surface/50 hover:border-border/80 overflow-hidden rounded-xl border transition-all">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        >
+          <div className="bg-page flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
             {TYPE_ICONS[figure.image_type] || TYPE_ICONS.figure}
           </div>
           <div className="min-w-0 flex-1">
@@ -797,39 +1151,48 @@ function FigureCard({ figure, index, paperId }: { figure: FigureAnalysisItem; in
               <span className="rounded-md bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
                 {TYPE_LABELS[figure.image_type] || figure.image_type}
               </span>
-              <span className="text-[10px] text-ink-tertiary">第 {figure.page_number} 页</span>
+              <span className="text-ink-tertiary text-[10px]">第 {figure.page_number} 页</span>
             </div>
-            {figure.caption && <p className="mt-0.5 truncate text-xs font-medium text-ink">{figure.caption}</p>}
+            {figure.caption && (
+              <p className="text-ink mt-0.5 truncate text-xs font-medium">{figure.caption}</p>
+            )}
           </div>
-          {expanded ? <ChevronDown className="h-4 w-4 shrink-0 text-ink-tertiary" /> : <ChevronRight className="h-4 w-4 shrink-0 text-ink-tertiary" />}
+          {expanded ? (
+            <ChevronDown className="text-ink-tertiary h-4 w-4 shrink-0" />
+          ) : (
+            <ChevronRight className="text-ink-tertiary h-4 w-4 shrink-0" />
+          )}
         </button>
 
         {expanded && (
-          <div className="border-t border-border">
+          <div className="border-border border-t">
             {/* 原图展示区 */}
             {imgUrl ? (
-              <div className="flex justify-center bg-page/50 p-4 dark:bg-black/20">
+              <div className="bg-page/50 flex justify-center p-4 dark:bg-black/20">
                 <img
                   src={imgUrl}
                   alt={figure.caption || `Figure on page ${figure.page_number}`}
                   className="max-h-[400px] max-w-full cursor-zoom-in rounded-lg object-contain shadow-sm transition-transform hover:scale-[1.02]"
-                  onClick={(e) => { e.stopPropagation(); setLightbox(true); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setLightbox(true);
+                  }}
                   loading="lazy"
                 />
               </div>
             ) : (
-              <div className="flex items-center justify-center bg-page/30 px-4 py-6 text-xs text-ink-tertiary">
+              <div className="bg-page/30 text-ink-tertiary flex items-center justify-center px-4 py-6 text-xs">
                 <ImageIcon className="mr-1.5 h-4 w-4" /> 原图未提取（旧版分析结果）
               </div>
             )}
 
             {/* AI 解读区 */}
-            <div className="border-t border-border/50 px-4 py-3">
-              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-primary/70">
+            <div className="border-border/50 border-t px-4 py-3">
+              <div className="text-primary/70 mb-1.5 flex items-center gap-1.5 text-[10px] font-medium tracking-wide uppercase">
                 <Sparkles className="h-3 w-3" /> AI 解读
               </div>
-              <div className="prose prose-sm max-w-none text-ink-secondary dark:prose-invert">
-                <Suspense fallback={<div className="h-8 animate-pulse rounded bg-surface" />}>
+              <div className="prose prose-sm text-ink-secondary dark:prose-invert max-w-none">
+                <Suspense fallback={<div className="bg-surface h-8 animate-pulse rounded" />}>
                   <Markdown>{figure.description}</Markdown>
                 </Suspense>
               </div>
@@ -845,7 +1208,7 @@ function FigureCard({ figure, index, paperId }: { figure: FigureAnalysisItem; in
           onClick={() => setLightbox(false)}
         >
           <button
-            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+            className="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
             onClick={() => setLightbox(false)}
           >
             <X className="h-5 w-5" />
@@ -873,9 +1236,9 @@ function FigureCard({ figure, index, paperId }: { figure: FigureAnalysisItem; in
 
 function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
   const steps = reasoning.reasoning_steps ?? [];
-  const mc = reasoning.method_chain ?? {} as Record<string, string>;
-  const ec = reasoning.experiment_chain ?? {} as Record<string, string>;
-  const ia = reasoning.impact_assessment ?? {} as Record<string, unknown>;
+  const mc = reasoning.method_chain ?? ({} as Record<string, string>);
+  const ec = reasoning.experiment_chain ?? ({} as Record<string, string>);
+  const ia = reasoning.impact_assessment ?? ({} as Record<string, unknown>);
 
   const novelty = (ia.novelty_score as number) ?? 0;
   const rigor = (ia.rigor_score as number) ?? 0;
@@ -888,25 +1251,45 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-4">
-        <ScoreCard label="创新性" score={novelty} icon={<Zap className="h-4 w-4" />} color="text-purple-500" bg="bg-purple-500/10" />
-        <ScoreCard label="严谨性" score={rigor} icon={<Target className="h-4 w-4" />} color="text-blue-500" bg="bg-blue-500/10" />
-        <ScoreCard label="影响力" score={impact} icon={<TrendingUp className="h-4 w-4" />} color="text-orange-500" bg="bg-orange-500/10" />
+        <ScoreCard
+          label="创新性"
+          score={novelty}
+          icon={<Zap className="h-4 w-4" />}
+          color="text-purple-500"
+          bg="bg-purple-500/10"
+        />
+        <ScoreCard
+          label="严谨性"
+          score={rigor}
+          icon={<Target className="h-4 w-4" />}
+          color="text-blue-500"
+          bg="bg-blue-500/10"
+        />
+        <ScoreCard
+          label="影响力"
+          score={impact}
+          icon={<TrendingUp className="h-4 w-4" />}
+          color="text-orange-500"
+          bg="bg-orange-500/10"
+        />
       </div>
 
       {overall && (
-        <div className="rounded-xl bg-page p-4 dark:bg-page/50">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-secondary">{overall}</p>
+        <div className="bg-page dark:bg-page/50 rounded-xl p-4">
+          <p className="text-ink-secondary text-sm leading-relaxed whitespace-pre-wrap">
+            {overall}
+          </p>
         </div>
       )}
 
       {steps.length > 0 && (
         <div>
-          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+          <h4 className="text-ink mb-3 flex items-center gap-2 text-sm font-semibold">
             <Brain className="h-4 w-4 text-purple-500" /> 推理过程
           </h4>
           <div className="space-y-2">
             {steps.map((step, i) => (
-              <ReasoningStepCard key={i} step={step} index={i} />
+              <ReasoningStepCard key={step.step} step={step} index={i} />
             ))}
           </div>
         </div>
@@ -914,7 +1297,7 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
 
       {Object.values(mc).some(Boolean) && (
         <div>
-          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+          <h4 className="text-ink mb-3 flex items-center gap-2 text-sm font-semibold">
             <FlaskConical className="h-4 w-4 text-blue-500" /> 方法论推导链
           </h4>
           <div className="space-y-3">
@@ -922,14 +1305,16 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
             {mc.core_hypothesis && <ChainItem label="核心假设" text={mc.core_hypothesis} />}
             {mc.method_derivation && <ChainItem label="方法推导" text={mc.method_derivation} />}
             {mc.theoretical_basis && <ChainItem label="理论基础" text={mc.theoretical_basis} />}
-            {mc.innovation_analysis && <ChainItem label="创新性分析" text={mc.innovation_analysis} />}
+            {mc.innovation_analysis && (
+              <ChainItem label="创新性分析" text={mc.innovation_analysis} />
+            )}
           </div>
         </div>
       )}
 
       {Object.values(ec).some(Boolean) && (
         <div>
-          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+          <h4 className="text-ink mb-3 flex items-center gap-2 text-sm font-semibold">
             <Microscope className="h-4 w-4 text-green-500" /> 实验验证链
           </h4>
           <div className="space-y-3">
@@ -944,11 +1329,17 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
       <div className="grid gap-4 sm:grid-cols-2">
         {strengths.length > 0 && (
           <div>
-            <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink"><ThumbsUp className="h-4 w-4 text-green-500" /> 优势</h4>
+            <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
+              <ThumbsUp className="h-4 w-4 text-green-500" /> 优势
+            </h4>
             <ul className="space-y-1.5">
               {strengths.map((s, i) => (
-                <li key={i} className="flex items-start gap-2 rounded-xl bg-green-500/5 px-3 py-2.5 text-sm text-ink-secondary dark:bg-green-500/10">
-                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />{s}
+                <li
+                  key={`strength-${i}`}
+                  className="text-ink-secondary flex items-start gap-2 rounded-xl bg-green-500/5 px-3 py-2.5 text-sm dark:bg-green-500/10"
+                >
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
+                  {s}
                 </li>
               ))}
             </ul>
@@ -956,11 +1347,17 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
         )}
         {weaknesses.length > 0 && (
           <div>
-            <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink"><ThumbsDown className="h-4 w-4 text-red-500" /> 不足</h4>
+            <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
+              <ThumbsDown className="h-4 w-4 text-red-500" /> 不足
+            </h4>
             <ul className="space-y-1.5">
               {weaknesses.map((w, i) => (
-                <li key={i} className="flex items-start gap-2 rounded-xl bg-red-500/5 px-3 py-2.5 text-sm text-ink-secondary dark:bg-red-500/10">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />{w}
+                <li
+                  key={`weakness-${i}`}
+                  className="text-ink-secondary flex items-start gap-2 rounded-xl bg-red-500/5 px-3 py-2.5 text-sm dark:bg-red-500/10"
+                >
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
+                  {w}
                 </li>
               ))}
             </ul>
@@ -970,11 +1367,17 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
 
       {suggestions.length > 0 && (
         <div>
-          <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink"><Lightbulb className="h-4 w-4 text-amber-500" /> 未来研究建议</h4>
+          <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
+            <Lightbulb className="h-4 w-4 text-amber-500" /> 未来研究建议
+          </h4>
           <ul className="space-y-1.5">
             {suggestions.map((f, i) => (
-              <li key={i} className="flex items-start gap-2 rounded-xl bg-amber-500/5 px-3 py-2.5 text-sm text-ink-secondary dark:bg-amber-500/10">
-                <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />{f}
+              <li
+                key={`suggestion-${i}`}
+                className="text-ink-secondary flex items-start gap-2 rounded-xl bg-amber-500/5 px-3 py-2.5 text-sm dark:bg-amber-500/10"
+              >
+                <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                {f}
               </li>
             ))}
           </ul>
@@ -984,27 +1387,48 @@ function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
   );
 }
 
-function ReasoningStepCard({ step, index }: { step: { step: string; thinking: string; conclusion: string }; index: number }) {
+function ReasoningStepCard({
+  step,
+  index,
+}: {
+  step: { step: string; thinking: string; conclusion: string };
+  index: number;
+}) {
   const [open, setOpen] = useState(index < 2);
   return (
-    <div className="rounded-xl border border-border bg-surface/50 transition-all">
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-500/10 text-xs font-bold text-purple-500">{index + 1}</div>
-        <span className="flex-1 text-sm font-medium text-ink">{step.step}</span>
-        {open ? <ChevronDown className="h-4 w-4 text-ink-tertiary" /> : <ChevronRight className="h-4 w-4 text-ink-tertiary" />}
+    <div className="border-border bg-surface/50 rounded-xl border transition-all">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+      >
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-500/10 text-xs font-bold text-purple-500">
+          {index + 1}
+        </div>
+        <span className="text-ink flex-1 text-sm font-medium">{step.step}</span>
+        {open ? (
+          <ChevronDown className="text-ink-tertiary h-4 w-4" />
+        ) : (
+          <ChevronRight className="text-ink-tertiary h-4 w-4" />
+        )}
       </button>
       {open && (
-        <div className="space-y-3 border-t border-border px-4 py-3">
+        <div className="border-border space-y-3 border-t px-4 py-3">
           {step.thinking && (
             <div className="rounded-xl bg-purple-500/5 px-3 py-2.5 dark:bg-purple-500/10">
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-purple-500">思考过程</p>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-secondary">{step.thinking}</p>
+              <p className="mb-1 text-[10px] font-semibold tracking-wider text-purple-500 uppercase">
+                思考过程
+              </p>
+              <p className="text-ink-secondary text-sm leading-relaxed whitespace-pre-wrap">
+                {step.thinking}
+              </p>
             </div>
           )}
           {step.conclusion && (
             <div className="rounded-xl bg-green-500/5 px-3 py-2.5 dark:bg-green-500/10">
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-green-500">结论</p>
-              <p className="text-sm leading-relaxed text-ink-secondary">{step.conclusion}</p>
+              <p className="mb-1 text-[10px] font-semibold tracking-wider text-green-500 uppercase">
+                结论
+              </p>
+              <p className="text-ink-secondary text-sm leading-relaxed">{step.conclusion}</p>
             </div>
           )}
         </div>
@@ -1013,15 +1437,37 @@ function ReasoningStepCard({ step, index }: { step: { step: string; thinking: st
   );
 }
 
-function ScoreCard({ label, score, icon, color, bg }: { label: string; score: number; icon: React.ReactNode; color: string; bg: string }) {
+function ScoreCard({
+  label,
+  score,
+  icon,
+  color,
+  bg,
+}: {
+  label: string;
+  score: number;
+  icon: React.ReactNode;
+  color: string;
+  bg: string;
+}) {
   const pct = Math.round(score * 100);
   return (
-    <div className="rounded-xl border border-border bg-surface p-4 text-center">
-      <div className={`mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full ${bg} ${color}`}>{icon}</div>
-      <div className="text-2xl font-bold text-ink">{pct}<span className="text-sm text-ink-tertiary">%</span></div>
-      <div className="mt-1 text-xs text-ink-tertiary">{label}</div>
-      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-hover">
-        <div className={`h-full rounded-full transition-all duration-700 ${score > 0.7 ? "bg-green-500" : score > 0.4 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${pct}%` }} />
+    <div className="border-border bg-surface rounded-xl border p-4 text-center">
+      <div
+        className={`mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full ${bg} ${color}`}
+      >
+        {icon}
+      </div>
+      <div className="text-ink text-2xl font-bold">
+        {pct}
+        <span className="text-ink-tertiary text-sm">%</span>
+      </div>
+      <div className="text-ink-tertiary mt-1 text-xs">{label}</div>
+      <div className="bg-hover mt-2 h-1.5 w-full overflow-hidden rounded-full">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ${score > 0.7 ? "bg-green-500" : score > 0.4 ? "bg-amber-500" : "bg-red-500"}`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
   );
@@ -1029,19 +1475,30 @@ function ScoreCard({ label, score, icon, color, bg }: { label: string; score: nu
 
 function ChainItem({ label, text }: { label: string; text: string }) {
   return (
-    <div className="rounded-xl border border-border bg-surface/50 px-4 py-3">
-      <p className="mb-1 text-xs font-semibold text-ink-tertiary">{label}</p>
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-secondary">{text}</p>
+    <div className="border-border bg-surface/50 rounded-xl border px-4 py-3">
+      <p className="text-ink-tertiary mb-1 text-xs font-semibold">{label}</p>
+      <p className="text-ink-secondary text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
     </div>
   );
 }
 
-function ReportSection({ icon, title, content }: { icon: React.ReactNode; title: string; content: string }) {
+function ReportSection({
+  icon,
+  title,
+  content,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  content: string;
+}) {
   return (
     <div>
-      <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-ink">{icon}{title}</h4>
-      <div className="rounded-xl bg-page px-4 py-3 dark:bg-page/50">
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-secondary">{content}</p>
+      <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
+        {icon}
+        {title}
+      </h4>
+      <div className="bg-page dark:bg-page/50 rounded-xl px-4 py-3">
+        <p className="text-ink-secondary text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
       </div>
     </div>
   );

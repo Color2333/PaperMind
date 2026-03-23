@@ -1,6 +1,6 @@
 /**
  * Graph Explorer - 知识图谱探索（3 大面板：全局概览 / 引文分析 / 领域洞察）
- * @author Bamzc
+ * @author Color2333
  */
 import { useState } from "react";
 import { Compass, Network, TrendingUp } from "lucide-react";
@@ -24,18 +24,18 @@ export default function GraphExplorer() {
       {/* 页面头 */}
       <div className="page-hero rounded-2xl p-6">
         <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-primary/10 p-2.5">
-            <Compass className="h-5 w-5 text-primary" />
+          <div className="bg-primary/10 rounded-xl p-2.5">
+            <Compass className="text-primary h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-ink">知识图谱</h1>
-            <p className="mt-0.5 text-sm text-ink-secondary">探索引用关系、领域时间线和知识脉络</p>
+            <h1 className="text-ink text-2xl font-bold">知识图谱</h1>
+            <p className="text-ink-secondary mt-0.5 text-sm">探索引用关系、领域时间线和知识脉络</p>
           </div>
         </div>
       </div>
 
       {/* 功能标签 — 3 个大 tab */}
-      <div className="flex gap-1 rounded-2xl bg-page p-1.5">
+      <div className="bg-page flex gap-1 rounded-2xl p-1.5">
         {TABS.map((tab) => (
           <button
             key={tab.id}

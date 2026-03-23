@@ -1,6 +1,6 @@
 """
 每日/每周定时任务编排 - 智能调度 + 精读限额
-@author Bamzc
+@author Color2333
 @author Color2333
 """
 
@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional
+from datetime import date
 from uuid import UUID
 
 from packages.ai.brief_service import DailyBriefService
 from packages.ai.graph_service import GraphService
 from packages.ai.pipelines import PaperPipelines
-from packages.ai.rate_limiter import acquire_api, get_rate_limiter
+from packages.ai.rate_limiter import acquire_api
 from packages.config import get_settings
-from packages.domain.enums import ActionType, ReadStatus
+from packages.domain.enums import ActionType
 from packages.storage.db import session_scope
 from packages.storage.models import TopicSubscription
 from packages.storage.repositories import (
@@ -30,9 +30,7 @@ logger = logging.getLogger(__name__)
 PAPER_CONCURRENCY = 3
 
 
-def _process_paper(
-    paper_id, force_deep: bool = False, deep_read_quota: Optional[int] = None
-) -> dict:
+def _process_paper(paper_id, force_deep: bool = False, deep_read_quota: int | None = None) -> dict:
     """
     单篇论文：embed ∥ skim 并行，智能精读
 
@@ -44,7 +42,6 @@ def _process_paper(
     Returns:
         dict: 处理结果 {skim_score, deep_read, success}
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     settings = get_settings()
     pipelines = PaperPipelines()
@@ -116,17 +113,17 @@ def _process_paper(
     return result
 
 
-def run_topic_ingest(topic_id: str) -> dict:
+def run_topic_ingest(topic_id: str, progress_callback: callable | None = None) -> dict:
     """
     单独处理一个主题的抓取 + 处理 - 智能精读限额
 
     Args:
         topic_id: 主题 ID
+        progress_callback: 可选的进度回调函数，签名 callback(message, current, total)
 
     Returns:
         dict: 处理结果统计
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     pipelines = PaperPipelines()
     with session_scope() as session:
@@ -138,6 +135,11 @@ def run_topic_ingest(topic_id: str) -> dict:
         # 获取精读配额配置
         max_deep_reads = getattr(topic, "max_deep_reads_per_run", 2)
 
+        # 读取日期过滤配置
+        enable_date_filter = getattr(topic, "enable_date_filter", False)
+        date_filter_days = getattr(topic, "date_filter_days", 7)
+        days_back = date_filter_days if enable_date_filter else 0
+
         last_error: str | None = None
         ids: list[str] = []
         new_count: int = 0
@@ -146,11 +148,15 @@ def run_topic_ingest(topic_id: str) -> dict:
             attempts += 1
             try:
                 # 返回详细统计信息
+                if progress_callback:
+                    progress_callback("正在抓取论文...", 10, 100)
                 result = pipelines.ingest_arxiv_with_stats(
                     query=topic.query,
                     max_results=topic.max_results_per_run,
                     topic_id=topic.id,
                     action_type=ActionType.auto_collect,
+                    days_back=days_back,
+                    progress_callback=progress_callback,
                 )
                 ids = result["inserted_ids"]
                 new_count = result["new_count"]
@@ -176,6 +182,8 @@ def run_topic_ingest(topic_id: str) -> dict:
                 topic_name,
                 len(ids),
             )
+            if progress_callback:
+                progress_callback("没有新论文", 100, 100)
             return {
                 "topic_id": topic_id,
                 "topic_name": topic_name,
@@ -201,17 +209,26 @@ def run_topic_ingest(topic_id: str) -> dict:
 
     # 第一步：全部论文并行粗读 + 嵌入（不精读）
     logger.info("第一步：并行粗读 + 嵌入...")
+    if progress_callback:
+        progress_callback("开始粗读 + 嵌入...", 30, 100)
     skim_results = []
 
+    total_papers = len(papers_data)
     with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
         futs = {
             pool.submit(_process_paper, paper_id, force_deep=False, deep_read_quota=0): paper_id
             for paper_id, _ in papers_data
         }
-        for fut in as_completed(futs):
+        for i, fut in enumerate(as_completed(futs)):
             try:
                 result = fut.result()
                 skim_results.append(result)
+                if progress_callback:
+                    progress_callback(
+                        f"粗读中 ({i + 1}/{total_papers})...",
+                        30 + int((i + 1) / total_papers * 40),
+                        100,
+                    )
             except Exception as exc:
                 paper_id = futs[fut]
                 logger.warning(
@@ -222,6 +239,8 @@ def run_topic_ingest(topic_id: str) -> dict:
 
     # 第二步：按粗读分数排序，选前 N 篇精读
     logger.info("第二步：选择高分论文进行精读...")
+    if progress_callback:
+        progress_callback("选择高分论文...", 70, 100)
     # 只用 ID 和分数排序，不再引用 ORM 对象
     scored_papers = [
         (r, paper_id)
@@ -232,6 +251,7 @@ def run_topic_ingest(topic_id: str) -> dict:
 
     # 精读前 N 篇
     deep_read_count = 0
+    max_scored = len(scored_papers)
     for i, (result, paper_id) in enumerate(scored_papers):
         if deep_read_count >= max_deep_reads:
             logger.info(
@@ -259,6 +279,12 @@ def run_topic_ingest(topic_id: str) -> dict:
             if acquire_api("llm", timeout=60.0):
                 pipelines.deep_dive(UUID(paper_id))  # type: ignore[arg-type]
                 deep_read_count += 1
+                if progress_callback:
+                    progress_callback(
+                        f"精读中 ({deep_read_count}/{max_deep_reads})...",
+                        70 + int((i + 1) / max_scored * 30),
+                        100,
+                    )
                 logger.info("✅ 精读完成 (%d/%d)", deep_read_count, max_deep_reads)
             else:
                 logger.warning("等待 API 许可超时，跳过精读")
@@ -268,6 +294,9 @@ def run_topic_ingest(topic_id: str) -> dict:
                 str(paper_id)[:8],
                 exc,
             )
+
+    if progress_callback:
+        progress_callback("处理完成", 100, 100)
 
     return {
         "topic_id": topic_id,
@@ -312,8 +341,21 @@ def run_daily_ingest() -> dict:
 
 
 def run_daily_brief() -> dict:
-    settings = get_settings()
-    return DailyBriefService().publish(recipient=settings.notify_default_to)
+    """生成每日简报，从数据库读取收件人配置"""
+    # 从数据库读取收件人
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import DailyReportConfigRepository
+
+    recipient = None
+    try:
+        with session_scope() as session:
+            config = DailyReportConfigRepository(session).get_config()
+            if config.send_email_report and config.recipient_emails:
+                recipient = config.recipient_emails.split(",")[0]
+    except Exception as e:
+        logger.warning(f"读取收件人配置失败：{e}")
+
+    return DailyBriefService().publish(recipient=recipient)
 
 
 def run_weekly_graph_maintenance() -> dict:
@@ -345,37 +387,37 @@ def run_weekly_graph_maintenance() -> dict:
 
 # ========== 完整版新增：多渠道调度支持 ==========
 
+
 def run_topic_ingest_v2(topic_id: str) -> dict:
     """
     单独处理一个主题的抓取 + 处理 - 支持多渠道（完整版）
-    
+
     新功能:
     - 支持同时从 ArXiv 和 IEEE 抓取
     - 独立 IEEE 配额控制
     - 按渠道分别统计结果
-    
+
     Args:
         topic_id: 主题 ID
-    
+
     Returns:
         dict: 处理结果统计（包含 by_source 字段）
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    
+
     pipelines = PaperPipelines()
     with session_scope() as session:
         topic = session.get(TopicSubscription, topic_id)
         if not topic:
             return {"topic_id": topic_id, "status": "not_found"}
-        
+
         topic_name = topic.name
         # 获取配置的渠道列表，默认只有 ArXiv
         sources = getattr(topic, "sources", ["arxiv"])
-        
+
         # 按渠道分别抓取
         all_results = {}
         total_inserted = 0
-        
+
         for source in sources:
             if source == "arxiv":
                 result = _ingest_from_arxiv(pipelines, topic, session)
@@ -384,10 +426,10 @@ def run_topic_ingest_v2(topic_id: str) -> dict:
             else:
                 logger.warning("未知渠道：%s，跳过", source)
                 continue
-            
+
             all_results[source] = result
             total_inserted += result.get("inserted", 0)
-        
+
         # 汇总统计
         return {
             "topic_id": topic_id,
@@ -404,7 +446,7 @@ def _ingest_from_arxiv(pipelines, topic, session) -> dict:
     ids: list[str] = []
     new_count: int = 0
     attempts = 0
-    
+
     for _attempt in range(topic.retry_limit + 1):
         attempts += 1
         try:
@@ -420,7 +462,7 @@ def _ingest_from_arxiv(pipelines, topic, session) -> dict:
             break
         except Exception as exc:
             last_error = str(exc)
-    
+
     if last_error is not None:
         return {
             "status": "failed",
@@ -428,7 +470,7 @@ def _ingest_from_arxiv(pipelines, topic, session) -> dict:
             "error": last_error,
             "inserted": 0,
         }
-    
+
     return {
         "status": "ok",
         "inserted": len(ids),
@@ -439,31 +481,31 @@ def _ingest_from_arxiv(pipelines, topic, session) -> dict:
 def _ingest_from_ieee(pipelines, topic, session) -> dict:
     """
     IEEE 渠道抓取 - 独立配额控制
-    
+
     Args:
         pipelines: PaperPipelines 实例
         topic: TopicSubscription 对象
         session: SQLAlchemy Session
-    
+
     Returns:
         dict: 抓取结果统计
     """
     from packages.config import get_settings
-    
+
     settings = get_settings()
-    
+
     # 检查 IEEE 配额
     ieee_quota = getattr(topic, "ieee_daily_quota", 10)
     if ieee_quota <= 0:
         logger.info("主题 [%s] IEEE 配额已用尽，跳过", topic.name)
         return {"status": "quota_exhausted", "inserted": 0}
-    
+
     # 检查 IEEE API Key
     api_key = getattr(topic, "ieee_api_key_override", None) or settings.ieee_api_key
     if not api_key:
         logger.warning("主题 [%s] IEEE API Key 未配置，跳过", topic.name)
         return {"status": "no_api_key", "inserted": 0}
-    
+
     try:
         # 使用 IEEE 渠道抓取
         total, inserted_ids, new_count = pipelines.ingest_ieee(
@@ -472,14 +514,14 @@ def _ingest_from_ieee(pipelines, topic, session) -> dict:
             topic_id=topic.id,
             action_type=ActionType.auto_collect,
         )
-        
+
         return {
             "status": "ok",
             "inserted": len(inserted_ids),
             "new_count": new_count,
             "quota_used": 1,
         }
-        
+
     except Exception as exc:
         logger.error("IEEE 抓取失败：%s", exc)
         return {"status": "failed", "error": str(exc), "inserted": 0}
@@ -488,28 +530,28 @@ def _ingest_from_ieee(pipelines, topic, session) -> dict:
 def _check_and_consume_ieee_quota(session, topic_id: str, date: date) -> bool:
     """
     检查并消耗 IEEE 配额
-    
+
     Args:
         session: SQLAlchemy Session
         topic_id: 主题 ID
         date: 日期
-    
+
     Returns:
         bool: True 表示成功消耗配额，False 表示配额不足
     """
     from packages.storage.repositories import IeeeQuotaRepository
-    
+
     quota_repo = IeeeQuotaRepository(session)
     topic = session.get(TopicSubscription, topic_id)
     if not topic:
         return False
-    
+
     limit = getattr(topic, "ieee_daily_quota", 10)
-    
+
     # 检查配额
     if not quota_repo.check_quota(topic_id, date, limit):
         logger.warning("主题 [%s] IEEE 配额已用尽 (%d/%d)", topic.name, limit, limit)
         return False
-    
+
     # 消耗配额
     return quota_repo.consume_quota(topic_id, date, 1)

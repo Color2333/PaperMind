@@ -612,7 +612,7 @@
 /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1218:13: ERROR: The character "}" is not valid inside a JSX element
   Plugin: vite:esbuild
   File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1199:0
-  
+
   The character "}" is not valid inside a JSX element
   1216|                  </Button>
   1217|                </>
@@ -620,7 +620,7 @@
      |               ^
   1219|            </div>
   1220|          </div>
-  
+
       at failureErrorWithLog (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:1472:15)
       at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:755:50
       at responseCallbacks.<computed> (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:622:9)
@@ -635,7 +635,7 @@
 /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1218:13: ERROR: The character "}" is not valid inside a JSX element
   Plugin: vite:esbuild
   File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1199:0
-  
+
   The character "}" is not valid inside a JSX element
   1216|                  </Button>
   1217|                </>
@@ -643,7 +643,7 @@
      |               ^
   1219|            </div>
   1220|          </div>
-  
+
       at failureErrorWithLog (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:1472:15)
       at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:755:50
       at responseCallbacks.<computed> (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:622:9)
@@ -658,7 +658,7 @@
 /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1218:13: ERROR: The character "}" is not valid inside a JSX element
   Plugin: vite:esbuild
   File: /Users/haojiang/Documents/2026/PaperMind/frontend/src/components/SettingsDialog.tsx:1199:0
-  
+
   The character "}" is not valid inside a JSX element
   1216|                  </Button>
   1217|                </>
@@ -666,7 +666,7 @@
      |               ^
   1219|            </div>
   1220|          </div>
-  
+
       at failureErrorWithLog (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:1472:15)
       at /Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:755:50
       at responseCallbacks.<computed> (/Users/haojiang/Documents/2026/PaperMind/frontend/node_modules/esbuild/lib/main.js:622:9)

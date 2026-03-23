@@ -1,0 +1,29 @@
+# PaperMind Pre-commit Hooks
+# 安装: pre-commit install
+# 手动运行: pre-commit run --all-files
+
+repos:
+  # Python - Ruff (格式化 + Lint)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.0
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # TypeScript/JavaScript - 通过 npm scripts 格式化 (prettier 在 node_modules 中)
+  # 运行 npm run format 格式化前端代码
+
+  # 通用检查
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^frontend/node_modules/
+      - id: end-of-file-fixer
+        exclude: ^frontend/node_modules/
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-json
+      - id: check-added-large-files
+        args: [--maxkb=500]

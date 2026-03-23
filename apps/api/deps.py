@@ -26,21 +26,38 @@ settings = get_settings()
 
 
 class TTLCache:
-    """简单的 TTL 内存缓存，避免引入 cachetools 依赖"""
+    """TTL 内存缓存，带最大容量限制，线程安全"""
 
-    def __init__(self):
+    def __init__(self, max_size: int = 1024):
         self._store: dict[str, tuple[float, Any]] = {}
         self._lock = threading.Lock()
+        self._max_size = max_size
+
+    def _evict_expired(self) -> None:
+        """"""
+        now = time.time()
+        expired = [k for k, (exp, _) in self._store.items() if now >= exp]
+        for k in expired:
+            del self._store[k]
 
     def get(self, key: str) -> Any:
         with self._lock:
             entry = self._store.get(key)
             if entry and time.time() < entry[0]:
                 return entry[1]
+            # 过期则删除
+            if entry:
+                del self._store[key]
             return None
 
     def set(self, key: str, value: Any, ttl: float):
         with self._lock:
+            # 容量达上限时清理过期项，仍不够则删最旧的
+            if len(self._store) >= self._max_size and key not in self._store:
+                self._evict_expired()
+                if len(self._store) >= self._max_size:
+                    oldest_key = min(self._store, key=lambda k: self._store[k][0])
+                    del self._store[oldest_key]
             self._store[key] = (time.time() + ttl, value)
 
     def invalidate(self, key: str):
@@ -81,6 +98,7 @@ def iso_dt(dt: datetime | None) -> str | None:
 
 def brief_date() -> str:
     from packages.timezone import user_date_str
+
     return user_date_str()
 
 

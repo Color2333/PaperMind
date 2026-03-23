@@ -32,9 +32,14 @@ htmlcov/
 # AI agent config (local only)
 .claude/
 CLAUDE.md
+.spec-workflow/
+.cursor/
 
 # Data (runtime generated)
 data/
+# Logs
+logs/
+*.log
 
 # Node / Frontend
 node_modules/
@@ -45,14 +50,11 @@ frontend/dist/
 package-lock.json
 frontend/package-lock.json
 
-# Egg info
-papermind.egg-info/
-
 # Tauri / Desktop build
 src-tauri/target/
 src-tauri/binaries/
 *.dmg
 *.app
 
-# Docker deploy data (runtime)
-deploy/
+# PyInstaller
+*.spec

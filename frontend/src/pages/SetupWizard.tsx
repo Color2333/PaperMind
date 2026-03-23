@@ -1,22 +1,11 @@
 /**
  * PaperMind 桌面版 — 首次启动引导
  * 让用户选择数据目录和 .env 配置文件路径。
- * @author Bamzc
+ * @author Color2333
  */
 import { useState } from "react";
-import {
-  FolderOpen,
-  FileText,
-  Loader2,
-  CheckCircle2,
-  AlertCircle,
-  Sparkles,
-} from "lucide-react";
-import {
-  saveConfigAndStart,
-  openFolderDialog,
-  openFileDialog,
-} from "@/lib/tauri";
+import { FolderOpen, FileText, Loader2, CheckCircle2, AlertCircle, Sparkles } from "lucide-react";
+import { saveConfigAndStart, openFolderDialog, openFileDialog } from "@/lib/tauri";
 
 interface Props {
   onReady: (port: number) => void;
@@ -66,9 +55,7 @@ export default function SetupWizard({ onReady }: Props) {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg">
             <Sparkles className="h-8 w-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            欢迎使用 PaperMind
-          </h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">欢迎使用 PaperMind</h1>
           <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
             首次启动，请配置数据存储路径
           </p>
@@ -86,7 +73,7 @@ export default function SetupWizard({ onReady }: Props) {
               value={dataDir}
               onChange={(e) => setDataDir(e.target.value)}
               placeholder="选择数据存储目录..."
-              className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 transition-colors focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-500 dark:focus:ring-blue-900"
+              className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 transition-colors focus:border-blue-400 focus:ring-2 focus:ring-blue-100 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-500 dark:focus:ring-blue-900"
             />
             <button
               onClick={selectFolder}
@@ -113,7 +100,7 @@ export default function SetupWizard({ onReady }: Props) {
               value={envFile}
               onChange={(e) => setEnvFile(e.target.value)}
               placeholder="选择 .env 配置文件（可选）..."
-              className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 transition-colors focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-500 dark:focus:ring-blue-900"
+              className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 transition-colors focus:border-blue-400 focus:ring-2 focus:ring-blue-100 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-500 dark:focus:ring-blue-900"
             />
             <button
               onClick={selectEnvFile}

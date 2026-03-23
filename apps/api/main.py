@@ -13,9 +13,9 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
+from packages.auth import decode_access_token
 from packages.config import get_settings
 from packages.domain.exceptions import AppError
-from packages.auth import decode_access_token
 from packages.logging_setup import setup_logging
 
 setup_logging()
@@ -63,6 +63,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not settings.auth_password:
             return await call_next(request)
 
+        # OPTIONS preflight 请求放行（CORS 需要）
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # 白名单路径跳过认证
         if request.url.path in self.WHITELIST:
             return await call_next(request)
@@ -98,12 +102,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# ---------- 启动时检查认证配置 ----------
 
 settings = get_settings()
+
+if settings.auth_password and not settings.auth_secret_key:
+    raise RuntimeError(
+        "安全错误: 启用了 AUTH_PASSWORD 但未配置 AUTH_SECRET_KEY。"
+        "请在 .env 中设置一个强随机密钥，例如: AUTH_SECRET_KEY=$(openssl rand -hex 32)"
+    )
+
 app = FastAPI(title=settings.app_name)
+
+# 中间件注册顺序：Starlette 中间件为倒序执行（最后注册的最先执行）
+# 执行顺序: CORS -> GZip -> Auth -> RequestLog -> 路由处理
 app.add_middleware(RequestLogMiddleware)
 app.add_middleware(AuthMiddleware)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # Starlette 内置跳过 text/event-stream
 
 
 @app.exception_handler(AppError)
@@ -137,19 +152,23 @@ from apps.api.routers import (  # noqa: E402
     agent,
     auth,
     content,
+    cs_feeds,
     graph,
     jobs,
     papers,
     pipelines,
-    settings as settings_router,
     system,
     topics,
     writing,
+)
+from apps.api.routers import (
+    settings as settings_router,
 )
 
 app.include_router(system.router)
 app.include_router(papers.router)
 app.include_router(topics.router)
+app.include_router(cs_feeds.router)
 app.include_router(graph.router)
 app.include_router(agent.router)
 app.include_router(content.router)

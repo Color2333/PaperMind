@@ -3,7 +3,8 @@
 @author Color2333
 """
 
-from datetime import datetime, timedelta, timezone
+import hmac
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from jose import JWTError, jwt
@@ -31,9 +32,9 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
     """创建 JWT token"""
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+        expire = datetime.now(UTC) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     to_encode.update({"exp": expire})
     settings = get_settings()
     encoded_jwt = jwt.encode(to_encode, settings.auth_secret_key, algorithm=ALGORITHM)
@@ -53,9 +54,9 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
 def authenticate_user(password: str) -> bool:
     """
     验证站点密码
-    简单模式：直接对比明文密码
+    使用 hmac.compare_digest 防止时序攻击
     """
     settings = get_settings()
     if not settings.auth_password:
         return False
-    return password == settings.auth_password
+    return hmac.compare_digest(password, settings.auth_password)

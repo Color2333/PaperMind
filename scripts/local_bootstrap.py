@@ -33,21 +33,6 @@ def main() -> None:
     print("[2/4] 导入所有模型...")
     from packages.storage.models import (
         Base,
-        Paper,
-        AnalysisReport,
-        ImageAnalysis,
-        Citation,
-        PipelineRun,
-        PromptTrace,
-        SourceCheckpoint,
-        TopicSubscription,
-        PaperTopic,
-        LLMProviderConfig,
-        GeneratedContent,
-        CollectionAction,
-        ActionPaper,
-        EmailConfig,
-        DailyReportConfig,
     )
 
     # 创建所有表

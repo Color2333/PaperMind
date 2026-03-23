@@ -1,6 +1,6 @@
 /**
  * 加载指示器
- * @author Bamzc
+ * @author Color2333
  */
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";

@@ -1,6 +1,6 @@
 /**
  * UI 组件统一导出
- * @author Bamzc
+ * @author Color2333
  */
 export { Card, CardHeader } from "./Card";
 export { Button } from "./Button";

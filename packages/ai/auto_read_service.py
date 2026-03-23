@@ -7,16 +7,16 @@
 - build_html() 结果缓存（同一天内不重复计算）
 - 新增 send_only() 方法，跳过精读直接发送
 """
+
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from datetime import UTC, datetime
-from typing import Callable
+from collections.abc import Callable
+from datetime import datetime
 
 from packages.config import get_settings
-from packages.timezone import user_date_str
 from packages.domain.exceptions import ConfigError, ServiceUnavailableError
 from packages.domain.service_base import ServiceBase
 from packages.storage.db import session_scope
@@ -25,6 +25,7 @@ from packages.storage.repositories import (
     EmailConfigRepository,
     PaperRepository,
 )
+from packages.timezone import user_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +65,18 @@ class AutoReadService(ServiceBase):
 
     def get_config(self) -> dict:
         """获取每日报告配置"""
-        with self.get_session() as session:
+        with session_scope() as session:
             config = DailyReportConfigRepository(session).get_config()
             return {
                 "enabled": config.enabled,
                 "auto_deep_read": config.auto_deep_read,
                 "deep_read_limit": config.deep_read_limit,
                 "send_email_report": config.send_email_report,
-                "recipient_emails": config.recipient_emails.split(",") if config.recipient_emails else [],
-                "report_time_utc": config.report_time_utc,
+                "recipient_emails": config.recipient_emails.split(",")
+                if config.recipient_emails
+                else [],
+                "cron_expression": config.cron_expression,  # 新增：返回 cron 表达式
+                "report_time_utc": config.report_time_utc,  # 保留：向后兼容
                 "include_paper_details": config.include_paper_details,
                 "include_graph_insights": config.include_graph_insights,
             }
@@ -86,8 +90,11 @@ class AutoReadService(ServiceBase):
                 "auto_deep_read": config.auto_deep_read,
                 "deep_read_limit": config.deep_read_limit,
                 "send_email_report": config.send_email_report,
-                "recipient_emails": config.recipient_emails.split(",") if config.recipient_emails else [],
-                "report_time_utc": config.report_time_utc,
+                "recipient_emails": config.recipient_emails.split(",")
+                if config.recipient_emails
+                else [],
+                "cron_expression": config.cron_expression,  # 新增：返回 cron 表达式
+                "report_time_utc": config.report_time_utc,  # 保留：向后兼容
                 "include_paper_details": config.include_paper_details,
                 "include_graph_insights": config.include_graph_insights,
             }
@@ -116,6 +123,7 @@ class AutoReadService(ServiceBase):
 
         try:
             from packages.ai.recommendation_service import RecommendationService
+
             recommendations = RecommendationService().recommend(top_k=deep_read_limit)
         except Exception as e:
             logger.error(f"推荐系统失败: {e}")
@@ -129,16 +137,19 @@ class AutoReadService(ServiceBase):
                 for rec in recommendations:
                     paper = paper_repo.get_by_id(rec["id"])
                     if paper and paper.read_status.value != "deep_read":
-                        papers_to_read.append({
-                            "id": paper.id,
-                            "title": paper.title,
-                            "similarity": rec.get("similarity", 0),
-                        })
+                        papers_to_read.append(
+                            {
+                                "id": paper.id,
+                                "title": paper.title,
+                                "similarity": rec.get("similarity", 0),
+                            }
+                        )
             result["recommended_count"] = len(papers_to_read)
 
         # 执行精读
         if papers_to_read:
             from packages.ai.pipelines import PaperPipelines
+
             pipelines = PaperPipelines()
             for i, p in enumerate(papers_to_read, 1):
                 try:
@@ -176,6 +187,7 @@ class AutoReadService(ServiceBase):
             progress_callback("正在生成每日简报...", 60, 100)
 
         from packages.ai.brief_service import DailyBriefService
+
         html = DailyBriefService().build_html()
         _set_cached_html(html)
         return html
@@ -216,6 +228,7 @@ class AutoReadService(ServiceBase):
             progress_callback("正在发送邮件报告...", 90, 100)
 
         from packages.integrations.email_service import EmailService
+
         email_service = EmailService(email_config)
         report_date = datetime.now().strftime("%Y-%m-%d")
 

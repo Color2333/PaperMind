@@ -2,7 +2,7 @@
  * Phase 5 功能 E2E 测试脚本
  * 使用: npx playwright test scripts/test-phase5-e2e.ts
  * 或: npx ts-node scripts/test-phase5-e2e.ts (需安装 playwright)
- * @author Bamzc
+ * @author Color2333
  */
 import { chromium } from "playwright";
 

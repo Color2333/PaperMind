@@ -26,12 +26,17 @@ def sync_citations_incremental(
     """增量同步引用（后台执行）"""
 
     def _fn(progress_callback=None):
-        return graph_service.sync_incremental(
+        if progress_callback:
+            progress_callback("正在同步增量引用...", 20, 100)
+        result = graph_service.sync_incremental(
             paper_limit=paper_limit,
             edge_limit_per_paper=edge_limit_per_paper,
         )
+        if progress_callback:
+            progress_callback("增量引用同步完成", 90, 100)
+        return result
 
-    task_id = global_tracker.submit("citation_sync", "📊 增量引用同步", _fn)
+    task_id = global_tracker.submit("citation_sync", "📊 增量引用同步", _fn, category="sync")
     return {"task_id": task_id, "message": "增量引用同步已启动", "status": "running"}
 
 
@@ -52,13 +57,20 @@ def sync_citations_for_topic(
         pass
 
     def _fn(progress_callback=None):
-        return graph_service.sync_citations_for_topic(
+        if progress_callback:
+            progress_callback("正在同步主题引用...", 20, 100)
+        result = graph_service.sync_citations_for_topic(
             topic_id=topic_id,
             paper_limit=paper_limit,
             edge_limit_per_paper=edge_limit_per_paper,
         )
+        if progress_callback:
+            progress_callback("主题引用同步完成", 90, 100)
+        return result
 
-    task_id = global_tracker.submit("citation_sync", f"📊 主题引用同步: {topic_name}", _fn)
+    task_id = global_tracker.submit(
+        "citation_sync", f"📊 主题引用同步：{topic_name}", _fn, category="sync"
+    )
     return {"task_id": task_id, "message": f"主题引用同步已启动: {topic_name}", "status": "running"}
 
 
@@ -71,9 +83,16 @@ def sync_citations(
     paper_title = get_paper_title(UUID(paper_id)) or paper_id[:8]
 
     def _fn(progress_callback=None):
-        return graph_service.sync_citations_for_paper(paper_id=paper_id, limit=limit)
+        if progress_callback:
+            progress_callback("正在同步论文引用...", 20, 100)
+        result = graph_service.sync_citations_for_paper(paper_id=paper_id, limit=limit)
+        if progress_callback:
+            progress_callback("论文引用同步完成", 90, 100)
+        return result
 
-    task_id = global_tracker.submit("citation_sync", f"📄 引用同步: {paper_title[:30]}", _fn)
+    task_id = global_tracker.submit(
+        "citation_sync", f"📄 引用同步：{paper_title[:30]}", _fn, category="sync"
+    )
     return {"task_id": task_id, "message": "论文引用同步已启动", "status": "running"}
 
 

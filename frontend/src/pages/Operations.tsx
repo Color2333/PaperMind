@@ -1,7 +1,7 @@
 /**
  * Operations - 运维操作
  * 覆盖 API: POST /citations/sync/*, POST /jobs/*, GET /system/status
- * @author Bamzc
+ * @author Color2333
  */
 import { useState } from "react";
 import { Card, CardHeader, Button, Input } from "@/components/ui";
@@ -52,7 +52,10 @@ export default function Operations() {
         message: (res.message as string) || "论文引用同步已启动",
         data: res,
       });
-      toast("success", `✅ ${res.message || "论文引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
+      toast(
+        "success",
+        `✅ ${res.message || "论文引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`
+      );
     } catch (err) {
       setResult("syncPaper", {
         success: false,
@@ -74,7 +77,10 @@ export default function Operations() {
         message: (res.message as string) || "主题引用同步已启动",
         data: res,
       });
-      toast("success", `✅ ${res.message || "主题引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
+      toast(
+        "success",
+        `✅ ${res.message || "主题引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`
+      );
     } catch (err) {
       setResult("syncTopic", {
         success: false,
@@ -95,7 +101,10 @@ export default function Operations() {
         message: res.message || "增量引用同步已启动",
         data: res,
       });
-      toast("success", `✅ ${res.message || "增量引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`);
+      toast(
+        "success",
+        `✅ ${res.message || "增量引用同步已启动"}\n你可以在侧边栏或 Dashboard 查看进度`
+      );
     } catch (err) {
       setResult("syncIncremental", {
         success: false,
@@ -172,10 +181,8 @@ export default function Operations() {
   return (
     <div className="animate-fade-in space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-ink">Operations</h1>
-        <p className="mt-1 text-sm text-ink-secondary">
-          引用同步、定时任务、系统检查等运维操作
-        </p>
+        <h1 className="text-ink text-2xl font-bold">Operations</h1>
+        <p className="text-ink-secondary mt-1 text-sm">引用同步、定时任务、系统检查等运维操作</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -184,12 +191,12 @@ export default function Operations() {
           <CardHeader
             title="引用同步"
             description="同步论文之间的引用关系"
-            action={<Link2 className="h-5 w-5 text-ink-tertiary" />}
+            action={<Link2 className="text-ink-tertiary h-5 w-5" />}
           />
           <div className="space-y-4">
             {/* 单篇同步 */}
             <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wider text-ink-tertiary">
+              <p className="text-ink-tertiary text-xs font-medium tracking-wider uppercase">
                 单篇论文同步
               </p>
               <div className="flex gap-2">
@@ -213,7 +220,7 @@ export default function Operations() {
 
             {/* 主题同步 */}
             <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wider text-ink-tertiary">
+              <p className="text-ink-tertiary text-xs font-medium tracking-wider uppercase">
                 主题同步
               </p>
               <div className="flex gap-2">
@@ -237,7 +244,7 @@ export default function Operations() {
 
             {/* 增量同步 */}
             <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wider text-ink-tertiary">
+              <p className="text-ink-tertiary text-xs font-medium tracking-wider uppercase">
                 增量同步
               </p>
               <Button
@@ -258,12 +265,12 @@ export default function Operations() {
           <CardHeader
             title="定时任务"
             description="手动触发调度任务"
-            action={<Calendar className="h-5 w-5 text-ink-tertiary" />}
+            action={<Calendar className="text-ink-tertiary h-5 w-5" />}
           />
           <div className="space-y-4">
             {/* 每日任务 */}
             <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wider text-ink-tertiary">
+              <p className="text-ink-tertiary text-xs font-medium tracking-wider uppercase">
                 每日任务 (抓取 + 简报)
               </p>
               <Button
@@ -279,7 +286,7 @@ export default function Operations() {
 
             {/* 每周图维护 */}
             <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wider text-ink-tertiary">
+              <p className="text-ink-tertiary text-xs font-medium tracking-wider uppercase">
                 每周图维护 (引用同步)
               </p>
               <Button
@@ -297,7 +304,7 @@ export default function Operations() {
 
             {/* 系统检查 */}
             <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wider text-ink-tertiary">
+              <p className="text-ink-tertiary text-xs font-medium tracking-wider uppercase">
                 系统健康检查
               </p>
               <Button
@@ -323,9 +330,7 @@ function ResultMessage({ result }: { result?: OperationResult }) {
   return (
     <div
       className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm ${
-        result.success
-          ? "bg-success-light text-success"
-          : "bg-error-light text-error"
+        result.success ? "bg-success-light text-success" : "bg-error-light text-error"
       }`}
     >
       {result.success ? (

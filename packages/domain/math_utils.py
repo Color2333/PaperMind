@@ -1,7 +1,8 @@
 """
 向量数学工具函数
-@author Bamzc
+@author Color2333
 """
+
 import math
 
 

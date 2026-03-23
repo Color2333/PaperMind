@@ -29,13 +29,17 @@ def _topic_dict(t, session=None) -> dict:
         "retry_limit": t.retry_limit,
         "schedule_frequency": getattr(t, "schedule_frequency", "daily"),
         "schedule_time_utc": getattr(t, "schedule_time_utc", 21),
+        "enable_date_filter": getattr(t, "enable_date_filter", False),
+        "date_filter_days": getattr(t, "date_filter_days", 7),
+        "schedule_time_utc": getattr(t, "schedule_time_utc", 21),
         "paper_count": 0,
         "last_run_at": None,
         "last_run_count": None,
     }
     if session is not None:
         from sqlalchemy import func, select
-        from packages.storage.models import PaperTopic, CollectionAction
+
+        from packages.storage.models import CollectionAction, PaperTopic
 
         # 论文计数
         cnt = session.scalar(
@@ -75,6 +79,8 @@ def upsert_topic(req: TopicCreate) -> dict:
             retry_limit=req.retry_limit,
             schedule_frequency=req.schedule_frequency,
             schedule_time_utc=req.schedule_time_utc,
+            enable_date_filter=req.enable_date_filter,
+            date_filter_days=req.date_filter_days,
         )
         return _topic_dict(topic, session)
 
@@ -102,6 +108,8 @@ def update_topic(topic_id: str, req: TopicUpdate) -> dict:
                 retry_limit=req.retry_limit,
                 schedule_frequency=req.schedule_frequency,
                 schedule_time_utc=req.schedule_time_utc,
+                enable_date_filter=req.enable_date_filter,
+                date_filter_days=req.date_filter_days,
             )
         except ValueError as exc:
             raise NotFoundError(str(exc)) from exc
@@ -128,12 +136,22 @@ def manual_fetch_topic(topic_id: str) -> dict:
         topic_name = topic.name
 
     def _fetch_fn(progress_callback=None):
-        return run_topic_ingest(topic_id)
+        # 分阶段报告进度：抓取 (0-50%) -> 处理 (50-100%)
+        def _stage_callback(msg, cur, tot):
+            # 将内部进度映射到 0-50% 范围
+            progress_callback(f"抓取：{msg}", int(cur / tot * 50), 100)
+
+        result = run_topic_ingest(topic_id, progress_callback=_stage_callback)
+
+        if progress_callback:
+            progress_callback("处理完成", 100, 100)
+        return result
 
     task_id = global_tracker.submit(
         task_type="fetch",
-        title=f"抓取: {topic_name[:30]}",
+        title=f"抓取：{topic_name[:30]}",
         fn=_fetch_fn,
+        category="collection",
     )
     return {
         "status": "started",
@@ -224,9 +242,40 @@ def ingest_references(body: ReferenceImportReq) -> dict:
 @router.get("/ingest/references/status/{task_id}")
 def ingest_references_status(task_id: str) -> dict:
     """查询参考文献导入任务进度"""
-    from packages.ai.pipelines import get_import_task
+    from packages.domain.task_tracker import global_tracker
 
-    task = get_import_task(task_id)
+    task = global_tracker.get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
     return task
+
+
+# ---------- 统计 ----------
+
+
+@router.get("/topics/stats")
+def topic_stats() -> dict:
+    """主题维度统计（30s 缓存）"""
+    from apps.api.deps import cache
+
+    cached = cache.get("topic_stats")
+    if cached is not None:
+        return cached
+    with session_scope() as session:
+        result = PaperRepository(session).topic_stats()
+    cache.set("topic_stats", result, ttl=30)
+    return result
+
+
+@router.get("/topics/distribution")
+def paper_distribution() -> dict:
+    """论文分布统计：年份分布 + 来源分布（30s 缓存）"""
+    from apps.api.deps import cache
+
+    cached = cache.get("paper_distribution")
+    if cached is not None:
+        return cached
+    with session_scope() as session:
+        result = PaperRepository(session).paper_distribution_stats()
+    cache.set("paper_distribution", result, ttl=30)
+    return result

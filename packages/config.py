@@ -1,11 +1,11 @@
 """
 应用配置 - Pydantic Settings
 支持桌面模式通过 PAPERMIND_ENV_FILE / PAPERMIND_DATA_DIR 环境变量注入路径。
-@author Bamzc
+@author Color2333
 """
 
-from functools import lru_cache
 import os
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # 认证配置
     auth_password: str = ""  # 站点密码，为空则禁用认证
-    auth_secret_key: str = "papermind-secret-key-change-in-production"  # JWT 密钥
+    auth_secret_key: str = ""  # JWT 密钥，生产环境必须配置，为空时启用认证会报错
 
     database_url: str = "sqlite:////app/data/papermind.db"
     pdf_storage_root: Path = Path("./data/papers")

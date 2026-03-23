@@ -1,6 +1,6 @@
 """
 数据库引擎和会话管理
-@author Bamzc
+@author Color2333
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import uuid as _uuid
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, event, text, StaticPool
+from sqlalchemy import StaticPool, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from packages.config import get_settings
@@ -120,6 +120,20 @@ def run_migrations() -> None:
             "INTEGER",
             "21",
         )
+        _safe_add_column(
+            conn,
+            "topic_subscriptions",
+            "enable_date_filter",
+            "BOOLEAN",
+            "0",
+        )
+        _safe_add_column(
+            conn,
+            "topic_subscriptions",
+            "date_filter_days",
+            "INTEGER",
+            "7",
+        )
         _safe_add_column(conn, "papers", "favorited", "BOOLEAN", "0")
         # 关键列索引加速 ORDER BY / WHERE 查询
         _safe_create_index(conn, "ix_papers_created_at", "papers", "created_at")
@@ -130,6 +144,9 @@ def run_migrations() -> None:
         _safe_create_index(
             conn, "ix_generated_contents_created_at", "generated_contents", "created_at"
         )
+        # Citation 表索引 - 加速图谱查询
+        _safe_create_index(conn, "ix_citations_source_paper_id", "citations", "source_paper_id")
+        _safe_create_index(conn, "ix_citations_target_paper_id", "citations", "target_paper_id")
 
         # image_analyses 表（如果不存在则创建）
         try:
@@ -194,6 +211,35 @@ def run_migrations() -> None:
             )
             _safe_create_index(conn, "ix_action_papers_action_id", "action_papers", "action_id")
             _safe_create_index(conn, "ix_action_papers_paper_id", "action_papers", "paper_id")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        # generated_contents 表（如果不存在则创建）
+        try:
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS generated_contents (
+                    id VARCHAR(36) PRIMARY KEY,
+                    content_type VARCHAR(32) NOT NULL,
+                    title VARCHAR(512) NOT NULL,
+                    keyword VARCHAR(256),
+                    paper_id VARCHAR(36) REFERENCES papers(id) ON DELETE SET NULL,
+                    markdown TEXT NOT NULL,
+                    metadata_json JSON,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            )
+            _safe_create_index(
+                conn, "ix_generated_contents_created_at", "generated_contents", "created_at"
+            )
+            _safe_create_index(
+                conn, "ix_generated_contents_content_type", "generated_contents", "content_type"
+            )
+            _safe_create_index(
+                conn, "ix_generated_contents_paper_id", "generated_contents", "paper_id"
+            )
             conn.commit()
         except Exception:
             conn.rollback()

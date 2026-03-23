@@ -1,29 +1,33 @@
 """
 数据仓储层
-@author Bamzc
+@author Color2333
 """
 
 from __future__ import annotations
 
-import math
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import Select, delete, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import Integer, Select, delete, func, select
+from sqlalchemy.orm import Session, defer
 
 from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
+from packages.domain.math_utils import cosine_distance as _cosine_distance
 from packages.domain.schemas import DeepDiveReport, PaperCreate, SkimReport
 from packages.storage.models import (
     ActionPaper,
     AgentConversation,
     AgentMessage,
+    AgentPendingAction,
     AnalysisReport,
     Citation,
     CollectionAction,
+    CSCategory,
+    CSFeedSubscription,
     DailyReportConfig,
     EmailConfig,
     GeneratedContent,
+    IeeeApiQuota,
     LLMProviderConfig,
     Paper,
     PaperTopic,
@@ -32,9 +36,6 @@ from packages.storage.models import (
     SourceCheckpoint,
     TopicSubscription,
 )
-
-
-from packages.domain.math_utils import cosine_distance as _cosine_distance
 
 
 class BaseQuery:
@@ -117,6 +118,19 @@ class PaperRepository:
     def list_all(self, limit: int = 10000) -> list[Paper]:
         return self.list_latest(limit=limit)
 
+    def list_lightweight(self, limit: int = 50000) -> list[Paper]:
+        """只加载论文的轻量字段，避免加载 embedding 和大文本
+
+        适用于需要批量加载论文但只需 id, title, arxiv_id, publication_date 等字段的场景
+        """
+        q = (
+            select(Paper)
+            .options(defer(Paper.embedding), defer(Paper.abstract))
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
     def list_by_ids(self, paper_ids: list[str]) -> list[Paper]:
         if not paper_ids:
             return []
@@ -140,6 +154,7 @@ class PaperRepository:
             return set()
         q = select(Paper.doi).where(Paper.doi.in_(clean_dois))
         return set(self.session.execute(q).scalars())
+
     def list_by_read_status(self, status: ReadStatus, limit: int = 200) -> list[Paper]:
         q = (
             select(Paper)
@@ -239,11 +254,7 @@ class PaperRepository:
         # "最近 7 天" 用用户时区的今天 0 点往前推 7 天
         user_today_utc = user_today_start_utc()
         week_start_utc = user_today_utc - timedelta(days=7)
-        recent_q = (
-            select(func.count())
-            .select_from(Paper)
-            .where(Paper.created_at >= week_start_utc)
-        )
+        recent_q = select(func.count()).select_from(Paper).where(Paper.created_at >= week_start_utc)
         recent_7d = self.session.execute(recent_q).scalar() or 0
 
         # 有主题的论文 ID 集合
@@ -295,6 +306,245 @@ class PaperRepository:
             "by_date": by_date,
         }
 
+    def topic_stats(self) -> dict:
+        """
+        返回主题维度统计：
+        - 每个主题的论文数、总引用数、活跃度（近 30 天新增）
+        - 每个主题的阅读状态分布
+
+        优化：将 N+1 查询合并为 4 次批量聚合查询
+        """
+        from packages.timezone import user_today_start_utc
+
+        user_today_utc = user_today_start_utc()
+        since_30d = user_today_utc - timedelta(days=30)
+
+        # 1. 获取所有主题基本信息和论文数
+        topic_stats_q = (
+            select(
+                TopicSubscription.id,
+                TopicSubscription.name,
+                func.count(PaperTopic.paper_id).label("paper_count"),
+            )
+            .join(PaperTopic, TopicSubscription.id == PaperTopic.topic_id, isouter=True)
+            .group_by(TopicSubscription.id, TopicSubscription.name)
+        )
+        topic_rows = self.session.execute(topic_stats_q).all()
+
+        # 提取所有 topic_id 用于批量查询
+        topic_ids = [row.id for row in topic_rows]
+        if not topic_ids:
+            return {"topics": []}
+
+        # 2. 批量查询所有主题的总引用数（一次查询，GROUP BY topic_id）
+        citation_subq = (
+            select(
+                PaperTopic.topic_id,
+                func.coalesce(
+                    func.sum(
+                        func.cast(
+                            func.json_extract(Paper.metadata_json, "$.citation_count"), Integer
+                        )
+                    ),
+                    0,
+                ).label("total_citations"),
+            )
+            .join(Paper, Paper.id == PaperTopic.paper_id)
+            .group_by(PaperTopic.topic_id)
+            .subquery()
+        )
+        citation_rows = {
+            row[0]: row[1] for row in self.session.execute(select(citation_subq)).all()
+        }
+
+        # 3. 批量查询所有主题的近 30 天新增论文数（一次查询，GROUP BY topic_id）
+        recent_subq = (
+            select(
+                PaperTopic.topic_id,
+                func.count().label("recent_30d"),
+            )
+            .join(Paper, Paper.id == PaperTopic.paper_id)
+            .where(Paper.created_at >= since_30d)
+            .group_by(PaperTopic.topic_id)
+            .subquery()
+        )
+        recent_rows = {row[0]: row[1] for row in self.session.execute(select(recent_subq)).all()}
+
+        # 4. 批量查询所有主题的阅读状态分布（一次查询，GROUP BY topic_id, read_status）
+        status_subq = (
+            select(
+                PaperTopic.topic_id,
+                Paper.read_status,
+                func.count().label("count"),
+            )
+            .join(Paper, Paper.id == PaperTopic.paper_id)
+            .group_by(PaperTopic.topic_id, Paper.read_status)
+            .subquery()
+        )
+        status_rows = self.session.execute(select(status_subq)).all()
+        # 组装成 {topic_id: {status: count}}
+        status_map: dict[str, dict[str, int]] = {}
+        for row in status_rows:
+            tid = row[0]
+            status = row[1].value
+            count = row[2]
+            if tid not in status_map:
+                status_map[tid] = {}
+            status_map[tid][status] = count
+
+        # 在 Python 中组装结果
+        result = []
+        for row in topic_rows:
+            topic_id = row.id
+            topic_name = row.name
+            paper_count = row.paper_count or 0
+            total_citations = citation_rows.get(topic_id, 0)
+            recent_30d = recent_rows.get(topic_id, 0)
+
+            topic_status = status_map.get(topic_id, {})
+            result.append(
+                {
+                    "topic_id": topic_id,
+                    "topic_name": topic_name,
+                    "paper_count": paper_count,
+                    "total_citations": total_citations,
+                    "recent_30d": recent_30d,
+                    "status_dist": {
+                        "unread": topic_status.get("unread", 0),
+                        "skimmed": topic_status.get("skimmed", 0),
+                        "deep_read": topic_status.get("deep_read", 0),
+                    },
+                }
+            )
+
+        # 按论文数降序排列
+        result.sort(key=lambda x: x["paper_count"], reverse=True)
+        return {"topics": result}
+
+    def paper_distribution_stats(self) -> dict:
+        """论文分布统计：按发表年份分布 + 按来源分布"""
+        from packages.timezone import user_today_start_utc
+
+        by_year_q = (
+            select(
+                func.coalesce(func.strftime("%Y", Paper.publication_date), "未知").label("year"),
+                func.count().label("count"),
+            )
+            .group_by(func.strftime("%Y", Paper.publication_date))
+            .order_by(func.strftime("%Y", Paper.publication_date).desc())
+        )
+        year_rows = self.session.execute(by_year_q).all()
+        by_year = [{"year": r[0], "count": r[1]} for r in year_rows]
+
+        by_source_q = (
+            select(
+                func.coalesce(func.json_extract(Paper.metadata_json, "$.source"), "unknown").label(
+                    "source"
+                ),
+                func.count().label("count"),
+            )
+            .group_by(func.json_extract(Paper.metadata_json, "$.source"))
+            .order_by(func.count().desc())
+        )
+        source_rows = self.session.execute(by_source_q).all()
+        source_label: dict[str, str] = {
+            "arxiv": "arXiv",
+            "semantic_scholar": "Semantic Scholar",
+            "reference_import": "参考文献导入",
+            "unknown": "未知来源",
+        }
+        by_source = [
+            {"source": source_label.get(r[0], r[0]), "raw_source": r[0], "count": r[1]}
+            for r in source_rows
+        ]
+
+        by_status_q = select(Paper.read_status, func.count()).group_by(Paper.read_status)
+        status_rows = self.session.execute(by_status_q).all()
+        status_label: dict[str, str] = {
+            "unread": "未读",
+            "skimmed": "已粗读",
+            "deep_read": "已精读",
+        }
+        by_status = [
+            {
+                "status": status_label.get(r[0].value, r[0].value),
+                "raw_status": r[0].value,
+                "count": r[1],
+            }
+            for r in status_rows
+        ]
+
+        user_today_utc = user_today_start_utc()
+        by_month_rows: list[dict] = []
+        for i in range(11, -1, -1):
+            month_start = user_today_utc - timedelta(days=30 * i)
+            month_label = month_start.strftime("%Y-%m")
+            month_start_day = month_start.replace(day=1)
+            if month_start.month == 12:
+                month_end = month_start.replace(year=month_start.year + 1, month=1, day=1)
+            else:
+                month_end = month_start.replace(month=month_start.month + 1, day=1)
+            count_q = (
+                select(func.count())
+                .select_from(Paper)
+                .where(
+                    Paper.created_at >= month_start_day,
+                    Paper.created_at < month_end,
+                )
+            )
+            count = self.session.execute(count_q).scalar() or 0
+            by_month_rows.append({"month": month_label, "count": count})
+
+        by_venue_q = (
+            select(
+                func.coalesce(func.json_extract(Paper.metadata_json, "$.venue"), "未知").label(
+                    "venue"
+                ),
+                func.count().label("count"),
+            )
+            .where(func.json_extract(Paper.metadata_json, "$.venue") != None)
+            .group_by(func.json_extract(Paper.metadata_json, "$.venue"))
+            .order_by(func.count().desc())
+            .limit(15)
+        )
+        venue_rows = self.session.execute(by_venue_q).all()
+        by_venue = [{"venue": r[0], "count": r[1]} for r in venue_rows if r[0]]
+
+        action_source_q = (
+            select(
+                CollectionAction.action_type,
+                func.sum(CollectionAction.paper_count).label("total"),
+            )
+            .group_by(CollectionAction.action_type)
+            .order_by(func.sum(CollectionAction.paper_count).desc())
+        )
+        action_rows = self.session.execute(action_source_q).all()
+        action_label: dict[str, str] = {
+            "initial_import": "初始导入",
+            "manual_collect": "手动收集",
+            "auto_collect": "自动收集",
+            "agent_collect": "Agent收集",
+            "subscription_ingest": "订阅抓取",
+            "reference_import": "参考文献",
+        }
+        by_action_source = [
+            {
+                "source": action_label.get(r[0].value, r[0].value),
+                "raw_source": r[0].value,
+                "count": r[1] or 0,
+            }
+            for r in action_rows
+        ]
+
+        return {
+            "by_year": by_year,
+            "by_source": by_source,
+            "by_status": by_status,
+            "by_month": by_month_rows,
+            "by_venue": by_venue,
+            "by_action_source": by_action_source,
+        }
+
     def list_paginated(
         self,
         page: int = 1,
@@ -306,6 +556,7 @@ class PaperRepository:
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        category: str | None = None,
     ) -> tuple[list[Paper], int]:
         """分页查询论文，返回 (papers, total_count)"""
         filters = []
@@ -343,6 +594,9 @@ class PaperRepository:
                 filters.append(Paper.created_at < day_end)
             except ValueError:
                 pass
+
+        if category:
+            filters.append(Paper.metadata_json.contains({"categories": [category]}))
 
         base_q = select(Paper)
         count_q = select(func.count()).select_from(Paper)
@@ -624,38 +878,41 @@ class PromptTraceRepository:
         )
 
     def summarize_costs(self, days: int = 7) -> dict:
-        since = datetime.now(UTC) - timedelta(days=max(days, 1))
+        since = None if days <= 0 else datetime.now(UTC) - timedelta(days=days)
+        base_filter = [] if since is None else [PromptTrace.created_at >= since]
+
         total_q = select(
             func.count(PromptTrace.id),
             func.coalesce(func.sum(PromptTrace.input_tokens), 0),
             func.coalesce(func.sum(PromptTrace.output_tokens), 0),
             func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
-        ).where(PromptTrace.created_at >= since)
+        )
+        if since:
+            total_q = total_q.where(*base_filter)
         count, in_tokens, out_tokens, total_cost = self.session.execute(total_q).one()
 
-        by_stage_q = (
-            select(
-                PromptTrace.stage,
-                func.count(PromptTrace.id),
-                func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
-                func.coalesce(func.sum(PromptTrace.input_tokens), 0),
-                func.coalesce(func.sum(PromptTrace.output_tokens), 0),
-            )
-            .where(PromptTrace.created_at >= since)
-            .group_by(PromptTrace.stage)
+        by_stage_q = select(
+            PromptTrace.stage,
+            func.count(PromptTrace.id),
+            func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
+            func.coalesce(func.sum(PromptTrace.input_tokens), 0),
+            func.coalesce(func.sum(PromptTrace.output_tokens), 0),
         )
-        by_model_q = (
-            select(
-                PromptTrace.provider,
-                PromptTrace.model,
-                func.count(PromptTrace.id),
-                func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
-                func.coalesce(func.sum(PromptTrace.input_tokens), 0),
-                func.coalesce(func.sum(PromptTrace.output_tokens), 0),
-            )
-            .where(PromptTrace.created_at >= since)
-            .group_by(PromptTrace.provider, PromptTrace.model)
+        if since:
+            by_stage_q = by_stage_q.where(*base_filter)
+        by_stage_q = by_stage_q.group_by(PromptTrace.stage)
+
+        by_model_q = select(
+            PromptTrace.provider,
+            PromptTrace.model,
+            func.count(PromptTrace.id),
+            func.coalesce(func.sum(PromptTrace.total_cost_usd), 0.0),
+            func.coalesce(func.sum(PromptTrace.input_tokens), 0),
+            func.coalesce(func.sum(PromptTrace.output_tokens), 0),
         )
+        if since:
+            by_model_q = by_model_q.where(*base_filter)
+        by_model_q = by_model_q.group_by(PromptTrace.provider, PromptTrace.model)
 
         by_stage = [
             {
@@ -793,6 +1050,8 @@ class TopicRepository:
         retry_limit: int = 2,
         schedule_frequency: str = "daily",
         schedule_time_utc: int = 21,
+        enable_date_filter: bool = False,
+        date_filter_days: int = 7,
     ) -> TopicSubscription:
         found = self.get_by_name(name)
         if found:
@@ -802,6 +1061,8 @@ class TopicRepository:
             found.retry_limit = max(retry_limit, 0)
             found.schedule_frequency = schedule_frequency
             found.schedule_time_utc = max(0, min(23, schedule_time_utc))
+            found.enable_date_filter = enable_date_filter
+            found.date_filter_days = max(1, date_filter_days)
             found.updated_at = datetime.now(UTC)
             self.session.flush()
             return found
@@ -813,6 +1074,8 @@ class TopicRepository:
             retry_limit=max(retry_limit, 0),
             schedule_frequency=schedule_frequency,
             schedule_time_utc=max(0, min(23, schedule_time_utc)),
+            enable_date_filter=enable_date_filter,
+            date_filter_days=max(1, date_filter_days),
         )
         self.session.add(topic)
         self.session.flush()
@@ -827,6 +1090,8 @@ class TopicRepository:
         max_results_per_run: int | None = None,
         retry_limit: int | None = None,
         schedule_frequency: str | None = None,
+        enable_date_filter: bool | None = None,
+        date_filter_days: int | None = None,
         schedule_time_utc: int | None = None,
     ) -> TopicSubscription:
         topic = self.session.get(TopicSubscription, topic_id)
@@ -844,6 +1109,10 @@ class TopicRepository:
             topic.schedule_frequency = schedule_frequency
         if schedule_time_utc is not None:
             topic.schedule_time_utc = max(0, min(23, schedule_time_utc))
+        if enable_date_filter is not None:
+            topic.enable_date_filter = enable_date_filter
+        if date_filter_days is not None:
+            topic.date_filter_days = max(1, date_filter_days)
         topic.updated_at = datetime.now(UTC)
         self.session.flush()
         return topic
@@ -1033,13 +1302,9 @@ class ActionRepository:
         self.session.add(action)
         self.session.flush()
 
-        for pid in paper_ids:
-            self.session.add(
-                ActionPaper(
-                    action_id=action.id,
-                    paper_id=pid,
-                )
-            )
+        # 批量插入关联论文
+        action_papers = [ActionPaper(action_id=action.id, paper_id=pid) for pid in paper_ids]
+        self.session.add_all(action_papers)
         self.session.flush()
         return action
 
@@ -1291,28 +1556,28 @@ class DailyReportConfigRepository:
         for key, value in kwargs.items():
             if hasattr(config, key):
                 setattr(config, key, value)
-        self.session.flush()
         return config
 
 
 class IeeeQuotaRepository:
-    """IEEE API 配额管理 Repository - 完整版新增"""
-    
+    """IEEE API 配额管理 Repository"""
+
     def __init__(self, session: Session):
         from packages.storage.models import IeeeApiQuota
+
         self.session = session
         self.IeeeApiQuota = IeeeApiQuota
-    
+
     def get_or_create(self, topic_id: str, date: date, limit: int = 50) -> IeeeApiQuota:
         """获取或创建当日配额记录"""
         from sqlalchemy import select
-        
+
         q = select(self.IeeeApiQuota).where(
             self.IeeeApiQuota.topic_id == topic_id,
             self.IeeeApiQuota.date == date,
         )
         quota = self.session.execute(q).scalar_one_or_none()
-        
+
         if not quota:
             quota = self.IeeeApiQuota(
                 topic_id=topic_id,
@@ -1322,47 +1587,162 @@ class IeeeQuotaRepository:
             )
             self.session.add(quota)
             self.session.flush()
-        
+
         return quota
-    
+
     def check_quota(self, topic_id: str, date: date, limit: int = 50) -> bool:
-        """检查是否还有配额
-        
-        Returns:
-            bool: True 表示还有配额，False 表示配额已用尽
-        """
+        """检查是否还有配额"""
         quota = self.get_or_create(topic_id, date, limit)
         return quota.api_calls_used < quota.api_calls_limit
-    
+
     def consume_quota(self, topic_id: str, date: date, amount: int = 1) -> bool:
-        """消耗配额
-        
-        Args:
-            topic_id: 主题 ID
-            date: 日期
-            amount: 消耗数量
-        
-        Returns:
-            bool: True 表示成功消耗，False 表示配额不足
-        """
+        """消耗配额"""
         quota = self.get_or_create(topic_id, date)
-        
+
         if quota.api_calls_used + amount > quota.api_calls_limit:
             return False
-        
+
         quota.api_calls_used += amount
         self.session.flush()
         return True
-    
+
     def get_remaining(self, topic_id: str, date: date) -> int:
         """获取剩余配额"""
         quota = self.get_or_create(topic_id, date)
         return max(0, quota.api_calls_limit - quota.api_calls_used)
-    
+
     def reset_quota(self, topic_id: str, date: date, new_limit: int = 50) -> None:
-        """重置配额（用于手动调整）"""
+        """重置配额"""
         quota = self.get_or_create(topic_id, date, new_limit)
         quota.api_calls_used = 0
         quota.api_calls_limit = new_limit
         quota.last_reset_at = datetime.now(UTC)
         self.session.flush()
+
+
+class AgentPendingActionRepository:
+    """Agent 待确认操作持久化 Repository"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def create(
+        self,
+        action_id: str,
+        tool_name: str,
+        tool_args: dict,
+        tool_call_id: str | None = None,
+        conversation_id: str | None = None,
+        conversation_state: dict | None = None,
+    ) -> AgentPendingAction:
+        """创建待确认操作"""
+        action = AgentPendingAction(
+            id=action_id,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            tool_call_id=tool_call_id,
+            conversation_id=conversation_id,
+            conversation_state=conversation_state,
+        )
+        self.session.add(action)
+        self.session.flush()
+        return action
+
+    def get_by_id(self, action_id: str) -> AgentPendingAction | None:
+        """根据 ID 获取待确认操作"""
+        return self.session.get(AgentPendingAction, action_id)
+
+    def delete(self, action_id: str) -> bool:
+        """删除待确认操作"""
+        action = self.get_by_id(action_id)
+        if action:
+            self.session.delete(action)
+            self.session.flush()
+            return True
+        return False
+
+    def cleanup_expired(self, ttl_seconds: int = 1800) -> int:
+        """清理过期的待确认操作"""
+        cutoff = datetime.now(UTC) - timedelta(seconds=ttl_seconds)
+        q = delete(AgentPendingAction).where(AgentPendingAction.created_at < cutoff)
+        result = self.session.execute(q)
+        self.session.flush()
+        return result.rowcount
+
+
+class CSFeedRepository:
+    """arXiv CS 分类订阅 Repository"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get_categories(self) -> list[CSCategory]:
+        return list(self.session.execute(select(CSCategory)).scalars())
+
+    def upsert_category(self, code: str, name: str, description: str = "") -> CSCategory:
+        existing = self.session.execute(
+            select(CSCategory).where(CSCategory.code == code)
+        ).scalar_one_or_none()
+        if existing:
+            existing.name = name
+            existing.description = description
+            existing.cached_at = datetime.now(UTC)
+            return existing
+        cat = CSCategory(code=code, name=name, description=description)
+        self.session.add(cat)
+        self.session.commit()
+        return cat
+
+    def get_subscriptions(self) -> list[CSFeedSubscription]:
+        return list(self.session.execute(select(CSFeedSubscription)).scalars())
+
+    def get_subscription(self, category_code: str) -> CSFeedSubscription | None:
+        return self.session.execute(
+            select(CSFeedSubscription).where(CSFeedSubscription.category_code == category_code)
+        ).scalar_one_or_none()
+
+    def upsert_subscription(
+        self, category_code: str, daily_limit: int, enabled: bool = True
+    ) -> CSFeedSubscription:
+        existing = self.get_subscription(category_code)
+        if existing:
+            existing.daily_limit = daily_limit
+            existing.enabled = enabled
+            self.session.commit()
+            return existing
+        sub = CSFeedSubscription(
+            category_code=category_code, daily_limit=daily_limit, enabled=enabled
+        )
+        self.session.add(sub)
+        self.session.commit()
+        return sub
+
+    def delete_subscription(self, category_code: str) -> bool:
+        sub = self.get_subscription(category_code)
+        if sub:
+            self.session.delete(sub)
+            self.session.commit()
+            return True
+        return False
+
+    def update_run_status(self, category_code: str, count: int):
+        sub = self.get_subscription(category_code)
+        if sub:
+            sub.last_run_at = datetime.now(UTC)
+            sub.last_run_count = count
+            sub.status = "active"
+            self.session.commit()
+
+    def set_cool_down(self, category_code: str, until: datetime):
+        sub = self.get_subscription(category_code)
+        if sub:
+            sub.status = "cool_down"
+            sub.cool_down_until = until
+            self.session.commit()
+
+    def get_active_subscriptions(self) -> list[CSFeedSubscription]:
+        return list(
+            self.session.execute(
+                select(CSFeedSubscription).where(CSFeedSubscription.enabled == True)
+            ).scalars()
+        )

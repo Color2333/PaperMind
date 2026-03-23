@@ -11,13 +11,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { Empty } from "@/components/ui/Empty";
 import { Modal } from "@/components/ui/Modal";
-import {
-  emailConfigApi,
-  dailyReportApi,
-  type EmailConfig,
-  type EmailConfigForm,
-  type DailyReportConfig,
-} from "@/services/api";
+import { emailConfigApi, dailyReportApi } from "@/services/api";
+import type { EmailConfig, EmailConfigForm, DailyReportConfig } from "@/types";
 import { getErrorMessage } from "@/lib/errorHandler";
 import {
   Mail,
@@ -38,11 +33,19 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-const SMTP_PRESETS: Record<string, { label: string; smtp_server: string; smtp_port: number; smtp_use_tls: boolean }> = {
+const SMTP_PRESETS: Record<
+  string,
+  { label: string; smtp_server: string; smtp_port: number; smtp_use_tls: boolean }
+> = {
   gmail: { label: "Gmail", smtp_server: "smtp.gmail.com", smtp_port: 587, smtp_use_tls: true },
   qq: { label: "QQ邮箱", smtp_server: "smtp.qq.com", smtp_port: 587, smtp_use_tls: true },
   "163": { label: "163邮箱", smtp_server: "smtp.163.com", smtp_port: 465, smtp_use_tls: true },
-  outlook: { label: "Outlook", smtp_server: "smtp-mail.outlook.com", smtp_port: 587, smtp_use_tls: true },
+  outlook: {
+    label: "Outlook",
+    smtp_server: "smtp-mail.outlook.com",
+    smtp_port: 587,
+    smtp_use_tls: true,
+  },
 };
 
 export default function EmailSettings() {
@@ -190,16 +193,16 @@ export default function EmailSettings() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex min-h-[400px] items-center justify-center">
         <Spinner className="h-8 w-8" />
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-6xl">
+    <div className="container mx-auto max-w-6xl px-4 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+        <h1 className="mb-2 text-3xl font-bold text-gray-900 dark:text-white">
           邮箱与每日报告设置
         </h1>
         <p className="text-gray-600 dark:text-gray-400">
@@ -209,26 +212,18 @@ export default function EmailSettings() {
 
       {/* 每日报告配置 */}
       <Card className="mb-8">
-        <div className="flex items-center justify-between mb-6">
+        <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
+            <div className="rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30">
               <Bell className="h-5 w-5 text-purple-600 dark:text-purple-400" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                每日报告配置
-              </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                自动精读论文并发送邮件报告
-              </p>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">每日报告配置</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">自动精读论文并发送邮件报告</p>
             </div>
           </div>
-          <Button
-            onClick={handleRunDailyReport}
-            variant="secondary"
-            size="sm"
-          >
-            <Sparkles className="h-4 w-4 mr-2" />
+          <Button onClick={handleRunDailyReport} variant="secondary" size="sm">
+            <Sparkles className="mr-2 h-4 w-4" />
             立即执行
           </Button>
         </div>
@@ -236,9 +231,11 @@ export default function EmailSettings() {
         {dailyConfig && (
           <div className="space-y-6">
             {/* 总开关 */}
-            <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+            <div className="flex items-center justify-between rounded-lg bg-gray-50 p-4 dark:bg-gray-800/50">
               <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${dailyConfig.enabled ? "bg-green-100 dark:bg-green-900/30" : "bg-gray-100 dark:bg-gray-800"}`}>
+                <div
+                  className={`rounded-lg p-2 ${dailyConfig.enabled ? "bg-green-100 dark:bg-green-900/30" : "bg-gray-100 dark:bg-gray-800"}`}
+                >
                   {dailyConfig.enabled ? (
                     <Power className="h-5 w-5 text-green-600 dark:text-green-400" />
                   ) : (
@@ -265,31 +262,41 @@ export default function EmailSettings() {
 
             {/* 详细配置 */}
             {dailyConfig.enabled && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                 {/* 自动精读设置 */}
                 <div className="space-y-4">
-                  <h3 className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                  <h3 className="flex items-center gap-2 font-medium text-gray-900 dark:text-white">
                     <FileText className="h-4 w-4" />
                     自动精读设置
                   </h3>
                   <div className="space-y-3">
                     <label className="flex items-center justify-between">
-                      <span className="text-sm text-gray-700 dark:text-gray-300">自动精读新论文</span>
+                      <span className="text-sm text-gray-700 dark:text-gray-300">
+                        自动精读新论文
+                      </span>
                       <input
                         type="checkbox"
                         checked={dailyConfig.auto_deep_read}
-                        onChange={(e) => handleUpdateDailyConfig({ auto_deep_read: e.target.checked })}
-                        className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                        onChange={(e) =>
+                          handleUpdateDailyConfig({ auto_deep_read: e.target.checked })
+                        }
+                        className="h-4 w-4 rounded text-purple-600 focus:ring-purple-500"
                       />
                     </label>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-700 dark:text-gray-300">每日精读数量限制</span>
+                      <span className="text-sm text-gray-700 dark:text-gray-300">
+                        每日精读数量限制
+                      </span>
                       <Input
                         type="number"
                         min={1}
                         max={50}
                         value={dailyConfig.deep_read_limit}
-                        onChange={(e) => handleUpdateDailyConfig({ deep_read_limit: parseInt(e.target.value) || 10 })}
+                        onChange={(e) =>
+                          handleUpdateDailyConfig({
+                            deep_read_limit: parseInt(e.target.value) || 10,
+                          })
+                        }
                         className="w-20"
                       />
                     </div>
@@ -298,7 +305,7 @@ export default function EmailSettings() {
 
                 {/* 邮件发送设置 */}
                 <div className="space-y-4">
-                  <h3 className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                  <h3 className="flex items-center gap-2 font-medium text-gray-900 dark:text-white">
                     <Send className="h-4 w-4" />
                     邮件发送设置
                   </h3>
@@ -308,28 +315,45 @@ export default function EmailSettings() {
                       <input
                         type="checkbox"
                         checked={dailyConfig.send_email_report}
-                        onChange={(e) => handleUpdateDailyConfig({ send_email_report: e.target.checked })}
-                        className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                        onChange={(e) =>
+                          handleUpdateDailyConfig({ send_email_report: e.target.checked })
+                        }
+                        className="h-4 w-4 rounded text-purple-600 focus:ring-purple-500"
                       />
                     </label>
                     <div>
-                      <span className="text-sm text-gray-700 dark:text-gray-300 block mb-2">收件人邮箱（逗号分隔）</span>
+                      <span className="mb-2 block text-sm text-gray-700 dark:text-gray-300">
+                        收件人邮箱（逗号分隔）
+                      </span>
                       <Input
                         type="text"
                         placeholder="user1@example.com, user2@example.com"
                         value={dailyConfig.recipient_emails.join(", ")}
-                        onChange={(e) => handleUpdateDailyConfig({ recipient_emails: e.target.value.split(",").map(e => e.trim()).filter(Boolean) })}
+                        onChange={(e) =>
+                          handleUpdateDailyConfig({
+                            recipient_emails: e.target.value
+                              .split(",")
+                              .map((e) => e.trim())
+                              .filter(Boolean),
+                          })
+                        }
                         className="w-full"
                       />
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-700 dark:text-gray-300">发送时间（UTC）</span>
+                      <span className="text-sm text-gray-700 dark:text-gray-300">
+                        发送时间（UTC）
+                      </span>
                       <Input
                         type="number"
                         min={0}
                         max={23}
                         value={dailyConfig.report_time_utc}
-                        onChange={(e) => handleUpdateDailyConfig({ report_time_utc: parseInt(e.target.value) || 21 })}
+                        onChange={(e) =>
+                          handleUpdateDailyConfig({
+                            report_time_utc: parseInt(e.target.value) || 21,
+                          })
+                        }
                         className="w-20"
                       />
                     </div>
@@ -338,7 +362,7 @@ export default function EmailSettings() {
 
                 {/* 报告内容设置 */}
                 <div className="space-y-4">
-                  <h3 className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                  <h3 className="flex items-center gap-2 font-medium text-gray-900 dark:text-white">
                     <FileText className="h-4 w-4" />
                     报告内容设置
                   </h3>
@@ -348,8 +372,10 @@ export default function EmailSettings() {
                       <input
                         type="checkbox"
                         checked={dailyConfig.include_paper_details}
-                        onChange={(e) => handleUpdateDailyConfig({ include_paper_details: e.target.checked })}
-                        className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                        onChange={(e) =>
+                          handleUpdateDailyConfig({ include_paper_details: e.target.checked })
+                        }
+                        className="h-4 w-4 rounded text-purple-600 focus:ring-purple-500"
                       />
                     </label>
                     <label className="flex items-center justify-between">
@@ -357,8 +383,10 @@ export default function EmailSettings() {
                       <input
                         type="checkbox"
                         checked={dailyConfig.include_graph_insights}
-                        onChange={(e) => handleUpdateDailyConfig({ include_graph_insights: e.target.checked })}
-                        className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                        onChange={(e) =>
+                          handleUpdateDailyConfig({ include_graph_insights: e.target.checked })
+                        }
+                        className="h-4 w-4 rounded text-purple-600 focus:ring-purple-500"
                       />
                     </label>
                   </div>
@@ -371,22 +399,20 @@ export default function EmailSettings() {
 
       {/* 邮箱配置列表 */}
       <Card>
-        <div className="flex items-center justify-between mb-6">
+        <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+            <div className="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30">
               <Mail className="h-5 w-5 text-blue-600 dark:text-blue-400" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                邮箱配置
-              </h2>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">邮箱配置</h2>
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 配置 SMTP 服务器用于发送邮件报告
               </p>
             </div>
           </div>
           <Button onClick={() => setEmailModalOpen(true)} size="sm">
-            <Plus className="h-4 w-4 mr-2" />
+            <Plus className="mr-2 h-4 w-4" />
             添加邮箱
           </Button>
         </div>
@@ -398,20 +424,20 @@ export default function EmailSettings() {
             description="添加邮箱配置后才能发送每日报告"
           />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {emailConfigs.map((config) => (
               <div
                 key={config.id}
-                className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow"
+                className="rounded-lg border border-gray-200 p-4 transition-shadow hover:shadow-md dark:border-gray-700"
               >
-                <div className="flex items-start justify-between mb-3">
+                <div className="mb-3 flex items-start justify-between">
                   <div className="flex items-center gap-2">
                     <Mail className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-                    <h3 className="font-medium text-gray-900 dark:text-white">
-                      {config.name}
-                    </h3>
+                    <h3 className="font-medium text-gray-900 dark:text-white">{config.name}</h3>
                     {config.is_active && (
-                      <Badge variant="success" className="text-xs">已激活</Badge>
+                      <Badge variant="success" className="text-xs">
+                        已激活
+                      </Badge>
                     )}
                   </div>
                   <div className="flex items-center gap-1">
@@ -434,8 +460,12 @@ export default function EmailSettings() {
                   </div>
                 </div>
                 <div className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
-                  <div>发送方: {config.sender_name} &lt;{config.sender_email}&gt;</div>
-                  <div>SMTP: {config.smtp_server}:{config.smtp_port}</div>
+                  <div>
+                    发送方: {config.sender_name} &lt;{config.sender_email}&gt;
+                  </div>
+                  <div>
+                    SMTP: {config.smtp_server}:{config.smtp_port}
+                  </div>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <Button
@@ -452,7 +482,7 @@ export default function EmailSettings() {
                       </>
                     ) : (
                       <>
-                        <TestTube className="h-3 w-3 mr-2" />
+                        <TestTube className="mr-2 h-3 w-3" />
                         发送测试
                       </>
                     )}
@@ -476,7 +506,7 @@ export default function EmailSettings() {
         <div className="space-y-4">
           {/* SMTP 预设 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
               快速配置（常见邮箱服务商）
             </label>
             <div className="flex flex-wrap gap-2">
@@ -495,7 +525,7 @@ export default function EmailSettings() {
 
           {/* 配置名称 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
               配置名称
             </label>
             <Input
@@ -510,7 +540,7 @@ export default function EmailSettings() {
           {/* SMTP 服务器 */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 SMTP 服务器
               </label>
               <Input
@@ -522,14 +552,16 @@ export default function EmailSettings() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 端口
               </label>
               <Input
                 type="number"
                 placeholder="587"
                 value={emailForm.smtp_port}
-                onChange={(e) => setEmailForm({ ...emailForm, smtp_port: parseInt(e.target.value) || 587 })}
+                onChange={(e) =>
+                  setEmailForm({ ...emailForm, smtp_port: parseInt(e.target.value) || 587 })
+                }
                 required
               />
             </div>
@@ -541,7 +573,7 @@ export default function EmailSettings() {
               type="checkbox"
               checked={emailForm.smtp_use_tls}
               onChange={(e) => setEmailForm({ ...emailForm, smtp_use_tls: e.target.checked })}
-              className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+              className="h-4 w-4 rounded text-purple-600 focus:ring-purple-500"
             />
             <span className="text-sm text-gray-700 dark:text-gray-300">使用 TLS 加密</span>
           </label>
@@ -549,7 +581,7 @@ export default function EmailSettings() {
           {/* 发件人信息 */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 发件人邮箱
               </label>
               <Input
@@ -561,7 +593,7 @@ export default function EmailSettings() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 发件人名称
               </label>
               <Input
@@ -575,7 +607,7 @@ export default function EmailSettings() {
 
           {/* 用户名和密码 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
               用户名（通常是邮箱地址）
             </label>
             <Input
@@ -588,7 +620,7 @@ export default function EmailSettings() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
               密码 / 应用专用密码
             </label>
             <div className="relative">
@@ -603,7 +635,7 @@ export default function EmailSettings() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                className="absolute top-1/2 right-3 -translate-y-1/2 text-gray-400 hover:text-gray-600"
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -624,9 +656,7 @@ export default function EmailSettings() {
             >
               取消
             </Button>
-            <Button onClick={handleCreateEmailConfig}>
-              创建配置
-            </Button>
+            <Button onClick={handleCreateEmailConfig}>创建配置</Button>
           </div>
         </div>
       </Modal>

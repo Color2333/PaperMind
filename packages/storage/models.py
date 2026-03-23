@@ -1,13 +1,12 @@
 """
 SQLAlchemy ORM 模型定义
-@author Bamzc
+@author Color2333
 """
 
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
-    Integer,
     JSON,
     Boolean,
     Date,
@@ -16,6 +15,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -188,35 +188,47 @@ class SourceCheckpoint(Base):
 
 class TopicSubscription(Base):
     """主题订阅配置 - 支持多渠道"""
-    
+
     __tablename__ = "topic_subscriptions"
-    
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     query: Mapped[str] = mapped_column(String(1024), nullable=False)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
     max_results_per_run: Mapped[int] = mapped_column(nullable=False, default=20)
     retry_limit: Mapped[int] = mapped_column(nullable=False, default=2)
-    schedule_frequency: Mapped[str] = mapped_column(String(20), nullable=False, default="daily")
+    schedule_frequency: Mapped[str] = mapped_column(String(32), nullable=False, default="daily")
     schedule_time_utc: Mapped[int] = mapped_column(nullable=False, default=21)
-    
+
     # 完整版新增：多渠道支持
     sources: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=lambda: ["arxiv"]
     )  # ["arxiv", "ieee"]
-    
+
     # IEEE 特定配置
     ieee_daily_quota: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=10  # IEEE 每日 API 调用限额
+        Integer,
+        nullable=False,
+        default=10,  # IEEE 每日 API 调用限额
     )
     ieee_api_key_override: Mapped[str | None] = mapped_column(
-        String(512), nullable=True  # 可选的 IEEE API Key 覆盖
+        String(512),
+        nullable=True,  # 可选的 IEEE API Key 覆盖
     )
-    
+
+    # 日期过滤配置
+    enable_date_filter: Mapped[bool] = mapped_column(
+        nullable=False, default=False
+    )  # 是否启用日期过滤
+    date_filter_days: Mapped[int] = mapped_column(
+        nullable=False, default=7
+    )  # 日期范围（最近 N 天）
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
 
 class PaperTopic(Base):
     __tablename__ = "paper_topics"
@@ -321,6 +333,26 @@ class AgentMessage(Base):
     )
 
 
+class AgentPendingAction(Base):
+    """Agent 待确认操作 - 持久化存储"""
+
+    __tablename__ = "agent_pending_actions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_args: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    tool_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    conversation_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False, index=True
+    )
+
     paper_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("papers.id", ondelete="SET NULL"),
@@ -416,8 +448,14 @@ class DailyReportConfig(Base):
     recipient_emails: Mapped[str] = mapped_column(
         String(2048), nullable=False, default="", doc="收件人邮箱列表，逗号分隔"
     )
+    cron_expression: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="0 4 * * *", doc="定时任务 cron 表达式（UTC 时间）"
+    )
     report_time_utc: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=21, doc="发送报告的时间（UTC，0-23）"
+        Integer,
+        nullable=False,
+        default=21,
+        doc="发送报告的时间（UTC，0-23）- 已废弃，使用 cron_expression",
     )
     include_paper_details: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, doc="报告中是否包含论文详情"
@@ -432,10 +470,10 @@ class DailyReportConfig(Base):
 
 
 class IeeeApiQuota(Base):
-    """IEEE API 配额追踪 - 完整版新增"""
-    
+    """IEEE API 配额追踪"""
+
     __tablename__ = "ieee_api_quotas"
-    
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     topic_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("topic_subscriptions.id"), nullable=True, index=True
@@ -445,7 +483,32 @@ class IeeeApiQuota(Base):
     api_calls_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     last_reset_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
-    
-    __table_args__ = (
-        UniqueConstraint("topic_id", "date", name="uq_ieee_quota_daily"),
-    )
+
+    __table_args__ = (UniqueConstraint("topic_id", "date", name="uq_ieee_quota_daily"),)
+
+
+class CSCategory(Base):
+    """arXiv 计算机科学分类"""
+
+    __tablename__ = "cs_categories"
+
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)  # "cs.CV"
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    cached_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class CSFeedSubscription(Base):
+    """arXiv CS 分类订阅"""
+
+    __tablename__ = "cs_feed_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    category_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    daily_limit: Mapped[int] = mapped_column(Integer, default=30)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")  # active | cool_down | paused
+    cool_down_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

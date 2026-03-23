@@ -24,10 +24,9 @@ router = APIRouter()
 
 @router.post("/pipelines/skim/{paper_id}")
 def run_skim(paper_id: UUID) -> dict:
-
     tid = f"skim_{paper_id.hex[:8]}"
     title = get_paper_title(paper_id) or str(paper_id)[:8]
-    global_tracker.start(tid, "skim", f"粗读: {title[:30]}", total=1)
+    global_tracker.start(tid, "skim", f"粗读：{title[:30]}", total=1, category="analysis")
     try:
         skim = pipelines.skim(paper_id)
         global_tracker.finish(tid, success=True)
@@ -39,10 +38,9 @@ def run_skim(paper_id: UUID) -> dict:
 
 @router.post("/pipelines/deep/{paper_id}")
 def run_deep(paper_id: UUID) -> dict:
-
     tid = f"deep_{paper_id.hex[:8]}"
     title = get_paper_title(paper_id) or str(paper_id)[:8]
-    global_tracker.start(tid, "deep_read", f"精读: {title[:30]}", total=1)
+    global_tracker.start(tid, "deep_read", f"精读：{title[:30]}", total=1, category="analysis")
     try:
         deep = pipelines.deep_dive(paper_id)
         global_tracker.finish(tid, success=True)
@@ -54,10 +52,9 @@ def run_deep(paper_id: UUID) -> dict:
 
 @router.post("/pipelines/embed/{paper_id}")
 def run_embed(paper_id: UUID) -> dict:
-
     tid = f"embed_{paper_id.hex[:8]}"
     title = get_paper_title(paper_id) or str(paper_id)[:8]
-    global_tracker.start(tid, "embed", f"嵌入: {title[:30]}", total=1)
+    global_tracker.start(tid, "embed", f"嵌入：{title[:30]}", total=1, category="analysis")
     try:
         pipelines.embed_paper(paper_id)
         global_tracker.finish(tid, success=True)
@@ -169,6 +166,6 @@ def get_task_result(task_id: str) -> dict:
     if not status:
         raise NotFoundError(f"Task {task_id} not found")
     if not status.get("finished"):
-        raise HTTPException(400, f"Task not finished yet")
+        raise HTTPException(400, "Task not finished yet")
     result = global_tracker.get_result(task_id)
     return result or {}

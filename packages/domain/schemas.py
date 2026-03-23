@@ -63,6 +63,8 @@ class TopicCreate(BaseModel):
     retry_limit: int = 2
     schedule_frequency: str = "daily"
     schedule_time_utc: int = 21
+    enable_date_filter: bool = False
+    date_filter_days: int = 7
 
 
 class TopicUpdate(BaseModel):
@@ -72,6 +74,8 @@ class TopicUpdate(BaseModel):
     retry_limit: int | None = None
     schedule_frequency: str | None = None
     schedule_time_utc: int | None = None
+    enable_date_filter: bool | None = None
+    date_filter_days: int | None = None
 
 
 # ---------- LLM Provider Config ----------
@@ -109,6 +113,7 @@ class AgentMessage(BaseModel):
 
     role: str  # user / assistant / tool
     content: str = ""
+    meta: dict | None = None
     tool_call_id: str | None = None
     tool_name: str | None = None
     tool_args: dict | None = None
@@ -119,6 +124,7 @@ class AgentChatRequest(BaseModel):
     """Agent 对话请求"""
 
     messages: list[AgentMessage]
+    conversation_id: str | None = None
     confirmed_action_id: str | None = None
 
 

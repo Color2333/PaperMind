@@ -1,6 +1,6 @@
 /**
  * 对话历史管理 - localStorage 持久化
- * @author Bamzc
+ * @author Color2333
  */
 import { useState, useCallback, useEffect } from "react";
 import { uid } from "@/lib/utils";
@@ -65,7 +65,7 @@ function loadMetas(): ConversationMeta[] {
 }
 
 function saveMetas(metas: ConversationMeta[]) {
-  localStorage.setItem(STORAGE_KEY + "_index", JSON.stringify(metas));
+  safeSetItem(STORAGE_KEY + "_index", JSON.stringify(metas));
 }
 
 export function loadConversation(id: string): Conversation | null {
@@ -78,8 +78,44 @@ export function loadConversation(id: string): Conversation | null {
   }
 }
 
+/**
+ * 安全写入 localStorage，容量不足时清理最旧对话
+ */
+function safeSetItem(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    // QuotaExceededError: 清理最旧的对话释放空间
+    if (e instanceof DOMException && e.name === "QuotaExceededError") {
+      console.warn("[Conversations] localStorage 容量不足，清理旧对话...");
+      const metas = loadMetas();
+      // 删除最旧的 20% 对话
+      const toRemove = Math.max(1, Math.ceil(metas.length * 0.2));
+      const removed = metas.splice(-toRemove, toRemove);
+      for (const m of removed) {
+        localStorage.removeItem(`${STORAGE_KEY}_${m.id}`);
+      }
+      // 更新索引
+      try {
+        localStorage.setItem(STORAGE_KEY + "_index", JSON.stringify(metas));
+      } catch { /* 索引更新失败则放弃 */ }
+      // 重试写入
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch {
+        console.error("[Conversations] 清理后仍无法写入 localStorage");
+        return false;
+      }
+    }
+    console.error("[Conversations] localStorage 写入失败:", e);
+    return false;
+  }
+}
+
 function saveConversation(conv: Conversation) {
-  localStorage.setItem(`${STORAGE_KEY}_${conv.id}`, JSON.stringify(conv));
+  safeSetItem(`${STORAGE_KEY}_${conv.id}`, JSON.stringify(conv));
 }
 
 function removeConversation(id: string) {

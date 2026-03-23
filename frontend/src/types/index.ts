@@ -1,6 +1,6 @@
 /**
  * PaperMind - TypeScript 类型定义
- * @author Bamzc
+ * @author Color2333
  */
 
 /* ========== 系统 ========== */
@@ -34,6 +34,8 @@ export interface Topic {
   retry_limit: number;
   schedule_frequency: ScheduleFrequency;
   schedule_time_utc: number;
+  enable_date_filter: boolean;
+  date_filter_days: number;
   paper_count?: number;
   last_run_at?: string | null;
   last_run_count?: number | null;
@@ -47,6 +49,8 @@ export interface TopicCreate {
   retry_limit?: number;
   schedule_frequency?: ScheduleFrequency;
   schedule_time_utc?: number;
+  enable_date_filter?: boolean;
+  date_filter_days?: number;
 }
 
 export interface TopicUpdate {
@@ -56,6 +60,8 @@ export interface TopicUpdate {
   retry_limit?: number;
   schedule_frequency?: ScheduleFrequency;
   schedule_time_utc?: number;
+  enable_date_filter?: boolean;
+  date_filter_days?: number;
 }
 
 export interface KeywordSuggestion {
@@ -64,31 +70,47 @@ export interface KeywordSuggestion {
   reason: string;
 }
 
-/* ========== 抓取任务 ========== */
-export interface TopicFetchResult {
-  status: "started" | "already_running" | "ok" | "failed" | "no_new_papers";
-  task_id?: string;
-  topic_name?: string;
-  topic_id?: string;
-  message?: string;
-  inserted?: number;
-  new_count?: number;      // 新论文数量
-  total_count?: number;    // 总抓取数量（包含重复）
-  processed?: number;
-  error?: string;
+export interface TopicStats {
+  topic_id: string;
+  topic_name: string;
+  paper_count: number;
+  total_citations: number;
+  recent_30d: number;
+  status_dist: {
+    unread: number;
+    skimmed: number;
+    deep_read: number;
+  };
 }
 
-export interface TopicFetchStatus {
-  status: "running" | "ok" | "failed" | "no_new_papers";
-  task_id: string;
-  progress_pct: number;
-  message?: string;
-  inserted?: number;
-  new_count?: number;
-  total_count?: number;
+export interface TopicStatsResponse {
+  topics: TopicStats[];
+}
+
+export interface PaperDistributionStats {
+  by_year: { year: string; count: number }[];
+  by_source: { source: string; raw_source: string; count: number }[];
+}
+
+export interface PaperDistributionResponse {
+  by_year: { year: string; count: number }[];
+  by_source: { source: string; raw_source: string; count: number }[];
+  by_status: { status: string; raw_status: string; count: number }[];
+  by_month: { month: string; count: number }[];
+  by_venue: { venue: string; count: number }[];
+  by_action_source: { source: string; raw_source: string; count: number }[];
+}
+
+/* ========== 抓取任务 ========== */
+export interface TopicFetchResult {
+  topic_id: string;
+  topic_name?: string;
+  status: string;
+  inserted: number;
   processed?: number;
+  attempts?: number;
   error?: string;
-  topic?: Partial<Topic>;
+  topic?: Topic;
 }
 
 /* ========== 论文 ========== */
@@ -752,6 +774,168 @@ export interface PendingAction {
   tool: string;
   args: Record<string, unknown>;
   description: string;
+}
+
+/* ========== 今日速览 ========== */
+export interface TodaySummary {
+  today_new: number;
+  week_new: number;
+  total_papers: number;
+  recommendations: {
+    id: string;
+    title: string;
+    arxiv_id: string;
+    abstract: string;
+    similarity: number;
+    title_zh?: string;
+    keywords?: string[];
+    categories?: string[];
+  }[];
+  hot_keywords: { keyword: string; count: number }[];
+}
+
+/* ========== 论文列表 ========== */
+export interface FolderStats {
+  total: number;
+  favorites: number;
+  recent_7d: number;
+  unclassified: number;
+  by_topic: { topic_id: string; topic_name: string; count: number }[];
+  by_status: Record<string, number>;
+  by_date: { date: string; count: number }[];
+}
+
+export interface PaperListResponse {
+  items: Paper[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface FigureAnalysisItem {
+  id?: string;
+  page_number: number;
+  image_index?: number;
+  image_type: string;
+  caption: string;
+  description: string;
+  image_url?: string | null;
+  has_image?: boolean;
+}
+
+/* ========== 引用入库 ========== */
+export interface ReferenceImportEntry {
+  scholar_id: string | null;
+  title: string;
+  year: number | null;
+  venue: string | null;
+  citation_count: number | null;
+  arxiv_id: string | null;
+  abstract: string | null;
+  direction?: string;
+}
+
+export interface ImportTaskStatus {
+  task_id: string;
+  status: "running" | "completed" | "failed";
+  total: number;
+  completed: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  current: string;
+  error?: string;
+  results: { title: string; status: string; reason?: string; paper_id?: string; source?: string }[];
+}
+
+/* ========== 行动记录 ========== */
+export interface CollectionAction {
+  id: string;
+  action_type: string;
+  title: string;
+  query: string | null;
+  topic_id: string | null;
+  paper_count: number;
+  created_at: string;
+}
+
+/* ========== 邮箱配置 ========== */
+export interface EmailConfig {
+  id: string;
+  name: string;
+  smtp_server: string;
+  smtp_port: number;
+  smtp_use_tls: boolean;
+  sender_email: string;
+  sender_name: string;
+  username: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface EmailConfigForm {
+  name: string;
+  smtp_server: string;
+  smtp_port: number;
+  smtp_use_tls: boolean;
+  sender_email: string;
+  sender_name: string;
+  username: string;
+  password: string;
+}
+
+/* ========== 每日报告配置 ========== */
+export interface DailyReportConfig {
+  enabled: boolean;
+  auto_deep_read: boolean;
+  deep_read_limit: number;
+  send_email_report: boolean;
+  recipient_emails: string[];
+  cron_expression: string;  // 新增：cron 表达式
+  report_time_utc: number;  // 保留：向后兼容
+  include_paper_details: boolean;
+  include_graph_insights: boolean;
+}
+
+/* ========== 后台任务 ========== */
+export interface TaskStatus {
+  task_id: string;
+  task_type: string;
+  title: string;
+  status: "pending" | "running" | "completed" | "failed";
+  progress: number;
+  message: string;
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+  has_result: boolean;
+}
+
+export interface ActiveTaskInfo {
+  task_id: string;
+  task_type: string;
+  title: string;
+  current: number;
+  total: number;
+  message: string;
+  elapsed_seconds: number;
+  progress_pct: number;
+  finished: boolean;
+  success: boolean;
+  error: string | null;
+  category?: string;
+  created_at?: number;
+}
+
+/* ========== 认证 ========== */
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface AuthStatusResponse {
+  auth_enabled: boolean;
 }
 
 export type SSEEventType =
