@@ -340,7 +340,7 @@ export default function PdfReader({ paperId, paperTitle, paperArxivId, paperPdfP
       <div className="flex w-1/2 shrink-0">
         <ToolPanel selectedText={selectedText} paperId={paperId}>
           {{
-            translation: <TranslationPanel selectedText={selectedText} paperId={paperId} />,
+            translation: <TranslationPanel selectedText={selectedText} paperId={paperId} paperArxivId={paperArxivId} paperPdfPath={paperPdfPath} />,
             aggregation: <AggregationPanel selectedText={selectedText} paperId={paperId} />,
             canvas: <CanvasPanel paperId={paperId} paperTitle={paperTitle} />,
           }}

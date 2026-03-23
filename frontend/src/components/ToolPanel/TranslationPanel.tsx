@@ -1,413 +1,245 @@
-import { useState, useCallback } from 'react';
-import { Loader2, Copy, Check, Languages, FileText } from 'lucide-react';
-import Markdown from '@/components/Markdown';
-import { paperApi } from '@/services/api';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { Document, Page, pdfjs } from 'react-pdf';
+import 'react-pdf/dist/Page/AnnotationLayer.css';
+import 'react-pdf/dist/Page/TextLayer.css';
 
-type AiAction = 'explain' | 'translate' | 'summarize';
-
-interface AiResult {
-  action: AiAction;
-  text: string;
-  result: string;
-}
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).href;
 
 interface Segment {
   id: string;
-  type: 'paragraph' | 'figure';
+  type: string;
   content: string;
   translation?: string;
 }
 
-type PanelMode = 'selection' | 'paragraph';
-
 interface TranslationPanelProps {
   selectedText: string;
   paperId: string;
+  paperArxivId?: string;
+  paperPdfPath?: string | null;
 }
 
-export function TranslationPanel({ selectedText, paperId }: TranslationPanelProps) {
-  const [mode, setMode] = useState<PanelMode>('selection');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResults, setAiResults] = useState<AiResult[]>([]);
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+type ViewMode = 'selection' | 'bilingual';
+
+export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdfPath }: TranslationPanelProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>('selection');
   const [segments, setSegments] = useState<Segment[]>([]);
   const [translating, setTranslating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [needsPdfDownload, setNeedsPdfDownload] = useState(false);
+  const [numPages, setNumPages] = useState(0);
 
-  const handleAiAction = useCallback(async (action: AiAction, text?: string) => {
-    const t = text || selectedText;
-    if (!t) return;
-    setAiLoading(true);
-    try {
-      const res = await paperApi.aiExplain(paperId, t, action);
-      setAiResults((prev) => [{ action, text: t.slice(0, 100), result: res.result }, ...prev]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setAiResults((prev) => [{ action, text: t.slice(0, 100), result: `错误: ${msg}` }, ...prev]);
-    } finally {
-      setAiLoading(false);
+  const leftScrollRef = useRef<HTMLDivElement>(null);
+  const rightScrollRef = useRef<HTMLDivElement>(null);
+
+  const [containerWidth, setContainerWidth] = useState(400);
+  const scale = useMemo(() => {
+    return (containerWidth - 40) / 612;
+  }, [containerWidth]);
+
+  const handleLeftScroll = useCallback(() => {
+    if (rightScrollRef.current && leftScrollRef.current) {
+      rightScrollRef.current.scrollTop = leftScrollRef.current.scrollTop;
     }
-  }, [paperId, selectedText]);
-
-  const handleCopy = useCallback((idx: number, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedIdx(idx);
-    setTimeout(() => setCopiedIdx(null), 2000);
   }, []);
 
-  const actionLabels: Record<AiAction, { label: string }> = {
-    explain: { label: '解释' },
-    translate: { label: '翻译' },
-    summarize: { label: '总结' },
-  };
+  const handleRightScroll = useCallback(() => {
+    if (leftScrollRef.current && rightScrollRef.current) {
+      leftScrollRef.current.scrollTop = rightScrollRef.current.scrollTop;
+    }
+  }, []);
 
   const handleTranslateFull = useCallback(async () => {
-    setMode('paragraph');
     if (segments.length > 0) {
+      setViewMode('bilingual');
       return;
     }
 
     setTranslating(true);
-    setError(null);
     try {
-      const token = localStorage.getItem('auth_token') || '';
       const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-      const res = await fetch(`${base}/papers/${paperId}/segments`, {
+      const token = localStorage.getItem('auth_token') || '';
+
+      const segRes = await fetch(`${base}/papers/${paperId}/segments`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setSegments(data.segments || []);
-      } else if (res.status === 404) {
-        const data = await res.json();
+
+      if (!segRes.ok) {
+        const data = await segRes.json();
         if (data.detail?.includes('没有 PDF') || data.detail?.includes('PDF 文件不存在')) {
-          setNeedsPdfDownload(true);
+          alert('请先下载 PDF');
         }
-        setError('请先下载 PDF 才能使用全文对照');
-      } else {
-        setError('加载分段失败，请稍后重试');
+        return;
       }
-    } catch (err) {
-      console.error('Failed to load segments:', err);
-      setError('网络错误，请检查连接');
-    } finally {
-      setTranslating(false);
-    }
-  }, [paperId, segments.length]);
 
-  const handleDownloadPdf = async () => {
-    setTranslating(true);
-    setError(null);
-    try {
-      const token = localStorage.getItem('auth_token') || '';
-      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-      const res = await fetch(`${base}/papers/${paperId}/download-pdf`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        setNeedsPdfDownload(false);
-        setError(null);
-        handleTranslateFull();
-      } else {
-        setError('PDF下载失败');
-      }
-    } catch (err) {
-      console.error('Failed to download PDF:', err);
-      setError('PDF下载失败');
-    } finally {
-      setTranslating(false);
-    }
-  };
+      const segData = await segRes.json();
+      const rawSegments = segData.segments || [];
+      setSegments(rawSegments);
 
-  const handleTranslateSegments = useCallback(async () => {
-    if (segments.length === 0) return;
-    setTranslating(true);
-    try {
-      const token = localStorage.getItem('auth_token') || '';
-      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-      const res = await fetch(`${base}/translate/segments`, {
+      const transRes = await fetch(`${base}/translate/segments`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ segments, target_lang: 'zh' }),
+        body: JSON.stringify({ segments: rawSegments, target_lang: 'zh' }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setSegments(data.segments || []);
+
+      if (transRes.ok) {
+        const transData = await transRes.json();
+        setSegments(transData.segments || []);
       }
+
+      setViewMode('bilingual');
     } catch (err) {
-      console.error('Failed to translate segments:', err);
+      console.error('Failed to translate:', err);
     } finally {
       setTranslating(false);
     }
-  }, [segments]);
+  }, [paperId, segments.length]);
+
+  const onDocumentLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
+    setNumPages(n);
+  }, []);
+
+  useEffect(() => {
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+
+    if (leftScrollRef.current) {
+      observer.observe(leftScrollRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  const pdfUrl = useMemo(() => {
+    const token = localStorage.getItem('auth_token') || '';
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+    const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+
+    if (paperPdfPath) {
+      return `${base}/papers/${paperId}/pdf${tokenParam}`;
+    }
+    if (paperArxivId && !paperArxivId.startsWith('ss-')) {
+      return `${base}/papers/proxy-arxiv-pdf/${paperArxivId}${tokenParam}`;
+    }
+    return `${base}/papers/${paperId}/pdf${tokenParam}`;
+  }, [paperId, paperArxivId, paperPdfPath]);
 
   return (
     <div className="flex h-full flex-col">
+      {/* Tab 切换 */}
       <div className="flex gap-2 border-b border-white/10 px-4 py-2">
         <button
           type="button"
-          onClick={() => setMode('selection')}
-          className={`text-xs ${mode === 'selection' ? 'text-primary' : 'text-white/40'}`}
+          onClick={() => setViewMode('selection')}
+          className={`text-xs ${viewMode === 'selection' ? 'text-primary' : 'text-white/40'}`}
         >
           划词翻译
         </button>
         <button
           type="button"
           onClick={handleTranslateFull}
-          className={`text-xs flex items-center gap-1 ${mode === 'paragraph' ? 'text-primary' : 'text-white/40'}`}
+          className={`text-xs flex items-center gap-1 ${viewMode === 'bilingual' ? 'text-primary' : 'text-white/40'}`}
         >
-          <FileText className="h-3 w-3" />
           全文对照
         </button>
       </div>
 
-      {mode === 'selection' ? (
-        <SelectionView
-          selectedText={selectedText}
-          aiLoading={aiLoading}
-          aiResults={aiResults}
-          copiedIdx={copiedIdx}
-          handleAiAction={handleAiAction}
-          handleCopy={handleCopy}
-          actionLabels={actionLabels}
-        />
-      ) : (
-        <ParagraphView
-          segments={segments}
-          translating={translating}
-          handleTranslate={handleTranslateSegments}
-          handleCopy={handleCopy}
-          error={error}
-          needsPdfDownload={needsPdfDownload}
-          handleDownloadPdf={handleDownloadPdf}
-        />
-      )}
-    </div>
-  );
-}
-
-interface SelectionViewProps {
-  selectedText: string;
-  aiLoading: boolean;
-  aiResults: AiResult[];
-  copiedIdx: number | null;
-  handleAiAction: (action: AiAction, text?: string) => void;
-  handleCopy: (idx: number, text: string) => void;
-  actionLabels: Record<AiAction, { label: string }>;
-}
-
-function SelectionView({
-  selectedText,
-  aiLoading,
-  aiResults,
-  copiedIdx,
-  handleAiAction,
-  handleCopy,
-  actionLabels,
-}: SelectionViewProps) {
-  return (
-    <>
-      {selectedText && (
-        <div className="border-b border-white/10 px-4 py-3">
-          <p className="mb-2 text-xs text-white/40">选中文本</p>
-          <p className="mb-3 line-clamp-3 rounded-md bg-white/5 p-2 text-xs leading-relaxed text-white/70">
-            {selectedText}
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => handleAiAction('explain')}
-              disabled={aiLoading}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-amber-500/10 py-1.5 text-xs text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
-            >
-              解释
-            </button>
-            <button
-              type="button"
-              onClick={() => handleAiAction('translate')}
-              disabled={aiLoading}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-500/10 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 disabled:opacity-50"
-            >
-              翻译
-            </button>
-            <button
-              type="button"
-              onClick={() => handleAiAction('summarize')}
-              disabled={aiLoading}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-500/10 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
-            >
-              总结
-            </button>
-          </div>
+      {/* 划词翻译模式 */}
+      {viewMode === 'selection' && (
+        <div className="flex-1 overflow-auto p-4">
+          {selectedText ? (
+            <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+              <p className="text-xs text-white/40 mb-2">选中文本</p>
+              <p className="text-sm text-white/80">{selectedText}</p>
+            </div>
+          ) : (
+            <p className="text-sm text-white/40 text-center py-8">
+              在左侧 PDF 中选中文本即可翻译
+            </p>
+          )}
         </div>
       )}
 
-      <div className="flex-1 overflow-auto px-4 py-3">
-        {aiLoading && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            <span className="text-xs text-primary">AI 分析中...</span>
-          </div>
-        )}
-
-        {aiResults.length === 0 && !aiLoading && (
-          <div className="flex flex-col items-center gap-3 pt-12 text-center">
-            <Languages className="h-10 w-10 text-white/10" />
-            <p className="text-sm text-white/40">选中论文文本</p>
-            <p className="text-xs text-white/20">即可使用 AI 解释、翻译、总结</p>
-          </div>
-        )}
-
-        {aiResults.map((r, idx) => {
-          const resultKey = `${r.action}-${r.text.slice(0, 20)}`;
-          return (
-            <div key={resultKey} className="mb-4 overflow-hidden rounded-xl border border-white/[.08]">
-              <div className="flex items-center justify-between border-b border-white/[.06] px-3.5 py-2">
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                  r.action === 'explain' ? 'bg-amber-500/10 text-amber-300' :
-                  r.action === 'translate' ? 'bg-blue-500/10 text-blue-300' :
-                  'bg-emerald-500/10 text-emerald-300'
-                }`}>
-                  {actionLabels[r.action].label}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleCopy(idx, r.result)}
-                  className="rounded-md p-1 text-white/20 hover:bg-white/10"
-                >
-                  {copiedIdx === idx ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                </button>
-              </div>
-              <div className="border-b border-white/[.04] px-3.5 py-2">
-                <p className="line-clamp-2 border-l-2 border-white/10 pl-2.5 text-[11px] leading-relaxed text-white/30 italic">
-                  {r.text}
-                </p>
-              </div>
-              <div className="px-3.5 py-3">
-                <Markdown className="pdf-ai-markdown">{r.result}</Markdown>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
-
-interface ParagraphViewProps {
-  segments: Segment[];
-  translating: boolean;
-  handleTranslate: () => void;
-  handleCopy: (idx: number, text: string) => void;
-  error?: string | null;
-  needsPdfDownload?: boolean;
-  handleDownloadPdf?: () => void;
-}
-
-function ParagraphView({ segments, translating, handleTranslate, handleCopy, error, needsPdfDownload, handleDownloadPdf }: ParagraphViewProps) {
-  const allTranslated = segments.length > 0 && segments.every(s => s.translation);
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-white/10 px-4 py-2">
-        {segments.length === 0 ? (
-          error?.includes('PDF') ? (
-            <button
-              type="button"
-              onClick={handleDownloadPdf}
-              disabled={translating}
-              className="w-full rounded-lg bg-blue-500/20 py-2 text-sm text-blue-300 hover:bg-blue-500/30 disabled:opacity-50"
-            >
-              {translating ? '下载中...' : '📥 下载 PDF'}
-            </button>
-          ) : (
-            <p className="text-xs text-white/40">点击上方"全文对照"加载分段</p>
-          )
-        ) : !allTranslated ? (
-          <button
-            type="button"
-            onClick={handleTranslate}
-            disabled={translating}
-            className="w-full rounded-lg bg-primary/20 py-2 text-sm text-primary hover:bg-primary/30 disabled:opacity-50"
+      {/* 双语对照模式 - 左右分栏 */}
+      {viewMode === 'bilingual' && (
+        <div className="flex flex-1 overflow-hidden">
+          {/* 左侧: PDF */}
+          <div
+            ref={leftScrollRef}
+            onScroll={handleLeftScroll}
+            className="flex-1 overflow-auto border-r border-white/10"
           >
-            {translating ? '翻译中...' : '翻译全文'}
-          </button>
-        ) : (
-          <p className="text-center text-xs text-emerald-400">翻译完成</p>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-auto px-4 py-3">
-        {error && (
-          <div className="mb-4 flex flex-col items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-4 text-center">
-            <p className="text-xs text-red-300">{error}</p>
-            {needsPdfDownload && handleDownloadPdf ? (
-              <button
-                type="button"
-                onClick={handleDownloadPdf}
-                className="text-xs text-blue-400 underline hover:text-blue-300"
-              >
-                下载 PDF
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleTranslate}
-                className="text-xs text-red-400 underline hover:text-red-300"
-              >
-                重试
-              </button>
-            )}
+            <Document
+              file={pdfUrl}
+              onLoadSuccess={onDocumentLoadSuccess}
+              loading={
+                <div className="flex items-center justify-center p-8">
+                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                </div>
+              }
+            >
+              <div className="flex flex-col items-center gap-4 p-4">
+                {Array.from(new Array(numPages), (_, i) => i + 1).map((page) => (
+                  <div key={page} data-page={page} className="relative">
+                    <Page
+                      pageNumber={page}
+                      scale={scale}
+                      className="shadow-lg"
+                      loading={
+                        <div
+                          className="flex items-center justify-center bg-white/5"
+                          style={{ width: 612 * scale, height: 842 * scale }}
+                        >
+                          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        </div>
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </Document>
           </div>
-        )}
-        {translating && segments.length === 0 && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            <span className="text-xs text-primary">加载分段中...</span>
-          </div>
-        )}
 
-        {segments.length === 0 && !translating && (
-          <div className="flex flex-col items-center gap-3 pt-12 text-center">
-            <FileText className="h-10 w-10 text-white/10" />
-            <p className="text-sm text-white/40">点击"全文对照"</p>
-            <p className="text-xs text-white/20">加载并翻译论文段落</p>
-          </div>
-        )}
-
-        {segments.map((seg, idx) => (
-          <div key={seg.id || idx} className="mb-4 overflow-hidden rounded-xl border border-white/[.08]">
-            <div className="flex items-center justify-between border-b border-white/[.06] px-3.5 py-2">
-              <span className="text-[11px] text-white/40">
-                {seg.type === 'figure' ? '图表' : `段落 ${idx + 1}`}
-              </span>
-              {seg.translation && (
-                <button
-                  type="button"
-                  onClick={() => handleCopy(idx, seg.translation!)}
-                  className="rounded-md p-1 text-white/20 hover:bg-white/10"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
+          {/* 右侧: 翻译 */}
+          <div
+            ref={rightScrollRef}
+            onScroll={handleRightScroll}
+            className="w-full overflow-auto bg-[#1a1a2e]"
+          >
+            <div className="p-4">
+              <h3 className="text-sm font-medium text-white/80 mb-4">译文对照</h3>
+              {segments.length === 0 && !translating && (
+                <p className="text-xs text-white/40">正在加载翻译...</p>
               )}
-            </div>
-            <div className="px-3.5 py-3">
-              <p className="mb-2 text-xs leading-relaxed text-white/70">{seg.content}</p>
-              {seg.translation && (
-                <>
-                  <div className="mb-2 border-t border-white/10" />
-                  <p className="text-xs leading-relaxed text-primary/80">{seg.translation}</p>
-                </>
+              {translating && segments.length === 0 && (
+                <div className="flex items-center gap-2">
+                  <div className="h-4 w-4 animate-spin rounded-full border border-primary border-t-transparent" />
+                  <span className="text-xs text-primary">翻译中...</span>
+                </div>
               )}
+              {segments.map((seg, idx) => (
+                <div key={seg.id || idx} className="mb-6">
+                  <div className="text-xs text-white/30 mb-1">P{Math.floor(idx / 5) + 1}</div>
+                  <p className="text-sm text-white/70 leading-relaxed mb-3">{seg.content}</p>
+                  {seg.translation && (
+                    <div className="border-l-2 border-primary/40 pl-3">
+                      <p className="text-xs text-primary/60 mb-1">译文</p>
+                      <p className="text-sm text-primary/90 leading-relaxed">{seg.translation}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
