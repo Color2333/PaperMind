@@ -9,30 +9,12 @@ import { llmConfigApi, type LLMConfigItem, type LLMConfigCreate } from "@/servic
 const PRESET_CONFIGS = [
   {
     provider: "zhipu",
-    name: "智谱 AI - 经济型",
-    model_skim: "glm-4-flash",
-    model_deep: "glm-4.7",
-    model_vision: "glm-4v-flash",
-    model_embedding: "embedding-3",
-    model_fallback: "glm-4-flash",
-  },
-  {
-    provider: "zhipu",
-    name: "智谱 AI - 高级型",
+    name: "智谱 AI - GLM-4.7 统一配置",
     model_skim: "glm-4.7",
-    model_deep: "glm-4-air",
-    model_vision: "glm-4v-flash",
+    model_deep: "glm-4.7",
+    model_vision: "glm-4.6v",
     model_embedding: "embedding-3",
     model_fallback: "glm-4.7",
-  },
-  {
-    provider: "siliconflow",
-    name: "硅基流动 - 性价比",
-    model_skim: "Qwen/Qwen2.5-7B-Instruct",
-    model_deep: "deepseek-ai/DeepSeek-V3",
-    model_vision: "Pro/Qwen/Qwen2.5-VL-72B-Instruct",
-    model_embedding: "BAAI/bge-m3",
-    model_fallback: "Qwen/Qwen2.5-7B-Instruct",
   },
 ];
 

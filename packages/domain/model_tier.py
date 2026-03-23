@@ -51,27 +51,9 @@ MODEL_TIER_SCENARIOS = {
 # 预设模型配置模板（常见服务商）
 PRESET_MODEL_CONFIGS = {
     "zhipu": {
-        ModelTier.ECONOMY: "glm-4-flash",  # ~¥0.001/1k tokens
-        ModelTier.STANDARD: "glm-4.7",  # ~¥0.005/1k tokens
-        ModelTier.PREMIUM: "glm-4-air",  # ~¥0.01/1k tokens
-        ModelTier.VISION: "glm-4v-flash",  # 视觉
-    },
-    "openai": {
-        ModelTier.ECONOMY: "gpt-4o-mini",  # $0.00015/1k
-        ModelTier.STANDARD: "gpt-4o",  # $0.005/1k
-        ModelTier.PREMIUM: "gpt-4.5-preview",  # $0.075/1k
-        ModelTier.VISION: "gpt-4o",
-    },
-    "anthropic": {
-        ModelTier.ECONOMY: "claude-3-haiku",  # $0.00025/1k
-        ModelTier.STANDARD: "claude-3.5-sonnet",  # $0.003/1k
-        ModelTier.PREMIUM: "claude-3.5-opus",  # $0.015/1k
-        ModelTier.VISION: "claude-3.5-sonnet",
-    },
-    "siliconflow": {
-        ModelTier.ECONOMY: "Qwen/Qwen2.5-7B-Instruct",  # 免费/极便宜
-        ModelTier.STANDARD: "Qwen/Qwen2.5-72B-Instruct",  # 便宜
-        ModelTier.PREMIUM: "deepseek-ai/DeepSeek-V3",  # 性价比高
-        ModelTier.VISION: "Pro/Qwen/Qwen2.5-VL-72B-Instruct",
+        ModelTier.ECONOMY: "glm-4.7",  # 统一使用 GLM-4.7
+        ModelTier.STANDARD: "glm-4.7",  # 统一使用 GLM-4.7
+        ModelTier.PREMIUM: "glm-4.7",  # 统一使用 GLM-4.7
+        ModelTier.VISION: "glm-4.6v",  # 视觉专用
     },
 }
