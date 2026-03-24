@@ -2,7 +2,7 @@
  * 侧边栏 - AI 应用风格：图标网格 + 对话历史 + 设置弹窗
  * @author Color2333
  */
-import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useConversationCtx } from "@/contexts/ConversationContext";
@@ -10,9 +10,6 @@ import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
 import { groupByDate } from "@/hooks/useConversations";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import LogoIcon from "@/assets/logo-icon.svg?react";
-
-// 1550 行的设置弹窗，只在用户点击设置按钮时才加载
-const SettingsDialog = lazy(() => import("./SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 import {
   FileText,
   Network,
@@ -67,7 +64,6 @@ function useDarkMode() {
 
 export default function Sidebar() {
   const [dark, toggleDark] = useDarkMode();
-  const [showSettings, setShowSettings] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -263,7 +259,7 @@ export default function Sidebar() {
         <div className="border-t border-border px-3 py-2">
           <div className="flex items-center justify-between px-1">
             <button
-              onClick={() => setShowSettings(true)}
+              onClick={() => navigate("/settings")}
               className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-ink-secondary transition-colors hover:bg-hover hover:text-ink"
             >
               <Settings className="h-3.5 w-3.5" />
@@ -293,13 +289,6 @@ export default function Sidebar() {
           </div>
         </div>
       </aside>
-
-      {/* 设置弹窗 - 懒加载，只在用户点击时才拉取 chunk */}
-      {showSettings && (
-        <Suspense fallback={null}>
-          <SettingsDialog onClose={() => setShowSettings(false)} />
-        </Suspense>
-      )}
 
       <ConfirmDialog
         open={!!deleteId}

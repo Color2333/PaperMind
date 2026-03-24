@@ -55,7 +55,6 @@ const PROVIDER_PRESETS: Record<string, { label: string; base_url: string; models
 };
 
 export default function SettingsPage() {
-  const location = useLocation();
   const [activeTab, setActiveTab] = useState<SettingsTab>("llm");
 
   return (
