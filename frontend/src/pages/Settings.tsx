@@ -12,6 +12,7 @@ import {
   Trash2,
   Pencil,
   Power,
+  PowerOff,
   Eye,
   EyeOff,
   Server,
@@ -20,6 +21,14 @@ import {
   Link2,
   BookOpen,
   Activity,
+  Zap,
+  Network,
+  Calendar,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  AlertTriangle,
+  Send,
 } from "lucide-react";
 import { useToast } from "@/contexts/ToastContext";
 import { Button } from "@/components/ui/Button";
@@ -34,6 +43,7 @@ import {
   emailConfigApi,
   dailyReportApi,
 } from "@/services/api";
+import { getErrorMessage } from "@/lib/errorHandler";
 import { cn } from "@/lib/utils";
 import { formatDuration, timeAgo } from "@/lib/utils";
 
@@ -51,6 +61,16 @@ const PROVIDER_PRESETS: Record<string, { label: string; base_url: string; models
     label: "智谱 AI",
     base_url: "https://open.bigmodel.cn/api/paas/v4/",
     models: { model_skim: "glm-4.7", model_deep: "glm-4.7", model_vision: "glm-4.6v", model_embedding: "embedding-3", model_fallback: "glm-4.7" },
+  },
+  openai: {
+    label: "OpenAI",
+    base_url: "https://api.openai.com/v1",
+    models: { model_skim: "gpt-4o-mini", model_deep: "gpt-4.1", model_vision: "gpt-4o", model_embedding: "text-embedding-3-small", model_fallback: "gpt-4o-mini" },
+  },
+  anthropic: {
+    label: "Anthropic",
+    base_url: "",
+    models: { model_skim: "claude-3-haiku-20240307", model_deep: "claude-3-5-sonnet-20241022", model_embedding: "text-embedding-3-small", model_fallback: "claude-3-haiku-20240307" },
   },
 };
 
@@ -103,6 +123,25 @@ export default function SettingsPage() {
 }
 
 /* ======== LLM 设置 ======== */
+function ProviderBadge({ provider }: { provider: string }) {
+  const colors: Record<string, string> = {
+    zhipu: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
+    openai: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+    anthropic: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
+  };
+  const labels: Record<string, string> = {
+    zhipu: "智谱",
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+  };
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium", colors[provider] || "bg-hover text-ink-tertiary")}>
+      <Server className="h-2.5 w-2.5" />
+      {labels[provider] || provider}
+    </span>
+  );
+}
+
 function LLMSettings() {
   const { toast } = useToast();
   const [configs, setConfigs] = useState<any[]>([]);
@@ -110,6 +149,7 @@ function LLMSettings() {
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editCfg, setEditCfg] = useState<any>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -124,6 +164,19 @@ function LLMSettings() {
   }, [toast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleDeactivate = async () => {
+    setSubmitting(true);
+    try {
+      await llmConfigApi.deactivate();
+      await load();
+      toast("success", "已切回默认配置");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) return <div className="flex h-64 items-center justify-center"><Spinner /></div>;
 
@@ -146,17 +199,31 @@ function LLMSettings() {
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-ink">{activeInfo.config?.name || "当前配置"}</span>
                   <Badge variant="success">使用中</Badge>
+                  <ProviderBadge provider={activeInfo.config?.provider || ""} />
+                  <Badge variant={activeInfo.source === "database" ? "info" : "default"}>
+                    {activeInfo.source === "database" ? "用户配置" : ".env"}
+                  </Badge>
                 </div>
                 <div className="mt-1 flex gap-3 text-xs text-ink-secondary">
-                  <span>文本: {activeInfo.config?.model_skim}</span>
-                  <span>视觉: {activeInfo.config?.model_vision || "未设置"}</span>
+                  <span>粗读: {activeInfo.config?.model_skim}</span>
+                  <span>精读: {activeInfo.config?.model_deep}</span>
+                  {activeInfo.config?.model_vision && <span>视觉: {activeInfo.config?.model_vision}</span>}
+                  <span>嵌入: {activeInfo.config?.model_embedding}</span>
                 </div>
               </div>
             </div>
-            <Button variant="secondary" size="sm" onClick={() => setEditCfg(activeInfo.config)}>
-              <Pencil className="mr-1.5 h-3.5 w-3.5" />
-              编辑
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setEditCfg(activeInfo.config)}>
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                编辑
+              </Button>
+              {activeInfo.source === "database" && (
+                <Button variant="ghost" size="sm" onClick={handleDeactivate} disabled={submitting}>
+                  <PowerOff className="mr-1.5 h-3.5 w-3.5" />
+                  切回默认
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -194,7 +261,7 @@ function LLMSettings() {
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-ink">{cfg.name}</span>
                       {cfg.is_active && <Badge variant="default">激活</Badge>}
-                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">{cfg.provider}</span>
+                      <ProviderBadge provider={cfg.provider} />
                     </div>
                     <div className="mt-1 flex gap-2 text-xs text-ink-tertiary">
                       <span>{cfg.api_key_masked}</span>
@@ -232,6 +299,7 @@ function LLMSettings() {
 }
 
 function ConfigModal({ config, onClose, onSaved }: { config?: any; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useToast();
   const [form, setForm] = useState({
     name: config?.name || "",
     provider: config?.provider || "zhipu",
@@ -266,12 +334,14 @@ function ConfigModal({ config, onClose, onSaved }: { config?: any; onClose: () =
         const payload: any = { name: form.name, provider: form.provider, api_base_url: form.api_base_url, model_skim: form.model_skim, model_deep: form.model_deep, model_vision: form.model_vision, model_embedding: form.model_embedding, model_fallback: form.model_fallback };
         if (form.api_key) payload.api_key = form.api_key;
         await llmConfigApi.update(config.id, payload);
+        toast("success", "配置已保存");
       } else {
         await llmConfigApi.create(form);
+        toast("success", "配置已创建");
       }
       onSaved();
     } catch (err: any) {
-      setError(err.message || "操作失败");
+      setError(getErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -341,17 +411,106 @@ function EmailSettings() {
   const { toast } = useToast();
   const [emailConfigs, setEmailConfigs] = useState<any[]>([]);
   const [dailyReport, setDailyReport] = useState<any>(null);
+  const [localConfig, setLocalConfig] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [showAddEmail, setShowAddEmail] = useState(false);
+  const [editEmailConfig, setEditEmailConfig] = useState<any>(null);
+  const [testEmailId, setTestEmailId] = useState<string | null>(null);
 
   const loadEmails = useCallback(async () => {
     try { setEmailConfigs(await emailConfigApi.list() || []); } catch { toast("error", "加载邮箱配置失败"); }
   }, [toast]);
 
   const loadDaily = useCallback(async () => {
-    try { setDailyReport(await dailyReportApi.getConfig()); } catch { toast("error", "加载报告配置失败"); }
+    try {
+      const data = await dailyReportApi.getConfig();
+      setDailyReport(data);
+      setLocalConfig(data);
+    } catch { toast("error", "加载报告配置失败"); }
   }, [toast]);
 
   useEffect(() => { Promise.all([loadEmails(), loadDaily()]).finally(() => setLoading(false)); }, [loadEmails, loadDaily]);
+
+  const handleActivateEmail = async (id: string) => {
+    setSubmitting(true);
+    try {
+      await emailConfigApi.activate(id);
+      await loadEmails();
+      toast("success", "邮箱已激活");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteEmail = async (id: string) => {
+    if (!confirm("确定要删除此邮箱配置？")) return;
+    try {
+      await emailConfigApi.delete(id);
+      await loadEmails();
+      toast("success", "邮箱配置已删除");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    }
+  };
+
+  const handleTestEmail = async (id: string) => {
+    setTestEmailId(id);
+    try {
+      await emailConfigApi.test(id);
+      toast("success", "测试邮件已发送，请检查邮箱");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setTestEmailId(null);
+    }
+  };
+
+  const handleUpdateDailyReport = async (updates: any) => {
+    setSubmitting(true);
+    try {
+      const body: Record<string, unknown> = { ...updates };
+      if (updates.recipient_emails !== undefined) {
+        body.recipient_emails = Array.isArray(updates.recipient_emails) ? updates.recipient_emails.join(",") : updates.recipient_emails;
+      }
+      const data = await dailyReportApi.updateConfig(body);
+      if (data.config) {
+        setDailyReport(data.config);
+        setLocalConfig(data.config);
+        toast("success", "每日报告配置已更新");
+      }
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+      await loadDaily();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleInputChange = (field: string, value: any) => {
+    setLocalConfig((prev: any) => ({ ...prev, [field]: value }));
+  };
+
+  const handleInputBlur = (field: string) => {
+    if (localConfig && localConfig[field] !== dailyReport[field]) {
+      handleUpdateDailyReport({ [field]: localConfig[field] });
+    }
+  };
+
+  const handleRunDailyWorkflow = async () => {
+    if (!confirm("确定要立即执行每日工作流吗？这将使用AI推荐系统找出高价值论文进行精读，生成每日简报并发送邮件报告。\n\n注意：精读论文需要几分钟时间，任务将在后台执行，请稍后查看结果。")) return;
+    setSubmitting(true);
+    try {
+      await dailyReportApi.runOnce();
+      toast("success", "每日报告工作流已启动，正在后台执行");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) return <div className="flex h-64 items-center justify-center"><Spinner /></div>;
 
@@ -366,19 +525,7 @@ function EmailSettings() {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-ink">邮箱配置</h3>
-          <Button variant="secondary" size="sm" onClick={async () => {
-            const name = prompt("配置名称：");
-            if (!name) return;
-            const email = prompt("邮箱地址：");
-            if (!email) return;
-            const smtp = prompt("SMTP 服务器：");
-            if (!smtp) return;
-            try {
-              await emailConfigApi.create({ name, sender_email: email, smtp_server: smtp, smtp_port: 587, smtp_use_tls: true, username: email, password: "" });
-              loadEmails();
-              toast("success", "邮箱配置已添加");
-            } catch (e: any) { toast("error", e.message); }
-          }}>
+          <Button variant="secondary" size="sm" onClick={() => setShowAddEmail(true)}>
             <Plus className="mr-1.5 h-3.5 w-3.5" /> 添加邮箱
           </Button>
         </div>
@@ -403,8 +550,12 @@ function EmailSettings() {
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                {!cfg.is_active && <Button variant="ghost" size="sm" onClick={async () => { await emailConfigApi.activate(cfg.id); loadEmails(); toast("success", "已激活"); }}><Power className="h-3.5 w-3.5" /></Button>}
-                <Button variant="ghost" size="sm" onClick={async () => { if (confirm("删除此配置？")) { await emailConfigApi.delete(cfg.id); loadEmails(); } }}><Trash2 className="h-3.5 w-3.5 text-error" /></Button>
+                {!cfg.is_active && <Button variant="ghost" size="sm" onClick={() => handleActivateEmail(cfg.id)} disabled={submitting}><Power className="h-3.5 w-3.5" /></Button>}
+                <Button variant="ghost" size="sm" onClick={() => handleTestEmail(cfg.id)} disabled={testEmailId === cfg.id}>
+                  {testEmailId === cfg.id ? <Spinner className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setEditEmailConfig(cfg)}><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="sm" onClick={() => handleDeleteEmail(cfg.id)} disabled={cfg.is_active}><Trash2 className="h-3.5 w-3.5 text-error" /></Button>
               </div>
             </div>
           ))
@@ -415,7 +566,7 @@ function EmailSettings() {
       {dailyReport && (
         <div className="space-y-4">
           <h3 className="text-sm font-medium text-ink">每日报告</h3>
-          <div className="rounded-xl border border-border bg-page p-5">
+          <div className="rounded-xl border border-border bg-page p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
@@ -428,24 +579,317 @@ function EmailSettings() {
               </div>
               <button
                 type="button"
-                onClick={async () => { await dailyReportApi.updateConfig({ enabled: !dailyReport.enabled }); loadDaily(); }}
+                onClick={() => handleUpdateDailyReport({ enabled: !dailyReport.enabled })}
+                disabled={submitting}
                 className={cn("relative h-6 w-11 rounded-full transition-colors", dailyReport.enabled ? "bg-primary" : "bg-ink-tertiary")}
               >
                 <span className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform", dailyReport.enabled ? "translate-x-6" : "translate-x-0.5")} />
               </button>
             </div>
+
+            {dailyReport.enabled && (
+              <>
+                <div className="space-y-2">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-medium text-ink">发送邮件报告</p>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateDailyReport({ send_email_report: !dailyReport.send_email_report })}
+                      disabled={submitting}
+                      className={cn("relative h-4 w-8 rounded-full transition-colors", dailyReport.send_email_report ? "bg-primary" : "bg-ink-tertiary")}
+                    >
+                      <span className={cn("absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform", dailyReport.send_email_report ? "translate-x-[1.125rem]" : "translate-x-0.5")} />
+                    </button>
+                  </div>
+                  {dailyReport.send_email_report && (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        placeholder="收件人邮箱（逗号分隔）"
+                        value={localConfig?.recipient_emails ?? dailyReport.recipient_emails}
+                        onChange={(e) => handleInputChange("recipient_emails", e.target.value)}
+                        onBlur={() => handleInputBlur("recipient_emails")}
+                        disabled={submitting}
+                        className="w-full rounded border border-border bg-surface px-2 py-1.5 text-xs text-ink placeholder:text-ink-placeholder"
+                      />
+                      <div className="space-y-1">
+                        <label htmlFor="cron-expression" className="text-[10px] font-medium text-ink-secondary">定时任务 Cron 表达式</label>
+                        <input
+                          id="cron-expression"
+                          type="text"
+                          placeholder="0 4 * * *"
+                          value={localConfig?.cron_expression ?? dailyReport.cron_expression ?? "0 4 * * *"}
+                          onChange={(e) => handleInputChange("cron_expression", e.target.value)}
+                          onBlur={() => handleInputBlur("cron_expression")}
+                          disabled={submitting}
+                          className="w-full rounded border border-border bg-surface px-2 py-1.5 text-xs font-mono text-ink placeholder:text-ink-placeholder"
+                        />
+                        <p className="text-[9px] text-ink-tertiary">
+                          默认：<code className="font-mono">0 4 * * *</code>（UTC 4 点 = 北京时间 12 点）
+                          <br />
+                          格式：<code className="font-mono">分 时 日 月 周</code>
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                  <p className="mb-2 text-xs font-medium text-ink">报告内容</p>
+                  <div className="space-y-1">
+                    <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={dailyReport.include_paper_details}
+                        onChange={(e) => handleUpdateDailyReport({ include_paper_details: e.target.checked })}
+                        disabled={submitting}
+                        className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-1 focus:ring-primary"
+                      />
+                      <span>包含论文详情</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={dailyReport.include_graph_insights}
+                        onChange={(e) => handleUpdateDailyReport({ include_graph_insights: e.target.checked })}
+                        disabled={submitting}
+                        className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-1 focus:ring-primary"
+                      />
+                      <span>包含图谱洞察</span>
+                    </label>
+                  </div>
+                </div>
+
+                <Button variant="secondary" size="sm" onClick={handleRunDailyWorkflow} disabled={submitting} className="w-full">
+                  {submitting ? <><Spinner className="mr-1.5 h-3.5 w-3.5" />执行中...</> : <><Play className="mr-1.5 h-3.5 w-3.5" />立即执行</>}
+                </Button>
+              </>
+            )}
           </div>
         </div>
+      )}
+
+      {/* 添加邮箱弹窗 */}
+      {showAddEmail && (
+        <AddEmailConfigModal
+          onCreated={() => { setShowAddEmail(false); loadEmails(); }}
+          onCancel={() => setShowAddEmail(false)}
+        />
+      )}
+
+      {/* 编辑邮箱弹窗 */}
+      {editEmailConfig && (
+        <EditEmailConfigModal
+          config={editEmailConfig}
+          onSaved={() => { setEditEmailConfig(null); loadEmails(); }}
+          onCancel={() => setEditEmailConfig(null)}
+        />
       )}
     </div>
   );
 }
 
+function AddEmailConfigModal({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    name: "",
+    smtp_server: "",
+    smtp_port: 587,
+    smtp_use_tls: true,
+    sender_email: "",
+    sender_name: "PaperMind",
+    username: "",
+    password: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const setField = (key: string, value: any) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const handleSelectPreset = async (provider: string) => {
+    try {
+      const data = await emailConfigApi.smtpPresets();
+      const preset = data[provider];
+      if (!preset) {
+        toast("error", `未找到 ${provider} 邮箱的预设配置`);
+        return;
+      }
+      setForm((prev) => ({
+        ...prev,
+        smtp_server: preset.smtp_server || prev.smtp_server,
+        smtp_port: preset.smtp_port || 587,
+        smtp_use_tls: preset.smtp_use_tls !== false,
+      }));
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!form.name.trim() || !form.smtp_server || !form.sender_email || !form.username || !form.password) {
+      setError("请填写所有必填字段");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      await emailConfigApi.create(form);
+      toast("success", "邮箱配置已添加");
+      onCreated();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="mx-4 w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-xl">
+        <h3 className="text-lg font-semibold text-ink">添加邮箱配置</h3>
+        {error && <div className="mt-3 rounded-lg bg-error-light px-3 py-2 text-xs text-error">{error}</div>}
+        <div className="mt-4 space-y-3">
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => handleSelectPreset("qq")} className="flex-1">QQ 邮箱</Button>
+            <Button variant="ghost" size="sm" onClick={() => handleSelectPreset("gmail")} className="flex-1">Gmail</Button>
+            <Button variant="ghost" size="sm" onClick={() => handleSelectPreset("163")} className="flex-1">163 邮箱</Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="email-name" className="mb-1 block text-[11px] font-medium text-ink-secondary">配置名称</label>
+              <input id="email-name" value={form.name} onChange={(e) => setField("name", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" placeholder="如：我的QQ邮箱" />
+            </div>
+            <div>
+              <label htmlFor="email-sender" className="mb-1 block text-[11px] font-medium text-ink-secondary">发件人邮箱</label>
+              <input id="email-sender" value={form.sender_email} onChange={(e) => setField("sender_email", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" placeholder="example@qq.com" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="email-smtp" className="mb-1 block text-[11px] font-medium text-ink-secondary">SMTP 服务器</label>
+              <input id="email-smtp" value={form.smtp_server} onChange={(e) => setField("smtp_server", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" placeholder="smtp.qq.com" />
+            </div>
+            <div>
+              <label htmlFor="email-port" className="mb-1 block text-[11px] font-medium text-ink-secondary">SMTP 端口</label>
+              <input id="email-port" type="number" value={form.smtp_port} onChange={(e) => setField("smtp_port", parseInt(e.target.value) || 587)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" />
+            </div>
+          </div>
+            <div>
+              <label htmlFor="email-username" className="mb-1 block text-[11px] font-medium text-ink-secondary">用户名</label>
+              <input id="email-username" value={form.username} onChange={(e) => setField("username", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" placeholder="同发件人邮箱" />
+          </div>
+            <div>
+              <label htmlFor="email-password" className="mb-1 block text-[11px] font-medium text-ink-secondary">密码/授权码</label>
+              <input id="email-password" type="password" value={form.password} onChange={(e) => setField("password", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" placeholder="邮箱授权码" />
+          </div>
+          <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
+            <input type="checkbox" checked={form.smtp_use_tls} onChange={(e) => setField("smtp_use_tls", e.target.checked)} className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-1 focus:ring-primary" />
+            <span>使用 TLS 加密</span>
+          </label>
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="ghost" onClick={onCancel}>取消</Button>
+          <Button onClick={handleSubmit} disabled={submitting}>{submitting ? <Spinner className="mr-1.5 h-3.5 w-3.5" /> : null}添加</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditEmailConfigModal({ config, onSaved, onCancel }: { config: any; onSaved: () => void; onCancel: () => void }) {
+  const [form, setForm] = useState({
+    name: config.name,
+    smtp_server: config.smtp_server,
+    smtp_port: config.smtp_port,
+    smtp_use_tls: config.smtp_use_tls,
+    sender_email: config.sender_email,
+    sender_name: config.sender_name || "PaperMind",
+    username: config.username,
+    password: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const setField = (key: string, value: any) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setError("");
+    try {
+      const payload = { ...form };
+      if (!form.password) delete (payload as any).password;
+      await emailConfigApi.update(config.id, payload);
+      onSaved();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="mx-4 w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-xl">
+        <h3 className="text-lg font-semibold text-ink">编辑邮箱配置</h3>
+        {error && <div className="mt-3 rounded-lg bg-error-light px-3 py-2 text-xs text-error">{error}</div>}
+        <div className="mt-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="edit-email-name" className="mb-1 block text-[11px] font-medium text-ink-secondary">配置名称</label>
+              <input id="edit-email-name" value={form.name} onChange={(e) => setField("name", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" />
+            </div>
+            <div>
+              <label htmlFor="edit-email-sender" className="mb-1 block text-[11px] font-medium text-ink-secondary">发件人邮箱</label>
+              <input id="edit-email-sender" value={form.sender_email} onChange={(e) => setField("sender_email", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="edit-email-smtp" className="mb-1 block text-[11px] font-medium text-ink-secondary">SMTP 服务器</label>
+              <input id="edit-email-smtp" value={form.smtp_server} onChange={(e) => setField("smtp_server", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" />
+            </div>
+            <div>
+              <label htmlFor="edit-email-port" className="mb-1 block text-[11px] font-medium text-ink-secondary">SMTP 端口</label>
+              <input id="edit-email-port" type="number" value={form.smtp_port} onChange={(e) => setField("smtp_port", parseInt(e.target.value) || 587)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" />
+            </div>
+          </div>
+          <div>
+            <label htmlFor="edit-email-username" className="mb-1 block text-[11px] font-medium text-ink-secondary">用户名</label>
+            <input id="edit-email-username" value={form.username} onChange={(e) => setField("username", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" />
+          </div>
+          <div>
+            <label htmlFor="edit-email-password" className="mb-1 block text-[11px] font-medium text-ink-secondary">新密码（留空不改）</label>
+            <input id="edit-email-password" type="password" value={form.password} onChange={(e) => setField("password", e.target.value)} className="w-full rounded-lg border border-border bg-page px-2.5 py-1.5 text-xs text-ink outline-none focus:border-primary" placeholder="留空保持不变" />
+          </div>
+          <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
+            <input type="checkbox" checked={form.smtp_use_tls} onChange={(e) => setField("smtp_use_tls", e.target.checked)} className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-1 focus:ring-primary" />
+            <span>使用 TLS 加密</span>
+          </label>
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="ghost" onClick={onCancel}>取消</Button>
+          <Button onClick={handleSubmit} disabled={submitting}>{submitting ? <Spinner className="mr-1.5 h-3.5 w-3.5" /> : null}保存</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ======== Pipeline 设置 ======== */
+function StatusDot({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    succeeded: "bg-success",
+    failed: "bg-error",
+    running: "bg-info animate-pulse",
+    pending: "bg-warning",
+  };
+  return <span className={cn("inline-block h-2 w-2 shrink-0 rounded-full", colors[status] || "bg-ink-tertiary")} />;
+}
+
 function PipelineSettings() {
   const [runs, setRuns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"all" | "succeeded" | "failed">("all");
+  const [filter, setFilter] = useState<"all" | "succeeded" | "failed" | "running">("all");
 
   const loadRuns = useCallback(async () => {
     try { setRuns((await pipelineApi.runs(50)).items || []); } catch { /* quiet */ } finally { setLoading(false); }
@@ -456,7 +900,7 @@ function PipelineSettings() {
   if (loading) return <div className="flex h-64 items-center justify-center"><Spinner /></div>;
 
   const filtered = filter === "all" ? runs : runs.filter((r) => r.status === filter);
-  const counts = { all: runs.length, succeeded: runs.filter((r) => r.status === "succeeded").length, failed: runs.filter((r) => r.status === "failed").length };
+  const counts = { all: runs.length, succeeded: runs.filter((r) => r.status === "succeeded").length, failed: runs.filter((r) => r.status === "failed").length, running: runs.filter((r) => r.status === "running" || r.status === "pending").length };
 
   return (
     <div className="space-y-6">
@@ -466,9 +910,9 @@ function PipelineSettings() {
       </div>
 
       <div className="flex items-center gap-2">
-        {(["all", "succeeded", "failed"] as const).map((f) => (
+        {(["all", "succeeded", "failed", "running"] as const).map((f) => (
           <button type="button" key={f} onClick={() => setFilter(f)} className={cn("rounded-lg px-3 py-1.5 text-xs font-medium transition-colors", filter === f ? "bg-primary text-white" : "bg-hover text-ink-secondary hover:text-ink")}>
-            {f === "all" ? `全部 (${counts.all})` : f === "succeeded" ? `成功 (${counts.succeeded})` : `失败 (${counts.failed})`}
+            {f === "all" ? `全部 (${counts.all})` : f === "succeeded" ? `成功 (${counts.succeeded})` : f === "failed" ? `失败 (${counts.failed})` : `进行中 (${counts.running})`}
           </button>
         ))}
         <Button variant="ghost" size="sm" onClick={loadRuns} className="ml-auto"><RefreshCw className="h-3.5 w-3.5" /></Button>
@@ -480,11 +924,12 @@ function PipelineSettings() {
           <p className="mt-2 text-sm text-ink-secondary">暂无运行记录</p>
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="max-h-[400px] space-y-1 overflow-y-auto">
           {filtered.map((run) => (
             <div key={run.id} className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-hover">
-              <span className={cn("h-2 w-2 shrink-0 rounded-full", run.status === "succeeded" ? "bg-success" : run.status === "failed" ? "bg-error" : "bg-info")} />
+              <StatusDot status={run.status} />
               <span className="font-medium text-ink">{run.pipeline_name}</span>
+              {run.paper_id && <span className="font-mono text-[10px] text-ink-tertiary">{run.paper_id.slice(0, 8)}</span>}
               <span className="ml-auto text-xs text-ink-tertiary">{run.elapsed_ms != null ? formatDuration(run.elapsed_ms) : ""}</span>
               <span className="text-xs text-ink-tertiary">{timeAgo(run.created_at)}</span>
             </div>
@@ -496,23 +941,23 @@ function PipelineSettings() {
 }
 
 /* ======== 运维设置 ======== */
+interface OpResult { success: boolean; message: string; }
+
 function OpsSettings() {
-  const [results, setResults] = useState<Record<string, any>>({});
+  const { toast } = useToast();
+  const [results, setResults] = useState<Record<string, OpResult>>({});
+  const [loadings, setLoadings] = useState<Record<string, boolean>>({});
+
+  const setL = (k: string, v: boolean) => setLoadings((p) => ({ ...p, [k]: v }));
+  const setR = (k: string, r: OpResult) => setResults((p) => ({ ...p, [k]: r }));
 
   const ops = [
-    { key: "batchProcess", label: "一键嵌入 & 粗读", desc: "对所有未读论文执行向量嵌入 + AI 粗读", icon: BookOpen, action: async () => { const r = await jobApi.batchProcessUnread(50); return r.message; } },
-    { key: "syncIncremental", label: "增量引用同步", desc: "同步论文之间的引用关系", icon: Link2, action: async () => { const r = await citationApi.syncIncremental(); return `处理 ${r.processed_papers ?? 0} 篇，新增 ${r.edges_inserted} 条边`; } },
-    { key: "health", label: "系统健康检查", desc: "查看数据库和统计信息", icon: Activity, action: async () => { const r = await systemApi.status(); return `${r.health.status === "ok" ? "正常" : "异常"} | ${r.counts.topics} 主题 | ${r.counts.papers_latest_200} 论文`; } },
+    { key: "batchProcess", label: "一键嵌入 & 粗读未读论文", desc: "对所有未读论文执行向量嵌入 + AI 粗读（并行处理）", icon: BookOpen, action: async () => { setL("batchProcess", true); try { const r = await jobApi.batchProcessUnread(50); setR("batchProcess", { success: r.failed === 0, message: r.message }); } catch (err) { setR("batchProcess", { success: false, message: err instanceof Error ? err.message : "失败" }); } finally { setL("batchProcess", false); } } },
+    { key: "syncIncremental", label: "增量引用同步", desc: "同步论文之间的引用关系", icon: Link2, action: async () => { setL("syncIncremental", true); try { const r = await citationApi.syncIncremental(); setR("syncIncremental", { success: true, message: `同步完成，处理 ${r.processed_papers ?? 0} 篇，新增 ${r.edges_inserted} 条边` }); } catch (err) { setR("syncIncremental", { success: false, message: err instanceof Error ? err.message : "失败" }); } finally { setL("syncIncremental", false); } } },
+    { key: "dailyJob", label: "执行每日任务", desc: "抓取论文 + 生成简报", icon: Calendar, action: async () => { setL("dailyJob", true); try { await jobApi.dailyRun(); setR("dailyJob", { success: true, message: "每日任务执行完成" }); } catch (err) { setR("dailyJob", { success: false, message: err instanceof Error ? err.message : "失败" }); } finally { setL("dailyJob", false); } } },
+    { key: "weeklyJob", label: "每周图维护", desc: "引用同步 + 图谱维护", icon: Network, action: async () => { setL("weeklyJob", true); try { await jobApi.weeklyGraphRun(); setR("weeklyJob", { success: true, message: "每周维护执行完成" }); } catch (err) { setR("weeklyJob", { success: false, message: err instanceof Error ? err.message : "失败" }); } finally { setL("weeklyJob", false); } } },
+    { key: "health", label: "系统健康检查", desc: "数据库 + 统计信息", icon: Zap, action: async () => { setL("health", true); try { const r = await systemApi.status(); setR("health", { success: r.health.status === "ok", message: `${r.health.status === "ok" ? "正常" : "异常"} | ${r.counts.topics} 主题 | ${r.counts.papers_latest_200} 论文` }); } catch (err) { setR("health", { success: false, message: err instanceof Error ? err.message : "失败" }); } finally { setL("health", false); } } },
   ];
-
-  const runOp = async (key: string, fn: () => Promise<string>) => {
-    try {
-      const msg = await fn();
-      setResults((p) => ({ ...p, [key]: { success: true, msg } }));
-    } catch (e: any) {
-      setResults((p) => ({ ...p, [key]: { success: false, msg: e.message || "失败" } }));
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -525,6 +970,7 @@ function OpsSettings() {
         {ops.map((op) => {
           const Icon = op.icon;
           const result = results[op.key];
+          const loading = loadings[op.key];
           return (
             <div key={op.key} className="rounded-xl border border-border bg-page p-5">
               <div className="flex items-start justify-between">
@@ -537,14 +983,13 @@ function OpsSettings() {
                     <p className="text-xs text-ink-secondary">{op.desc}</p>
                   </div>
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => runOp(op.key, op.action)}>
-                  <Play className="mr-1.5 h-3.5 w-3.5" />
-                  执行
+                <Button variant="secondary" size="sm" onClick={() => op.action()} disabled={loading}>
+                  {loading ? <><Spinner className="mr-1.5 h-3.5 w-3.5" />执行中</> : <><Play className="mr-1.5 h-3.5 w-3.5" />执行</>}
                 </Button>
               </div>
               {result && (
                 <div className={cn("mt-3 rounded-lg px-3 py-2 text-xs", result.success ? "bg-success/10 text-success" : "bg-error/10 text-error")}>
-                  {result.msg}
+                  {result.message}
                 </div>
               )}
             </div>
