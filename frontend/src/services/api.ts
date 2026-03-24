@@ -53,6 +53,8 @@ import type {
   ActiveTaskInfo,
   LoginResponse,
   AuthStatusResponse,
+  MultiSourceSearchResult,
+  ChannelSuggestion,
 } from "@/types";
 
 export type {
@@ -275,6 +277,15 @@ export const paperApi = {
   },
   aiExplain: (id: string, text: string, action: "explain" | "translate" | "summarize") =>
     post<{ action: string; result: string }>(`/papers/${id}/ai/explain`, { text, action }),
+  multiSourceSearch: (query: string, channels: string[]) => {
+    const params = new URLSearchParams({
+      query,
+      channels: channels.join(","),
+    });
+    return post<MultiSourceSearchResult>(`/papers/multi-source-search?${params}`);
+  },
+  suggestChannels: (query: string) =>
+    get<ChannelSuggestion>(`/papers/suggest-channels?query=${encodeURIComponent(query)}`),
 };
 
 /* ========== 摄入 ========== */

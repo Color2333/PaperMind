@@ -33,7 +33,7 @@ import {
   Play,
   Layers,
 } from "lucide-react";
-import { ingestApi, topicApi } from "@/services/api";
+import { ingestApi, topicApi, paperApi } from "@/services/api";
 import { useToast } from "@/contexts/ToastContext";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import type {
@@ -44,11 +44,13 @@ import type {
   KeywordSuggestion,
   IngestPaper,
   TopicFetchResult,
+  MultiSourceSearchResult,
+  ChannelSuggestion,
 } from "@/types";
 import CSFeeds from "./CSFeeds";
 
 type SortBy = "submittedDate" | "relevance" | "lastUpdatedDate";
-type ActiveTab = "search" | "subscriptions" | "csfeeds";
+type ActiveTab = "search" | "subscriptions" | "csfeeds" | "multi";
 
 interface SearchResult {
   ingested: number;
@@ -98,6 +100,15 @@ function relativeTime(iso: string): string {
   return d.toLocaleDateString("zh-CN");
 }
 
+const CHANNEL_MAP: Record<string, { id: string; name: string; isFree: boolean }> = {
+  arxiv: { id: "arxiv", name: "ArXiv", isFree: true },
+  openalex: { id: "openalex", name: "OpenAlex", isFree: true },
+  semantic_scholar: { id: "semantic_scholar", name: "Semantic Scholar", isFree: true },
+  dblp: { id: "dblp", name: "DBLP", isFree: true },
+  ieee: { id: "ieee", name: "IEEE", isFree: false },
+  biorxiv: { id: "biorxiv", name: "bioRxiv", isFree: true },
+};
+
 export default function Collect() {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -112,6 +123,45 @@ export default function Collect() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [error, setError] = useState("");
+
+  // ========== 多源搜索 ==========
+  const [multiQuery, setMultiQuery] = useState("");
+  const [multiChannels, setMultiChannels] = useState<string[]>(["arxiv"]);
+  const [multiLoading, setMultiLoading] = useState(false);
+  const [multiResults, setMultiResults] = useState<MultiSourceSearchResult["results"]>([]);
+  const [multiSuggestions, setMultiSuggestions] = useState<ChannelSuggestion | null>(null);
+
+  const handleMultiSearch = useCallback(async (q: string, channels: string[]) => {
+    if (!q.trim()) return;
+    setMultiLoading(true);
+    try {
+      const res = await paperApi.multiSourceSearch(q.trim(), channels);
+      setMultiResults(res.results || []);
+      if (res.results && res.results.length > 0) {
+        toast("success", `找到 ${res.results.length} 篇相关论文`);
+      } else {
+        toast("info", "未找到相关论文");
+      }
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "搜索失败");
+    } finally {
+      setMultiLoading(false);
+    }
+  }, [toast]);
+
+  const fetchMultiSuggestions = useCallback(async (q: string) => {
+    if (!q.trim()) { setMultiSuggestions(null); return; }
+    try {
+      const res = await paperApi.suggestChannels(q.trim());
+      setMultiSuggestions(res);
+    } catch { /* quiet */ }
+  }, []);
+
+  const applyMultiRecommendation = useCallback(() => {
+    if (multiSuggestions?.recommended) {
+      setMultiChannels(multiSuggestions.recommended);
+    }
+  }, [multiSuggestions]);
 
   // ========== 订阅管理 ==========
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -414,6 +464,17 @@ export default function Collect() {
           <Layers className="h-4 w-4" />
           分类订阅
         </button>
+        <button
+          onClick={() => setActiveTab("multi")}
+          className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium transition-all ${
+            activeTab === "multi"
+              ? "bg-primary text-white shadow-sm"
+              : "text-ink-secondary hover:text-ink hover:bg-muted"
+          }`}
+        >
+          <Sparkles className="h-4 w-4" />
+          多源搜索
+        </button>
       </div>
 
       {/* 错误 */}
@@ -536,6 +597,156 @@ export default function Collect() {
                   }
                   onNavigate={(paperId) => navigate(`/papers/${paperId}`)}
                 />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "multi" && (
+        <div className="border-border bg-surface rounded-2xl border p-6 shadow-sm">
+          <div className="mb-5 flex items-center gap-2">
+            <div className="bg-primary/8 rounded-xl p-2">
+              <Sparkles className="text-primary h-4 w-4" />
+            </div>
+            <div>
+              <h2 className="text-ink text-sm font-semibold">多源搜索</h2>
+              <p className="text-ink-tertiary text-xs">
+                从 ArXiv、OpenAlex、Semantic Scholar 等多渠道并行搜索
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex gap-3">
+              <div className="relative flex-1">
+                <Search className="text-ink-tertiary absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={multiQuery}
+                  onChange={(e) => {
+                    setMultiQuery(e.target.value);
+                    fetchMultiSuggestions(e.target.value);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleMultiSearch(multiQuery, multiChannels);
+                  }}
+                  placeholder="输入关键词，如 machine learning transformer"
+                  className="border-border bg-page text-ink placeholder:text-ink-placeholder focus:border-primary focus:ring-primary/20 h-11 w-full rounded-xl border pr-4 pl-10 text-sm focus:ring-2 focus:outline-none"
+                />
+              </div>
+              <Button
+                onClick={() => handleMultiSearch(multiQuery, multiChannels)}
+                loading={multiLoading}
+                disabled={!multiQuery.trim() || multiChannels.length === 0}
+                icon={<Download className="h-4 w-4" />}
+              >
+                搜索
+              </Button>
+            </div>
+
+            {multiSuggestions && multiSuggestions.recommended.length > 0 && (
+              <div className="flex items-center gap-2 text-sm">
+                <Sparkles className="h-4 w-4 text-purple-500" />
+                <span className="text-ink-secondary">推荐渠道：</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {multiSuggestions.recommended.map((id) => {
+                    const ch = CHANNEL_MAP[id];
+                    return ch ? (
+                      <span
+                        key={id}
+                        className="inline-flex items-center px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-xs dark:bg-purple-900/30 dark:text-purple-400"
+                      >
+                        {ch.name}
+                      </span>
+                    ) : null;
+                  })}
+                </div>
+                {JSON.stringify(multiSuggestions.recommended.sort()) !== JSON.stringify(multiChannels.sort()) && (
+                  <button
+                    type="button"
+                    onClick={applyMultiRecommendation}
+                    className="text-blue-500 hover:text-blue-600 text-xs"
+                  >
+                    应用推荐
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm text-ink-secondary">渠道：</span>
+              {Object.values(CHANNEL_MAP).map((channel) => {
+                const isSelected = multiChannels.includes(channel.id);
+                return (
+                  <button
+                    key={channel.id}
+                    type="button"
+                    onClick={() => {
+                      setMultiChannels((prev) =>
+                        prev.includes(channel.id)
+                          ? prev.filter((id) => id !== channel.id)
+                          : [...prev, channel.id]
+                      );
+                    }}
+                    className={`
+                      inline-flex items-center px-3 py-1 rounded-full text-sm border transition-all
+                      ${
+                        isSelected
+                          ? "bg-primary text-white border-primary"
+                          : "bg-page text-ink-secondary border-border hover:border-ink-tertiary"
+                      }
+                    `}
+                  >
+                    {channel.name}
+                    {!channel.isFree && <span className="ml-1 text-[10px]">💰</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {multiLoading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          )}
+
+          {!multiLoading && multiResults.length === 0 && multiQuery.trim() && (
+            <div className="flex flex-col items-center gap-3 pt-8 text-center">
+              <Search className="h-10 w-10 text-ink-tertiary" />
+              <p className="text-sm text-ink-secondary">输入关键词开始多源搜索</p>
+            </div>
+          )}
+
+          {!multiLoading && multiResults.length > 0 && (
+            <div className="mt-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-ink-secondary">
+                  共找到 <span className="font-medium text-ink">{multiResults.length}</span> 篇论文
+                </p>
+              </div>
+              {multiResults.map((paper, idx) => (
+                <div
+                  key={paper.id || idx}
+                  className="border-border bg-page rounded-xl border p-4 hover:border-ink-tertiary transition-colors"
+                >
+                  <h4 className="mb-1 text-sm font-medium text-ink line-clamp-2">{paper.title}</h4>
+                  {paper.authors && paper.authors.length > 0 && (
+                    <p className="mb-2 text-xs text-ink-tertiary">
+                      {paper.authors.slice(0, 3).join(", ")}
+                      {paper.authors.length > 3 && " et al."}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center rounded bg-primary/20 px-2 py-0.5 text-[10px] text-primary">
+                      {paper.source}
+                    </span>
+                    {paper.publishedDate && (
+                      <span className="text-[10px] text-ink-tertiary">{paper.publishedDate}</span>
+                    )}
+                  </div>
+                </div>
               ))}
             </div>
           )}
