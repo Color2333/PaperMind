@@ -150,6 +150,7 @@ function LLMSettings() {
   const [showAdd, setShowAdd] = useState(false);
   const [editCfg, setEditCfg] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [actionId, setActionId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -175,6 +176,33 @@ function LLMSettings() {
       toast("error", getErrorMessage(err));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleActivate = async (id: string) => {
+    setActionId(id);
+    try {
+      await llmConfigApi.activate(id);
+      await load();
+      toast("success", "配置已激活");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("确定要删除此配置？")) return;
+    setActionId(id);
+    try {
+      await llmConfigApi.delete(id);
+      await load();
+      toast("success", "配置已删除");
+    } catch (err) {
+      toast("error", getErrorMessage(err));
+    } finally {
+      setActionId(null);
     }
   };
 
@@ -270,13 +298,13 @@ function LLMSettings() {
                 </div>
                 <div className="flex items-center gap-1">
                   {!cfg.is_active && (
-                    <Button variant="ghost" size="sm" onClick={async () => { await llmConfigApi.activate(cfg.id); load(); }}>
+                    <Button variant="ghost" size="sm" onClick={() => handleActivate(cfg.id)} disabled={actionId !== null}>
                     <Power className="mr-1.5 h-3.5 w-3.5" />
                     激活
                   </Button>
                   )}
-                  <Button variant="ghost" size="sm" onClick={() => setEditCfg(cfg)}><Pencil className="h-3.5 w-3.5" /></Button>
-                  <Button variant="ghost" size="sm" onClick={async () => { if (confirm("确定删除？")) { await llmConfigApi.delete(cfg.id); load(); } }} disabled={cfg.is_active}>
+                  <Button variant="ghost" size="sm" onClick={() => setEditCfg(cfg)} disabled={actionId !== null}><Pencil className="h-3.5 w-3.5" /></Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleDelete(cfg.id)} disabled={cfg.is_active || actionId !== null}>
                     <Trash2 className="h-3.5 w-3.5 text-error" />
                   </Button>
                 </div>
@@ -633,6 +661,37 @@ function EmailSettings() {
                     </div>
                   )}
                 </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
+                  <div>
+                    <p className="text-xs font-medium text-ink">自动精读新论文</p>
+                    <p className="text-[10px] text-ink-tertiary">每日自动精选高价值论文进行深度阅读</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateDailyReport({ auto_deep_read: !dailyReport.auto_deep_read })}
+                    disabled={submitting}
+                    className={cn("relative h-5 w-9 rounded-full transition-colors", dailyReport.auto_deep_read ? "bg-primary" : "bg-ink-tertiary")}
+                  >
+                    <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform", dailyReport.auto_deep_read ? "translate-x-5" : "translate-x-0.5")} />
+                  </button>
+                </div>
+                {dailyReport.auto_deep_read && (
+                  <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2">
+                    <span className="text-xs text-ink-secondary">每日精读上限</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={localConfig?.deep_read_limit ?? dailyReport.deep_read_limit ?? 10}
+                      onChange={(e) => handleInputChange("deep_read_limit", parseInt(e.target.value) || 10)}
+                      onBlur={() => handleInputBlur("deep_read_limit")}
+                      disabled={submitting}
+                      className="w-20 rounded border border-border bg-page px-2 py-1 text-xs text-ink outline-none focus:border-primary"
+                    />
+                    <span className="text-xs text-ink-tertiary">篇</span>
+                  </div>
+                )}
 
                 <div className="rounded-lg border border-border bg-surface px-3 py-2">
                   <p className="mb-2 text-xs font-medium text-ink">报告内容</p>
