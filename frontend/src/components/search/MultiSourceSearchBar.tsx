@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Search, Loader2, Sparkles } from 'lucide-react';
 import { useChannels } from '@/contexts/ChannelContext';
+import { paperApi } from '@/services/api';
 
 interface MultiSourceSearchBarProps {
   onSearch: (query: string, channels: string[]) => void;
@@ -27,12 +28,7 @@ export const MultiSourceSearchBar: React.FC<MultiSourceSearchBarProps> = ({
       setSuggestions(null);
       return;
     }
-    fetch(`/papers/suggest-channels?query=${encodeURIComponent(q)}`, {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}`,
-      },
-    })
-      .then((res) => res.ok && res.json())
+    paperApi.suggestChannels(q)
       .then((data) => data && setSuggestions(data))
       .catch(() => {});
   }, []);

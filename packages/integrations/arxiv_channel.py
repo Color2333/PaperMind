@@ -5,9 +5,9 @@ ArXiv 渠道适配器
 @author Color2333
 """
 
+from packages.domain.schemas import PaperCreate
 from packages.integrations.arxiv_client import ArxivClient
 from packages.integrations.channel_base import ChannelBase
-from packages.domain.schemas import PaperCreate
 
 
 class ArxivChannel(ChannelBase):
@@ -44,9 +44,8 @@ class ArxivChannel(ChannelBase):
         Returns:
             list[PaperCreate]: 论文列表，source 字段统一设置为 "arxiv"
         """
-        papers = self._client.fetch_latest(query, max_results)
+        papers = self._client.fetch_latest(query, max_results, days_back=0)
 
-        # 统一设置 source 字段
         for paper in papers:
             paper.source = "arxiv"
             paper.source_id = paper.arxiv_id
@@ -65,7 +64,7 @@ class ArxivChannel(ChannelBase):
         """
         try:
             return self._client.download_pdf(arxiv_id)
-        except Exception as exc:
+        except Exception:
             return None
 
     def supports_incremental(self) -> bool:

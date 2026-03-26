@@ -282,7 +282,10 @@ export const paperApi = {
       query,
       channels: channels.join(","),
     });
-    return post<MultiSourceSearchResult>(`/papers/multi-source-search?${params}`);
+    return post<MultiSourceSearchResult>(`/papers/search-multi?${params}`).then((res) => ({
+      results: res.papers || [],
+      channelStats: res.channel_stats,
+    }));
   },
   suggestChannels: (query: string) =>
     get<ChannelSuggestion>(`/papers/suggest-channels?query=${encodeURIComponent(query)}`),

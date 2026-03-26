@@ -665,15 +665,14 @@ export interface MultiSourcePaper {
   title: string;
   authors?: string[];
   abstract?: string;
-  source: string;
-  url?: string;
-  publishedDate?: string;
-  externalId?: string;
+  year?: number | null;
+  venue?: string | null;
+  sources: { channel: string; [key: string]: unknown }[];
 }
 
 export interface MultiSourceSearchResult {
-  results: MultiSourcePaper[];
-  channelStats?: Record<string, { total: number; new: number; duplicates: number; error?: string }>;
+  papers: MultiSourcePaper[];
+  channel_stats?: Record<string, { total: number; new: number; duplicates: number; error?: string }>;
 }
 
 export interface ChannelSuggestion {

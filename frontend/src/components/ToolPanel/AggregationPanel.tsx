@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Sparkles, Search as SearchIcon, Loader2 } from 'lucide-react';
 import { MultiSourceSearchBar } from '@/components/search/MultiSourceSearchBar';
+import { paperApi } from '@/services/api';
 
 interface SearchResult {
   id: string;
@@ -24,17 +25,8 @@ export function AggregationPanel({ selectedText, paperId }: AggregationPanelProp
   const handleSearch = useCallback(async (query: string, channels: string[]) => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('auth_token') || '';
-      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-      const res = await fetch(`${base}/papers/multi-source-search?query=${encodeURIComponent(query)}&channels=${channels.join(',')}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setResults(data.results || []);
-      }
+      const res = await paperApi.multiSourceSearch(query, channels);
+      setResults(res.results || []);
     } catch (err) {
       console.error('Search failed:', err);
     } finally {
