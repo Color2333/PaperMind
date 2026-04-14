@@ -539,6 +539,18 @@ def init_database():
             conn.execute(text("CREATE INDEX ix_image_analyses_paper_id ON image_analyses(paper_id)"))
             print("image_analyses table created")
         
+        # 检查并添加缺失的列
+        # 检查 pipeline_runs 表是否有 decision_note 列
+        try:
+            result = conn.execute(text("PRAGMA table_info(pipeline_runs)"))
+            columns = [row[1] for row in result.fetchall()]
+            if "decision_note" not in columns:
+                print("Adding decision_note column to pipeline_runs...")
+                conn.execute(text("ALTER TABLE pipeline_runs ADD COLUMN decision_note TEXT"))
+                print("decision_note column added")
+        except Exception as e:
+            print(f"Warning: Could not check/add decision_note column: {e}")
+        
         # 检查 alembic_version 表并设置版本
         result = conn.execute(text("""
             SELECT name FROM sqlite_master 
@@ -558,7 +570,7 @@ def init_database():
             print("alembic_version table created")
         
         conn.commit()
-        print("\n✅ Database initialization completed!")
+        print("\nDatabase initialization completed!")
 
 
 if __name__ == "__main__":
