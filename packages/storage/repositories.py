@@ -30,10 +30,12 @@ from packages.storage.models import (
     IeeeApiQuota,
     LLMProviderConfig,
     Paper,
+    PaperTag,
     PaperTopic,
     PipelineRun,
     PromptTrace,
     SourceCheckpoint,
+    Tag,
     TopicSubscription,
 )
 
@@ -557,10 +559,12 @@ class PaperRepository:
         sort_by: str = "created_at",
         sort_order: str = "desc",
         category: str | None = None,
+        tag_ids: list[str] | None = None,
     ) -> tuple[list[Paper], int]:
         """分页查询论文，返回 (papers, total_count)"""
         filters = []
         need_join_topic = False
+        need_join_tag = False
 
         if search:
             like_pat = f"%{search}%"
@@ -581,6 +585,10 @@ class PaperRepository:
         elif topic_id:
             need_join_topic = True
             filters.append(PaperTopic.topic_id == topic_id)
+
+        if tag_ids and len(tag_ids) > 0:
+            need_join_tag = True
+            filters.append(PaperTag.tag_id.in_(tag_ids))
 
         if status and status in ("unread", "skimmed", "deep_read"):
             filters.append(Paper.read_status == ReadStatus(status))
@@ -603,6 +611,9 @@ class PaperRepository:
         if need_join_topic:
             base_q = base_q.join(PaperTopic, Paper.id == PaperTopic.paper_id)
             count_q = count_q.join(PaperTopic, Paper.id == PaperTopic.paper_id)
+        if need_join_tag:
+            base_q = base_q.join(PaperTag, Paper.id == PaperTag.paper_id)
+            count_q = count_q.join(PaperTag, Paper.id == PaperTag.paper_id)
         for f in filters:
             base_q = base_q.where(f)
             count_q = count_q.where(f)
@@ -743,6 +754,110 @@ class PaperRepository:
         for pid, tname in rows:
             result.setdefault(pid, []).append(tname)
         return result
+
+    def get_tags_for_papers(self, paper_ids: list[str]) -> dict[str, list[dict]]:
+        """批量查 paper → tags 映射"""
+        if not paper_ids:
+            return {}
+        q = (
+            select(PaperTag.paper_id, Tag.id, Tag.name, Tag.color)
+            .join(Tag, PaperTag.tag_id == Tag.id)
+            .where(PaperTag.paper_id.in_(paper_ids))
+        )
+        rows = self.session.execute(q).all()
+        result: dict[str, list[dict]] = {}
+        for pid, tid, tname, tcolor in rows:
+            result.setdefault(pid, []).append({"id": tid, "name": tname, "color": tcolor})
+        return result
+
+    def link_to_tag(self, paper_id: str, tag_id: str) -> None:
+        """为论文添加标签"""
+        q = select(PaperTag).where(
+            PaperTag.paper_id == paper_id,
+            PaperTag.tag_id == tag_id,
+        )
+        found = self.session.execute(q).scalar_one_or_none()
+        if found:
+            return
+        self.session.add(PaperTag(paper_id=paper_id, tag_id=tag_id))
+
+    def unlink_from_tag(self, paper_id: str, tag_id: str) -> None:
+        """移除论文的标签"""
+        q = select(PaperTag).where(
+            PaperTag.paper_id == paper_id,
+            PaperTag.tag_id == tag_id,
+        )
+        found = self.session.execute(q).scalar_one_or_none()
+        if found:
+            self.session.delete(found)
+
+
+class TagRepository:
+    """标签数据仓储"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def list_all(self) -> list[Tag]:
+        """获取所有标签，按使用次数排序"""
+        q = (
+            select(Tag, func.count(PaperTag.id).label("paper_count"))
+            .join(PaperTag, Tag.id == PaperTag.tag_id, isouter=True)
+            .group_by(Tag.id)
+            .order_by(func.count(PaperTag.id).desc())
+        )
+        rows = self.session.execute(q).all()
+        tags = []
+        for row in rows:
+            tag = row[0]
+            tag.paper_count = row[1] or 0
+            tags.append(tag)
+        return tags
+
+    def get_by_id(self, tag_id: str) -> Tag | None:
+        """根据 ID 获取标签"""
+        return self.session.get(Tag, tag_id)
+
+    def get_by_name(self, name: str) -> Tag | None:
+        """根据名称获取标签"""
+        q = select(Tag).where(Tag.name == name)
+        return self.session.execute(q).scalar_one_or_none()
+
+    def create(self, name: str, color: str = "#3b82f6") -> Tag:
+        """创建新标签"""
+        existing = self.get_by_name(name)
+        if existing:
+            raise ValueError(f"标签 '{name}' 已存在")
+        tag = Tag(name=name, color=color)
+        self.session.add(tag)
+        self.session.flush()
+        return tag
+
+    def update(self, tag_id: str, name: str | None = None, color: str | None = None) -> Tag:
+        """更新标签"""
+        tag = self.get_by_id(tag_id)
+        if tag is None:
+            raise ValueError(f"标签 {tag_id} 不存在")
+        if name is not None:
+            existing = self.get_by_name(name)
+            if existing and existing.id != tag_id:
+                raise ValueError(f"标签 '{name}' 已存在")
+            tag.name = name
+        if color is not None:
+            tag.color = color
+        self.session.flush()
+        return tag
+
+    def delete(self, tag_id: str) -> None:
+        """删除标签"""
+        tag = self.get_by_id(tag_id)
+        if tag is not None:
+            self.session.delete(tag)
+
+    def get_paper_count(self, tag_id: str) -> int:
+        """获取标签关联的论文数量"""
+        q = select(func.count()).select_from(PaperTag).where(PaperTag.tag_id == tag_id)
+        return self.session.execute(q).scalar() or 0
 
 
 class AnalysisRepository:
