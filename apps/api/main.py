@@ -158,6 +158,7 @@ from apps.api.routers import (  # noqa: E402
     papers,
     pipelines,
     system,
+    tags,
     topics,
     writing,
 )
@@ -168,6 +169,7 @@ from apps.api.routers import (
 app.include_router(system.router)
 app.include_router(papers.router)
 app.include_router(topics.router)
+app.include_router(tags.router)
 app.include_router(cs_feeds.router)
 app.include_router(graph.router)
 app.include_router(agent.router)

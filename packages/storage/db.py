@@ -247,6 +247,63 @@ def run_migrations() -> None:
         # 初始化：给没有 action 的已有论文创建 initial_import 记录
         _init_existing_papers_action(conn)
 
+        # 初始化标签表
+        _init_tags_table(conn)
+
+
+def _init_tags_table(conn) -> None:
+    """初始化标签表"""
+    try:
+        # 检查 tags 表是否存在
+        result = conn.execute(text("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='tags'
+        """))
+        tags_exists = result.fetchone() is not None
+
+        if not tags_exists:
+            logger.info("Creating tags table...")
+            conn.execute(text("""
+                CREATE TABLE tags (
+                    id VARCHAR(36) PRIMARY KEY NOT NULL,
+                    name VARCHAR(64) NOT NULL UNIQUE,
+                    color VARCHAR(32) NOT NULL DEFAULT '#3b82f6',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX ix_tags_name ON tags(name)"))
+            logger.info("tags table created")
+
+        # 检查 paper_tags 表是否存在
+        result = conn.execute(text("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='paper_tags'
+        """))
+        paper_tags_exists = result.fetchone() is not None
+
+        if not paper_tags_exists:
+            logger.info("Creating paper_tags table...")
+            conn.execute(text("""
+                CREATE TABLE paper_tags (
+                    id VARCHAR(36) PRIMARY KEY NOT NULL,
+                    paper_id VARCHAR(36) NOT NULL,
+                    tag_id VARCHAR(36) NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE,
+                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE,
+                    UNIQUE(paper_id, tag_id)
+                )
+            """))
+            conn.execute(text("CREATE INDEX ix_paper_tags_paper_id ON paper_tags(paper_id)"))
+            conn.execute(text("CREATE INDEX ix_paper_tags_tag_id ON paper_tags(tag_id)"))
+            logger.info("paper_tags table created")
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error("Failed to initialize tags table: %s", e)
+
 
 def _init_existing_papers_action(conn) -> None:
     """为没有行动记录的已有论文创建 initial_import 记录（只执行一次）"""
