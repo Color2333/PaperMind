@@ -12,13 +12,14 @@ import { PaperDetailSkeleton } from "@/components/Skeleton";
 const Markdown = lazy(() => import("@/components/Markdown"));
 const PdfReader = lazy(() => import("@/components/PdfReader"));
 import { useToast } from "@/contexts/ToastContext";
-import { paperApi, pipelineApi } from "@/services/api";
+import { paperApi, pipelineApi, tagApi } from "@/services/api";
 import type {
   Paper,
   SkimReport,
   DeepDiveReport,
   ReasoningChainResult,
   FigureAnalysisItem,
+  Tag as TagType,
 } from "@/types";
 import {
   ArrowLeft,
@@ -55,6 +56,7 @@ import {
   Loader2,
   Check,
   Download,
+  Plus,
 } from "lucide-react";
 
 /* ================================================================
@@ -225,8 +227,25 @@ export default function PaperDetail() {
   const [readerOpen, setReaderOpen] = useState(false);
   const [reportTab, setReportTab] = useState("skim");
 
+  /* 标签相关 */
+  const [allTags, setAllTags] = useState<TagType[]>([]);
+  const [tagModalOpen, setTagModalOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagColor, setNewTagColor] = useState("#3b82f6");
+  const [tagsLoading, setTagsLoading] = useState(false);
+
   const skimAbort = useRef<AbortController | null>(null);
   const deepAbort = useRef<AbortController | null>(null);
+
+  /* 加载标签列表 */
+  const loadTags = useCallback(async () => {
+    try {
+      const res = await tagApi.list();
+      setAllTags(res.items);
+    } catch {
+      // 静默失败
+    }
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -234,13 +253,15 @@ export default function PaperDetail() {
     Promise.all([
       paperApi.detail(id),
       paperApi.getFigures(id).catch(() => ({ items: [] as FigureAnalysisItem[] })),
+      tagApi.list().catch(() => ({ items: [] as TagType[] })),
     ])
-      .then(([p, figRes]) => {
+      .then(([p, figRes, tagRes]) => {
         setPaper(p);
         setEmbedDone(p.has_embedding ?? false);
         if (p.skim_report) setSavedSkim(p.skim_report);
         if (p.deep_report) setSavedDeep(p.deep_report);
         setFigures(figRes.items);
+        setAllTags(tagRes.items);
         const rc = p.metadata?.reasoning_chain as ReasoningChainResult | undefined;
         if (rc) setReasoning(rc);
         if (p.deep_report) setReportTab("deep");
@@ -434,6 +455,70 @@ export default function PaperDetail() {
     }
   }, [id, paper, toast]);
 
+  /* 标签管理 */
+  const handleToggleTag = useCallback(
+    async (tagId: string, isSelected: boolean) => {
+      if (!id) return;
+      try {
+        if (isSelected) {
+          await tagApi.removePaperTag(id, tagId);
+          setPaper((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  tags: (prev.tags || []).filter((t) => t.id !== tagId),
+                }
+              : prev
+          );
+        } else {
+          const res = await tagApi.addPaperTag(id, tagId);
+          setPaper((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  tags: [...(prev.tags || []), res.tag],
+                }
+              : prev
+          );
+        }
+      } catch {
+        toast("error", "标签操作失败");
+      }
+    },
+    [id, toast]
+  );
+
+  const handleCreateTag = useCallback(async () => {
+    if (!newTagName.trim()) {
+      toast("error", "标签名称不能为空");
+      return;
+    }
+    setTagsLoading(true);
+    try {
+      const newTag = await tagApi.create(newTagName.trim(), newTagColor);
+      setAllTags((prev) => [...prev, newTag]);
+      if (id) {
+        const res = await tagApi.addPaperTag(id, newTag.id);
+        setPaper((prev) =>
+          prev
+            ? {
+                ...prev,
+                tags: [...(prev.tags || []), res.tag],
+              }
+            : prev
+        );
+      }
+      toast("success", "标签创建成功");
+      setTagModalOpen(false);
+      setNewTagName("");
+      setNewTagColor("#3b82f6");
+    } catch {
+      toast("error", "创建标签失败");
+    } finally {
+      setTagsLoading(false);
+    }
+  }, [newTagName, newTagColor, id, toast]);
+
   if (loading) return <PaperDetailSkeleton />;
   if (!paper) {
     return (
@@ -562,6 +647,22 @@ export default function PaperDetail() {
                 {t}
               </span>
             ))}
+          {/* 用户自定义标签 */}
+          {paper.tags &&
+            paper.tags.length > 0 &&
+            paper.tags.map((tag) => (
+              <span
+                key={tag.id}
+                className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium"
+                style={{
+                  backgroundColor: `${tag.color}20`,
+                  color: tag.color,
+                }}
+              >
+                <Tag className="h-3 w-3" />
+                {tag.name}
+              </span>
+            ))}
           {paper.keywords &&
             paper.keywords.map((kw) => (
               <span
@@ -581,6 +682,51 @@ export default function PaperDetail() {
                 {c}
               </span>
             ))}
+        </div>
+
+        {/* 标签管理区域 */}
+        <div className="border-border mt-4 rounded-xl border p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-ink-tertiary text-xs font-medium">标签管理</p>
+            <button
+              onClick={() => {
+                setNewTagName("");
+                setNewTagColor("#3b82f6");
+                setTagModalOpen(true);
+              }}
+              className="text-primary hover:bg-primary/5 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors"
+            >
+              <Plus className="h-3 w-3" />
+              新建标签
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {allTags.length === 0 ? (
+              <p className="text-ink-tertiary px-1 py-2 text-xs">暂无标签，点击上方按钮创建</p>
+            ) : (
+              allTags.map((tag) => {
+                const isSelected = paper.tags?.some((t) => t.id === tag.id) ?? false;
+                return (
+                  <button
+                    key={tag.id}
+                    onClick={() => handleToggleTag(tag.id, isSelected)}
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-all ${
+                      isSelected ? "ring-2 ring-offset-1" : "hover:opacity-80"
+                    }`}
+                    style={{
+                      backgroundColor: isSelected ? tag.color : `${tag.color}15`,
+                      color: isSelected ? "white" : tag.color,
+                      boxShadow: isSelected ? `0 0 0 2px ${tag.color}` : "none",
+                    }}
+                  >
+                    <Tag className="h-3 w-3" />
+                    {tag.name}
+                    {isSelected && <Check className="h-3 w-3" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
       </Card>
 
@@ -1085,6 +1231,108 @@ export default function PaperDetail() {
             onClose={() => setReaderOpen(false)}
           />
         </Suspense>
+      )}
+
+      {/* 新建标签弹窗 */}
+      {tagModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-md rounded-2xl border p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-ink text-lg font-semibold">新建标签</h3>
+              <button
+                onClick={() => {
+                  setTagModalOpen(false);
+                  setNewTagName("");
+                  setNewTagColor("#3b82f6");
+                }}
+                className="text-ink-tertiary hover:bg-hover rounded-lg p-1 transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-ink mb-1.5 block text-sm font-medium">标签名称</label>
+                <input
+                  type="text"
+                  value={newTagName}
+                  onChange={(e) => setNewTagName(e.target.value)}
+                  placeholder="输入标签名称"
+                  className="border-border bg-surface text-ink focus:border-primary h-10 w-full rounded-lg border px-3 text-sm focus:outline-none"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-ink mb-2 block text-sm font-medium">标签颜色</label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    "#3b82f6",
+                    "#10b981",
+                    "#f59e0b",
+                    "#ef4444",
+                    "#8b5cf6",
+                    "#ec4899",
+                    "#06b6d4",
+                    "#84cc16",
+                  ].map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setNewTagColor(color)}
+                      className={`h-8 w-8 rounded-full transition-transform ${
+                        newTagColor === color ? "ring-2 ring-offset-2" : "hover:scale-110"
+                      }`}
+                      style={{
+                        backgroundColor: color,
+                        boxShadow: newTagColor === color ? `0 0 0 2px ${color}` : "none",
+                      }}
+                    />
+                  ))}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={newTagColor}
+                      onChange={(e) => setNewTagColor(e.target.value)}
+                      className="h-8 w-8 cursor-pointer rounded border-0"
+                    />
+                    <span className="text-ink-tertiary text-[11px]">{newTagColor}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <span className="text-ink-tertiary text-sm">预览：</span>
+                <span
+                  className="inline-flex items-center rounded-md px-3 py-1 text-sm font-medium"
+                  style={{
+                    backgroundColor: `${newTagColor}20`,
+                    color: newTagColor,
+                  }}
+                >
+                  {newTagName || "标签名称"}
+                </span>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setTagModalOpen(false);
+                  setNewTagName("");
+                  setNewTagColor("#3b82f6");
+                }}
+                className="border-border bg-surface text-ink-secondary hover:bg-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreateTag}
+                disabled={tagsLoading || !newTagName.trim()}
+                className="bg-primary text-white hover:bg-primary/90 disabled:opacity-50 inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+              >
+                {tagsLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

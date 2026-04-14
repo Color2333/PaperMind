@@ -56,6 +56,7 @@ def latest(
     sort_by: str = Query(default="created_at"),
     sort_order: str = Query(default="desc"),
     category: str | None = Query(default=None),
+    tag_ids: list[str] | None = Query(default=None),
 ) -> dict:
     with session_scope() as session:
         repo = PaperRepository(session)
@@ -72,6 +73,7 @@ def latest(
             else "created_at",
             sort_order=sort_order if sort_order in ("asc", "desc") else "desc",
             category=category,
+            tag_ids=tag_ids,
         )
         resp = paper_list_response(papers, repo)
         resp["total"] = total
@@ -218,6 +220,7 @@ def paper_detail(paper_id: UUID) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         topic_map = repo.get_topic_names_for_papers([str(p.id)])
+        tag_map = repo.get_tags_for_papers([str(p.id)])
         # 查询已有分析报告
         from sqlalchemy import select as _sel
 
@@ -253,6 +256,7 @@ def paper_detail(paper_id: UUID) -> dict:
             "title_zh": (p.metadata_json or {}).get("title_zh", ""),
             "abstract_zh": (p.metadata_json or {}).get("abstract_zh", ""),
             "topics": topic_map.get(str(p.id), []),
+            "tags": tag_map.get(str(p.id), []),
             "metadata": p.metadata_json,
             "has_embedding": p.embedding is not None,
             "skim_report": skim_data,

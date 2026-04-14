@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "20260303_0009_ieee_mvp"
-down_revision: Union[str, None] = "20260228_0008"
+down_revision: Union[str, None] = "20260228_0008_agent_conversations"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -51,11 +51,11 @@ def upgrade() -> None:
     conn = op.get_bind()
     batch_size = 10000
     offset = 0
-    
+
     while True:
         result = conn.execute(
             sa.text("""
-                UPDATE papers 
+                UPDATE papers
                 SET source_id = arxiv_id, source = 'arxiv'
                 WHERE source_id IS NULL AND arxiv_id IS NOT NULL
                 LIMIT :batch_size OFFSET :offset

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
@@ -15,7 +16,7 @@ from packages.ai.cost_guard import CostGuardService
 from packages.ai.pdf_parser import PdfTextExtractor
 from packages.ai.prompts import build_deep_prompt, build_skim_prompt
 from packages.ai.vision_reader import VisionPdfReader
-from packages.config import get_settings
+from packages.config import get_ieee_api_key, get_ieee_enabled, get_settings
 from packages.domain.enums import ActionType, ReadStatus
 from packages.domain.schemas import DeepDiveReport, PaperCreate, SkimReport
 from packages.domain.task_tracker import global_tracker
@@ -57,8 +58,9 @@ class PaperPipelines:
         self.pdf_extractor = PdfTextExtractor()
         # IEEE 客户端（MVP 阶段新增）
         self.ieee: IeeeClient | None = None
-        if self.settings.ieee_api_key:
-            self.ieee = IeeeClient(api_key=self.settings.ieee_api_key)
+        ieee_api_key = get_ieee_api_key()
+        if ieee_api_key and get_ieee_enabled():
+            self.ieee = IeeeClient(api_key=ieee_api_key)
             logger.info("IEEE 客户端已初始化")
         else:
             logger.warning("IEEE API Key 未配置，IEEE 摄取功能将不可用")
@@ -114,7 +116,6 @@ class PaperPipelines:
             repo = PaperRepository(session)
             run_repo = PipelineRunRepository(session)
             action_repo = ActionRepository(session)
-            trace_repo = PromptTraceRepository(session)
             run = run_repo.start("ingest_arxiv", decision_note=f"query={query}")
 
             try:
@@ -832,7 +833,7 @@ class ReferenceImporter:
                 logger.warning("arXiv batch fetch failed: %s", exc)
             time.sleep(1)
 
-        for idx, entry in enumerate(entries):
+        for entry in entries:
             title = entry.get("title", "Unknown")
             arxiv_id = entry["arxiv_id"]
             norm = self._normalize_arxiv_id(arxiv_id)
@@ -923,7 +924,7 @@ class ReferenceImporter:
     ) -> None:
         """用 Semantic Scholar 元数据导入没有 arXiv ID 的论文"""
         imported_count = len(inserted_ids)
-        for idx, entry in enumerate(entries):
+        for entry in entries:
             title = entry.get("title", "Unknown")
             scholar_id = entry.get("scholar_id")
 
@@ -1047,13 +1048,11 @@ class ReferenceImporter:
 
         pub_date = None
         if detail.get("publication_date"):
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 pub_date = datetime.strptime(
                     detail["publication_date"],
                     "%Y-%m-%d",
                 ).date()
-            except (ValueError, TypeError):
-                pass
         if not pub_date and detail.get("year"):
             pub_date = date(detail["year"], 1, 1)
 
