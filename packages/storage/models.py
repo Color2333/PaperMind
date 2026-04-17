@@ -498,6 +498,42 @@ class CSCategory(Base):
     cached_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class Tag(Base):
+    """用户自定义标签"""
+
+    __tablename__ = "tags"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    color: Mapped[str] = mapped_column(String(32), nullable=False, default="#3b82f6")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class PaperTag(Base):
+    """论文-标签关联表"""
+
+    __tablename__ = "paper_tags"
+    __table_args__ = (UniqueConstraint("paper_id", "tag_id", name="uq_paper_tag"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    paper_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("papers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tag_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("tags.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
 class CSFeedSubscription(Base):
     """arXiv CS 分类订阅"""
 

@@ -106,6 +106,7 @@ def paper_list_response(papers: list, repo: PaperRepository) -> dict:
     """论文列表统一序列化"""
     paper_ids = [str(p.id) for p in papers]
     topic_map = repo.get_topic_names_for_papers(paper_ids)
+    tag_map = repo.get_tags_for_papers(paper_ids)
     return {
         "items": [
             {
@@ -123,6 +124,7 @@ def paper_list_response(papers: list, repo: PaperRepository) -> dict:
                 "title_zh": (p.metadata_json or {}).get("title_zh", ""),
                 "abstract_zh": (p.metadata_json or {}).get("abstract_zh", ""),
                 "topics": topic_map.get(str(p.id), []),
+                "tags": tag_map.get(str(p.id), []),
             }
             for p in papers
         ]
