@@ -113,6 +113,26 @@ export interface TopicFetchResult {
   topic?: Topic;
 }
 
+/* ========== 标签 ========== */
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+  paper_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TagCreate {
+  name: string;
+  color?: string;
+}
+
+export interface TagUpdate {
+  name?: string;
+  color?: string;
+}
+
 /* ========== 论文 ========== */
 export type ReadStatus = "unread" | "skimmed" | "deep_read";
 
@@ -133,6 +153,7 @@ export interface Paper {
   title_zh?: string;
   abstract_zh?: string;
   topics?: string[];
+  tags?: Tag[];
   skim_report?: {
     summary_md: string;
     skim_score: number | null;
