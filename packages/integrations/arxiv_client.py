@@ -181,7 +181,6 @@ class ArxivClient:
             {"code": "cs.CL", "name": "Computation and Language", "description": ""},
             {"code": "cs.AI", "name": "Artificial Intelligence", "description": ""},
             {"code": "cs.NE", "name": "Neural and Evolutionary Computing", "description": ""},
-            {"code": "cs.CL", "name": "Computational Linguistics", "description": ""},
             {"code": "cs.IR", "name": "Information Retrieval", "description": ""},
             {"code": "cs.IT", "name": "Information Theory", "description": ""},
             {"code": "cs.CR", "name": "Cryptography and Security", "description": ""},
