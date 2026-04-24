@@ -324,6 +324,59 @@ def serve_paper_pdf(paper_id: UUID) -> FileResponse:
     )
 
 
+@router.get("/papers/{paper_id}/segments")
+def get_paper_segments(paper_id: UUID) -> dict:
+    """获取论文分段（用于全文对照翻译）- 包含页码信息"""
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            paper = repo.get_by_id(paper_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        pdf_path = paper.pdf_path
+
+    if not pdf_path:
+        raise HTTPException(status_code=404, detail="论文没有 PDF 文件")
+
+    full_path = Path(pdf_path)
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="PDF 文件不存在")
+
+    try:
+        import fitz
+
+        doc = fitz.open(str(full_path))
+        paragraphs: list[dict] = []
+        para_idx = 0
+        max_pages = 30
+
+        for page_num in range(min(max_pages, len(doc))):
+            page = doc.load_page(page_num)
+            page_text = page.get_text("text").strip()
+            if not page_text:
+                continue
+
+            blocks = page_text.split("\n\n")
+            for block in blocks:
+                block = block.strip()
+                if len(block) < 20:
+                    continue
+                para_idx += 1
+                paragraphs.append(
+                    {
+                        "id": f"p-{para_idx}",
+                        "type": "paragraph",
+                        "content": block[:2000],
+                        "pageNumber": page_num + 1,
+                    }
+                )
+
+        doc.close()
+        return {"segments": paragraphs}
+    except Exception as e:
+        return {"segments": [], "error": str(e)}
+
+
 @router.post("/papers/{paper_id}/ai/explain")
 def ai_explain_text(paper_id: UUID, body: AIExplainReq) -> dict:
     """AI 解释/翻译选中文本"""

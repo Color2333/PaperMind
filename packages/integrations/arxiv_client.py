@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import xml.etree.ElementTree as ElementTree
 from datetime import date, datetime, timedelta
 
@@ -15,32 +16,38 @@ ARXIV_API_URL = "https://export.arxiv.org/api/query"
 logger = logging.getLogger(__name__)
 
 
-def _build_arxiv_query(raw: str, days_back: int = 7) -> str:
+def _build_arxiv_query(raw: str, days_back: int = 0) -> str:
     """将用户输入转换为 ArXiv API 查询语法
 
     - 已是结构化查询（含 all:/ti: 等）直接返回
-    - 否则按空格拆分，取前 3 个关键词用 AND 连接（避免 429）
-    - 当 days_back > 0 时自动添加最近 N 天的日期范围过滤
+    - 带引号则识别为精确短语搜索
+    - 否则按空格拆分，取前 6 个关键词用 AND 连接
+    - 当 days_back > 0 时自动添加最近 N 天的日期范围过滤（默认 0 = 不过滤）
     """
     raw = raw.strip()
     if not raw:
         return raw
-    # 日期过滤（days_back <= 0 时不添加）
     date_filter = ""
     if days_back > 0:
         from_date = datetime.now() - timedelta(days=days_back)
         date_filter = f" AND submittedDate:[{from_date.strftime('%Y%m%d')}000000 TO *]"
 
     if re.search(r"\b(all|ti|au|abs|cat|co|jr|rn|id):", raw):
-        # 已经是结构化查询，检查是否已有日期过滤
         if "submittedDate:" not in raw:
             return raw + date_filter
         return raw
-    # 拆分词汇，跳过短词（<2 字符），最多取 3 个
+
+    # 整串带引号 → 当作精确短语搜索
+    quoted = re.match(r'^"(.+)"$', raw)
+    if quoted:
+        phrase = quoted.group(1).strip()
+        return f'all:"{phrase}"' + date_filter
+
+    # 拆词：跳过短词（<2 字符），最多取 6 个（原为 3，易把多关键词查询截断）
     tokens = [t.strip() for t in raw.split() if len(t.strip()) >= 2]
     if not tokens:
         return f"all:{raw}"
-    tokens = tokens[:3]
+    tokens = tokens[:6]
     return " AND ".join(f"all:{t}" for t in tokens) + date_filter
 
 
@@ -61,9 +68,13 @@ class ArxivClient:
         max_results: int = 20,
         sort_by: str = "submittedDate",
         start: int = 0,
-        days_back: int = 7,
+        days_back: int = 0,
     ) -> list[PaperCreate]:
-        """sort_by: submittedDate(最新) / relevance(相关性) / lastUpdatedDate"""
+        """sort_by: submittedDate(最新) / relevance(相关性) / lastUpdatedDate
+
+        days_back 默认 0 = 不加日期过滤（否则经典老论文如 OpenShape/Uni3D 都会被筛掉）。
+        订阅/定时任务需要最新增量时，由调用方显式传 days_back。
+        """
         # 获取速率限制许可（10 秒超时）
         if not acquire_api("arxiv", timeout=10.0):
             raise httpx.TimeoutException("ArXiv 速率限制等待超时，请稍后重试")
@@ -170,7 +181,6 @@ class ArxivClient:
             {"code": "cs.CL", "name": "Computation and Language", "description": ""},
             {"code": "cs.AI", "name": "Artificial Intelligence", "description": ""},
             {"code": "cs.NE", "name": "Neural and Evolutionary Computing", "description": ""},
-            {"code": "cs.CL", "name": "Computational Linguistics", "description": ""},
             {"code": "cs.IR", "name": "Information Retrieval", "description": ""},
             {"code": "cs.IT", "name": "Information Theory", "description": ""},
             {"code": "cs.CR", "name": "Cryptography and Security", "description": ""},

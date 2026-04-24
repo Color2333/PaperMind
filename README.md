@@ -88,6 +88,17 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 
 ## ✨ 核心能力
 
+### 🧠 认知重构工作流 (PaperSenseMaking)
+
+「阅读→理解→重构」的完整论文工作流：
+
+- 📝 **Act 1 理解** —— 摘要 + 关键发现，厘清论文核心
+- ⚡ **Act 2 碰撞** —— 冲突 + 疑问，与已有知识对话
+- 🔄 **Act 3 重构** —— 前后对比 + 认知变化，形成新认知
+- 📖 **全文对照翻译** —— 段落级中英对照，支持两种模式
+  - ⚡ **快速翻译**：1-2 分钟，PyMuPDF 分段 + 并发翻译
+  - 📐 **布局保留**：3-5 分钟，PDFMathTranslate 完整排版（公式/图表保留）
+
 ### 🤖 AI Agent 对话
 
 你的智能研究助理，自然语言交互搞定一切：
@@ -161,6 +172,21 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 - 🔑 **站点密码** —— 简单可靠，适合个人/小团队
 - 🎫 **JWT Token** —— 7 天有效期，自动续期
 - 🛡️ **全站保护** —— 所有 API 都需要认证
+
+### ⚙️ LLM 模型管理
+
+灵活控制成本，按场景分配模型：
+
+- 📊 **统一配置** —— 默认使用 GLM-4.7（文本）+ GLM-4.6V（视觉）
+- 🔄 **一键切换** —— 在设置页面随时切换配置
+- 🎯 **场景映射** —— 所有文本任务自动使用 GLM-4.7
+- 💰 **成本优化** —— 单一模型配置，避免管理复杂度
+- 📈 **Token 追踪** —— 所有 API 调用自动记录成本和用量
+
+**默认模型配置**：
+- 文本任务（粗读/精读/翻译/写作）：GLM-4.7
+- 视觉任务（图表分析/OCR）：GLM-4.6V
+- 降级备用：GLM-4.7
 
 ---
 
@@ -384,6 +410,7 @@ alembic upgrade head
 - **[Semantic Scholar](https://www.semanticscholar.org)** — 引用数据来源
 - **[CSFeeds](https://csarxiv.org)** — 论文源订阅服务
 - **[learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)** — Agent Harness 工程体系启发，s01-s12 渐进式解构：Loop → Tools → Planning → Subagents → Skills → Context → Tasks → Background → Teams → Protocols → Autonomous
+- **[PaperSenseMaking](https://github.com/edu-ai-builders/paper-sense-making)** — 论文阅读「阅读→理解→重构」工作流设计灵感
 
 ---
 

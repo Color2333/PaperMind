@@ -29,6 +29,10 @@ htmlcov/
 # Environment
 .env
 
+# Worktrees
+.worktrees/
+worktrees/
+
 # AI agent config (local only)
 .claude/
 CLAUDE.md

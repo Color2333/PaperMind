@@ -512,3 +512,64 @@ class CSFeedSubscription(Base):
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_run_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# ========== Sensemaking 认知重构相关 ==========
+
+
+class UserSchema(Base):
+    __tablename__ = "user_schemas"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+
+    research_topics: Mapped[list[str]] = mapped_column(JSON, default=list)
+    academic_level: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_challenges: Mapped[list[str]] = mapped_column(JSON, default=list)
+    beliefs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    knowledge_gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class SensemakingSession(Base):
+    __tablename__ = "sensemaking_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    paper_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_schema_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user_schemas.id", ondelete="CASCADE"), nullable=False
+    )
+
+    act1_comprehension: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    act2_collision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    act3_reconstruction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(32), default="in_progress")
+    conversation_history: Mapped[list[dict]] = mapped_column(JSON, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class SchemaPaperInteraction(Base):
+    __tablename__ = "schema_paper_interactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_schema_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user_schemas.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    paper_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+
+    interaction_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    cognitive_delta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)

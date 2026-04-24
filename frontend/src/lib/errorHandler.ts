@@ -84,11 +84,16 @@ export function parseErrorType(error: unknown): ErrorType {
       return ErrorType.NOT_FOUND;
     }
 
-    // 服务器错误
+    // 服务器错误 / 网关超时
     if (
       message.includes("500") ||
       message.includes("502") ||
-      message.includes("503")
+      message.includes("503") ||
+      message.includes("504") ||
+      message.includes("524") ||
+      message.includes("408") ||
+      message.includes("gateway time-out") ||
+      message.includes("gateway timeout")
     ) {
       return ErrorType.SERVER;
     }
@@ -131,8 +136,19 @@ export function getErrorMessage(error: unknown): string {
       }
     }
 
-    // 返回原始错误消息（如果比较短）
-    if (message.length < 100) {
+    // HTML 污染兜底：若消息包含 HTML 标签或 DOCTYPE，直接走默认文案
+    const lower = message.toLowerCase();
+    if (
+      message.includes("<!DOCTYPE") ||
+      lower.includes("<!doctype") ||
+      lower.includes("<html") ||
+      lower.includes("cloudflare")
+    ) {
+      return ERROR_MESSAGES[type];
+    }
+
+    // 返回原始错误消息（短消息才采纳，避免长错误信息淹没 UI）
+    if (message.length < 200) {
       return message;
     }
   }

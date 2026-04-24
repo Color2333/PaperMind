@@ -6,8 +6,8 @@ Agent 工具注册表和执行函数
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from packages.ai.brief_service import DailyBriefService
@@ -20,6 +20,9 @@ from packages.storage.repositories import (
     PipelineRunRepository,
     TopicRepository,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +196,19 @@ TOOL_REGISTRY: list[ToolDef] = [
                     "type": "integer",
                     "description": "最大搜索数量",
                     "default": 20,
+                },
+                "days_back": {
+                    "type": "integer",
+                    "description": (
+                        "只检索最近 N 天提交的论文（默认 0 = 不限日期，可搜到经典/老论文）。"
+                        "需要最新增量时传 7 或 30。"
+                    ),
+                    "default": 0,
+                },
+                "sort_by": {
+                    "type": "string",
+                    "description": "排序方式：relevance（相关性，默认）/ submittedDate（最新优先）",
+                    "default": "relevance",
                 },
             },
             "required": ["query"],
@@ -648,7 +664,7 @@ def _get_timeline(keyword: str, limit: int = 100) -> ToolResult:
     try:
         result = GraphService().timeline(keyword=keyword, limit=limit)
         tl = result.get("timeline", [])
-        years = sorted(set(p.get("year") for p in tl if p.get("year")))
+        years = sorted({p.get("year") for p in tl if p.get("year")})
         year_range = (
             f"{years[0]}-{years[-1]}" if len(years) >= 2 else (str(years[0]) if years else "无")
         )
@@ -741,12 +757,26 @@ def _get_system_status() -> ToolResult:
         return ToolResult(success=False, summary=f"获取系统状态失败: {exc!s}")
 
 
-def _search_arxiv(query: str, max_results: int = 20) -> ToolResult:
-    """搜索 arXiv，返回候选论文列表（不入库）"""
+def _search_arxiv(
+    query: str,
+    max_results: int = 20,
+    days_back: int = 0,
+    sort_by: str = "relevance",
+) -> ToolResult:
+    """搜索 arXiv，返回候选论文列表（不入库）
+
+    days_back=0（默认）不限日期，适合按关键词检索经典/全时间段论文。
+    想要最新增量时传 days_back=7/30。
+    """
     from packages.integrations.arxiv_client import ArxivClient
 
     try:
-        papers = ArxivClient().fetch_latest(query=query, max_results=max_results)
+        papers = ArxivClient().fetch_latest(
+            query=query,
+            max_results=max_results,
+            sort_by=sort_by,
+            days_back=days_back,
+        )
     except Exception as exc:
         logger.exception("ArXiv search failed: %s", exc)
         return ToolResult(success=False, summary=f"ArXiv 搜索失败: {exc!s}")

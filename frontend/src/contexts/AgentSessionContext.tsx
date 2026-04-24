@@ -696,8 +696,16 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   );
 
   /* ---- 确认/拒绝操作 ---- */
+  // 已处理（confirm/reject 过）的 actionId，用于防重复提交
+  const handledActionsRef = useRef<Set<string>>(new Set());
+
   const handleConfirm = useCallback(
     async (actionId: string) => {
+      // 幂等保护：防 StrictMode 双触发 / 按钮快速双击 / 错误重试等场景
+      if (handledActionsRef.current.has(actionId)) return;
+      if (confirmingActionIds.includes(actionId)) return;
+      handledActionsRef.current.add(actionId);
+
       setConfirmingActionIds((prev) => [...prev, actionId]);
       setPendingActionIds((prev) => prev.filter((id) => id !== actionId));
       cancelStream();
@@ -723,11 +731,14 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         setConfirmingActionIds((prev) => prev.filter((id) => id !== actionId));
       }
     },
-    [startStream, cancelStream]
+    [startStream, cancelStream, confirmingActionIds]
   );
 
   const handleReject = useCallback(
     async (actionId: string) => {
+      if (handledActionsRef.current.has(actionId)) return;
+      handledActionsRef.current.add(actionId);
+
       setPendingActionIds((prev) => prev.filter((id) => id !== actionId));
       cancelStream();
       setLoading(true);

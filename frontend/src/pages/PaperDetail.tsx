@@ -277,7 +277,7 @@ export default function PaperDetail() {
     setReportTab("deep");
     try {
       const report = await pipelineApi.deep(id);
-      setSavedDeep(report);
+      setDeepReport(report);
       toast("success", "精读完成");
     } catch {
       toast("error", "精读失败");
@@ -490,9 +490,6 @@ export default function PaperDetail() {
     : hasSimilar
       ? "done"
       : "idle";
-
-  const anyPipelineRunning =
-    skimLoading || deepLoading || figuresAnalyzing || reasoningLoading || embedLoading;
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -1084,6 +1081,7 @@ export default function PaperDetail() {
             paperId={id!}
             paperTitle={paper.title}
             paperArxivId={paper.arxiv_id}
+            paperPdfPath={paper.pdf_path}
             onClose={() => setReaderOpen(false)}
           />
         </Suspense>

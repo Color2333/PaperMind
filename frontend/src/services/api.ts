@@ -53,6 +53,8 @@ import type {
   ActiveTaskInfo,
   LoginResponse,
   AuthStatusResponse,
+  MultiSourceSearchResult,
+  ChannelSuggestion,
 } from "@/types";
 
 export type {
@@ -92,6 +94,56 @@ export function clearAuth(): void {
   localStorage.removeItem("auth_token");
 }
 
+/** 按 HTTP 状态码映射友好文案（HTML/超长响应降级用） */
+function friendlyStatusMessage(status: number, statusText: string): string {
+  if (status === 408 || status === 504 || status === 524) {
+    return "请求超时，服务端处理时间过长，请稍后重试";
+  }
+  if (status === 502 || status === 503) {
+    return "服务暂时不可用，请稍后重试";
+  }
+  if (status === 500) {
+    return "服务器内部错误，请稍后重试或联系管理员";
+  }
+  if (status === 429) {
+    return "请求过于频繁，请稍后再试";
+  }
+  if (status === 404) {
+    return "请求的资源不存在";
+  }
+  return `${status} ${statusText}`.trim() || "请求失败";
+}
+
+/** 从失败响应中安全提取错误消息：JSON 走字段，HTML/超长文本走状态码降级 */
+async function extractErrorMessage(resp: Response): Promise<string> {
+  const fallback = friendlyStatusMessage(resp.status, resp.statusText);
+  const contentType = resp.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    try {
+      const body = await resp.json();
+      const msg = body?.message || body?.detail || body?.error;
+      if (typeof msg === "string" && msg.trim()) return msg.trim();
+    } catch {
+      // JSON 解析失败，降级到 fallback
+    }
+    return fallback;
+  }
+  // 非 JSON（text/html / text/plain 等）：可能是 Cloudflare 504 HTML 页，不能原样抛
+  try {
+    const text = (await resp.text()).trim();
+    if (!text) return fallback;
+    // HTML 直接丢弃
+    if (text.startsWith("<") || text.toLowerCase().includes("<!doctype")) {
+      return fallback;
+    }
+    // 纯文本短消息可以采纳，超长一律降级
+    if (text.length <= 200) return text;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${getApiBase().replace(/\/+$/, "")}${path}`;
   let resp: Response;
@@ -108,19 +160,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error("网络连接失败，请检查后端服务是否启动");
   }
   if (!resp.ok) {
-    let msg = `${resp.status} ${resp.statusText}`;
-    try {
-      const body = await resp.json();
-      // 兼容后端 AppError 格式: {error, message, detail}
-      msg = body.message || body.detail || body.error || msg;
-    } catch {
-      const text = await resp.text().catch(() => "");
-      if (text) msg = text;
-    }
+    const msg = await extractErrorMessage(resp);
     // 401 未认证，清除 token 并刷新页面跳转登录
     if (resp.status === 401) {
       clearAuth();
-      // 强制刷新页面触发 App 重新渲染登录页
       window.location.reload();
     }
     throw new Error(msg);
@@ -275,13 +318,36 @@ export const paperApi = {
   },
   aiExplain: (id: string, text: string, action: "explain" | "translate" | "summarize") =>
     post<{ action: string; result: string }>(`/papers/${id}/ai/explain`, { text, action }),
+  multiSourceSearch: (query: string, channels: string[]) => {
+    const params = new URLSearchParams({
+      query,
+      channels: channels.join(","),
+    });
+    return post<MultiSourceSearchResult>(`/papers/search-multi?${params}`).then((res) => ({
+      results: res.papers || [],
+      channelStats: res.channel_stats,
+    }));
+  },
+  suggestChannels: (query: string) =>
+    get<ChannelSuggestion>(`/papers/suggest-channels?query=${encodeURIComponent(query)}`),
 };
 
 /* ========== 摄入 ========== */
 
 export const ingestApi = {
-  arxiv: (query: string, maxResults = 20, topicId?: string, sortBy = "submittedDate") => {
-    const params = new URLSearchParams({ query, max_results: String(maxResults), sort_by: sortBy });
+  arxiv: (
+    query: string,
+    maxResults = 20,
+    topicId?: string,
+    sortBy = "submittedDate",
+    daysBack = 0
+  ) => {
+    const params = new URLSearchParams({
+      query,
+      max_results: String(maxResults),
+      sort_by: sortBy,
+      days_back: String(daysBack),
+    });
     if (topicId) params.append("topic_id", topicId);
     return post<IngestResult>(`/ingest/arxiv?${params}`);
   },
@@ -475,13 +541,12 @@ async function fetchSSE(url: string, init?: RequestInit): Promise<Response> {
     },
   });
   if (!resp.ok) {
-    // 401 未认证，清除 token 并刷新页面跳转登录
     if (resp.status === 401) {
       clearAuth();
       window.location.reload();
     }
-    const text = await resp.text().catch(() => "");
-    throw new Error(`请求失败 (${resp.status}): ${text || resp.statusText}`);
+    const msg = await extractErrorMessage(resp);
+    throw new Error(`请求失败 (${resp.status}): ${msg}`);
   }
   return resp;
 }

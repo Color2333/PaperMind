@@ -27,6 +27,7 @@ const Operations = lazy(() => import("@/pages/Operations"));
 const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
+const Settings = lazy(() => import("@/pages/Settings"));
 
 import LoginPage from "@/pages/Login";
 import { isAuthenticated as checkAuth, clearAuth } from "@/services/api";
@@ -117,7 +118,7 @@ export default function App() {
 
           {/* 常见拼写重定向 */}
           <Route path="/briefs" element={<Navigate to="/brief" replace />} />
-          <Route path="/settings" element={<Navigate to="/collect" replace />} />
+          <Route path="/settings" element={<Suspense fallback={<PageFallback />}><Settings /></Suspense>} />
 
           {/* 404 */}
           <Route path="*" element={<NotFound />} />

@@ -6,6 +6,7 @@
  */
 
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import { resolveApiBase } from '@/lib/tauri';
 
 export interface Channel {
   id: string;
@@ -40,7 +41,8 @@ export function ChannelProvider({ children }: { children: ReactNode }) {
   const fetchChannels = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/papers/suggest-channels');
+      const base = resolveApiBase();
+      const response = await fetch(`${base.replace(/\/+$/, '')}/papers/suggest-channels`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -49,7 +51,6 @@ export function ChannelProvider({ children }: { children: ReactNode }) {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
-      // 降级：使用默认渠道列表
       setChannels(INITIAL_CHANNELS);
     } finally {
       setLoading(false);

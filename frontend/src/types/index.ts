@@ -659,6 +659,28 @@ export interface IngestResult {
   papers?: IngestPaper[];
 }
 
+/* ========== 多源搜索 ========== */
+export interface MultiSourcePaper {
+  id: string;
+  title: string;
+  authors?: string[];
+  abstract?: string;
+  year?: number | null;
+  venue?: string | null;
+  sources: { channel: string; [key: string]: unknown }[];
+}
+
+export interface MultiSourceSearchResult {
+  papers: MultiSourcePaper[];
+  channel_stats?: Record<string, { total: number; new: number; duplicates: number; error?: string }>;
+}
+
+export interface ChannelSuggestion {
+  recommended: string[];
+  alternatives: string[];
+  reasoning: string;
+}
+
 /* ========== 聊天消息 ========== */
 export interface ChatMessage {
   id: string;

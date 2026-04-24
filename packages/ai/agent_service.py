@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from packages.agent_core.context_compaction import (
@@ -51,6 +52,9 @@ SYSTEM_PROMPT = """\
    → 调 search_arxiv 获取候选
    → **停下来**，等用户在前端界面勾选要入库的论文
    → 用户确认后调 ingest_arxiv(arxiv_ids=[用户选的])
+   → 调用 ingest_arxiv 前，**必须**先在文本消息中逐条列出每篇候选的
+     「标题 + 第一作者 + 年份 + arXiv ID」，严禁只给出 arxiv_ids 列表让用户盲确认。
+     用户对"看不见的 ID"没有判断依据，这是硬性规则。
 
 4. **分析论文**（"粗读"、"精读"、"分析图表"）
    → 先确认目标论文 ID，再调对应工具
@@ -105,10 +109,38 @@ SYSTEM_PROMPT = """\
 
 _ACTION_TTL = 1800  # 30 分钟
 
+# 已处理（确认/拒绝）过的 action_id → 时间戳；用于幂等保护，避免重复 confirm 报"已过期"
+_HANDLED_ACTION_CACHE: dict[str, float] = {}
+_HANDLED_ACTION_TTL = 3600.0  # 1 小时
+
 
 def _make_sse(event: str, data: dict) -> str:
     """格式化 SSE 事件"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _mark_action_handled(action_id: str) -> None:
+    """标记 action 已被处理过（确认/拒绝），避免重复触发时报'已过期'"""
+    _HANDLED_ACTION_CACHE[action_id] = time.time()
+    # 控制缓存膨胀
+    if len(_HANDLED_ACTION_CACHE) > 256:
+        now = time.time()
+        expired = [
+            aid for aid, ts in _HANDLED_ACTION_CACHE.items() if now - ts > _HANDLED_ACTION_TTL
+        ]
+        for aid in expired:
+            _HANDLED_ACTION_CACHE.pop(aid, None)
+
+
+def _is_action_handled(action_id: str) -> bool:
+    """判断 action 是否已被处理过（幂等保护）"""
+    ts = _HANDLED_ACTION_CACHE.get(action_id)
+    if ts is None:
+        return False
+    if time.time() - ts > _HANDLED_ACTION_TTL:
+        _HANDLED_ACTION_CACHE.pop(action_id, None)
+        return False
+    return True
 
 
 def _record_agent_usage(
@@ -282,18 +314,21 @@ def stream_chat(
     if confirmed_action_id:
         action = _load_pending_action(confirmed_action_id)
         if not action:
+            # 幂等保护：已处理过的 action 给中性提示，不再报"已过期"
+            already_handled = _is_action_handled(confirmed_action_id)
+            err_msg = (
+                "该操作已处理过，请继续后续对话。"
+                if already_handled
+                else "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"
+            )
 
             def _err_iter():
-                yield _make_sse(
-                    "error",
-                    {
-                        "message": "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"
-                    },
-                )
+                yield _make_sse("error", {"message": err_msg})
                 yield _make_sse("done", {})
 
             return _err_iter(), conversation
 
+        _mark_action_handled(confirmed_action_id)
         loop = _create_loop(conversation)
 
         def _confirm_iter():
@@ -318,17 +353,22 @@ def confirm_action(action_id: str) -> tuple[Iterator[str], list[dict]]:
 
     action = _load_pending_action(action_id)
     if not action:
+        # 幂等保护：之前确认/拒绝过就明确提示，不再和"真过期"混淆
+        already_handled = _is_action_handled(action_id)
+        err_msg = (
+            "该操作已处理过，请继续后续对话。"
+            if already_handled
+            else "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"
+        )
 
         def _err_iter():
-            yield _make_sse(
-                "error",
-                {
-                    "message": "该操作已过期（可能因为服务重启或超时）。请重新描述您的需求，Agent 会重新发起操作。"
-                },
-            )
+            yield _make_sse("error", {"message": err_msg})
             yield _make_sse("done", {})
 
         return _err_iter(), []
+
+    # 立即标记已处理，防止用户双击 / 网络重试导致二次执行
+    _mark_action_handled(action_id)
 
     # 删除 pending action
     try:
@@ -354,8 +394,9 @@ def reject_action(action_id: str) -> tuple[Iterator[str], list[dict]]:
 
     action = _load_pending_action(action_id)
 
-    # 删除 pending action
+    # 标记已处理 + 删除 pending action
     if action:
+        _mark_action_handled(action_id)
         try:
             with session_scope() as session:
                 repo = AgentPendingActionRepository(session)
