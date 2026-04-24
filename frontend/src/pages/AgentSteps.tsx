@@ -16,7 +16,7 @@ import {
   TrendingUp,
   AlertTriangle,
 } from "lucide-react";
-import { useAgentSession, type StepItem } from "@/contexts/AgentSessionContext";
+import { useAgentSession } from "@/contexts/AgentSessionContext";
 import { lazy } from "react";
 const Markdown = lazy(() => import("@/components/Markdown"));
 
@@ -489,6 +489,44 @@ const StepDataView = memo(function StepDataView({ data, toolName }: { data: Reco
 
 export { getToolMeta, ArxivCandidateSelector, StepDataView, ActionConfirmCard };
 
+/**
+ * 从对话 items 反查 arxiv_ids 对应的候选论文元信息
+ * 用于在 ingest_arxiv 确认卡里显示标题/作者，避免让用户"盲确认"裸 ID
+ */
+function lookupArxivCandidates(
+  items: ReturnType<typeof useAgentSession>["items"],
+  arxivIds: string[]
+): Array<{ arxiv_id: string; title?: string; authors?: string[] }> {
+  const want = new Set(arxivIds.map((id) => id.split("v")[0])); // 去掉版本号
+  const found = new Map<string, { arxiv_id: string; title?: string; authors?: string[] }>();
+
+  for (let i = items.length - 1; i >= 0 && found.size < want.size; i--) {
+    const it = items[i];
+    if (it.type !== "step_group" || !it.steps) continue;
+    for (const step of it.steps) {
+      if (step.toolName !== "search_arxiv") continue;
+      const cands = step.data?.candidates;
+      if (!Array.isArray(cands)) continue;
+      for (const c of cands) {
+        const rec = c as Record<string, unknown>;
+        const aid = String(rec.arxiv_id ?? "").split("v")[0];
+        if (want.has(aid) && !found.has(aid)) {
+          found.set(aid, {
+            arxiv_id: String(rec.arxiv_id ?? aid),
+            title: rec.title ? String(rec.title) : undefined,
+            authors: Array.isArray(rec.authors) ? (rec.authors as string[]) : undefined,
+          });
+        }
+      }
+    }
+  }
+
+  return arxivIds.map((id) => {
+    const base = id.split("v")[0];
+    return found.get(base) ?? { arxiv_id: id };
+  });
+}
+
 const ActionConfirmCard = memo(function ActionConfirmCard({
   actionId,
   description,
@@ -510,6 +548,15 @@ const ActionConfirmCard = memo(function ActionConfirmCard({
 }) {
   const meta = getToolMeta(tool);
   const Icon = meta.icon;
+  const { items } = useAgentSession();
+
+  // 特化：ingest_arxiv 时把 arxiv_ids 反查成标题/作者卡片
+  const ingestPreview = useMemo(() => {
+    if (tool !== "ingest_arxiv") return null;
+    const ids = args?.arxiv_ids;
+    if (!Array.isArray(ids) || ids.length === 0) return null;
+    return lookupArxivCandidates(items, ids.map(String));
+  }, [tool, args, items]);
   return (
     <div className="py-2">
       <div
@@ -541,19 +588,53 @@ const ActionConfirmCard = memo(function ActionConfirmCard({
             <div className="bg-warning-light flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
               <Icon className="text-warning h-4 w-4" />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-ink text-sm font-medium">{description}</p>
-              {args && Object.keys(args).length > 0 && (
-                <div className="bg-page mt-1.5 rounded-lg px-2.5 py-1.5">
-                  {Object.entries(args).map(([k, v]) => (
-                    <div key={k} className="flex gap-1.5 text-[11px]">
-                      <span className="text-ink-secondary font-medium">{k}:</span>
-                      <span className="text-ink-tertiary">
-                        {typeof v === "string" ? v : JSON.stringify(v)}
-                      </span>
+              {ingestPreview && ingestPreview.length > 0 ? (
+                <div className="bg-page mt-1.5 space-y-1.5 rounded-lg px-2.5 py-2">
+                  <div className="text-ink-secondary text-[11px] font-medium">
+                    即将入库 {ingestPreview.length} 篇论文：
+                  </div>
+                  {ingestPreview.map((p, idx) => (
+                    <div
+                      key={p.arxiv_id}
+                      className="border-border/60 border-l-2 pl-2 text-[11px]"
+                    >
+                      <div className="text-ink leading-snug">
+                        <span className="text-ink-tertiary mr-1">{idx + 1}.</span>
+                        {p.title || <span className="text-warning">未找到元信息（仅 ID）</span>}
+                      </div>
+                      <div className="text-ink-tertiary mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
+                        <span className="font-mono">{p.arxiv_id}</span>
+                        {p.authors && p.authors.length > 0 && (
+                          <span className="truncate">
+                            {p.authors.slice(0, 3).join(", ")}
+                            {p.authors.length > 3 ? " 等" : ""}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
+                  {args?.query ? (
+                    <div className="text-ink-tertiary pt-1 text-[10px]">
+                      来源查询：<span className="font-mono">{String(args.query)}</span>
+                    </div>
+                  ) : null}
                 </div>
+              ) : (
+                args &&
+                Object.keys(args).length > 0 && (
+                  <div className="bg-page mt-1.5 rounded-lg px-2.5 py-1.5">
+                    {Object.entries(args).map(([k, v]) => (
+                      <div key={k} className="flex gap-1.5 text-[11px]">
+                        <span className="text-ink-secondary font-medium">{k}:</span>
+                        <span className="text-ink-tertiary">
+                          {typeof v === "string" ? v : JSON.stringify(v)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )
               )}
             </div>
           </div>

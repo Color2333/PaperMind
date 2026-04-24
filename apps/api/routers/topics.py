@@ -31,7 +31,6 @@ def _topic_dict(t, session=None) -> dict:
         "schedule_time_utc": getattr(t, "schedule_time_utc", 21),
         "enable_date_filter": getattr(t, "enable_date_filter", False),
         "date_filter_days": getattr(t, "date_filter_days", 7),
-        "schedule_time_utc": getattr(t, "schedule_time_utc", 21),
         "paper_count": 0,
         "last_run_at": None,
         "last_run_count": None,
@@ -193,13 +192,26 @@ def ingest_arxiv(
     sort_by: str = Query(
         default="submittedDate", pattern="^(submittedDate|relevance|lastUpdatedDate)$"
     ),
+    days_back: int = Query(
+        default=0,
+        ge=0,
+        le=3650,
+        description="只检索最近 N 天提交的论文，默认 0 = 不限日期（历史关键词搜索）；订阅可传 7/30",
+    ),
 ) -> dict:
-    logger.info("ArXiv ingest: query=%r max_results=%d sort=%s", query, max_results, sort_by)
+    logger.info(
+        "ArXiv ingest: query=%r max_results=%d sort=%s days_back=%d",
+        query,
+        max_results,
+        sort_by,
+        days_back,
+    )
     count, inserted_ids, _ = pipelines.ingest_arxiv(
         query=query,
         max_results=max_results,
         topic_id=topic_id,
         sort_by=sort_by,
+        days_back=days_back,
     )
     # 查询插入论文的基本信息
     papers_info: list[dict] = []

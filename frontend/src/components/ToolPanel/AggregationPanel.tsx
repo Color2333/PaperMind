@@ -2,16 +2,7 @@ import { useState, useCallback } from 'react';
 import { Sparkles, Search as SearchIcon, Loader2 } from 'lucide-react';
 import { MultiSourceSearchBar } from '@/components/search/MultiSourceSearchBar';
 import { paperApi } from '@/services/api';
-
-interface SearchResult {
-  id: string;
-  title: string;
-  authors?: string[];
-  abstract?: string;
-  source: string;
-  url?: string;
-  publishedDate?: string;
-}
+import type { MultiSourcePaper } from '@/types';
 
 interface AggregationPanelProps {
   selectedText: string;
@@ -19,7 +10,10 @@ interface AggregationPanelProps {
 }
 
 export function AggregationPanel({ selectedText, paperId }: AggregationPanelProps) {
-  const [results, setResults] = useState<SearchResult[]>([]);
+  // 当前面板由上游传入 selectedText / paperId，规划中用于基于选中文本做聚合搜索
+  void selectedText;
+  void paperId;
+  const [results, setResults] = useState<MultiSourcePaper[]>([]);
   const [loading, setLoading] = useState(false);
 
   const handleSearch = useCallback(async (query: string, channels: string[]) => {
@@ -59,19 +53,22 @@ export function AggregationPanel({ selectedText, paperId }: AggregationPanelProp
           </div>
         )}
 
-        {results.map((result, idx) => (
-          <div key={result.id || idx} className="mb-3 rounded-lg border border-white/10 p-3">
-            <h4 className="mb-1 text-sm font-medium text-white/90 line-clamp-2">{result.title}</h4>
-            {result.authors && result.authors.length > 0 && (
-              <p className="mb-1 text-xs text-white/40">{result.authors.slice(0, 3).join(', ')}</p>
-            )}
-            {result.source && (
-              <span className="inline-block rounded bg-primary/20 px-2 py-0.5 text-[10px] text-primary">
-                {result.source}
-              </span>
-            )}
-          </div>
-        ))}
+        {results.map((result, idx) => {
+          const primarySource = result.sources?.[0]?.channel;
+          return (
+            <div key={result.id || idx} className="mb-3 rounded-lg border border-white/10 p-3">
+              <h4 className="mb-1 text-sm font-medium text-white/90 line-clamp-2">{result.title}</h4>
+              {result.authors && result.authors.length > 0 && (
+                <p className="mb-1 text-xs text-white/40">{result.authors.slice(0, 3).join(', ')}</p>
+              )}
+              {primarySource && (
+                <span className="inline-block rounded bg-primary/20 px-2 py-0.5 text-[10px] text-primary">
+                  {primarySource}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

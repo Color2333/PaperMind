@@ -21,7 +21,6 @@ import {
   X,
   Rss,
   Loader2,
-  RefreshCw,
   FileText,
   ExternalLink,
   ChevronDown,
@@ -38,13 +37,11 @@ import { useToast } from "@/contexts/ToastContext";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import type {
   Topic,
-  TopicCreate,
-  TopicUpdate,
   ScheduleFrequency,
   KeywordSuggestion,
   IngestPaper,
   TopicFetchResult,
-  MultiSourceSearchResult,
+  MultiSourcePaper,
   ChannelSuggestion,
 } from "@/types";
 import CSFeeds from "./CSFeeds";
@@ -128,7 +125,7 @@ export default function Collect() {
   const [multiQuery, setMultiQuery] = useState("");
   const [multiChannels, setMultiChannels] = useState<string[]>(["arxiv"]);
   const [multiLoading, setMultiLoading] = useState(false);
-  const [multiResults, setMultiResults] = useState<MultiSourceSearchResult["results"]>([]);
+  const [multiResults, setMultiResults] = useState<MultiSourcePaper[]>([]);
   const [multiSuggestions, setMultiSuggestions] = useState<ChannelSuggestion | null>(null);
 
   const handleMultiSearch = useCallback(async (q: string, channels: string[]) => {
@@ -726,28 +723,36 @@ export default function Collect() {
                   共找到 <span className="font-medium text-ink">{multiResults.length}</span> 篇论文
                 </p>
               </div>
-              {multiResults.map((paper, idx) => (
-                <div
-                  key={paper.id || idx}
-                  className="border-border bg-page rounded-xl border p-4 hover:border-ink-tertiary transition-colors"
-                >
-                  <h4 className="mb-1 text-sm font-medium text-ink line-clamp-2">{paper.title}</h4>
-                  {paper.authors && paper.authors.length > 0 && (
-                    <p className="mb-2 text-xs text-ink-tertiary">
-                      {paper.authors.slice(0, 3).join(", ")}
-                      {paper.authors.length > 3 && " et al."}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center rounded bg-primary/20 px-2 py-0.5 text-[10px] text-primary">
-                      {paper.source}
-                    </span>
-                    {paper.publishedDate && (
-                      <span className="text-[10px] text-ink-tertiary">{paper.publishedDate}</span>
+              {multiResults.map((paper: MultiSourcePaper, idx: number) => {
+                const primarySource = paper.sources?.[0]?.channel;
+                return (
+                  <div
+                    key={paper.id || idx}
+                    className="border-border bg-page rounded-xl border p-4 hover:border-ink-tertiary transition-colors"
+                  >
+                    <h4 className="mb-1 text-sm font-medium text-ink line-clamp-2">{paper.title}</h4>
+                    {paper.authors && paper.authors.length > 0 && (
+                      <p className="mb-2 text-xs text-ink-tertiary">
+                        {paper.authors.slice(0, 3).join(", ")}
+                        {paper.authors.length > 3 && " et al."}
+                      </p>
                     )}
+                    <div className="flex items-center gap-2">
+                      {primarySource && (
+                        <span className="inline-flex items-center rounded bg-primary/20 px-2 py-0.5 text-[10px] text-primary">
+                          {primarySource}
+                        </span>
+                      )}
+                      {paper.year && (
+                        <span className="text-[10px] text-ink-tertiary">{paper.year}</span>
+                      )}
+                      {paper.venue && (
+                        <span className="text-[10px] text-ink-tertiary">{paper.venue}</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
