@@ -11,6 +11,9 @@ from packages.storage.repositories import PaperRepository, TagRepository
 
 router = APIRouter()
 
+# 十六进制颜色校验：#RGB 或 #RRGGBB
+_HEX_COLOR_PATTERN = r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$"
+
 
 @router.get("/tags")
 def list_tags() -> dict:
@@ -34,9 +37,12 @@ def list_tags() -> dict:
 
 
 @router.post("/tags")
-def create_tag(name: str, color: str = Query(default="#3b82f6")) -> dict:
+def create_tag(
+    name: str = Query(..., min_length=1, max_length=64),
+    color: str = Query(default="#3b82f6", pattern=_HEX_COLOR_PATTERN),
+) -> dict:
     """创建新标签"""
-    if not name or not name.strip():
+    if not name.strip():
         raise HTTPException(status_code=400, detail="标签名称不能为空")
     with session_scope() as session:
         repo = TagRepository(session)
@@ -55,8 +61,8 @@ def create_tag(name: str, color: str = Query(default="#3b82f6")) -> dict:
 @router.patch("/tags/{tag_id}")
 def update_tag(
     tag_id: UUID,
-    name: str | None = Query(default=None),
-    color: str | None = Query(default=None),
+    name: str | None = Query(default=None, max_length=64),
+    color: str | None = Query(default=None, pattern=_HEX_COLOR_PATTERN),
 ) -> dict:
     """更新标签"""
     with session_scope() as session:

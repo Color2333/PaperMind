@@ -41,7 +41,6 @@ import {
   ArrowUp,
   ArrowDown,
   Plus,
-  X,
   Edit2,
   Trash2,
 } from "lucide-react";
@@ -268,7 +267,12 @@ export default function Papers() {
   /* 删除标签 */
   const handleDeleteTag = useCallback(
     async (tag: TagType) => {
-      if (!window.confirm(`确定要删除标签 "${tag.name}" 吗？`)) {
+      const count = tag.paper_count ?? 0;
+      const warn =
+        count > 0
+          ? `确定要删除标签 "${tag.name}" 吗？\n将同时移除 ${count} 篇论文上的该标签。`
+          : `确定要删除标签 "${tag.name}" 吗？`;
+      if (!window.confirm(warn)) {
         return;
       }
       try {
