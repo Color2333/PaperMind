@@ -55,6 +55,9 @@ import type {
   AuthStatusResponse,
   MultiSourceSearchResult,
   ChannelSuggestion,
+  Tag,
+  TagCreate,
+  TagUpdate,
 } from "@/types";
 
 export type {
@@ -257,6 +260,30 @@ export const topicApi = {
   csFeedDelete: (categoryCode: string) => del<{ deleted: boolean }>(`/cs/feeds/${categoryCode}`),
 };
 
+/* ========== 标签 ========== */
+export const tagApi = {
+  list: () => get<{ items: Tag[] }>("/tags"),
+  create: (name: string, color?: string) => {
+    const params = new URLSearchParams({ name });
+    if (color) params.append("color", color);
+    return post<Tag>(`/tags?${params}`);
+  },
+  update: (id: string, data: { name?: string; color?: string }) => {
+    const params = new URLSearchParams();
+    if (data.name) params.append("name", data.name);
+    if (data.color) params.append("color", data.color);
+    return patch<Tag>(`/tags/${id}?${params}`);
+  },
+  delete: (id: string) => del<{ deleted: string; name: string }>(`/tags/${id}`),
+  getPaperTags: (paperId: string) => get<{ items: Tag[] }>(`/papers/${paperId}/tags`),
+  addPaperTag: (paperId: string, tagId: string) =>
+    post<{ paper_id: string; tag: Tag }>(`/papers/${paperId}/tags?tag_id=${tagId}`),
+  removePaperTag: (paperId: string, tagId: string) =>
+    del<{ paper_id: string; tag_id: string; removed: boolean }>(`/papers/${paperId}/tags/${tagId}`),
+  batchUpdatePaperTags: (paperId: string, tagIds: string[]) =>
+    post<{ paper_id: string; items: Tag[] }>(`/papers/${paperId}/tags/batch`, tagIds),
+};
+
 /* ========== 论文 ========== */
 export const paperApi = {
   latest: (
@@ -271,6 +298,7 @@ export const paperApi = {
       sortBy?: string;
       sortOrder?: string;
       category?: string;
+      tagIds?: string[];
     } = {}
   ) => {
     const params = new URLSearchParams();
@@ -284,6 +312,9 @@ export const paperApi = {
     if (opts.sortBy) params.append("sort_by", opts.sortBy);
     if (opts.sortOrder) params.append("sort_order", opts.sortOrder);
     if (opts.category) params.append("category", opts.category);
+    if (opts.tagIds && opts.tagIds.length > 0) {
+      opts.tagIds.forEach((tid) => params.append("tag_ids", tid));
+    }
     return get<PaperListResponse>(`/papers/latest?${params}`);
   },
   folderStats: () => get<FolderStats>("/papers/folder-stats"),

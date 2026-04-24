@@ -141,7 +141,7 @@ if origins:
 
 # ---------- 数据库迁移 ----------
 
-from packages.storage.db import run_migrations
+from packages.storage.db import run_migrations  # noqa: E402
 
 run_migrations()
 
@@ -160,17 +160,19 @@ from apps.api.routers import (  # noqa: E402
     pipelines,
     sensemaking,
     system,
+    tags,
     topics,
     translate,
     writing,
 )
-from apps.api.routers import (
+from apps.api.routers import (  # noqa: E402
     settings as settings_router,
 )
 
 app.include_router(system.router)
 app.include_router(papers.router)
 app.include_router(topics.router)
+app.include_router(tags.router)
 app.include_router(cs_feeds.router)
 app.include_router(graph.router)
 app.include_router(agent.router)
