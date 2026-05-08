@@ -38,7 +38,6 @@ import type {
   CocitationResponse,
   TodaySummary,
   FolderStats,
-  TopicStats,
   TopicStatsResponse,
   PaperDistributionResponse,
   PaperListResponse,
@@ -56,8 +55,6 @@ import type {
   MultiSourceSearchResult,
   ChannelSuggestion,
   Tag,
-  TagCreate,
-  TagUpdate,
 } from "@/types";
 
 export type {
@@ -77,7 +74,12 @@ export type {
   LoginResponse,
   AuthStatusResponse,
 } from "@/types";
-import { resolveApiBase } from "@/lib/tauri";
+/** 解析 API base URL：优先 VITE_API_BASE → 开发环境 localhost → 生产相对路径 /api */
+export function resolveApiBase(): string {
+  if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
+  if (import.meta.env.DEV) return "http://localhost:8000";
+  return "/api";
+}
 
 function getApiBase(): string {
   return resolveApiBase();

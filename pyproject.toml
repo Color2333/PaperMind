@@ -40,7 +40,6 @@ build-backend = "setuptools.build_meta"
 packages = [
   "apps",
   "apps.api",
-  "apps.desktop",
   "apps.worker",
   "packages",
   "packages.ai",

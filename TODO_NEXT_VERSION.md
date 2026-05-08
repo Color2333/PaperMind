@@ -6,6 +6,8 @@
 
 **背景**：当前 PaperMind 仅支持 arXiv 文章抓取，需要扩展支持 IEEE Xplore 平台的文章获取能力。
 
+> **进度更新（2026-05-08）**：多源架构 + IEEE/OpenAlex/Semantic Scholar/bioRxiv/DBLP 客户端已落地（见 `packages/integrations/`），核心实现部分大量已完成。剩余主要为 Open Access 全文下载、Unpaywall/TechRxiv 接入、合规文档与测试。
+
 ---
 
 ### 📋 任务清单
@@ -17,16 +19,16 @@
 - [ ] 测试 API 连通性和基础查询功能
 
 #### 2. 技术实现
-- [ ] 设计多源架构（统一接口支持 arXiv、IEEE 等）
-- [ ] 实现 IEEE API 客户端模块
-  - [ ] 元数据搜索功能
+- [x] 设计多源架构（统一接口支持 arXiv、IEEE 等） — `channel_base.py` + `aggregator.py`
+- [x] 实现 IEEE API 客户端模块 — `ieee_client.py` + `ieee_channel.py`
+  - [x] 元数据搜索功能
   - [ ] Open Access 全文下载
   - [ ] DOI 解析功能
 - [ ] 集成第三方开放资源
   - [ ] Unpaywall API（开放全文获取）
-  - [ ] Semantic Scholar API（补充元数据）
+  - [x] Semantic Scholar API（补充元数据） — `semantic_scholar_client.py`
   - [ ] TechRxiv 预印本检索
-- [ ] 统一数据模型（兼容不同来源的论文格式）
+- [x] 统一数据模型（兼容不同来源的论文格式） — `channel_base.py`
 
 #### 3. 合规与风险控制
 - [ ] 实现请求频率限制（避免 IP 被封）
@@ -112,5 +114,5 @@
 
 ---
 
-*最后更新：2026-03-03*
+*最后更新：2026-05-08*
 *创建人：老白*

@@ -24,10 +24,6 @@ import {
   Zap,
   Network,
   Calendar,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  AlertTriangle,
   Send,
 } from "lucide-react";
 import { useToast } from "@/contexts/ToastContext";
@@ -1010,7 +1006,6 @@ function PipelineSettings() {
 interface OpResult { success: boolean; message: string; }
 
 function OpsSettings() {
-  const { toast } = useToast();
   const [results, setResults] = useState<Record<string, OpResult>>({});
   const [loadings, setLoadings] = useState<Record<string, boolean>>({});
 

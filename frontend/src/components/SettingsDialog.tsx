@@ -2,14 +2,12 @@
  * 设置弹窗 - LLM 配置 / 邮箱与报告 / Pipeline 运行 / 运维操作
  * @author Color2333
  */
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useToast } from "@/contexts/ToastContext";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
-import { Empty } from "@/components/ui/Empty";
 import {
   llmConfigApi,
   pipelineApi,
@@ -43,13 +41,9 @@ import {
   Pencil,
   RefreshCw,
   CheckCircle2,
-  XCircle,
-  Clock,
-  Activity,
   Play,
   Network,
   Zap,
-  Settings2,
   Link2,
   Calendar,
   AlertTriangle,
@@ -1319,7 +1313,6 @@ function EditEmailConfigInline({
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const { toast } = useToast();
   const [form, setForm] = useState({
     name: config.name,
     smtp_server: config.smtp_server,
