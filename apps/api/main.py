@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
+from apps.api.middleware.demo_mode import DemoModeMiddleware
 from packages.auth import decode_access_token
 from packages.config import get_settings
 from packages.domain.exceptions import AppError
@@ -115,9 +116,10 @@ if settings.auth_password and not settings.auth_secret_key:
 app = FastAPI(title=settings.app_name)
 
 # 中间件注册顺序：Starlette 中间件为倒序执行（最后注册的最先执行）
-# 执行顺序: CORS -> GZip -> Auth -> RequestLog -> 路由处理
+# 执行顺序: CORS -> GZip -> DemoMode -> Auth -> RequestLog -> 路由处理
 app.add_middleware(RequestLogMiddleware)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(DemoModeMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # Starlette 内置跳过 text/event-stream
 
 
