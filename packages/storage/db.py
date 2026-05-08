@@ -253,6 +253,9 @@ def run_migrations() -> None:
         # 初始化标签表
         _init_tags_table(conn)
 
+        # batch_jobs 表
+        _init_batch_jobs_table(conn)
+
 
 def _init_tags_table(conn) -> None:
     """初始化标签表"""
@@ -360,3 +363,32 @@ def _init_existing_papers_action(conn) -> None:
     except Exception:
         conn.rollback()
         logger.debug("init_existing_papers_action skipped (already done or error)")
+
+
+def _init_batch_jobs_table(conn) -> None:
+    """初始化 batch_jobs 表"""
+    try:
+        conn.execute(
+            text("""
+            CREATE TABLE IF NOT EXISTS batch_jobs (
+                id VARCHAR(36) PRIMARY KEY,
+                kind VARCHAR(32) NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                total INTEGER NOT NULL DEFAULT 0,
+                done INTEGER NOT NULL DEFAULT 0,
+                failed INTEGER NOT NULL DEFAULT 0,
+                paper_ids JSON NOT NULL DEFAULT '[]',
+                error_log JSON NOT NULL DEFAULT '{}',
+                created_by VARCHAR(64),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                started_at DATETIME,
+                finished_at DATETIME
+            )
+            """)
+        )
+        _safe_create_index(conn, "ix_batch_jobs_kind", "batch_jobs", "kind")
+        _safe_create_index(conn, "ix_batch_jobs_status", "batch_jobs", "status")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error("Failed to initialize batch_jobs table: %s", e)

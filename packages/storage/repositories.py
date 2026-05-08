@@ -24,6 +24,7 @@ from packages.storage.models import (
     AgentMessage,
     AgentPendingAction,
     AnalysisReport,
+    BatchJob,
     Citation,
     CollectionAction,
     CSCategory,
@@ -564,6 +565,9 @@ class PaperRepository:
         sort_order: str = "desc",
         category: str | None = None,
         tag_ids: list[str] | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        date_field: str = "created_at",
     ) -> tuple[list[Paper], int]:
         """分页查询论文，返回 (papers, total_count)"""
         filters = []
@@ -597,7 +601,30 @@ class PaperRepository:
         if status and status in ("unread", "skimmed", "deep_read"):
             filters.append(Paper.read_status == ReadStatus(status))
 
-        if date_str:
+        # 日期范围筛选（start_date/end_date 优先于 date_str）
+        if start_date or end_date:
+            col = Paper.created_at if date_field == "created_at" else Paper.publication_date
+            try:
+                if start_date:
+                    d = date.fromisoformat(start_date)
+                    if date_field == "publication_date":
+                        filters.append(col >= d)
+                    else:
+                        filters.append(col >= datetime(d.year, d.month, d.day, tzinfo=UTC))
+                if end_date:
+                    d = date.fromisoformat(end_date)
+                    if date_field == "publication_date":
+                        # publication_date 是 Date 类型，取 < 次日即可包含当天
+                        from datetime import timedelta as _td
+
+                        filters.append(col < d + _td(days=1))
+                    else:
+                        filters.append(
+                            col < datetime(d.year, d.month, d.day, tzinfo=UTC) + timedelta(days=1)
+                        )
+            except ValueError:
+                pass
+        elif date_str:
             try:
                 d = date.fromisoformat(date_str)
                 day_start = datetime(d.year, d.month, d.day, tzinfo=UTC)
@@ -1865,3 +1892,71 @@ class CSFeedRepository:
                 select(CSFeedSubscription).where(CSFeedSubscription.enabled.is_(True))
             ).scalars()
         )
+
+
+class BatchJobRepository(BaseQuery):
+    def create(self, kind: str, paper_ids: list[str], created_by: str = "agent") -> BatchJob:
+        job = BatchJob(
+            kind=kind,
+            paper_ids=paper_ids,
+            total=len(paper_ids),
+            created_by=created_by,
+        )
+        self.session.add(job)
+        self.session.flush()
+        return job
+
+    def get(self, job_id: str) -> BatchJob | None:
+        return self.session.get(BatchJob, job_id)
+
+    def claim_next(self) -> BatchJob | None:
+        """原子拿一条 pending 改成 running"""
+        job = self.session.execute(
+            select(BatchJob)
+            .where(BatchJob.status == "pending")
+            .order_by(BatchJob.created_at.asc())
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        ).scalar_one_or_none()
+        if job:
+            job.status = "running"
+            job.started_at = datetime.now(UTC)
+            self.session.flush()
+        return job
+
+    def mark_progress(
+        self,
+        job_id: str,
+        done_delta: int = 0,
+        failed_delta: int = 0,
+        error_patch: dict | None = None,
+    ) -> None:
+        job = self.get(job_id)
+        if not job:
+            return
+        job.done = (job.done or 0) + done_delta
+        job.failed = (job.failed or 0) + failed_delta
+        if error_patch:
+            log = dict(job.error_log or {})
+            log.update(error_patch)
+            job.error_log = log
+        self.session.flush()
+
+    def mark_finished(self, job_id: str, status: str) -> None:
+        job = self.get(job_id)
+        if not job:
+            return
+        job.status = status
+        job.finished_at = datetime.now(UTC)
+        self.session.flush()
+
+    def recover_stale_running(self) -> int:
+        """启动时把 running 状态的恢复成 failed（幂等）"""
+        stale = list(
+            self.session.execute(select(BatchJob).where(BatchJob.status == "running")).scalars()
+        )
+        for job in stale:
+            job.status = "failed"
+            job.finished_at = datetime.now(UTC)
+        self.session.flush()
+        return len(stale)

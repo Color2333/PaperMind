@@ -146,6 +146,20 @@ from packages.storage.db import run_migrations  # noqa: E402
 run_migrations()
 
 
+# ---------- 启动 batch consumer ----------
+from packages.agent_core import batch_consumer as _batch  # noqa: E402
+
+
+@app.on_event("startup")
+def _start_batch_consumer():
+    _batch.start()
+
+
+@app.on_event("shutdown")
+def _stop_batch_consumer():
+    _batch.stop()
+
+
 # ---------- 注册路由 ----------
 
 from apps.api.routers import (  # noqa: E402

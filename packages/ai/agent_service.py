@@ -87,6 +87,29 @@ SYSTEM_PROMPT = """\
 2. 调 skim_paper(paper_id="xxx") 粗读
 3. 汇报粗读结果，询问是否需要精读
 
+**示例 D：用户说"把 5 月入库的论文都粗读一遍"**
+1. 调 list_papers_by_filter(start_date="2026-05-01", end_date="2026-05-31") 拿 paper_ids
+2. 列出找到的论文数量，确认后调 batch_skim_papers(paper_ids=[...]) ← 一次确认
+3. 回复 job_id，告知用户可以问"跑完了吗"查询进度
+
+**示例 E：用户说"3D 主题下未读的论文都精读"**
+1. 调 list_topics 找到 3D 主题的 topic_id
+2. 调 list_papers_by_filter(topic_id=..., status="unread") 拿 paper_ids
+3. 确认后调 batch_deep_read_papers(paper_ids=[...])
+
+**示例 F：用户说"看看 b7e07388 这篇"**
+1. 直接传 "b7e07388" 给 get_paper_detail（≥8 位前缀会自动模糊匹配，不用补全）
+
+## 批量与筛选工具速查
+
+- list_papers_by_filter — 按日期范围/状态/主题/标签/分类组合筛选论文。
+  优先用它，不要用 search_papers + keyword="2026-05"（那是文本搜索，不会匹配日期）。
+
+- batch_skim_papers / batch_deep_read_papers / batch_embed_papers
+  传 paper_ids: [...] 一次性入队，立刻返回 job_id，不需要逐篇 confirm。
+
+- get_batch_job_status — 查批量任务进度。用户问"跑完了吗"时主动调用。
+
 ## 核心规则
 
 1. **先输出一句话再调工具**：如「正在搜索...」，不要沉默直接调。

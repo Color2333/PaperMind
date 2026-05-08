@@ -16,6 +16,7 @@ from packages.ai.pipelines import PaperPipelines
 from packages.ai.rag_service import RAGService
 from packages.storage.db import check_db_connection, session_scope
 from packages.storage.repositories import (
+    BatchJobRepository,
     PaperRepository,
     PipelineRunRepository,
     TopicRepository,
@@ -27,19 +28,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _parse_uuid(val: str) -> UUID | None:
-    """解析 UUID 字符串，失败返回 None"""
+def _resolve_paper_id(val: str) -> tuple[UUID | None, str | None]:
+    """返回 (uuid, error_msg)。支持完整 UUID 或 ≥8 位前缀模糊匹配。"""
+    val = (val or "").strip()
     try:
-        return UUID(val)
+        return UUID(val), None
     except ValueError:
-        return None
+        pass
+    if len(val) < 8 or not all(c in "0123456789abcdef-" for c in val.lower()):
+        return None, "无效的 paper_id 格式（需完整 UUID 或 ≥8 位 hex 前缀）"
+    from sqlalchemy import select as sa_select
+
+    from packages.storage.models import Paper
+
+    with session_scope() as s:
+        rows = list(
+            s.execute(sa_select(Paper.id).where(Paper.id.ilike(f"{val}%")).limit(2)).scalars()
+        )
+    if not rows:
+        return None, f"未找到匹配 '{val}' 的论文"
+    if len(rows) > 1:
+        return None, f"前缀 '{val}' 匹配多篇论文，请使用完整 UUID"
+    return UUID(rows[0]), None
 
 
 def _require_paper(paper_id: str):
-    """校验 paper_id 格式 + 查库，返回 (paper, ToolResult|None)"""
-    pid = _parse_uuid(paper_id)
-    if pid is None:
-        return None, ToolResult(success=False, summary="无效的 paper_id 格式")
+    """校验 paper_id（支持短 ID 前缀）+ 查库"""
+    pid, err = _resolve_paper_id(paper_id)
+    if err:
+        return None, ToolResult(success=False, summary=err)
+    assert pid is not None
     with session_scope() as session:
         try:
             paper = PaperRepository(session).get_by_id(pid)
@@ -426,6 +444,115 @@ TOOL_REGISTRY: list[ToolDef] = [
         },
         requires_confirm=True,
     ),
+    ToolDef(
+        name="list_papers_by_filter",
+        description="按日期范围/状态/主题/标签/分类组合筛选论文，优先用它按日期筛选，不要用 search_papers + keyword 传日期",
+        parameters={
+            "type": "object",
+            "properties": {
+                "start_date": {
+                    "type": "string",
+                    "description": '起始日期 ISO 格式 "2026-05-01"',
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": '结束日期 ISO 格式 "2026-05-31"',
+                },
+                "date_field": {
+                    "type": "string",
+                    "description": '日期字段 "created_at" 或 "publication_date"',
+                    "default": "created_at",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "阅读状态：unread / skimmed / deep_read",
+                },
+                "topic_id": {"type": "string", "description": "主题 UUID"},
+                "tag_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "标签 UUID 列表",
+                },
+                "search": {"type": "string", "description": "文本搜索（标题/摘要）"},
+                "sort_by": {
+                    "type": "string",
+                    "description": "排序字段",
+                    "default": "created_at",
+                },
+                "sort_order": {
+                    "type": "string",
+                    "description": "排序方向 asc/desc",
+                    "default": "desc",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "返回数量上限",
+                    "default": 100,
+                },
+            },
+        },
+        requires_confirm=False,
+    ),
+    ToolDef(
+        name="batch_skim_papers",
+        description="批量粗读多篇论文，传入 paper_ids 列表一次性入队，立刻返回 job_id",
+        parameters={
+            "type": "object",
+            "properties": {
+                "paper_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "论文 UUID 列表",
+                },
+            },
+            "required": ["paper_ids"],
+        },
+        requires_confirm=True,
+    ),
+    ToolDef(
+        name="batch_deep_read_papers",
+        description="批量精读多篇论文，传入 paper_ids 列表一次性入队，立刻返回 job_id",
+        parameters={
+            "type": "object",
+            "properties": {
+                "paper_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "论文 UUID 列表",
+                },
+            },
+            "required": ["paper_ids"],
+        },
+        requires_confirm=True,
+    ),
+    ToolDef(
+        name="batch_embed_papers",
+        description="批量向量化多篇论文，传入 paper_ids 列表一次性入队，立刻返回 job_id",
+        parameters={
+            "type": "object",
+            "properties": {
+                "paper_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "论文 UUID 列表",
+                },
+            },
+            "required": ["paper_ids"],
+        },
+        requires_confirm=True,
+    ),
+    ToolDef(
+        name="get_batch_job_status",
+        description="查询批量任务进度（done/total/failed），用户问'跑完了吗'时调用",
+        parameters={
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "批量任务 ID"},
+            },
+            "required": ["job_id"],
+        },
+        requires_confirm=False,
+    ),
 ]
 
 
@@ -469,6 +596,11 @@ def _get_tool_handlers() -> dict:
         "reasoning_analysis": _reasoning_analysis,
         "identify_research_gaps": _identify_research_gaps,
         "writing_assist": _writing_assist,
+        "list_papers_by_filter": _list_papers_by_filter,
+        "batch_skim_papers": _batch_skim_papers,
+        "batch_deep_read_papers": _batch_deep_read_papers,
+        "batch_embed_papers": _batch_embed_papers,
+        "get_batch_job_status": _get_batch_job_status,
     }
 
 
@@ -1534,3 +1666,110 @@ def _writing_assist(action: str, text: str) -> ToolResult:
         },
         summary=f"「{label}」处理完成:\n\n{content[:2000]}",
     )
+
+
+def _list_papers_by_filter(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    date_field: str = "created_at",
+    status: str | None = None,
+    topic_id: str | None = None,
+    tag_ids: list[str] | None = None,
+    search: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    limit: int = 100,
+) -> ToolResult:
+    try:
+        with session_scope() as session:
+            papers, total = PaperRepository(session).list_paginated(
+                page=1,
+                page_size=limit,
+                start_date=start_date,
+                end_date=end_date,
+                date_field=date_field,
+                status=status,
+                topic_id=topic_id,
+                tag_ids=tag_ids,
+                search=search,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+        items = [
+            {
+                "paper_id": str(p.id),
+                "title": p.title,
+                "created_at": p.created_at.isoformat(),
+                "publication_date": p.publication_date.isoformat() if p.publication_date else None,
+                "read_status": p.read_status.value,
+            }
+            for p in papers
+        ]
+        return ToolResult(
+            success=True,
+            data={"items": items, "total": total},
+            summary=f"找到 {total} 篇（返回前 {len(items)} 篇）",
+        )
+    except Exception as exc:
+        logger.exception("list_papers_by_filter failed: %s", exc)
+        return ToolResult(success=False, summary=f"筛选论文失败: {exc!s}")
+
+
+def _create_batch_job(kind: str, paper_ids: list[str]) -> ToolResult:
+    if not paper_ids:
+        return ToolResult(success=False, summary="paper_ids 不能为空")
+    try:
+        with session_scope() as session:
+            repo = BatchJobRepository(session)
+            job = repo.create(kind=kind, paper_ids=paper_ids, created_by="agent")
+            job_id = job.id
+        label = {"skim": "粗读", "deep_read": "精读", "embed": "向量化"}.get(kind, kind)
+        return ToolResult(
+            success=True,
+            data={"job_id": job_id, "kind": kind, "total": len(paper_ids)},
+            summary=f"已提交批量{label}任务：{len(paper_ids)} 篇，job_id={job_id[:8]}...",
+        )
+    except Exception as exc:
+        logger.exception("create batch job (%s) failed: %s", kind, exc)
+        return ToolResult(success=False, summary=f"创建批量任务失败: {exc!s}")
+
+
+def _batch_skim_papers(paper_ids: list[str]) -> ToolResult:
+    return _create_batch_job("skim", paper_ids)
+
+
+def _batch_deep_read_papers(paper_ids: list[str]) -> ToolResult:
+    return _create_batch_job("deep_read", paper_ids)
+
+
+def _batch_embed_papers(paper_ids: list[str]) -> ToolResult:
+    return _create_batch_job("embed", paper_ids)
+
+
+def _get_batch_job_status(job_id: str) -> ToolResult:
+    try:
+        with session_scope() as session:
+            job = BatchJobRepository(session).get(job_id)
+        if not job:
+            return ToolResult(success=False, summary=f"批量任务 {job_id[:8]}... 不存在")
+        label = {"skim": "粗读", "deep_read": "精读", "embed": "向量化"}.get(job.kind, job.kind)
+        return ToolResult(
+            success=True,
+            data={
+                "job_id": str(job.id),
+                "kind": job.kind,
+                "status": job.status,
+                "total": job.total,
+                "done": job.done,
+                "failed": job.failed,
+                "error_log": job.error_log,
+            },
+            summary=(
+                f"批量{label}任务：{job.done}/{job.total} 完成"
+                + (f"，{job.failed} 篇失败" if job.failed else "")
+                + f"（状态: {job.status}）"
+            ),
+        )
+    except Exception as exc:
+        logger.exception("get_batch_job_status failed: %s", exc)
+        return ToolResult(success=False, summary=f"查询任务状态失败: {exc!s}")
