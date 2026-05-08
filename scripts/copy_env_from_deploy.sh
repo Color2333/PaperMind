@@ -59,15 +59,22 @@ echo
 
 # Step 4: 验证配置
 echo "🔍 验证配置文件..."
-if grep -q "ZHIPU_API_KEY=" "$PROJECT_ROOT/.env"; then
+if grep -q "XIAOMI_API_KEY=" "$PROJECT_ROOT/.env"; then
+    api_key=$(grep "XIAOMI_API_KEY=" "$PROJECT_ROOT/.env" | cut -d'=' -f2)
+    if [ -n "$api_key" ]; then
+        echo "✅ XIAOMI_API_KEY 已配置"
+    else
+        echo "⚠️  XIAOMI_API_KEY 为空，请编辑 .env 填写"
+    fi
+elif grep -q "ZHIPU_API_KEY=" "$PROJECT_ROOT/.env"; then
     api_key=$(grep "ZHIPU_API_KEY=" "$PROJECT_ROOT/.env" | cut -d'=' -f2)
     if [ -n "$api_key" ]; then
-        echo "✅ ZHIPU_API_KEY 已配置"
+        echo "✅ ZHIPU_API_KEY 已配置（如需切换至小米 MiMo，请改 LLM_PROVIDER=xiaomi 并填 XIAOMI_API_KEY）"
     else
-        echo "⚠️  ZHIPU_API_KEY 为空，请编辑 .env 填写"
+        echo "⚠️  未配置任何 LLM API Key，请编辑 .env 填写 XIAOMI_API_KEY 或 ZHIPU_API_KEY"
     fi
 else
-    echo "⚠️  未找到 ZHIPU_API_KEY 配置项"
+    echo "⚠️  未找到 LLM API Key 配置项（XIAOMI_API_KEY / ZHIPU_API_KEY）"
 fi
 echo
 

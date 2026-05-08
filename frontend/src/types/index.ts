@@ -713,7 +713,7 @@ export interface ChatMessage {
 }
 
 /* ========== LLM 配置 ========== */
-export type LLMProvider = "openai" | "anthropic" | "zhipu";
+export type LLMProvider = "openai" | "anthropic" | "zhipu" | "xiaomi";
 
 export interface LLMProviderConfig {
   id: string;

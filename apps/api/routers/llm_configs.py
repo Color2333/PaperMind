@@ -26,7 +26,7 @@ class LLMConfigItem(BaseModel):
 
 class LLMConfigCreate(BaseModel):
     name: str = Field(..., description="配置名称")
-    provider: str = Field(..., description="提供商：zhipu/openai/anthropic/siliconflow")
+    provider: str = Field(..., description="提供商：xiaomi/zhipu/openai/anthropic/siliconflow")
     api_key: str = Field(..., description="API Key")
     api_base_url: str | None = Field(None, description="自定义 API Base URL")
     model_skim: str = Field(..., description="粗读/简单任务模型")

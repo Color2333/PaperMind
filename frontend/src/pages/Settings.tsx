@@ -57,6 +57,11 @@ const NAV_ITEMS: { key: SettingsTab; label: string; icon: typeof Cpu }[] = [
 ];
 
 const PROVIDER_PRESETS: Record<string, { label: string; base_url: string; models: Record<string, string> }> = {
+  xiaomi: {
+    label: "小米 MiMo",
+    base_url: "https://token-plan-cn.xiaomimimo.com/v1",
+    models: { model_skim: "mimo-v2-omni", model_deep: "mimo-v2.5-pro", model_vision: "mimo-v2.5", model_embedding: "text-embedding-v4", model_fallback: "mimo-v2.5-pro" },
+  },
   zhipu: {
     label: "智谱 AI",
     base_url: "https://open.bigmodel.cn/api/paas/v4/",
@@ -125,11 +130,13 @@ export default function SettingsPage() {
 /* ======== LLM 设置 ======== */
 function ProviderBadge({ provider }: { provider: string }) {
   const colors: Record<string, string> = {
+    xiaomi: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
     zhipu: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
     openai: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
     anthropic: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
   };
   const labels: Record<string, string> = {
+    xiaomi: "小米 MiMo",
     zhipu: "智谱",
     openai: "OpenAI",
     anthropic: "Anthropic",
@@ -330,14 +337,14 @@ function ConfigModal({ config, onClose, onSaved }: { config?: any; onClose: () =
   const { toast } = useToast();
   const [form, setForm] = useState({
     name: config?.name || "",
-    provider: config?.provider || "zhipu",
+    provider: config?.provider || "xiaomi",
     api_key: "",
-    api_base_url: config?.api_base_url || PROVIDER_PRESETS.zhipu.base_url,
-    model_skim: config?.model_skim || "glm-4.7",
-    model_deep: config?.model_deep || "glm-4.7",
-    model_vision: config?.model_vision || "glm-4.6v",
-    model_embedding: config?.model_embedding || "embedding-3",
-    model_fallback: config?.model_fallback || "glm-4.7",
+    api_base_url: config?.api_base_url || PROVIDER_PRESETS.xiaomi.base_url,
+    model_skim: config?.model_skim || "mimo-v2-omni",
+    model_deep: config?.model_deep || "mimo-v2.5-pro",
+    model_vision: config?.model_vision || "mimo-v2.5",
+    model_embedding: config?.model_embedding || "text-embedding-v4",
+    model_fallback: config?.model_fallback || "mimo-v2.5-pro",
   });
   const [showKey, setShowKey] = useState(false);
   const [submitting, setSubmitting] = useState(false);

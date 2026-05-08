@@ -91,7 +91,7 @@ class TopicUpdate(BaseModel):
 
 class LLMProviderCreate(BaseModel):
     name: str
-    provider: str  # openai / anthropic / zhipu
+    provider: str  # openai / anthropic / zhipu / xiaomi
     api_key: str
     api_base_url: str | None = None
     model_skim: str

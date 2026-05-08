@@ -41,17 +41,22 @@ class Settings(BaseSettings):
         "https://pm.vibingu.cn"  # 自定义域名 HTTPS
     )
 
-    # LLM Provider: openai / anthropic / zhipu
-    llm_provider: str = "zhipu"
-    llm_model_skim: str = "glm-4.7"
-    llm_model_deep: str = "glm-4.7"
-    llm_model_vision: str = "glm-4.6v"
-    llm_model_fallback: str = "glm-4.7"
-    embedding_model: str = "embedding-3"
+    # LLM Provider: openai / anthropic / zhipu / xiaomi
+    llm_provider: str = "xiaomi"
+    llm_model_skim: str = "mimo-v2-omni"
+    llm_model_deep: str = "mimo-v2.5-pro"
+    llm_model_vision: str = "mimo-v2.5"
+    llm_model_fallback: str = "mimo-v2.5-pro"
+    # Embedding 独立 provider（小米 MiMo 不提供 embedding，默认走阿里百炼 DashScope）
+    embedding_model: str = "text-embedding-v4"
+    embedding_api_key: str | None = None
+    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    embedding_dimensions: int = 1024
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     zhipu_api_key: str | None = None
+    xiaomi_api_key: str | None = None
     semantic_scholar_api_key: str | None = None
     openalex_email: str | None = None
     ieee_api_key: str | None = None

@@ -110,6 +110,17 @@ const PROVIDER_PRESETS: Record<
   string,
   { label: string; base_url: string; models: Partial<LLMProviderCreate> }
 > = {
+  xiaomi: {
+    label: "小米 MiMo",
+    base_url: "https://token-plan-cn.xiaomimimo.com/v1",
+    models: {
+      model_skim: "mimo-v2-omni",
+      model_deep: "mimo-v2.5-pro",
+      model_vision: "mimo-v2.5",
+      model_embedding: "text-embedding-v4",
+      model_fallback: "mimo-v2.5-pro",
+    },
+  },
   zhipu: {
     label: "智谱 AI",
     base_url: "https://open.bigmodel.cn/api/paas/v4/",
@@ -334,6 +345,7 @@ function LLMTab() {
 
 function ProviderBadge({ provider }: { provider: string }) {
   const colors: Record<string, string> = {
+    xiaomi: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
     zhipu: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
     openai:
       "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
@@ -341,6 +353,7 @@ function ProviderBadge({ provider }: { provider: string }) {
       "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
   };
   const labels: Record<string, string> = {
+    xiaomi: "小米 MiMo",
     zhipu: "智谱",
     openai: "OpenAI",
     anthropic: "Anthropic",
@@ -364,14 +377,14 @@ function AddConfigInline({
 }) {
   const [form, setForm] = useState<LLMProviderCreate>({
     name: "",
-    provider: "zhipu",
+    provider: "xiaomi",
     api_key: "",
-    api_base_url: PROVIDER_PRESETS.zhipu.base_url,
-    model_skim: PROVIDER_PRESETS.zhipu.models.model_skim || "",
-    model_deep: PROVIDER_PRESETS.zhipu.models.model_deep || "",
-    model_vision: PROVIDER_PRESETS.zhipu.models.model_vision || "",
-    model_embedding: PROVIDER_PRESETS.zhipu.models.model_embedding || "",
-    model_fallback: PROVIDER_PRESETS.zhipu.models.model_fallback || "",
+    api_base_url: PROVIDER_PRESETS.xiaomi.base_url,
+    model_skim: PROVIDER_PRESETS.xiaomi.models.model_skim || "",
+    model_deep: PROVIDER_PRESETS.xiaomi.models.model_deep || "",
+    model_vision: PROVIDER_PRESETS.xiaomi.models.model_vision || "",
+    model_embedding: PROVIDER_PRESETS.xiaomi.models.model_embedding || "",
+    model_fallback: PROVIDER_PRESETS.xiaomi.models.model_fallback || "",
   });
   const [showKey, setShowKey] = useState(false);
   const [submitting, setSubmitting] = useState(false);
