@@ -56,4 +56,10 @@ PRESET_MODEL_CONFIGS = {
         ModelTier.PREMIUM: "glm-4.7",  # 统一使用 GLM-4.7
         ModelTier.VISION: "glm-4.6v",  # 视觉专用
     },
+    "xiaomi": {
+        ModelTier.ECONOMY: "mimo-v2-omni",  # 经济型：多模态轻量
+        ModelTier.STANDARD: "mimo-v2.5-pro",  # 标准型：纯文本强推理
+        ModelTier.PREMIUM: "mimo-v2.5-pro",  # 高级型：纯文本强推理
+        ModelTier.VISION: "mimo-v2.5",  # 视觉专用：支持多模态
+    },
 }

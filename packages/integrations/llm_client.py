@@ -1,5 +1,5 @@
 """
-LLM 提供者抽象层 - OpenAI / Anthropic / ZhipuAI / Pseudo
+LLM 提供者抽象层 - OpenAI / Anthropic / ZhipuAI / Xiaomi MiMo / Pseudo
 支持从数据库动态加载激活的 LLM 配置
 @author Color2333
 """
@@ -14,8 +14,11 @@ import re
 import socket
 import threading
 import time
-from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from packages.config import get_settings
 
@@ -144,6 +147,9 @@ def _load_active_config() -> LLMConfig:
         if settings.llm_provider == "zhipu":
             api_key = settings.zhipu_api_key
             base_url = "https://open.bigmodel.cn/api/paas/v4/"
+        elif settings.llm_provider == "xiaomi":
+            api_key = settings.xiaomi_api_key
+            base_url = "https://token-plan-cn.xiaomimimo.com/v1"
         elif settings.llm_provider == "openai":
             api_key = settings.openai_api_key
         elif settings.llm_provider == "anthropic":
@@ -177,6 +183,7 @@ def invalidate_llm_config_cache() -> None:
 # 预置的 provider → base_url 映射
 PROVIDER_BASE_URLS: dict[str, str] = {
     "zhipu": "https://open.bigmodel.cn/api/paas/v4/",
+    "xiaomi": "https://token-plan-cn.xiaomimimo.com/v1",
     "openai": "https://api.openai.com/v1",
     "anthropic": "",
 }
@@ -284,7 +291,7 @@ class LLMClient:
         max_tokens: int | None = None,
     ) -> LLMResult:
         cfg = self._config()
-        if cfg.provider in ("openai", "zhipu") and cfg.api_key:
+        if cfg.provider in ("openai", "zhipu", "xiaomi") and cfg.api_key:
             return self._call_openai_compatible(
                 prompt,
                 stage,
@@ -370,7 +377,7 @@ class LLMClient:
         """发送图片 + 文本给 Vision 模型（GLM-4.6V 等）"""
         cfg = self._config()
         model = cfg.model_vision or cfg.model_deep
-        if cfg.provider in ("openai", "zhipu") and cfg.api_key:
+        if cfg.provider in ("openai", "zhipu", "xiaomi") and cfg.api_key:
             try:
                 base_url = self._resolve_base_url(cfg)
                 client = _get_openai_client(cfg.api_key or "", base_url)
@@ -422,11 +429,58 @@ class LLMClient:
 
     def embed_text(self, text: str, dimensions: int = 1536) -> list[float]:
         cfg = self._config()
-        if cfg.provider in ("openai", "zhipu") and cfg.api_key:
+        # 优先使用独立的 embedding 配置（适用于 chat 与 embedding 不同 provider 的场景，
+        # 例如 chat 走小米 MiMo，embedding 走阿里百炼 DashScope）
+        if self.settings.embedding_api_key:
+            maybe = self._embed_dedicated(text)
+            if maybe:
+                return maybe
+        if cfg.provider in ("openai", "zhipu", "xiaomi") and cfg.api_key:
             maybe = self._embed_openai_compatible(text, cfg)
             if maybe:
                 return maybe
         return self._pseudo_embedding(text, dimensions)
+
+    def _embed_dedicated(self, text: str) -> list[float] | None:
+        """使用独立配置的 embedding provider（OpenAI 兼容协议）"""
+        if not text:
+            return None
+        try:
+            api_key = self.settings.embedding_api_key or ""
+            base_url = self.settings.embedding_base_url or None
+            model = self.settings.embedding_model
+            client = _get_openai_client(api_key, base_url)
+            kwargs: dict = {"model": model, "input": text}
+            if self.settings.embedding_dimensions:
+                kwargs["dimensions"] = self.settings.embedding_dimensions
+            response = client.embeddings.create(**kwargs)
+            vector = response.data[0].embedding
+            usage = response.usage
+            in_tokens = getattr(usage, "total_tokens", None) or getattr(
+                usage, "prompt_tokens", None
+            )
+            in_cost, _ = self._estimate_cost(
+                model=model,
+                input_tokens=in_tokens,
+                output_tokens=0,
+            )
+            self.trace_result(
+                LLMResult(
+                    content="",
+                    input_tokens=in_tokens,
+                    output_tokens=0,
+                    input_cost_usd=in_cost,
+                    output_cost_usd=0.0,
+                    total_cost_usd=in_cost,
+                ),
+                stage="embed",
+                model=model,
+                prompt_digest=f"embed:{text[:80]}",
+            )
+            return [float(v) for v in vector]
+        except Exception as exc:
+            logger.warning("Dedicated embedding call failed: %s", exc)
+            return None
 
     def chat_stream(
         self,
@@ -436,7 +490,7 @@ class LLMClient:
     ) -> Iterator[StreamEvent]:
         """Stream chat completions with optional tool calling support"""
         cfg = self._config()
-        if cfg.provider in ("openai", "zhipu") and cfg.api_key:
+        if cfg.provider in ("openai", "zhipu", "xiaomi") and cfg.api_key:
             yield from self._chat_stream_openai_compatible(messages, tools, max_tokens, cfg)
         elif cfg.provider == "anthropic" and cfg.api_key:
             yield from self._chat_stream_anthropic_fallback(messages, max_tokens, cfg)
@@ -974,6 +1028,17 @@ class LLMClient:
             ("glm-4-flash", 0.01, 0.01),
             ("glm-4v", 0.14, 0.14),
             ("glm-4", 0.1, 0.1),
+            # 小米 MiMo（套餐内 Credits 计费，此处为占位估值，仅用于成本展示）
+            ("mimo-v2.5-pro", 0.5, 1.5),
+            ("mimo-v2.5-tts", 0.2, 0.2),
+            ("mimo-v2.5", 0.3, 0.9),
+            ("mimo-v2-pro", 0.5, 1.5),
+            ("mimo-v2-omni", 0.3, 0.9),
+            ("mimo-v2-tts", 0.2, 0.2),
+            # 阿里百炼 DashScope embedding（占位估值）
+            ("text-embedding-v4", 0.05, 0.0),
+            ("text-embedding-v3", 0.05, 0.0),
+            ("text-embedding-v2", 0.05, 0.0),
             ("embedding", 0.005, 0.0),
         ]
         in_million = 1.0

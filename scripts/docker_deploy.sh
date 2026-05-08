@@ -24,7 +24,7 @@ if [ ! -f "$DEPLOY_DIR/.env" ]; then
     echo "✅ 已创建 $DEPLOY_DIR/.env"
     echo
     echo "❗ 请编辑 $DEPLOY_DIR/.env 填写以下配置:"
-    echo "   - ZHIPU_API_KEY (或其他 LLM API Key)"
+    echo "   - XIAOMI_API_KEY (小米 MiMo，默认 provider) 或 ZHIPU_API_KEY/其他 LLM API Key"
     echo "   - SMTP_USER (邮箱地址)"
     echo "   - SMTP_PASSWORD (SMTP 授权码)"
     echo "   - NOTIFY_DEFAULT_TO (接收日报的邮箱)"
