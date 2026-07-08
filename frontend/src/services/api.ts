@@ -405,6 +405,28 @@ export const ingestApi = {
   importStatus: (taskId: string) => get<ImportTaskStatus>(`/ingest/references/status/${taskId}`),
 };
 
+export interface BilingualSegment {
+  id: string;
+  type: string;
+  content: string;
+  translation?: string;
+  pageNumber?: number;
+}
+
+/* ========== 翻译 ========== */
+export const translateApi = {
+  startBilingualPdf: (paperId: string, mode: "fast" | "layout", targetLang = "zh") =>
+    post<{ task_id: string; status: string; message: string }>(`/translate/bilingual-pdf`, {
+      paper_id: paperId,
+      target_lang: targetLang,
+      mode,
+    }),
+  getBilingualPdfCache: (paperId: string, mode: "fast" | "layout", targetLang = "zh") =>
+    get<{ cached: boolean; segments?: BilingualSegment[]; pdf_url?: string }>(
+      `/translate/bilingual-pdf/${paperId}?target_lang=${targetLang}&mode=${mode}`
+    ),
+};
+
 /* ========== Pipeline ========== */
 export const pipelineApi = {
   skim: (paperId: string) => post<SkimReport>(`/pipelines/skim/${paperId}`),

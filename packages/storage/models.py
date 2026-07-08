@@ -614,6 +614,31 @@ class SchemaPaperInteraction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
+class PaperTranslation(Base):
+    """论文翻译缓存（快速模式分段译文 / 布局保留模式双语 PDF 路径）"""
+
+    __tablename__ = "paper_translations"
+    __table_args__ = (
+        UniqueConstraint("paper_id", "target_lang", "mode", name="uq_paper_translation"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    paper_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("papers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    target_lang: Mapped[str] = mapped_column(String(16), nullable=False, default="zh")
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="fast")
+    segments: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    bilingual_pdf_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
 class BatchJob(Base):
     __tablename__ = "batch_jobs"
 

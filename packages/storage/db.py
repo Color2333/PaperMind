@@ -183,6 +183,33 @@ def run_migrations() -> None:
         except Exception:
             conn.rollback()
 
+        # paper_translations 表（翻译缓存）
+        try:
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS paper_translations (
+                    id VARCHAR(36) PRIMARY KEY,
+                    paper_id VARCHAR(36) NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                    target_lang VARCHAR(16) NOT NULL DEFAULT 'zh',
+                    mode VARCHAR(16) NOT NULL DEFAULT 'fast',
+                    segments JSON,
+                    bilingual_pdf_path VARCHAR(512),
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(paper_id, target_lang, mode)
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_paper_translations_paper_id "
+                    "ON paper_translations (paper_id)"
+                )
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
         # collection_actions + action_papers 表
         try:
             conn.execute(
