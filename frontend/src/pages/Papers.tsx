@@ -2,14 +2,16 @@
  * Papers - 论文库（分页 + 文件夹/日期分类导航）
  * @author Color2333
  */
-import { useEffect, useState, useCallback, useMemo, useRef, memo } from "react";
+import { useEffect, useState, useCallback, useMemo, memo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Badge, Empty, Spinner, Modal, Input } from "@/components/ui";
+import { Button, Badge, Empty, Spinner } from "@/components/ui";
 import { PaperListSkeleton } from "@/components/Skeleton";
+import { IngestModal, TagModal, ActionBadge } from "@/components/papers";
+import { usePaperListFilters } from "@/hooks/usePaperListFilters";
 import { useToast } from "@/contexts/ToastContext";
-import { paperApi, ingestApi, topicApi, pipelineApi, actionApi, tasksApi, tagApi } from "@/services/api";
+import { paperApi, topicApi, pipelineApi, actionApi, tasksApi, tagApi } from "@/services/api";
 import { formatDate, truncate } from "@/lib/utils";
-import type { Paper, Topic, FolderStats, CollectionAction, Tag as TagType } from "@/types";
+import type { Paper, FolderStats, CollectionAction, Tag as TagType } from "@/types";
 import {
   FileText,
   Download,
@@ -36,8 +38,6 @@ import {
   Calendar,
   ChevronsLeft,
   ChevronsRight,
-  Bot,
-  CalendarClock,
   ArrowUp,
   ArrowDown,
   Plus,
@@ -82,9 +82,31 @@ function formatDateLabel(dateStr: string): string {
 export default function Papers() {
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  /* 筛选/排序/分页状态：搜索防抖 + 文件夹 + 收录日期 + 排序 + 状态 + 标签 + 分页 */
+  const {
+    searchTerm,
+    setSearchTerm,
+    debouncedSearch,
+    page,
+    setPage,
+    pageSize,
+    activeFolder,
+    setActiveFolder,
+    activeDate,
+    setActiveDate,
+    sortBy,
+    setSortBy,
+    sortOrder,
+    setSortOrder,
+    statusFilter,
+    setStatusFilter,
+    activeTagIds,
+    setActiveTagIds,
+  } = usePaperListFilters();
+
   const [papers, setPapers] = useState<Paper[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
   const [ingestOpen, setIngestOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
@@ -93,15 +115,11 @@ export default function Papers() {
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
 
   /* 分页 */
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
   /* 文件夹相关 */
   const [folderStats, setFolderStats] = useState<FolderStats | null>(null);
-  const [activeFolder, setActiveFolder] = useState("all");
-  const [activeDate, setActiveDate] = useState<string | undefined>();
   const [statsLoading, setStatsLoading] = useState(true);
   const [dateSectionOpen, setDateSectionOpen] = useState(false);
 
@@ -110,35 +128,18 @@ export default function Papers() {
   const [actionSectionOpen, setActionSectionOpen] = useState(false);
   const [activeActionId, setActiveActionId] = useState<string | undefined>();
 
-  /* 搜索防抖 */
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
   /* 排序 + 状态筛选 */
-  const [sortBy, setSortBy] = useState("created_at");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
-  const [statusFilter, setStatusFilter] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | undefined>();
   const [csFeeds, setCsFeeds] = useState<{ category_code: string; category_name: string }[]>([]);
 
   /* 标签相关 */
   const [tags, setTags] = useState<TagType[]>([]);
-  const [activeTagIds, setActiveTagIds] = useState<string[]>([]);
   const [tagSectionOpen, setTagSectionOpen] = useState(false);
   const [tagModalOpen, setTagModalOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<TagType | null>(null);
   const [newTagName, setNewTagName] = useState("");
   const [newTagColor, setNewTagColor] = useState("#3b82f6");
   const [tagsLoading, setTagsLoading] = useState(false);
-
-  useEffect(() => {
-    clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => {
-      setDebouncedSearch(searchTerm.trim());
-      setPage(1);
-    }, 350);
-    return () => clearTimeout(searchTimerRef.current);
-  }, [searchTerm]);
 
   /* 加载文件夹统计 + 行动记录 */
   const loadFolderStats = useCallback(async () => {
@@ -1416,202 +1417,3 @@ const PaperGridItem = memo(function PaperGridItem({
     </div>
   );
 });
-
-/* ========== 摄入弹窗 ========== */
-function IngestModal({
-  open,
-  onClose,
-  onDone,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [maxResults, setMaxResults] = useState(20);
-  const [topicId, setTopicId] = useState("");
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<number | null>(null);
-
-  const { toast } = useToast();
-  useEffect(() => {
-    if (open) {
-      topicApi
-        .list()
-        .then((r) => setTopics(r.items))
-        .catch(() => {
-          toast("error", "加载主题列表失败");
-        });
-      setResult(null);
-    }
-  }, [open, toast]);
-
-  const handleIngest = async () => {
-    if (!query.trim()) return;
-    setLoading(true);
-    try {
-      const res = await ingestApi.arxiv(query, maxResults, topicId || undefined);
-      setResult(res.ingested);
-      onDone();
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title="ArXiv 论文摄入">
-      <div className="space-y-4">
-        <Input
-          label="搜索查询"
-          placeholder="例如: transformer attention mechanism"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <div className="grid grid-cols-2 gap-4">
-          <Input
-            label="最大数量"
-            type="number"
-            value={maxResults}
-            onChange={(e) => setMaxResults(parseInt(e.target.value) || 20)}
-          />
-          <div className="space-y-1.5">
-            <label className="text-ink block text-sm font-medium">关联主题</label>
-            <select
-              value={topicId}
-              onChange={(e) => setTopicId(e.target.value)}
-              className="border-border bg-surface text-ink focus:border-primary h-10 w-full rounded-lg border px-3 text-sm focus:outline-none"
-            >
-              <option value="">不关联</option>
-              {topics.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        {result !== null && (
-          <div className="bg-success-light text-success rounded-xl p-3 text-sm font-medium">
-            <CheckCircle2 className="mr-2 inline h-4 w-4" />
-            成功摄入 {result} 篇论文
-          </div>
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" onClick={onClose}>
-            关闭
-          </Button>
-          <Button onClick={handleIngest} loading={loading}>
-            开始摄入
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-/* ========== 标签管理弹窗 ========== */
-function TagModal({
-  open,
-  onClose,
-  editingTag,
-  tagName,
-  tagColor,
-  onNameChange,
-  onColorChange,
-  onSave,
-}: {
-  open: boolean;
-  onClose: () => void;
-  editingTag: TagType | null;
-  tagName: string;
-  tagColor: string;
-  onNameChange: (name: string) => void;
-  onColorChange: (color: string) => void;
-  onSave: () => void;
-}) {
-  const presetColors = [
-    "#3b82f6",
-    "#10b981",
-    "#f59e0b",
-    "#ef4444",
-    "#8b5cf6",
-    "#ec4899",
-    "#06b6d4",
-    "#84cc16",
-  ];
-
-  return (
-    <Modal open={open} onClose={onClose} title={editingTag ? "编辑标签" : "新建标签"}>
-      <div className="space-y-4">
-        <Input
-          label="标签名称"
-          placeholder="输入标签名称"
-          value={tagName}
-          onChange={(e) => onNameChange(e.target.value)}
-        />
-        <div className="space-y-2">
-          <label className="text-ink block text-sm font-medium">标签颜色</label>
-          <div className="flex flex-wrap gap-2">
-            {presetColors.map((color) => (
-              <button
-                key={color}
-                onClick={() => onColorChange(color)}
-                className={`h-8 w-8 rounded-full transition-transform ${
-                  tagColor === color ? "ring-2 ring-offset-2" : "hover:scale-110"
-                }`}
-                style={{
-                  backgroundColor: color,
-                  boxShadow: tagColor === color ? `0 0 0 2px ${color}` : "none",
-                }}
-              />
-            ))}
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={tagColor}
-                onChange={(e) => onColorChange(e.target.value)}
-                className="h-8 w-8 cursor-pointer rounded border-0"
-              />
-              <span className="text-ink-tertiary text-[11px]">{tagColor}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 pt-2">
-          <span className="text-ink-tertiary text-sm">预览：</span>
-          <span
-            className="inline-flex items-center rounded-md px-3 py-1 text-sm font-medium"
-            style={{
-              backgroundColor: `${tagColor}20`,
-              color: tagColor,
-            }}
-          >
-            {tagName || "标签名称"}
-          </span>
-        </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" onClick={onClose}>
-            取消
-          </Button>
-          <Button onClick={onSave}>{editingTag ? "保存" : "创建"}</Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function ActionBadge({ type }: { type: string }) {
-  const cls = "h-3 w-3 shrink-0";
-  switch (type) {
-    case "agent_collect":
-      return <Bot className={`${cls} text-info`} />;
-    case "auto_collect":
-      return <CalendarClock className={`${cls} text-success`} />;
-    case "manual_collect":
-      return <Download className={`${cls} text-primary`} />;
-    case "subscription_ingest":
-      return <Tag className={`${cls} text-warning`} />;
-    default:
-      return <FileText className={`${cls} text-ink-tertiary`} />;
-  }
-}
