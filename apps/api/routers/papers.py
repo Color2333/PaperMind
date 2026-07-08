@@ -14,6 +14,7 @@ from packages.domain.schemas import AIExplainReq
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
+from packages.storage.repositories.stats import get_folder_stats
 
 # 全局 HTTP 客户端复用（避免每次请求创建新客户端）
 _http_client: httpx.AsyncClient | None = None
@@ -37,8 +38,7 @@ def paper_folder_stats() -> dict:
     if cached is not None:
         return cached
     with session_scope() as session:
-        repo = PaperRepository(session)
-        result = repo.folder_stats()
+        result = get_folder_stats(session)
     cache.set("folder_stats", result, ttl=30)
     return result
 
@@ -144,9 +144,9 @@ async def search_multi(
             {
                 "id": f"temp-{i}",
                 "title": r.paper.title,
-                "authors": r.paper.metadata.get("authors", []),
+                "authors": (r.paper.metadata_json or {}).get("authors", []),
                 "year": r.paper.publication_date.year if r.paper.publication_date else None,
-                "venue": r.paper.metadata.get("venue"),
+                "venue": (r.paper.metadata_json or {}).get("venue"),
                 "abstract": r.paper.abstract,
                 "sources": r.sources,
             }

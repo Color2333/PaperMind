@@ -8,9 +8,9 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict, deque
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
+from typing import TYPE_CHECKING
 
 from packages.ai.prompts import (
     build_evolution_prompt,
@@ -32,6 +32,9 @@ from packages.storage.repositories import (
     PaperRepository,
     TopicRepository,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -386,7 +389,7 @@ class GraphService:
                 key=lambda x: x[1],
                 reverse=True,
             )
-            for (a, b), strength in sorted_pairs:
+            for (a, b), _strength in sorted_pairs:
                 found = None
                 for cl in clusters:
                     if a in cl or b in cl:
@@ -823,7 +826,6 @@ class GraphService:
                 in_degree[e.target_paper_id] += 1
 
             all_node_ids = set(topic_ids_set)
-            topic_paper_map = {p.id: p for p in topic_papers}
 
             nodes = []
             for p in topic_papers:

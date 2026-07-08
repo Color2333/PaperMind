@@ -14,13 +14,11 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
-from typing import Optional
+from datetime import date
 
 import httpx
 
 from packages.domain.schemas import PaperCreate
-from packages.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +70,6 @@ class IeeeClient:
         Args:
             api_key: IEEE API Key（可选，默认从环境变量读取）
         """
-        settings = get_settings()
         self.api_key = api_key or os.getenv("IEEE_API_KEY")
         self._lock = threading.Lock()
         self._client: httpx.Client | None = None
@@ -356,8 +353,8 @@ class IeeeClient:
         publisher = article.get("publisher", "IEEE")
 
         # 提取 ISBN/ISSN
-        isbn = article.get("isbn", None)
-        issn = article.get("issn", None)
+        isbn = article.get("isbn")
+        issn = article.get("issn")
 
         # 检查 PDF 是否可用
         pdf_available = article.get("pdf_url") is not None

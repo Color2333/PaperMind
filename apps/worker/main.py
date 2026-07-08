@@ -6,6 +6,7 @@ PaperMind Worker - 智能定时任务调度（UTC 时间 + 闲时处理）
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import signal
 import time
@@ -36,10 +37,8 @@ _HEALTH_FILE = Path("/tmp/worker_heartbeat")
 
 def _write_heartbeat() -> None:
     """写入心跳文件供外部健康检查"""
-    try:
+    with contextlib.suppress(OSError):
         _HEALTH_FILE.write_text(str(time.time()))
-    except OSError:
-        pass
 
 
 def _retry_with_backoff(fn, *args, max_retries: int = 3, base_delay: float = 5.0, **kwargs):

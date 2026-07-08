@@ -136,7 +136,7 @@ def generated_detail(content_id: str) -> dict:
         try:
             gc = repo.get_by_id(content_id)
         except ValueError:
-            raise HTTPException(status_code=404, detail="Content not found")
+            raise HTTPException(status_code=404, detail="Content not found") from None
         return {
             "id": gc.id,
             "content_type": gc.content_type,
@@ -156,7 +156,7 @@ def generated_delete(content_id: str) -> dict:
         try:
             repo.get_by_id(content_id)
         except ValueError:
-            raise HTTPException(status_code=404, detail="Content not found")
+            raise HTTPException(status_code=404, detail="Content not found") from None
         repo.delete(content_id)
     return {"deleted": content_id}
 

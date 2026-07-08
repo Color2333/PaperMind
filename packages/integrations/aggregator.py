@@ -39,14 +39,17 @@ class ResultAggregator:
             if self._normalize_title(result.paper.title) == self._normalize_title(paper.title):
                 return result
             # 最后匹配 arxiv_id
-            if (result.paper.normalized_arxiv_id and paper.normalized_arxiv_id and 
-                result.paper.normalized_arxiv_id == paper.normalized_arxiv_id):
+            if (
+                result.paper.normalized_arxiv_id
+                and paper.normalized_arxiv_id
+                and result.paper.normalized_arxiv_id == paper.normalized_arxiv_id
+            ):
                 return result
         return None
 
     def _normalize_title(self, title: str) -> str:
         """归一化标题：转小写、去空格、去标点"""
-        return re.sub(r'[^a-z0-9]', '', title.lower())
+        return re.sub(r"[^a-z0-9]", "", title.lower())
 
     def get_sorted_results(self) -> list[AggregatedPaper]:
         return sorted(self.results, key=lambda r: len(r.sources), reverse=True)

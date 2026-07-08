@@ -7,10 +7,8 @@ LLM 提供者抽象层 - OpenAI / Anthropic / ZhipuAI / Xiaomi MiMo / Pseudo
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import random
-import re
 import socket
 import threading
 import time
@@ -21,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from packages.config import get_settings
+from packages.integrations import json_repair, pricing
 
 logger = logging.getLogger(__name__)
 _config_cache: LLMConfig | None = None
@@ -332,9 +331,9 @@ class LLMClient:
                 max_tokens=max_tokens,
             )
             # 多源 JSON 提取：先从 content，再从 reasoning_content
-            parsed = self._try_parse_json(result.content)
+            parsed = json_repair.try_parse_json(result.content)
             if parsed is None and result.reasoning_content:
-                parsed = self._try_parse_json(result.reasoning_content)
+                parsed = json_repair.try_parse_json(result.reasoning_content)
                 if parsed:
                     logger.info(
                         "complete_json: JSON 从 reasoning_content 提取成功 (stage=%s, attempt=%d)",
@@ -811,201 +810,9 @@ class LLMClient:
         scale = max(sum(v * v for v in vals) ** 0.5, 1e-6)
         return [v / scale for v in vals]
 
-    # ---------- 工具 ----------
-
-    @staticmethod
-    def _sanitize_json_str(s: str) -> str:
-        """修复 LLM 生成 JSON 中的常见问题：未转义的换行、制表符等"""
-        # 替换字符串值内部的 literal 换行和制表符
-        # 在 JSON string 内（引号之间），将 literal \n \r \t 转为转义序列
-        result: list[str] = []
-        in_str = False
-        esc = False
-        for ch in s:
-            if esc:
-                esc = False
-                result.append(ch)
-                continue
-            if ch == "\\" and in_str:
-                esc = True
-                result.append(ch)
-                continue
-            if ch == '"':
-                in_str = not in_str
-                result.append(ch)
-                continue
-            if in_str:
-                if ch == "\n":
-                    result.append("\\n")
-                    continue
-                if ch == "\r":
-                    result.append("\\r")
-                    continue
-                if ch == "\t":
-                    result.append("\\t")
-                    continue
-                # 去掉其他控制字符 (0x00-0x1F)
-                if ord(ch) < 0x20:
-                    continue
-            result.append(ch)
-        return "".join(result)
-
-    @staticmethod
-    def _safe_loads(text: str) -> dict | None:
-        """json.loads 带净化回退"""
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-        try:
-            return json.loads(LLMClient._sanitize_json_str(text))
-        except json.JSONDecodeError:
-            return None
-
-    @staticmethod
-    def _try_parse_json(text: str) -> dict | None:
-        """从文本中尽力提取 JSON 对象，处理 markdown 代码块和截断"""
-        raw = text.strip()
-        if not raw:
-            return None
-
-        # 1. 直接解析（含净化回退）
-        r = LLMClient._safe_loads(raw)
-        if r is not None:
-            return r
-
-        # 2. 去除 markdown 代码块
-        fence_match = re.search(
-            r"```(?:json)?\s*\n?(.*?)```",
-            raw,
-            re.DOTALL,
-        )
-        if fence_match:
-            r = LLMClient._safe_loads(fence_match.group(1).strip())
-            if r is not None:
-                return r
-
-        # 3. 提取 {} 块
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end > start:
-            r = LLMClient._safe_loads(raw[start : end + 1])
-            if r is not None:
-                return r
-
-        # 4. 截断 JSON 修复：模型可能在输出中途停止
-        if start != -1:
-            candidate = LLMClient._sanitize_json_str(raw[start:])
-            repaired = LLMClient._repair_truncated_json(candidate)
-            if repaired is not None:
-                return repaired
-
-        return None
-
-    @staticmethod
-    def _repair_truncated_json(text: str) -> dict | None:
-        """尝试修复被截断的 JSON，补全缺失的括号"""
-        closing_map = {"{": "}", "[": "]"}
-
-        def _scan(s: str):
-            """扫描 JSON 文本，返回 (stack, in_string, escape_next)"""
-            in_str = False
-            esc = False
-            stk: list[str] = []
-            for ch in s:
-                if esc:
-                    esc = False
-                    continue
-                if ch == "\\" and in_str:
-                    esc = True
-                    continue
-                if ch == '"':
-                    in_str = not in_str
-                    continue
-                if in_str:
-                    continue
-                if ch in "{[":
-                    stk.append(ch)
-                elif ch == "}" and stk and stk[-1] == "{" or ch == "]" and stk and stk[-1] == "[":
-                    stk.pop()
-            return stk, in_str, esc
-
-        stack, in_string, escape_pending = _scan(text)
-
-        if not stack and not in_string:
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                return None
-
-        # 策略1：直接补全
-        closers = "".join(closing_map[b] for b in reversed(stack))
-        # 处理各种截断边界
-        suffixes: list[str] = []
-        if escape_pending:
-            # 截断在 \ 后面，去掉尾部 \ 再闭合
-            base = text[:-1]
-            if in_string:
-                suffixes = [f'"{closers}', f'""{closers}']
-            else:
-                suffixes = [closers]
-            for sfx in suffixes:
-                try:
-                    return json.loads(base + sfx)
-                except json.JSONDecodeError:
-                    continue
-
-        # 构造 (base_text, suffix) 候选列表
-        attempts: list[tuple[str, str]] = []
-
-        if in_string:
-            # 截断在字符串中间，去掉末尾不完整转义
-            trimmed = text
-            if trimmed.endswith("\\"):
-                trimmed = trimmed[:-1]
-            elif re.search(r"\\u[0-9a-fA-F]{0,3}$", trimmed):
-                trimmed = re.sub(r"\\u[0-9a-fA-F]{0,3}$", "", trimmed)
-            attempts = [
-                (trimmed, f'"{closers}'),
-                (trimmed, f'" {closers}'),
-            ]
-        else:
-            clean = text.rstrip().rstrip(",").rstrip()
-            attempts = [
-                (text, closers),
-                (clean, closers),
-                (text, f'""{closers}'),
-                (text, f"null{closers}"),
-            ]
-
-        for base, sfx in attempts:
-            try:
-                return json.loads(base + sfx)
-            except json.JSONDecodeError:
-                continue
-
-        # 策略2：回退到最后一个完整的值边界再闭合
-        # 找结构性断点: }, ], "后的逗号, 完整数值等
-        candidates: list[int] = []
-        for m in re.finditer(r"[}\]]\s*,", text):
-            candidates.append(m.start() + 1)
-        for m in re.finditer(r'"\s*,', text):
-            candidates.append(m.start() + 1)
-        for m in re.finditer(r"[}\]]\s*$", text):
-            candidates.append(m.start() + 1)
-
-        for pos in sorted(set(candidates), reverse=True):
-            chunk = text[:pos].rstrip().rstrip(",")
-            stk2, in_s2, _ = _scan(chunk)
-            if in_s2:
-                continue
-            cl = "".join(closing_map[b] for b in reversed(stk2))
-            try:
-                return json.loads(chunk + cl)
-            except json.JSONDecodeError:
-                continue
-
-        return None
+    # ---------- JSON 修复 / 成本估算 已提取到独立模块 ----------
+    # 见 packages.integrations.json_repair / packages.integrations.pricing
+    # 以下保留为 thin delegate，保持外部调用方（cost_guard / agent_service）零改动
 
     @staticmethod
     def _estimate_cost(
@@ -1014,45 +821,9 @@ class LLMClient:
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> tuple[float, float]:
-        model_lower = (model or "").lower()
-        price_book: list[tuple[str, float, float]] = [
-            # 顺序：更具体的模式放前面
-            ("gpt-4.1-mini", 0.4, 1.6),
-            ("gpt-4.1", 2.0, 8.0),
-            ("gpt-4o-mini", 0.15, 0.6),
-            ("gpt-4o", 2.5, 10.0),
-            ("claude-3-haiku", 0.25, 1.25),
-            ("claude-3-5-sonnet", 3.0, 15.0),
-            ("glm-4.6v", 0.14, 0.14),
-            ("glm-4.7", 0.1, 0.1),
-            ("glm-4-flash", 0.01, 0.01),
-            ("glm-4v", 0.14, 0.14),
-            ("glm-4", 0.1, 0.1),
-            # 小米 MiMo（套餐内 Credits 计费，此处为占位估值，仅用于成本展示）
-            ("mimo-v2.5-pro", 0.5, 1.5),
-            ("mimo-v2.5-tts", 0.2, 0.2),
-            ("mimo-v2.5", 0.3, 0.9),
-            ("mimo-v2-pro", 0.5, 1.5),
-            ("mimo-v2-omni", 0.3, 0.9),
-            ("mimo-v2-tts", 0.2, 0.2),
-            # 阿里百炼 DashScope embedding（占位估值）
-            ("text-embedding-v4", 0.05, 0.0),
-            ("text-embedding-v3", 0.05, 0.0),
-            ("text-embedding-v2", 0.05, 0.0),
-            ("embedding", 0.005, 0.0),
-        ]
-        in_million = 1.0
-        out_million = 4.0
-        for key, pin, pout in price_book:
-            if key in model_lower:
-                in_million = pin
-                out_million = pout
-                break
-        in_t = input_tokens or 0
-        out_t = output_tokens or 0
-        in_cost = float(in_t) * in_million / 1_000_000.0
-        out_cost = float(out_t) * out_million / 1_000_000.0
-        return in_cost, out_cost
+        return pricing.estimate_cost(
+            model=model, input_tokens=input_tokens, output_tokens=output_tokens
+        )
 
     def estimate_cost(
         self,
@@ -1061,7 +832,7 @@ class LLMClient:
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> tuple[float, float, float]:
-        in_cost, out_cost = self._estimate_cost(
+        in_cost, out_cost = pricing.estimate_cost(
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,

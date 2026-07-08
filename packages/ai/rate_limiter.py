@@ -275,19 +275,5 @@ def record_rate_limit_error(api_type: str = "llm"):
 
 
 def can_start_task() -> bool:
-    """便捷函数：获取 API 调用许可
-
-    Args:
-        api_type: API 类型
-        timeout: 超时时间
-
-    Returns:
-        bool: 是否成功获取
-    """
-    limiter = get_rate_limiter()
-    return limiter.acquire(api_type, timeout)
-
-
-def can_start_task() -> bool:
     """便捷函数：检查是否可以启动任务"""
     return get_rate_limiter().can_start_task()

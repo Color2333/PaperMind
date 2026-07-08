@@ -329,12 +329,12 @@ class GlobalTrackerAdapter:
         兼容 agent_tools.py 的 submit(task_type, title, fn, *args, **kwargs) 签名。
         """
         return self._tracker.submit(
+            *args,
             task_type=task_type,
             title=title,
             fn=fn,
             total=total,
             category=category,
-            *args,
             **kwargs,
         )
 

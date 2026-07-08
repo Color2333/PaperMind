@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from packages.ai.brief_service import DailyBriefService
@@ -23,6 +23,9 @@ from packages.storage.repositories import (
     PaperRepository,
     TopicRepository,
 )
+
+if TYPE_CHECKING:
+    from datetime import date
 
 logger = logging.getLogger(__name__)
 

@@ -10,9 +10,10 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, formatdate
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from packages.storage.models import EmailConfig
+if TYPE_CHECKING:
+    from packages.storage.models import EmailConfig
 
 logger = logging.getLogger(__name__)
 

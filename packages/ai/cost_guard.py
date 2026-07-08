@@ -6,12 +6,15 @@ LLM 成本守卫 - 自动降级模型选择
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
 from packages.config import get_settings
-from packages.integrations.llm_client import LLMClient
 from packages.storage.repositories import PromptTraceRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from packages.integrations.llm_client import LLMClient
 
 
 @dataclass

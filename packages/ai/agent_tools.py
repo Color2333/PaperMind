@@ -929,8 +929,8 @@ def _search_arxiv(
                 "title": p.title,
                 "abstract": (p.abstract or "")[:300],
                 "publication_date": str(p.publication_date) if p.publication_date else None,
-                "categories": (p.metadata or {}).get("categories", []),
-                "authors": (p.metadata or {}).get("authors", [])[:5],
+                "categories": (p.metadata_json or {}).get("categories", []),
+                "authors": (p.metadata_json or {}).get("authors", [])[:5],
             }
         )
 

@@ -173,40 +173,6 @@ class PaperPipelines:
                         new_papers_count,
                         max_results,
                     )
-                    total_fetched += len(papers)
-
-                    # 添加请求间隔，避免触发 arXiv 限流
-                    if page < max_pages - 1 and papers:
-                        time.sleep(arxiv_request_delay)
-
-                    if not papers:
-                        break  # 没有更多论文了
-
-                    # 提前检查哪些论文已存在
-                    existing_arxiv_ids = repo.list_existing_arxiv_ids([p.arxiv_id for p in papers])
-
-                    # 只处理新论文
-                    for paper in papers:
-                        is_new = paper.arxiv_id not in existing_arxiv_ids
-                        if is_new:
-                            saved = self._save_paper(repo, paper, topic_id)
-                            new_papers_count += 1
-                            inserted_ids.append(saved.id)
-
-                            # 达到目标就停止
-                            if new_papers_count >= max_results:
-                                break
-
-                    # 日志
-                    new_in_batch = len(papers) - len(existing_arxiv_ids)
-                    logger.info(
-                        "第 %d 批：抓取 %d 篇，新论文 %d 篇（累计 %d/%d）",
-                        page + 1,
-                        len(papers),
-                        new_in_batch,
-                        new_papers_count,
-                        max_results,
-                    )
 
                 if inserted_ids:
                     action_repo.create_action(

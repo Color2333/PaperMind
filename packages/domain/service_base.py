@@ -16,12 +16,15 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator
 from contextlib import contextmanager
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
 from packages.storage.db import session_scope
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

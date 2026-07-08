@@ -26,9 +26,7 @@ class QuotaManager:
 
             today = date.today()
             quota_record = (
-                session.query(IeeeApiQuota)
-                .filter_by(topic_id=topic_id, date=today)
-                .first()
+                session.query(IeeeApiQuota).filter_by(topic_id=topic_id, date=today).first()
             )
 
             if not quota_record:
@@ -55,9 +53,7 @@ class QuotaManager:
 
             today = date.today()
             quota_record = (
-                session.query(IeeeApiQuota)
-                .filter_by(topic_id=topic_id, date=today)
-                .first()
+                session.query(IeeeApiQuota).filter_by(topic_id=topic_id, date=today).first()
             )
 
             if not quota_record:
@@ -88,9 +84,7 @@ class QuotaManager:
 
             today = date.today()
             quota_record = (
-                session.query(IeeeApiQuota)
-                .filter_by(topic_id=topic_id, date=today)
-                .first()
+                session.query(IeeeApiQuota).filter_by(topic_id=topic_id, date=today).first()
             )
 
             if not quota_record:
@@ -140,9 +134,7 @@ class QuotaManager:
 
             today = date.today()
             quota_record = (
-                session.query(IeeeApiQuota)
-                .filter_by(topic_id=topic_id, date=today)
-                .first()
+                session.query(IeeeApiQuota).filter_by(topic_id=topic_id, date=today).first()
             )
 
             if quota_record:

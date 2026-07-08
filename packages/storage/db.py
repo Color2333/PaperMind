@@ -107,7 +107,12 @@ def _safe_create_index(conn, idx_name: str, table: str, column: str) -> None:
 
 
 def run_migrations() -> None:
-    """启动时执行轻量级数据库迁移"""
+    """启动时执行轻量级数据库迁移
+
+    注意：Alembic（infra/migrations）是 schema 迁移的权威路径，新库应通过
+    `alembic upgrade head` 建表。本函数仅作运行时增量兜底，处理历史遗留库的
+    列/索引补齐，不替代 alembic 工作流。新表应通过 alembic 迁移添加。
+    """
     with engine.connect() as conn:
         _safe_add_column(
             conn,

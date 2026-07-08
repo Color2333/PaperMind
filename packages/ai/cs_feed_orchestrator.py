@@ -73,14 +73,13 @@ class CSFeedOrchestrator:
 
             for sub in subs:
                 # 冷却中检查
-                if sub.status == "cool_down" and sub.cool_down_until:
-                    if now < sub.cool_down_until:
-                        logger.info(
-                            "[CSFeed] Skipping %s (cool down until %s)",
-                            sub.category_code,
-                            sub.cool_down_until,
-                        )
-                        continue
+                if sub.status == "cool_down" and sub.cool_down_until and now < sub.cool_down_until:
+                    logger.info(
+                        "[CSFeed] Skipping %s (cool down until %s)",
+                        sub.category_code,
+                        sub.cool_down_until,
+                    )
+                    continue
 
                 # 每日配额检查
                 today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)

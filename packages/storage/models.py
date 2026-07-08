@@ -52,6 +52,10 @@ class Paper(Base):
         default=False,
         index=True,
     )
+    # 多渠道字段（IEEE / DOI 等非 arXiv 来源）
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="arxiv", index=True)
+    source_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    doi: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False, index=True
     )
@@ -361,7 +365,6 @@ class AgentPendingAction(Base):
     )
     markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
 class CollectionAction(Base):

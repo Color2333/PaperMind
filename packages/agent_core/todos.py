@@ -244,7 +244,7 @@ class PlannerMixin:
     """
     计划生成混入类。
 
-    混入 AgentLoop，在必要时生成任务计划。
+    混入 StreamingAgentLoop，在必要时生成任务计划。
     子类需要实现 _call_llm_for_plan 方法。
     """
 

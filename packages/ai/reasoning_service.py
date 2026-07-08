@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from packages.ai.pdf_parser import PdfTextExtractor
 from packages.ai.prompts import build_reasoning_prompt
@@ -19,6 +19,9 @@ from packages.storage.repositories import (
     PaperRepository,
     PromptTraceRepository,
 )
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 logger = logging.getLogger(__name__)
 

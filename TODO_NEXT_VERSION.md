@@ -4,9 +4,9 @@
 
 ### 🎯 核心功能：IEEE 文章抓取能力
 
-**背景**：当前 PaperMind 仅支持 arXiv 文章抓取，需要扩展支持 IEEE Xplore 平台的文章获取能力。
+**背景**：扩展 PaperMind 的论文抓取能力，从单一 arXiv 源扩展到 IEEE Xplore 等多平台。多源架构已落地（arXiv / IEEE / OpenAlex / Semantic Scholar / bioRxiv / DBLP），剩余工作集中在 IEEE 全文下载与合规。
 
-> **进度更新（2026-05-08）**：多源架构 + IEEE/OpenAlex/Semantic Scholar/bioRxiv/DBLP 客户端已落地（见 `packages/integrations/`），核心实现部分大量已完成。剩余主要为 Open Access 全文下载、Unpaywall/TechRxiv 接入、合规文档与测试。
+> **进度更新（2026-07-08）**：多源架构（`channel_base.py` + `aggregator.py`）+ 六个渠道客户端已全部落地（见 `packages/integrations/`）。ORM `Paper` 模型已补 `doi`/`source`/`source_id` 字段支撑多源去重。剩余主要为 Open Access 全文下载、Unpaywall/TechRxiv 接入、合规文档与测试。
 
 ---
 

@@ -13,6 +13,10 @@ from packages.domain.schemas import ReferenceImportReq, SuggestKeywordsReq, Topi
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository, TopicRepository
+from packages.storage.repositories.stats import (
+    get_paper_distribution_stats,
+    get_topic_stats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -274,7 +278,7 @@ def topic_stats() -> dict:
     if cached is not None:
         return cached
     with session_scope() as session:
-        result = PaperRepository(session).topic_stats()
+        result = get_topic_stats(session)
     cache.set("topic_stats", result, ttl=30)
     return result
 
@@ -288,6 +292,6 @@ def paper_distribution() -> dict:
     if cached is not None:
         return cached
     with session_scope() as session:
-        result = PaperRepository(session).paper_distribution_stats()
+        result = get_paper_distribution_stats(session)
     cache.set("paper_distribution", result, ttl=30)
     return result

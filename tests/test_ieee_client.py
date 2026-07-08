@@ -7,12 +7,13 @@ IEEE 客户端单元测试
     pytest tests/test_ieee_client.py -v
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 from datetime import date
+from unittest.mock import Mock, patch
 
-from packages.integrations.ieee_client import IeeeClient, create_ieee_client
+import pytest
+
 from packages.domain.schemas import PaperCreate
+from packages.integrations.ieee_client import IeeeClient, create_ieee_client
 
 
 class TestIeeeClientInit:
@@ -26,11 +27,9 @@ class TestIeeeClientInit:
 
     def test_init_without_api_key(self, monkeypatch):
         """测试无 API Key 时从环境变量读取"""
-        # Mock get_settings 返回 None
-        with patch("packages.integrations.ieee_client.get_settings") as mock_settings:
-            mock_settings.return_value.ieee_api_key = None
-            client = IeeeClient()
-            assert client.api_key is None
+        monkeypatch.delenv("IEEE_API_KEY", raising=False)
+        client = IeeeClient()
+        assert client.api_key is None
 
     def test_create_helper_function(self):
         """测试便捷函数"""
@@ -99,7 +98,7 @@ class TestIeeeClientFetch:
             )
 
             # 验证参数传递
-            call_args = mock_get.call_args[0][1]
+            call_args = mock_get.call_args.kwargs["params"]
             assert call_args["start_year"] == 2023
             assert call_args["end_year"] == 2024
 
@@ -208,7 +207,7 @@ class TestIeeeClientRetry:
             mock_client.get.side_effect = [mock_response_429, mock_response_success]
 
             client = IeeeClient(api_key="test_key")
-            papers = client.fetch_by_keywords("test")
+            client.fetch_by_keywords("test")
 
             # 验证重试了 2 次
             assert mock_client.get.call_count == 2
@@ -251,7 +250,7 @@ class TestIeeeClientEdgeCases:
             client.fetch_by_keywords("C++ programming")
 
             # 验证查询参数正确传递
-            call_args = mock_get.call_args[0][1]
+            call_args = mock_get.call_args.kwargs["params"]
             assert call_args["querytext"] == "C++ programming"
 
     def test_fetch_max_results_limit(self):
@@ -261,12 +260,12 @@ class TestIeeeClientEdgeCases:
 
             # 超过 200 应该被限制
             client.fetch_by_keywords("test", max_results=500)
-            call_args = mock_get.call_args[0][1]
+            call_args = mock_get.call_args.kwargs["params"]
             assert call_args["max_records"] == 200
 
             # 正常值应该保留
             client.fetch_by_keywords("test", max_results=50)
-            call_args = mock_get.call_args[0][1]
+            call_args = mock_get.call_args.kwargs["params"]
             assert call_args["max_records"] == 50
 
 
