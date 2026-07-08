@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from datetime import UTC, datetime, timedelta
+from html import escape as html_escape
 
 from packages.integrations.arxiv_client import ArxivClient
 from packages.storage.db import SessionLocal
@@ -70,17 +71,17 @@ class CSFeedOrchestrator:
             repo = CSFeedRepository(session)
             subs = repo.get_active_subscriptions()
             now = datetime.now(UTC)
+            digest: list[tuple[str, int, list[str]]] = []
 
             for sub in subs:
                 # 冷却中检查
-                if sub.status == "cool_down" and sub.cool_down_until:
-                    if now < sub.cool_down_until:
-                        logger.info(
-                            "[CSFeed] Skipping %s (cool down until %s)",
-                            sub.category_code,
-                            sub.cool_down_until,
-                        )
-                        continue
+                if sub.status == "cool_down" and sub.cool_down_until and now < sub.cool_down_until:
+                    logger.info(
+                        "[CSFeed] Skipping %s (cool down until %s)",
+                        sub.category_code,
+                        sub.cool_down_until,
+                    )
+                    continue
 
                 # 每日配额检查
                 today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -111,12 +112,18 @@ class CSFeedOrchestrator:
 
                     paper_repo = PaperRepository(session)
                     count = 0
+                    titles: list[str] = []
                     for p in papers:
                         paper_repo.upsert_paper(p)
                         count += 1
+                        title = getattr(p, "title", None)
+                        if title:
+                            titles.append(title)
 
                     repo.update_run_status(sub.category_code, count)
                     logger.info("[CSFeed] %s: ingested %d papers", sub.category_code, count)
+                    if count > 0:
+                        digest.append((sub.category_code, count, titles))
 
                 except Exception as e:
                     err_str = str(e)
@@ -129,5 +136,48 @@ class CSFeedOrchestrator:
                         )
                     else:
                         logger.error("[CSFeed] Error fetching %s: %s", sub.category_code, e)
+
+            # 入库后推送邮件摘要（README 宣传的「邮件推送」）；SMTP 未配置时静默跳过
+            if digest:
+                self._notify_digest(digest)
         finally:
             session.close()
+
+    def _notify_digest(self, digest: list[tuple[str, int, list[str]]]) -> None:
+        """抓取入库后发送邮件摘要；SMTP 未配置或无收件人时静默跳过"""
+        from packages.config import get_settings
+        from packages.integrations.notifier import NotificationService
+
+        settings = get_settings()
+        recipient = settings.notify_default_to
+        if not recipient:
+            return
+
+        total = sum(count for _, count, _ in digest)
+        rows = "".join(
+            f"<tr><td>{html_escape(cat)}</td><td style='text-align:right'>{count}</td></tr>"
+            for cat, count, _ in digest
+        )
+        title_blocks: list[str] = []
+        for cat, count, titles in digest:
+            if not titles:
+                continue
+            sample = "".join(f"<li>{html_escape(t)}</li>" for t in titles[:3])
+            more = f"<li>… 共 {count} 篇</li>" if count > len(titles) else ""
+            title_blocks.append(
+                f"<p><b>{html_escape(cat)}</b>（{count} 篇）</p><ul>{sample}{more}</ul>"
+            )
+        body = (
+            "<h2>CS 订阅抓取摘要</h2>"
+            f"<p>本次新增 <b>{total}</b> 篇论文，涉及 {len(digest)} 个分类：</p>"
+            "<table border='1' cellpadding='6' style='border-collapse:collapse'>"
+            f"<tr><th>分类</th><th>新增</th></tr>{rows}</table>"
+            f"{''.join(title_blocks)}"
+        )
+        ok = NotificationService().send_email_html(
+            recipient, f"[PaperMind] CS 订阅抓取摘要 · 新增 {total} 篇", body
+        )
+        if ok:
+            logger.info("[CSFeed] Digest email sent to %s (%d papers)", recipient, total)
+        else:
+            logger.debug("[CSFeed] SMTP not configured, skip digest email")

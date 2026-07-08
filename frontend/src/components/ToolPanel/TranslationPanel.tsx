@@ -3,6 +3,8 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
+import { paperApi, translateApi, tasksApi, type BilingualSegment } from '@/services/api';
+
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url
@@ -25,14 +27,42 @@ interface TranslationPanelProps {
 
 type ViewMode = 'selection' | 'bilingual';
 type TranslationMode = 'fast' | 'layout';
+type AiAction = 'explain' | 'translate' | 'summarize';
+
+const AI_ACTION_LABELS: Record<AiAction, string> = {
+  explain: '💡 解释',
+  translate: '🌐 翻译',
+  summarize: '📝 总结',
+};
 
 export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdfPath }: TranslationPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('selection');
   const [segments, setSegments] = useState<Segment[]>([]);
+  const [layoutPdfUrl, setLayoutPdfUrl] = useState('');
   const [translating, setTranslating] = useState(false);
   const [numPages, setNumPages] = useState(0);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
   const [translationMode, setTranslationMode] = useState<TranslationMode>('fast');
+  const [aiResult, setAiResult] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiAction, setAiAction] = useState<AiAction | null>(null);
+  const [aiError, setAiError] = useState('');
+
+  const handleAiExplain = useCallback(async (action: AiAction) => {
+    if (!selectedText) return;
+    setAiLoading(true);
+    setAiAction(action);
+    setAiError('');
+    setAiResult('');
+    try {
+      const res = await paperApi.aiExplain(paperId, selectedText, action);
+      setAiResult(res.result);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : '请求失败，请稍后重试');
+    } finally {
+      setAiLoading(false);
+    }
+  }, [paperId, selectedText]);
 
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
@@ -70,54 +100,57 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
     }
   }, []);
 
-  const handleTranslateFull = useCallback(async () => {
-    if (segments.length > 0) {
-      setViewMode('bilingual');
-      return;
-    }
-
-    setTranslating(true);
+  const handleTranslateFull = useCallback(async (mode: TranslationMode = translationMode) => {
+    // 1) 先查缓存 —— 命中则直接展示，不再调 LLM（省成本、即时）
     try {
-      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-      const token = localStorage.getItem('auth_token') || '';
-
-      const segRes = await fetch(`${base}/papers/${paperId}/segments`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!segRes.ok) {
-        const data = await segRes.json();
-        if (data.detail?.includes('没有 PDF') || data.detail?.includes('PDF 文件不存在')) {
-          alert('请先下载 PDF');
+      const cache = await translateApi.getBilingualPdfCache(paperId, mode);
+      if (cache.cached) {
+        if (mode === 'fast' && cache.segments) {
+          setSegments(cache.segments);
+        } else if (mode === 'layout' && cache.pdf_url) {
+          setLayoutPdfUrl(cache.pdf_url);
         }
+        setViewMode('bilingual');
         return;
       }
-
-      const segData = await segRes.json();
-      const rawSegments = segData.segments || [];
-      setSegments(rawSegments);
-
-      const transRes = await fetch(`${base}/translate/segments`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ segments: rawSegments, target_lang: 'zh' }),
-      });
-
-      if (transRes.ok) {
-        const transData = await transRes.json();
-        setSegments(transData.segments || []);
-      }
-
-      setViewMode('bilingual');
     } catch (err) {
-      console.error('Failed to translate:', err);
-    } finally {
+      console.error('Failed to check translation cache:', err);
+    }
+
+    // 2) 无缓存 —— 起异步翻译任务并轮询 /tasks/{id}
+    setTranslating(true);
+    try {
+      const { task_id } = await translateApi.startBilingualPdf(paperId, mode);
+      const poll = setInterval(async () => {
+        // 后端 /tasks/{id} 返回 global_tracker.to_dict()：含 finished/success
+        const status = (await tasksApi.getStatus(task_id)) as unknown as {
+          finished: boolean;
+          success: boolean;
+          error: string | null;
+        };
+        if (!status.finished) return;
+        clearInterval(poll);
+        if (status.success) {
+          const result = (await tasksApi.getResult(task_id)) as {
+            segments?: BilingualSegment[];
+            pdf_url?: string;
+          };
+          if (mode === 'fast' && result.segments) {
+            setSegments(result.segments);
+          } else if (mode === 'layout' && result.pdf_url) {
+            setLayoutPdfUrl(result.pdf_url);
+          }
+          setViewMode('bilingual');
+        } else {
+          alert(status.error || '翻译失败，请稍后重试');
+        }
+        setTranslating(false);
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to start translation:', err);
       setTranslating(false);
     }
-  }, [paperId, segments.length]);
+  }, [paperId, translationMode]);
 
   const onDocumentLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
     setNumPages(n);
@@ -151,6 +184,14 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
     return `${base}/papers/${paperId}/pdf${tokenParam}`;
   }, [paperId, paperArxivId, paperPdfPath]);
 
+  const layoutPdfFullUrl = useMemo(() => {
+    if (!layoutPdfUrl) return '';
+    const base = (import.meta.env.VITE_API_BASE || 'http://localhost:8000').replace(/\/+$/, '');
+    const token = localStorage.getItem('auth_token') || '';
+    const sep = layoutPdfUrl.includes('?') ? '&' : '?';
+    return `${base}${layoutPdfUrl}${sep}token=${encodeURIComponent(token)}`;
+  }, [layoutPdfUrl]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Tab 切换 + 模式选择 */}
@@ -165,7 +206,7 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
           </button>
           <button
             type="button"
-            onClick={handleTranslateFull}
+            onClick={() => handleTranslateFull()}
             className={`text-xs flex items-center gap-1 ${viewMode === 'bilingual' ? 'text-primary' : 'text-white/40'}`}
           >
             全文对照
@@ -190,13 +231,45 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
       {viewMode === 'selection' && (
         <div className="flex-1 overflow-auto p-4">
           {selectedText ? (
-            <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-              <p className="text-xs text-white/40 mb-2">选中文本</p>
-              <p className="text-sm text-white/80">{selectedText}</p>
+            <div className="space-y-3">
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                <p className="text-xs text-white/40 mb-2">选中文本</p>
+                <p className="text-sm text-white/80">{selectedText}</p>
+              </div>
+              <div className="flex gap-2">
+                {(['explain', 'translate', 'summarize'] as AiAction[]).map((act) => (
+                  <button
+                    key={act}
+                    type="button"
+                    disabled={aiLoading}
+                    onClick={() => handleAiExplain(act)}
+                    className={`flex-1 rounded bg-white/10 px-2 py-1.5 text-xs transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50 ${
+                      aiAction === act && aiLoading ? 'text-primary' : 'text-white/80'
+                    }`}
+                  >
+                    {aiAction === act && aiLoading ? '生成中…' : AI_ACTION_LABELS[act]}
+                  </button>
+                ))}
+              </div>
+              {aiLoading && (
+                <div className="flex items-center gap-2">
+                  <div className="h-4 w-4 animate-spin rounded-full border border-primary border-t-transparent" />
+                  <span className="text-xs text-primary">分析中…</span>
+                </div>
+              )}
+              {!aiLoading && aiError && <p className="text-xs text-red-400">{aiError}</p>}
+              {!aiLoading && aiResult && aiAction && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+                  <p className="text-xs text-primary/60 mb-2">{AI_ACTION_LABELS[aiAction]}</p>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/90">
+                    {aiResult}
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-white/40 text-center py-8">
-              在左侧 PDF 中选中文本即可翻译
+              在左侧 PDF 中选中文本，点击按钮即可解释 / 翻译 / 总结
             </p>
           )}
         </div>
@@ -247,39 +320,47 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
             ref={rightScrollRef}
             className="w-full overflow-auto bg-[#1a1a2e]"
           >
-            <div className="p-4">
-              <h3 className="text-sm font-medium text-white/80 mb-4">译文对照</h3>
-              {segments.length === 0 && !translating && (
-                <p className="text-xs text-white/40">正在加载翻译...</p>
-              )}
-              {translating && segments.length === 0 && (
-                <div className="flex items-center gap-2">
-                  <div className="h-4 w-4 animate-spin rounded-full border border-primary border-t-transparent" />
-                  <span className="text-xs text-primary">翻译中...</span>
-                </div>
-              )}
-              {segments.map((seg, idx) => (
-                <button
-                  type="button"
-                  key={seg.id || idx}
-                  data-trans-page={seg.pageNumber}
-                  className="mb-6 w-full cursor-pointer rounded-lg p-2 text-left hover:bg-white/5 transition-colors"
-                  onClick={() => seg.pageNumber && scrollPdfToPage(seg.pageNumber)}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-primary/60">P{seg.pageNumber}</span>
-                    <span className="text-xs text-white/20">点击跳转</span>
+            {translationMode === 'layout' && layoutPdfFullUrl ? (
+              <iframe
+                src={layoutPdfFullUrl}
+                className="h-full w-full"
+                title="双语 PDF"
+              />
+            ) : (
+              <div className="p-4">
+                <h3 className="text-sm font-medium text-white/80 mb-4">译文对照</h3>
+                {segments.length === 0 && !translating && (
+                  <p className="text-xs text-white/40">正在加载翻译...</p>
+                )}
+                {translating && segments.length === 0 && (
+                  <div className="flex items-center gap-2">
+                    <div className="h-4 w-4 animate-spin rounded-full border border-primary border-t-transparent" />
+                    <span className="text-xs text-primary">翻译中...</span>
                   </div>
-                  <p className="text-sm text-white/70 leading-relaxed mb-3">{seg.content}</p>
-                  {seg.translation && (
-                    <div className="border-l-2 border-primary/40 pl-3">
-                      <p className="text-xs text-primary/60 mb-1">译文</p>
-                      <p className="text-sm text-primary/90 leading-relaxed">{seg.translation}</p>
+                )}
+                {segments.map((seg, idx) => (
+                  <button
+                    type="button"
+                    key={seg.id || idx}
+                    data-trans-page={seg.pageNumber}
+                    className="mb-6 w-full cursor-pointer rounded-lg p-2 text-left hover:bg-white/5 transition-colors"
+                    onClick={() => seg.pageNumber && scrollPdfToPage(seg.pageNumber)}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-primary/60">P{seg.pageNumber}</span>
+                      <span className="text-xs text-white/20">点击跳转</span>
                     </div>
-                  )}
-                </button>
-              ))}
-            </div>
+                    <p className="text-sm text-white/70 leading-relaxed mb-3">{seg.content}</p>
+                    {seg.translation && (
+                      <div className="border-l-2 border-primary/40 pl-3">
+                        <p className="text-xs text-primary/60 mb-1">译文</p>
+                        <p className="text-sm text-primary/90 leading-relaxed">{seg.translation}</p>
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -286,7 +286,7 @@ async def test_email_config(config_id: str):
             else:
                 raise HTTPException(status_code=500, detail="测试邮件发送失败")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"测试邮件发送失败: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"测试邮件发送失败: {str(e)}") from e
 
 
 # ---------- 每日报告配置 ----------

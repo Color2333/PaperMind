@@ -62,8 +62,7 @@ def _run_topic_wiki_task(
     """后台执行 topic wiki 生成"""
 
     # task_tracker 传入的 progress_callback 签名为 (msg, cur, tot)
-    # graph_service.topic_wiki 期望的签名为 (pct: float, msg: str)
-    # 做适配器转换
+    # graph topic_wiki 内部已按 (msg, cur, tot) 调用，此处透传
     def _adapted_progress(pct: float, msg: str):
         if progress_callback:
             progress_callback(msg, int(pct * 100), 100)
@@ -136,7 +135,7 @@ def generated_detail(content_id: str) -> dict:
         try:
             gc = repo.get_by_id(content_id)
         except ValueError:
-            raise HTTPException(status_code=404, detail="Content not found")
+            raise HTTPException(status_code=404, detail="Content not found") from None
         return {
             "id": gc.id,
             "content_type": gc.content_type,
@@ -156,7 +155,7 @@ def generated_delete(content_id: str) -> dict:
         try:
             repo.get_by_id(content_id)
         except ValueError:
-            raise HTTPException(status_code=404, detail="Content not found")
+            raise HTTPException(status_code=404, detail="Content not found") from None
         repo.delete(content_id)
     return {"deleted": content_id}
 

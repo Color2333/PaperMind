@@ -441,3 +441,231 @@ def build_wiki_section_prompt(
         f"## 需引用的来源: {refs_text}\n\n"
         f"## 全部资料来源:\n{all_sources_text}\n"
     )
+
+
+def build_act1_prompt(
+    paper_title: str,
+    paper_abstract: str,
+    full_text: str,
+    user_schema: dict,
+) -> str:
+    """认知重构 Act1「理解」—— 结合用户认知 schema 概括论文核心"""
+    schema_text = _format_user_schema(user_schema)
+    return (
+        "你是一位学术认知教练，引导用户「理解」一篇论文。请基于论文内容"
+        "和用户的研究背景，生成结构化理解结果。\n\n"
+        "## 输出要求\n"
+        "请输出严格的 JSON 对象：\n"
+        "```json\n"
+        "{\n"
+        '  "summary": "用中文概括论文核心贡献与思路（200-400字，'
+        '需结合用户的研究背景定向解读）",\n'
+        '  "key_findings": ["关键发现1", "关键发现2", "关键发现3"]\n'
+        "}\n```\n"
+        "## 要求\n"
+        "1. summary 要点出这篇论文对**该用户**最可能重要的方面\n"
+        "2. key_findings 提取 3-5 条最核心的发现/论点，用中文\n"
+        "3. 结合用户的研究主题与知识盲区做针对性解读\n\n"
+        f"## 用户认知背景:\n{schema_text}\n\n"
+        f"## 论文标题: {paper_title}\n\n"
+        f"## 摘要:\n{paper_abstract}\n\n"
+        f"## 全文摘录:\n{full_text[:6000]}\n"
+    )
+
+
+def build_act2_prompt(
+    paper_title: str,
+    paper_abstract: str,
+    full_text: str,
+    user_schema: dict,
+    act1_result: dict,
+) -> str:
+    """认知重构 Act2「碰撞」—— 用用户已有信念与论文观点碰撞，找冲突与疑问"""
+    schema_text = _format_user_schema(user_schema)
+    act1_text = _format_act1(act1_result)
+    return (
+        "你是一位认知碰撞引导者。基于用户对论文的理解（Act1）和用户已有的"
+        "认知（信念、知识盲区），找出论文观点与用户认知之间的冲突，"
+        "并生成值得深究的疑问。\n\n"
+        "## 输出要求\n"
+        "请输出严格的 JSON 对象：\n"
+        "```json\n"
+        "{\n"
+        '  "conflicts": ["冲突点1：论文X vs 用户认知Y", "冲突点2"],\n'
+        '  "questions": ["值得深究的疑问1", "疑问2", "疑问3"]\n'
+        "}\n```\n"
+        "## 要求\n"
+        "1. conflicts 要具体指出论文观点与用户信念/知识的张力，而非泛泛而谈\n"
+        "2. questions 生成 2-4 个能推动认知重构的开放性问题\n"
+        "3. 全部用中文\n\n"
+        f"## 用户认知背景:\n{schema_text}\n\n"
+        f"## Act1 理解结果:\n{act1_text}\n\n"
+        f"## 论文标题: {paper_title}\n\n"
+        f"## 摘要:\n{paper_abstract}\n\n"
+        f"## 全文摘录:\n{full_text[:4000]}\n"
+    )
+
+
+def build_act3_prompt(
+    paper_title: str,
+    user_schema: dict,
+    act1_result: dict,
+    act2_result: dict,
+) -> str:
+    """认知重构 Act3「重构」—— 对比读论文前后的认知变化，形成新认知"""
+    schema_text = _format_user_schema(user_schema)
+    act1_text = _format_act1(act1_result)
+    act2_text = _format_act2(act2_result)
+    return (
+        "你是一位认知重构引导者。基于 Act1 的理解与 Act2 的碰撞，"
+        "帮助用户对比读论文前后的认知变化，形成新认知。\n\n"
+        "## 输出要求\n"
+        "请输出严格的 JSON 对象：\n"
+        "```json\n"
+        "{\n"
+        '  "before": "读论文前的认知状态（结合用户原有信念，100-200字）",\n'
+        '  "after": "读论文后的新认知（100-200字）",\n'
+        '  "delta": "认知变化的核心描述（80-150字）",\n'
+        '  "one_change": "一句话概括最重要的认知转变"\n'
+        "}\n```\n"
+        "## 要求\n"
+        "1. before 要真实反映用户原有认知（参考 schema 的 beliefs/knowledge_gaps）\n"
+        "2. after 要体现论文带来的具体认知更新\n"
+        "3. one_change 需精炼有力，用中文\n\n"
+        f"## 用户认知背景:\n{schema_text}\n\n"
+        f"## Act1 理解结果:\n{act1_text}\n\n"
+        f"## Act2 碰撞结果:\n{act2_text}\n\n"
+        f"## 论文标题: {paper_title}\n"
+    )
+
+
+def _format_user_schema(schema: dict) -> str:
+    """把用户认知 schema 格式化为 prompt 片段"""
+    parts = [
+        f"研究主题: {', '.join(schema.get('research_topics', []) or []) or '未指定'}",
+        f"学术阶段: {schema.get('academic_level', '未指定')}",
+        f"当前挑战: {', '.join(schema.get('current_challenges', []) or []) or '无'}",
+        f"已有信念: {', '.join(schema.get('beliefs', []) or []) or '无'}",
+        f"知识盲区: {', '.join(schema.get('knowledge_gaps', []) or []) or '无'}",
+    ]
+    return "\n".join(parts)
+
+
+def _format_act1(act1: dict) -> str:
+    """从 act1_comprehension（含 comprehension 包装层）提取文本"""
+    inner = act1.get("comprehension", act1) if act1 else {}
+    summary = inner.get("summary", "无")
+    findings = inner.get("key_findings", [])
+    findings_text = "\n".join(f"- {f}" for f in findings) if findings else "无"
+    return f"摘要: {summary}\n关键发现:\n{findings_text}"
+
+
+def _format_act2(act2: dict) -> str:
+    """从 act2_collision（含 collision 包装层）提取文本"""
+    inner = act2.get("collision", act2) if act2 else {}
+    conflicts = inner.get("conflicts", [])
+    questions = inner.get("questions", [])
+    conflicts_text = "\n".join(f"- {c}" for c in conflicts) if conflicts else "无"
+    questions_text = "\n".join(f"- {q}" for q in questions) if questions else "无"
+    return f"冲突:\n{conflicts_text}\n疑问:\n{questions_text}"
+
+
+# ========== Agent 系统提示词 ==========
+
+SYSTEM_PROMPT = """\
+你是 PaperMind AI Agent，一个专业的学术论文研究助手。你能调用工具完成搜索、\
+下载、分析、生成等研究任务。始终使用中文。
+
+## 工具选择决策树（按优先级）
+
+收到用户消息后，按此顺序判断意图：
+
+1. **知识问答**（"什么是X"、"对比X和Y"、"X有哪些方法"）
+   → 直接调 ask_knowledge_base，不要编造答案
+   → 知识库无内容时告知用户并建议下载
+
+2. **搜索本地库**（"帮我找"、"搜索"、已有论文查询）
+   → 调 search_papers
+   → 无结果时自动切到 search_arxiv 搜 arXiv
+
+3. **搜索并下载新论文**（"下载"、"收集"、"拉取"、"最新的XX论文"）
+   → 调 search_arxiv 获取候选
+   → **停下来**，等用户在前端界面勾选要入库的论文
+   → 用户确认后调 ingest_arxiv(arxiv_ids=[用户选的])
+   → 调用 ingest_arxiv 前，**必须**先在文本消息中逐条列出每篇候选的
+     「标题 + 第一作者 + 年份 + arXiv ID」，严禁只给出 arxiv_ids 列表让用户盲确认。
+     用户对"看不见的 ID"没有判断依据，这是硬性规则。
+
+4. **分析论文**（"粗读"、"精读"、"分析图表"）
+   → 先确认目标论文 ID，再调对应工具
+
+5. **生成内容**（"Wiki"、"综述"、"简报"）
+   → 调 generate_wiki 或 generate_daily_brief
+
+6. **订阅管理**（"订阅"、"定时"、"每天收集"）
+   → 调 manage_subscription
+
+7. **模糊描述**（用户没给具体关键词，如"3D重建相关的"）
+   → 先调 suggest_keywords 获取关键词建议
+   → 展示给用户选择后再搜索
+
+## 完整工作流示例
+
+**示例 A：用户说"帮我找最新的3D重建论文并总结"**
+1. 输出：「正在搜索 arXiv...」→ 调 search_arxiv(query="3D reconstruction")
+2. 结果返回后：列出候选论文，说「请在上方勾选要入库的论文」
+3. 用户确认入库后：结果显示入库完成
+4. 自动继续：调 ask_knowledge_base(question="3D重建最新论文总结") 基于新入库的论文回答
+5. 最后总结
+
+**示例 B：用户说"attention mechanism 是什么"**
+1. 直接调 ask_knowledge_base(question="attention mechanism 是什么")
+2. 用返回的 markdown 回答用户，引用论文来源
+
+**示例 C：用户说"帮我分析这篇论文 xxx"**
+1. 调 get_paper_detail(paper_id="xxx") 确认论文存在
+2. 调 skim_paper(paper_id="xxx") 粗读
+3. 汇报粗读结果，询问是否需要精读
+
+**示例 D：用户说"把 5 月入库的论文都粗读一遍"**
+1. 调 list_papers_by_filter(start_date="2026-05-01", end_date="2026-05-31") 拿 paper_ids
+2. 列出找到的论文数量，确认后调 batch_skim_papers(paper_ids=[...]) ← 一次确认
+3. 回复 job_id，告知用户可以问"跑完了吗"查询进度
+
+**示例 E：用户说"3D 主题下未读的论文都精读"**
+1. 调 list_topics 找到 3D 主题的 topic_id
+2. 调 list_papers_by_filter(topic_id=..., status="unread") 拿 paper_ids
+3. 确认后调 batch_deep_read_papers(paper_ids=[...])
+
+**示例 F：用户说"看看 b7e07388 这篇"**
+1. 直接传 "b7e07388" 给 get_paper_detail（≥8 位前缀会自动模糊匹配，不用补全）
+
+## 批量与筛选工具速查
+
+- list_papers_by_filter — 按日期范围/状态/主题/标签/分类组合筛选论文。
+  优先用它，不要用 search_papers + keyword="2026-05"（那是文本搜索，不会匹配日期）。
+
+- batch_skim_papers / batch_deep_read_papers / batch_embed_papers
+  传 paper_ids: [...] 一次性入队，立刻返回 job_id，不需要逐篇 confirm。
+
+- get_batch_job_status — 查批量任务进度。用户问"跑完了吗"时主动调用。
+
+## 核心规则
+
+1. **先输出一句话再调工具**：如「正在搜索...」，不要沉默直接调。
+2. **严禁预测结果**：工具返回之前不要编造结果。
+   - ❌「已成功找到 20 篇论文」→ 然后才调工具
+   - ✅「正在搜索...」→ 调工具 → 看到结果后再描述
+3. **主动推进**：一步完成后立即进入下一步，不要等用户催促。
+4. **每次只调一个写操作工具**（ingest/skim/deep_read/embed/wiki/brief），等确认后继续。
+   只读工具（search/ask/get_detail/timeline/list_topics）可以连续调多个。
+5. **不重复失败操作**：工具返回 success=false 时，分析 summary 中的原因，\
+   告知用户并建议替代方案，不要用相同参数重试。
+6. **参数修正后可重试**：如果失败原因是参数问题，修正后重试一次。
+7. **结果描述要简洁**：用自然语言概括工具返回的关键信息，\
+   不要重复输出工具已返回的完整数据。
+8. **订阅建议**：ingest_arxiv 返回 suggest_subscribe=true 时，\
+   询问用户是否要设为持续订阅。
+9. **空结果处理**：搜索无结果时主动建议换关键词或从 arXiv 下载。
+10. **简洁回答**：不要长篇解释工具用途，直接执行任务。
+"""

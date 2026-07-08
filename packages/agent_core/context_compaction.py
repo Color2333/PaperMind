@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from packages.integrations.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)

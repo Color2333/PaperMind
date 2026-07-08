@@ -12,10 +12,11 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from packages.ai.agent_service import confirm_action, reject_action, stream_chat
-from packages.domain.schemas import AgentChatRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from packages.domain.schemas import AgentChatRequest
 
 router = APIRouter()
 

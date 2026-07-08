@@ -177,6 +177,41 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
     }
   };
 
+  const [generating, setGenerating] = useState(false);
+
+  const generateAct = async (act: 1 | 2 | 3) => {
+    if (!currentSession) return;
+    setGenerating(true);
+    try {
+      const token = localStorage.getItem('auth_token') || '';
+      const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+      const res = await fetch(`${base}/sensemaking/sessions/${currentSession.id}/act${act}/generate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const updated: SessionData = await res.json();
+        setCurrentSession(updated);
+        // AI 生成后填入表单，用户可编辑后再手动提交
+        if (act === 1 && updated.act1_comprehension?.comprehension) {
+          setAct1Form(updated.act1_comprehension.comprehension);
+        } else if (act === 2 && updated.act2_collision?.collision) {
+          setAct2Form(updated.act2_collision.collision);
+        } else if (act === 3 && updated.act3_reconstruction) {
+          setAct3Form(updated.act3_reconstruction);
+        }
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.detail || 'AI 生成失败，请稍后重试');
+      }
+    } catch (err) {
+      console.error('Failed to generate act:', err);
+      alert('AI 生成失败，请检查后端服务');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const renderList = () => (
     <div className="flex h-full flex-col p-4">
       <div className="mb-4 text-center">
@@ -255,6 +290,16 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
         </div>
       </div>
 
+      <button
+        type="button"
+        onClick={() => generateAct(1)}
+        disabled={generating}
+        className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/10 py-1.5 text-xs text-primary hover:bg-primary/20 disabled:opacity-50"
+      >
+        {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+        ✨ AI 生成理解
+      </button>
+
       <div className="mb-3">
         <p className="mb-1 text-xs text-white/60">论文摘要</p>
         <textarea
@@ -313,6 +358,16 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
         </div>
       </div>
 
+      <button
+        type="button"
+        onClick={() => generateAct(2)}
+        disabled={generating}
+        className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 py-1.5 text-xs text-amber-400 hover:bg-amber-500/20 disabled:opacity-50"
+      >
+        {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+        ✨ AI 生成碰撞
+      </button>
+
       <div className="mb-3">
         <p className="mb-1 text-xs text-white/60">与已有知识的冲突</p>
         <textarea
@@ -358,6 +413,16 @@ export function CanvasPanel({ paperId, paperTitle }: CanvasPanelProps) {
           <span className="text-sm text-emerald-400">Act 3: 重构</span>
         </div>
       </div>
+
+      <button
+        type="button"
+        onClick={() => generateAct(3)}
+        disabled={generating}
+        className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 py-1.5 text-xs text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50"
+      >
+        {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+        ✨ AI 生成重构
+      </button>
 
       <div className="mb-3">
         <p className="mb-1 text-xs text-white/60">阅读前的理解</p>

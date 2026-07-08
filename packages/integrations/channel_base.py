@@ -11,7 +11,6 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from packages.domain.schemas import PaperCreate
 

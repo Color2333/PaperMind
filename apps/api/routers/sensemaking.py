@@ -257,6 +257,58 @@ async def complete_act3(session_id: str, act3_data: dict):
         }
 
 
+@router.post("/sessions/{session_id}/act1/generate")
+async def generate_act1(session_id: str):
+    """AI 生成 Act1「理解」—— 读论文 + 用户 schema，LLM 生成结构化理解"""
+    from packages.ai.sensemaking_service import SensemakingService
+
+    _ensure_session_exists(session_id)
+    try:
+        return SensemakingService().generate_act1(session_id)
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+
+
+@router.post("/sessions/{session_id}/act2/generate")
+async def generate_act2(session_id: str):
+    """AI 生成 Act2「碰撞」—— 用 Act1 + 用户信念与论文观点碰撞"""
+    from packages.ai.sensemaking_service import SensemakingService
+
+    _ensure_session_exists(session_id)
+    try:
+        return SensemakingService().generate_act2(session_id)
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+
+
+@router.post("/sessions/{session_id}/act3/generate")
+async def generate_act3(session_id: str):
+    """AI 生成 Act3「重构」—— 对比前后认知变化，置 status=completed"""
+    from packages.ai.sensemaking_service import SensemakingService
+
+    _ensure_session_exists(session_id)
+    try:
+        return SensemakingService().generate_act3(session_id)
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+
+
+def _ensure_session_exists(session_id: str) -> None:
+    """校验 session 存在，否则 404"""
+    with session_scope() as session:
+        if not session.query(SensemakingSession).filter_by(id=session_id).first():
+            raise HTTPException(status_code=404, detail="Session not found")
+
+
 @router.post("/interactions")
 async def create_interaction(
     user_schema_id: str,

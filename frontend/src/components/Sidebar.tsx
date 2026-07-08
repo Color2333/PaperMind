@@ -74,7 +74,7 @@ export default function Sidebar() {
   // folder-stats 每 60s 轮询一次，与路由无关（路由变化不重新注册 interval）
   useEffect(() => {
     const fetchUnread = () => {
-      paperApi.folderStats().then((s: any) => {
+      paperApi.folderStats().then((s) => {
         setUnreadCount(s.by_status?.unread ?? 0);
       }).catch(() => {});
     };

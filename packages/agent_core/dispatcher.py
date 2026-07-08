@@ -7,7 +7,6 @@ ToolDispatcher — 工具注册与分发，参考 learn-claude-code s02
     loop 不变，加工具 = 加 handler
 
     TOOL_HANDLERS = {
-        "bash":       lambda **kw: run_bash(kw["command"]),
         "read_file":  lambda **kw: run_read(kw["path"]),
         "task_create": lambda **kw: TASKS.create(kw["subject"], ...),
     }
@@ -29,7 +28,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-from .tools.bash import run_bash
 from .tools.filesystem import run_edit, run_glob, run_grep, run_read, run_write
 
 
@@ -39,14 +37,12 @@ class ToolDispatcher:
 
     使用方式：
         dispatcher = ToolDispatcher()
-        dispatcher.register("bash", run_bash)
         dispatcher.register("read_file", run_read)
         dispatcher.register("task_create", task_manager.create)
         dispatcher.register("task_list", task_manager.list_all)
 
         # 批量注册
         dispatcher.register_many({
-            "bash": run_bash,
             "read_file": run_read,
             "write_file": run_write,
         })
@@ -216,18 +212,12 @@ def make_default_dispatcher(
 ) -> ToolDispatcher:
     """
     创建默认工具集的 dispatcher。
-    包含所有基础工具：bash, read, write, edit, glob, grep
+    包含所有基础工具：read, write, edit, glob, grep
     可选添加 tasks 工具。
     """
     from pathlib import Path
 
-    workdir_path = Path(workdir) if workdir else Path.cwd()
-
-    def bash(command: str) -> str:
-        return run_bash(command, cwd=str(workdir_path))
-
     dispatcher = ToolDispatcher()
-    dispatcher.register("bash", bash)
     dispatcher.register("read_file", run_read)
     dispatcher.register("write_file", run_write)
     dispatcher.register("edit_file", run_edit)
@@ -286,7 +276,7 @@ class StreamingToolDispatcher:
     使用方式：
         dispatcher = StreamingToolDispatcher()
         dispatcher.register("search_papers", search_papers_handler)  # generator
-        dispatcher.register("bash", bash_handler)  # sync
+        dispatcher.register("get_status", status_handler)  # sync
 
         # 流式执行
         for item in dispatcher.dispatch_stream("search_papers", {"keyword": "AI"}):

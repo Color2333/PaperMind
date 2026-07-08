@@ -1,0 +1,78 @@
+"""
+分析报告数据仓储
+@author Color2333
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from sqlalchemy import select
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from sqlalchemy.orm import Session
+
+    from packages.domain.schemas import DeepDiveReport, SkimReport
+
+from packages.storage.models import AnalysisReport
+
+
+class AnalysisRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def upsert_skim(self, paper_id: UUID, skim: SkimReport) -> None:
+        report = self._get_or_create(paper_id)
+        innovations = "".join([f"  - {x}\n" for x in skim.innovations])
+        report.summary_md = f"- 一句话: {skim.one_liner}\n- 创新点:\n{innovations}"
+        report.skim_score = skim.relevance_score
+        report.key_insights = {"skim_innovations": skim.innovations}
+
+    def upsert_deep_dive(self, paper_id: UUID, deep: DeepDiveReport) -> None:
+        report = self._get_or_create(paper_id)
+        risks = "".join([f"- {x}\n" for x in deep.reviewer_risks])
+        report.deep_dive_md = (
+            f"## Method\n{deep.method_summary}\n\n"
+            f"## Experiments\n{deep.experiments_summary}\n\n"
+            f"## Ablation\n{deep.ablation_summary}\n\n"
+            f"## Reviewer Risks\n{risks}"
+        )
+        report.key_insights = {
+            **(report.key_insights or {}),
+            "reviewer_risks": deep.reviewer_risks,
+        }
+
+    def _get_or_create(self, paper_id: UUID) -> AnalysisReport:
+        pid = str(paper_id)
+        q = select(AnalysisReport).where(AnalysisReport.paper_id == pid)
+        found = self.session.execute(q).scalar_one_or_none()
+        if found:
+            return found
+        report = AnalysisReport(paper_id=pid, key_insights={})
+        self.session.add(report)
+        self.session.flush()
+        return report
+
+    def summaries_for_papers(self, paper_ids: list[str]) -> dict[str, str]:
+        if not paper_ids:
+            return {}
+        q = select(AnalysisReport).where(AnalysisReport.paper_id.in_(paper_ids))
+        reports = list(self.session.execute(q).scalars())
+        return {x.paper_id: x.summary_md or "" for x in reports}
+
+    def contexts_for_papers(self, paper_ids: list[str]) -> dict[str, str]:
+        if not paper_ids:
+            return {}
+        q = select(AnalysisReport).where(AnalysisReport.paper_id.in_(paper_ids))
+        reports = list(self.session.execute(q).scalars())
+        out: dict[str, str] = {}
+        for x in reports:
+            combined = []
+            if x.summary_md:
+                combined.append(x.summary_md)
+            if x.deep_dive_md:
+                combined.append(x.deep_dive_md[:2000])
+            out[x.paper_id] = "\n\n".join(combined)
+        return out

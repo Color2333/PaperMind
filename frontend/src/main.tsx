@@ -4,11 +4,11 @@
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import DesktopBootstrap from "./DesktopBootstrap";
+import App from "./App";
 import "./index.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <DesktopBootstrap />
+    <App />
   </StrictMode>
 );

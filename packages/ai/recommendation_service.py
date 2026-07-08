@@ -11,6 +11,7 @@ import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
+from packages.domain.math_utils import cosine_similarity as _cosine_sim
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
 
@@ -34,9 +35,6 @@ def _cached(key: str, ttl: float = _DEFAULT_TTL):
 def _set_cache(key: str, value: object):
     with _ttl_lock:
         _ttl_cache[key] = (time.monotonic(), value)
-
-
-from packages.domain.math_utils import cosine_similarity as _cosine_sim
 
 
 def _mean_vector(vectors: list[list[float]]) -> list[float]:

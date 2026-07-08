@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from packages.integrations.llm_client import LLMClient, LLMResult
 
 logger = logging.getLogger(__name__)
 
 
-class WritingAction(str, Enum):
+class WritingAction(StrEnum):
     ZH_TO_EN = "zh_to_en"
     EN_TO_ZH = "en_to_zh"
     ZH_POLISH = "zh_polish"
@@ -462,7 +462,7 @@ class WritingService:
         try:
             writing_action = WritingAction(action)
         except ValueError:
-            raise ValueError(f"未知的写作操作: {action}")
+            raise ValueError(f"未知的写作操作: {action}") from None
 
         builder = _PROMPT_BUILDERS.get(writing_action)
         if not builder:
@@ -502,7 +502,7 @@ class WritingService:
         try:
             writing_action = WritingAction(action)
         except ValueError:
-            raise ValueError(f"未知的写作操作: {action}")
+            raise ValueError(f"未知的写作操作: {action}") from None
 
         if writing_action not in VISION_ACTIONS:
             raise ValueError(f"写作操作 {action} 不支持图片输入")

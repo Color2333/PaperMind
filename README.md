@@ -11,7 +11,7 @@
 [![Tailwind](https://img.shields.io/badge/Tailwind_CSS_v4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-[![LLM](https://img.shields.io/badge/LLM-OpenAI_%7C_Anthropic_%7C_ZhipuAI-blueviolet?style=flat-square)]()
+[![LLM](https://img.shields.io/badge/LLM-Xiaomi_%7C_Zhipu_%7C_OpenAI_%7C_Anthropic-blueviolet?style=flat-square)]()
 
 > 让 AI 成为你的研究助理 —— 自动追踪、智能分析、知识图谱、学术写作，一站式搞定！
 
@@ -95,9 +95,11 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 - 📝 **Act 1 理解** —— 摘要 + 关键发现，厘清论文核心
 - ⚡ **Act 2 碰撞** —— 冲突 + 疑问，与已有知识对话
 - 🔄 **Act 3 重构** —— 前后对比 + 认知变化，形成新认知
-- 📖 **全文对照翻译** —— 段落级中英对照，支持两种模式
+- 📖 **全文对照翻译** —— 段落级中英对照，支持两种模式，结果持久化（二次打开免重译）
   - ⚡ **快速翻译**：1-2 分钟，PyMuPDF 分段 + 并发翻译
   - 📐 **布局保留**：3-5 分钟，PDFMathTranslate 完整排版（公式/图表保留）
+
+> 💡 布局保留模式依赖 pdf2zh（`pip install ".[pdf]"` 已含），首次使用会联网下载翻译模型。
 
 ### 🤖 AI Agent 对话
 
@@ -177,16 +179,17 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 
 灵活控制成本，按场景分配模型：
 
-- 📊 **统一配置** —— 默认使用 GLM-4.7（文本）+ GLM-4.6V（视觉）
-- 🔄 **一键切换** —— 在设置页面随时切换配置
-- 🎯 **场景映射** —— 所有文本任务自动使用 GLM-4.7
-- 💰 **成本优化** —— 单一模型配置，避免管理复杂度
+- 📊 **多配置管理** —— 支持多个 LLM 提供商配置，默认使用小米 MiMo（文本）+ MiMo（视觉）
+- 🔄 **一键切换** —— 在设置页面随时激活不同配置
+- 🎯 **场景映射** —— 粗读/精读/视觉/嵌入各有独立模型配置
+- 💰 **成本优化** —— 每日预算守卫，自动降级控制成本
 - 📈 **Token 追踪** —— 所有 API 调用自动记录成本和用量
 
-**默认模型配置**：
-- 文本任务（粗读/精读/翻译/写作）：GLM-4.7
-- 视觉任务（图表分析/OCR）：GLM-4.6V
-- 降级备用：GLM-4.7
+**默认模型配置**（小米 MiMo）：
+- 文本任务（粗读/精读/翻译/写作）：mimo-v2-omni / mimo-v2.5-pro
+- 视觉任务（图表分析/OCR）：mimo-v2.5
+- 降级备用：mimo-v2.5-pro
+- 嵌入向量：text-embedding-v4（阿里百炼 DashScope）
 
 ---
 
@@ -209,7 +212,7 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 │         右下角悬浮面板 · 分类图标 · 完成历史                │
 ├─────────────────────────────────────────────────────────────┤
 │           Unified LLM Client (连接复用 + TTL 缓存)           │
-│            OpenAI  │  Anthropic  │  ZhipuAI                 │
+│         Xiaomi(MiMo) │ Zhipu │ OpenAI │ Anthropic         │
 ├─────────────────────────────────────────────────────────────┤
 │   SQLite (WAL)  │  ArXiv API  │  Semantic Scholar API       │
 └─────────────────────────────────────────────────────────────┘
@@ -227,14 +230,19 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 
 | 变量 | 说明 | 默认值 |
 |:-----|:-----|:------:|
-| `LLM_PROVIDER` | LLM 提供商 (openai/anthropic/zhipu) | `zhipu` |
+| `LLM_PROVIDER` | LLM 提供商 (xiaomi/zhipu/openai/anthropic) | `xiaomi` |
+| `XIAOMI_API_KEY` | 小米 MiMo API Key | — |
 | `ZHIPU_API_KEY` | 智谱 API Key | — |
 | `OPENAI_API_KEY` | OpenAI API Key | — |
 | `ANTHROPIC_API_KEY` | Anthropic API Key | — |
-| `LLM_MODEL_SKIM` | 粗读模型 | `glm-4.7` |
-| `LLM_MODEL_DEEP` | 精读模型 | `glm-4.7` |
-| `LLM_MODEL_VISION` | 视觉模型 | `glm-4.6v` |
-| `EMBEDDING_MODEL` | Embedding 模型 | `embedding-3` |
+| `LLM_MODEL_SKIM` | 粗读模型 | `mimo-v2-omni` |
+| `LLM_MODEL_DEEP` | 精读模型 | `mimo-v2.5-pro` |
+| `LLM_MODEL_VISION` | 视觉模型 | `mimo-v2.5` |
+| `LLM_MODEL_FALLBACK` | 降级备用模型 | `mimo-v2.5-pro` |
+| `EMBEDDING_MODEL` | Embedding 模型 | `text-embedding-v4` |
+| `EMBEDDING_API_KEY` | Embedding API Key（阿里百炼 DashScope） | — |
+| `EMBEDDING_BASE_URL` | Embedding 服务地址 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `EMBEDDING_DIMENSIONS` | Embedding 向量维度 | `1024` |
 | `SITE_URL` | 生产域名 | `http://localhost:3002` |
 | `AUTH_PASSWORD` | 站点密码（留空禁用认证） | — |
 | `AUTH_SECRET_KEY` | JWT 密钥 | — |
@@ -290,11 +298,14 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 
 | 方法 | 路径 | 说明 |
 |:----:|:-----|:-----|
-| GET | `/graph/citation-tree/{id}` | 引文树 |
+| GET | `/graph/citation-tree/{paper_id}` | 引文树 |
+| GET | `/graph/citation-detail/{paper_id}` | 引用详情 |
 | GET | `/graph/overview` | 全局概览 |
 | GET | `/graph/bridges` | 桥接论文 |
 | GET | `/graph/frontier` | 研究前沿 |
-| GET | `/graph/cocitation` | 共引聚类 |
+| GET | `/graph/cocitation-clusters` | 共引聚类 |
+| GET | `/graph/timeline` | 时间线 + seminal |
+| GET | `/graph/survey` | 领域综述 |
 
 </details>
 
@@ -303,21 +314,22 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 
 | 方法 | 路径 | 说明 |
 |:----:|:-----|:-----|
-| POST | `/wiki/topic` | 生成主题综述 |
-| GET | `/wiki/topic/{id}` | 获取主题 Wiki |
-| POST | `/wiki/paper/{id}` | 生成论文解读 |
-| GET | `/wiki/history` | Wiki 生成历史 |
+| GET | `/wiki/paper/{paper_id}` | 论文深度解读 |
+| GET | `/wiki/topic` | 获取主题 Wiki |
+| POST | `/tasks/wiki/topic` | 生成主题综述 |
+| GET | `/generated/list` | 已生成内容列表 |
 
 </details>
 
 <details>
-<summary><strong>📡 订阅源</strong></summary>
+<summary><strong>📡 订阅源（CSFeeds）</strong></summary>
 
 | 方法 | 路径 | 说明 |
 |:----:|:-----|:-----|
-| GET | `/cs-feeds/` | 列表订阅源 |
-| POST | `/cs-feeds/subscribe` | 订阅论文源 |
-| POST | `/cs-feeds/fetch` | 手动触发抓取 |
+| GET | `/cs/categories` | arXiv CS 分类列表 |
+| GET | `/cs/feeds` | 列表订阅源 |
+| POST | `/cs/feeds` | 订阅论文源 |
+| POST | `/cs/feeds/{category_code}/fetch` | 手动触发抓取 |
 
 </details>
 
@@ -396,9 +408,10 @@ python -m ruff check .
 # 前端类型检查
 cd frontend && npx tsc --noEmit
 
-# 数据库迁移
-cd infra && alembic revision --autogenerate -m "描述"
-alembic upgrade head
+# 数据库迁移（详见 infra/migrations/README.md）
+alembic revision --autogenerate -m "描述"  # 修改模型后生成迁移
+alembic upgrade head                       # 新库建表
+alembic stamp head                         # 现有库纳入管理（不执行 DDL）
 ```
 
 ---

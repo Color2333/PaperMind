@@ -13,8 +13,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from packages.config import get_settings
 from packages.domain.exceptions import ConfigError, ServiceUnavailableError
@@ -26,6 +26,9 @@ from packages.storage.repositories import (
     PaperRepository,
 )
 from packages.timezone import user_date_str
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

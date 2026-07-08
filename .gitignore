@@ -38,6 +38,7 @@ worktrees/
 CLAUDE.md
 .spec-workflow/
 .cursor/
+.zcode/
 
 # Data (runtime generated)
 data/

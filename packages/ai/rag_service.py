@@ -6,7 +6,7 @@ RAG 检索增强生成服务
 from __future__ import annotations
 
 import logging
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from packages.ai.cost_guard import CostGuardService
 from packages.ai.prompts import build_rag_prompt
@@ -18,6 +18,9 @@ from packages.storage.repositories import (
     PaperRepository,
     PromptTraceRepository,
 )
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 logger = logging.getLogger(__name__)
 

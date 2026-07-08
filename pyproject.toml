@@ -29,6 +29,7 @@ llm = [
   "anthropic>=0.62.0",
 ]
 pdf = [
+  "pdf2zh>=1.9",
   "pymupdf>=1.25.5",
 ]
 
@@ -40,7 +41,6 @@ build-backend = "setuptools.build_meta"
 packages = [
   "apps",
   "apps.api",
-  "apps.desktop",
   "apps.worker",
   "packages",
   "packages.ai",
@@ -87,3 +87,7 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

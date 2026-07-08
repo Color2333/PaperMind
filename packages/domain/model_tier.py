@@ -2,10 +2,10 @@
 场景化模型配置 - 按使用场景分配不同成本的模型
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ModelTier(str, Enum):
+class ModelTier(StrEnum):
     """模型成本分层"""
 
     ECONOMY = "economy"  # 经济型：最便宜，适合简单任务（摘要、分类、关键词提取）

@@ -2,25 +2,37 @@
  * Paper Detail - 论文详情（重构版：进度面板 + Tab 化报告 + 统一布局）
  * @author Color2333
  */
-import { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
+import { useState, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardHeader, Button, Badge, Empty } from "@/components/ui";
 import { Tabs } from "@/components/ui/Tabs";
 import { PaperDetailSkeleton } from "@/components/Skeleton";
+import {
+  PipelineProgress,
+  TabLabel,
+  EmptyReport,
+  FigureCard,
+  ReasoningPanel,
+  ReportSection,
+} from "@/components/paper-detail";
+import {
+  usePaperCore,
+  useSkim,
+  useDeepRead,
+  useEmbed,
+  useSimilarPapers,
+  useFigures,
+  useReasoning,
+  usePaperTags,
+  useAutoAnalyze,
+} from "@/hooks/paper-detail";
 
 // 重型依赖懒加载，只在真正需要时加载
 const Markdown = lazy(() => import("@/components/Markdown"));
 const PdfReader = lazy(() => import("@/components/PdfReader"));
 import { useToast } from "@/contexts/ToastContext";
-import { paperApi, pipelineApi, tagApi } from "@/services/api";
-import type {
-  Paper,
-  SkimReport,
-  DeepDiveReport,
-  ReasoningChainResult,
-  FigureAnalysisItem,
-  Tag as TagType,
-} from "@/types";
+import { paperApi } from "@/services/api";
+import type { Paper } from "@/types";
 import {
   ArrowLeft,
   ExternalLink,
@@ -40,16 +52,7 @@ import {
   Folder,
   Heart,
   Image as ImageIcon,
-  BarChart3,
-  Table2,
-  FileCode2,
   Brain,
-  ChevronDown,
-  ChevronRight,
-  TrendingUp,
-  Target,
-  ThumbsUp,
-  ThumbsDown,
   Zap,
   FileSearch,
   X,
@@ -60,131 +63,6 @@ import {
 } from "lucide-react";
 
 /* ================================================================
- * PipelineProgress — 内联进度面板
- * ================================================================ */
-
-const SKIM_STAGES = ["提取论文摘要...", "分析方法论...", "评估创新点...", "生成报告..."];
-const DEEP_STAGES = ["深度分析方法论...", "评估实验设计...", "识别审稿风险...", "综合评估..."];
-const FIGURE_STAGES = ["提取 PDF 图表...", "Vision 模型分析中...", "整理解读结果..."];
-
-function PipelineProgress({
-  type,
-  onCancel,
-}: {
-  type: "skim" | "deep" | "figure" | "reasoning" | "embed";
-  onCancel?: () => void;
-}) {
-  const [progress, setProgress] = useState(0);
-  const [stageIdx, setStageIdx] = useState(0);
-
-  const stages =
-    type === "skim"
-      ? SKIM_STAGES
-      : type === "deep"
-        ? DEEP_STAGES
-        : type === "figure"
-          ? FIGURE_STAGES
-          : type === "reasoning"
-            ? ["构建推理链...", "分析方法推导...", "评估影响力...", "生成评估报告..."]
-            : ["计算向量嵌入..."];
-
-  const estimate =
-    type === "skim"
-      ? "10-20 秒"
-      : type === "deep"
-        ? "30-60 秒"
-        : type === "figure"
-          ? "30-60 秒"
-          : type === "reasoning"
-            ? "20-40 秒"
-            : "5-10 秒";
-
-  useEffect(() => {
-    const progressTimer = setInterval(() => {
-      setProgress((p) => (p < 90 ? p + Math.random() * 3 + 0.5 : p));
-    }, 500);
-    const stageTimer = setInterval(
-      () => {
-        setStageIdx((i) => (i < stages.length - 1 ? i + 1 : i));
-      },
-      type === "embed" ? 3000 : 8000
-    );
-    return () => {
-      clearInterval(progressTimer);
-      clearInterval(stageTimer);
-    };
-  }, [stages.length, type]);
-
-  return (
-    <div className="animate-fade-in border-primary/20 bg-primary/5 dark:bg-primary/10 rounded-2xl border p-5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative flex h-10 w-10 items-center justify-center">
-            <svg className="h-10 w-10 -rotate-90" viewBox="0 0 36 36">
-              <circle
-                cx="18"
-                cy="18"
-                r="15.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="text-border"
-              />
-              <circle
-                cx="18"
-                cy="18"
-                r="15.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                className="text-primary transition-all duration-500"
-                strokeDasharray={`${progress} ${100 - progress}`}
-                strokeLinecap="round"
-              />
-            </svg>
-            <span className="text-primary absolute text-[10px] font-bold">
-              {Math.round(progress)}%
-            </span>
-          </div>
-          <div>
-            <p className="text-ink text-sm font-medium">{stages[stageIdx]}</p>
-            <p className="text-ink-tertiary text-xs">预计 {estimate}</p>
-          </div>
-        </div>
-        {onCancel && (
-          <button
-            onClick={onCancel}
-            className="text-ink-tertiary hover:bg-hover hover:text-ink flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs transition-colors"
-          >
-            <X className="h-3.5 w-3.5" /> 取消
-          </button>
-        )}
-      </div>
-      <div className="bg-border mt-3 h-1.5 overflow-hidden rounded-full">
-        <div
-          className="from-primary h-full rounded-full bg-gradient-to-r to-blue-400 transition-all duration-500"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-/* ================================================================
- * Tab 状态指示器
- * ================================================================ */
-
-function TabLabel({ label, status }: { label: string; status: "idle" | "loading" | "done" }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      {status === "loading" && <Loader2 className="text-primary h-3 w-3 animate-spin" />}
-      {status === "done" && <Check className="text-success h-3 w-3" />}
-      {label}
-    </span>
-  );
-}
-
-/* ================================================================
  * 主组件
  * ================================================================ */
 
@@ -193,331 +71,127 @@ export default function PaperDetail() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // paper 状态在主组件中声明，避免 hook 间循环依赖
   const [paper, setPaper] = useState<Paper | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const [skimReport, setSkimReport] = useState<SkimReport | null>(null);
-  const [deepReport, setDeepReport] = useState<DeepDiveReport | null>(null);
-  const [savedSkim, setSavedSkim] = useState<{
-    summary_md: string;
-    skim_score: number | null;
-    key_insights: Record<string, unknown>;
-  } | null>(null);
-  const [savedDeep, setSavedDeep] = useState<{
-    deep_dive_md: string;
-    key_insights: Record<string, unknown>;
-  } | null>(null);
-  const [similarIds, setSimilarIds] = useState<string[]>([]);
-  const [similarItems, setSimilarItems] = useState<
-    { id: string; title: string; arxiv_id?: string; read_status?: string }[]
-  >([]);
-
-  const [skimLoading, setSkimLoading] = useState(false);
-  const [deepLoading, setDeepLoading] = useState(false);
-  const [embedLoading, setEmbedLoading] = useState(false);
-  const [embedDone, setEmbedDone] = useState<boolean | null>(null);
-  const [similarLoading, setSimilarLoading] = useState(false);
-
-  const [figures, setFigures] = useState<FigureAnalysisItem[]>([]);
-  const [figuresAnalyzing, setFiguresAnalyzing] = useState(false);
-
-  const [reasoning, setReasoning] = useState<ReasoningChainResult | null>(null);
-  const [reasoningLoading, setReasoningLoading] = useState(false);
 
   const [readerOpen, setReaderOpen] = useState(false);
   const [reportTab, setReportTab] = useState("skim");
 
-  /* 标签相关 */
-  const [allTags, setAllTags] = useState<TagType[]>([]);
-  const [tagModalOpen, setTagModalOpen] = useState(false);
-  const [newTagName, setNewTagName] = useState("");
-  const [newTagColor, setNewTagColor] = useState("#3b82f6");
-  const [tagsLoading, setTagsLoading] = useState(false);
+  // 标签 hook
+  const {
+    allTags,
+    setAllTags,
+    tagModalOpen,
+    setTagModalOpen,
+    newTagName,
+    setNewTagName,
+    newTagColor,
+    setNewTagColor,
+    tagsLoading,
+    handleToggleTag,
+    handleCreateTag,
+  } = usePaperTags({ paperId: id, toast, paper, setPaper });
 
-  const skimAbort = useRef<AbortController | null>(null);
-  const deepAbort = useRef<AbortController | null>(null);
+  // 图表 hook（提供 setFigures 给 usePaperCore）
+  const {
+    figures,
+    setFigures,
+    figuresAnalyzing,
+    setFiguresAnalyzing,
+    handleAnalyzeFigures,
+  } = useFigures({ id, toast, setReportTab });
 
-  /* 加载标签列表 */
-  const loadTags = useCallback(async () => {
-    try {
-      const res = await tagApi.list();
-      setAllTags(res.items);
-    } catch {
-      // 静默失败
-    }
-  }, []);
+  // 推理 hook（提供 setReasoning 给 usePaperCore）
+  const {
+    reasoning,
+    setReasoning,
+    reasoningLoading,
+    setReasoningLoading,
+    handleReasoning,
+  } = useReasoning({ id, toast, setReportTab });
 
-  useEffect(() => {
-    if (!id) return;
-    setLoading(true);
-    Promise.all([
-      paperApi.detail(id),
-      paperApi.getFigures(id).catch(() => ({ items: [] as FigureAnalysisItem[] })),
-      tagApi.list().catch(() => ({ items: [] as TagType[] })),
-    ])
-      .then(([p, figRes, tagRes]) => {
-        setPaper(p);
-        setEmbedDone(p.has_embedding ?? false);
-        if (p.skim_report) setSavedSkim(p.skim_report);
-        if (p.deep_report) setSavedDeep(p.deep_report);
-        setFigures(figRes.items);
-        setAllTags(tagRes.items);
-        const rc = p.metadata?.reasoning_chain as ReasoningChainResult | undefined;
-        if (rc) setReasoning(rc);
-        if (p.deep_report) setReportTab("deep");
-        else if (p.skim_report) setReportTab("skim");
-      })
-      .catch(() => {
-        toast("error", "加载论文详情失败");
-      })
-      .finally(() => setLoading(false));
-  }, [id, toast]);
+  // 粗读 hook（提供 setSavedSkim 给 usePaperCore）
+  const {
+    skimReport,
+    setSkimReport,
+    savedSkim,
+    setSavedSkim,
+    skimLoading,
+    setSkimLoading,
+    skimAbort,
+    handleSkim,
+  } = useSkim({ id, toast, setReportTab, setPaper });
 
-  const handleSkim = async () => {
-    if (!id) return;
-    setSkimLoading(true);
-    setReportTab("skim");
-    try {
-      const report = await pipelineApi.skim(id);
-      setSkimReport(report);
-      // 刷新论文信息，更新粗读报告
-      const updated = await paperApi.detail(id);
-      setPaper(updated);
-      if (updated.skim_report) setSavedSkim(updated.skim_report);
-      toast("success", "粗读完成");
-    } catch {
-      toast("error", "粗读失败");
-    } finally {
-      setSkimLoading(false);
-    }
-  };
+  // 精读 hook（提供 setSavedDeep 给 usePaperCore）
+  const {
+    deepReport,
+    setDeepReport,
+    savedDeep,
+    setSavedDeep,
+    deepLoading,
+    setDeepLoading,
+    deepAbort,
+    handleDeep,
+  } = useDeepRead({ id, toast, setReportTab });
 
-  const handleDeep = async () => {
-    if (!id) return;
-    setDeepLoading(true);
-    setReportTab("deep");
-    try {
-      const report = await pipelineApi.deep(id);
-      setDeepReport(report);
-      toast("success", "精读完成");
-    } catch {
-      toast("error", "精读失败");
-    } finally {
-      setDeepLoading(false);
-    }
-  };
+  // 核心数据 hook（拥有 loading/embedDone + 初始加载 effect + 收藏）
+  const {
+    loading,
+    embedDone,
+    setEmbedDone,
+    handleToggleFavorite,
+  } = usePaperCore({
+    id,
+    toast,
+    paper,
+    setPaper,
+    setFigures,
+    setAllTags,
+    setReasoning,
+    setSavedSkim,
+    setSavedDeep,
+    setReportTab,
+  });
 
-  const handleEmbed = async () => {
-    if (!id) return;
-    setEmbedLoading(true);
-    try {
-      await pipelineApi.embed(id);
-      setEmbedDone(true);
-      toast("success", "嵌入完成");
-    } catch {
-      toast("error", "嵌入失败");
-    } finally {
-      setEmbedLoading(false);
-    }
-  };
+  // 嵌入 hook
+  const { embedLoading, setEmbedLoading, handleEmbed } = useEmbed({
+    id,
+    toast,
+    embedDone,
+    setEmbedDone,
+  });
 
-  const handleSimilar = async () => {
-    if (!id) return;
-    setSimilarLoading(true);
-    setReportTab("similar");
-    try {
-      const res = await paperApi.similar(id);
-      setSimilarIds(res.similar_ids);
-      if (res.items) setSimilarItems(res.items);
-    } catch {
-      toast("error", "获取相似论文失败");
-    } finally {
-      setSimilarLoading(false);
-    }
-  };
+  // 相似论文 hook
+  const {
+    similarIds,
+    similarItems,
+    similarLoading,
+    handleSimilar,
+  } = useSimilarPapers({ id, toast, setReportTab });
 
-  const handleAnalyzeFigures = async () => {
-    if (!id) return;
-    setFiguresAnalyzing(true);
-    setReportTab("figures");
-    try {
-      const res = await paperApi.analyzeFigures(id, 10);
-      setFigures(res.items);
-      toast("success", `解读完成，共 ${res.items.length} 张图表`);
-    } catch {
-      toast("error", "图表分析失败");
-    } finally {
-      setFiguresAnalyzing(false);
-    }
-  };
-
-  const [autoAnalyzing, setAutoAnalyzing] = useState(false);
-  const [autoStage, setAutoStage] = useState("");
-
-  const handleAutoAnalyze = async () => {
-    if (!id || !paper) return;
-    setAutoAnalyzing(true);
-    try {
-      // Step 1: 向量嵌入（不需要 PDF）
-      if (!paper.has_embedding) {
-        setAutoStage("向量嵌入中...");
-        setEmbedLoading(true);
-        try {
-          await pipelineApi.embed(id);
-          setEmbedDone(true);
-        } catch {}
-        setEmbedLoading(false);
-      }
-
-      // Step 2: 粗读（不需要 PDF）
-      if (!hasSkim) {
-        setAutoStage("粗读分析中...");
-        setSkimLoading(true);
-        setReportTab("skim");
-        try {
-          const r = await pipelineApi.skim(id);
-          setSkimReport(r);
-        } catch {}
-        setSkimLoading(false);
-      }
-
-      if (paper.pdf_path) {
-        // Step 3: 精读（需要 PDF）
-        if (!hasDeep) {
-          setAutoStage("精读分析中...");
-          setDeepLoading(true);
-          setReportTab("deep");
-          try {
-            const r = await pipelineApi.deep(id);
-            setDeepReport(r);
-          } catch {}
-          setDeepLoading(false);
-        }
-
-        // Step 4: 图表解读（需要 PDF）
-        if (figures.length === 0) {
-          setAutoStage("图表解读中...");
-          setFiguresAnalyzing(true);
-          setReportTab("figures");
-          try {
-            const r = await paperApi.analyzeFigures(id, 10);
-            setFigures(r.items);
-          } catch {}
-          setFiguresAnalyzing(false);
-        }
-
-        // Step 5: 推理链（需要 PDF）
-        if (!reasoning) {
-          setAutoStage("推理链分析中...");
-          setReasoningLoading(true);
-          setReportTab("reasoning");
-          try {
-            const r = await paperApi.reasoningAnalysis(id);
-            setReasoning(r.reasoning);
-          } catch {}
-          setReasoningLoading(false);
-        }
-      }
-
-      setAutoStage("");
-      toast("success", "深度分析完成");
-      setReportTab("skim");
-    } finally {
-      setAutoAnalyzing(false);
-      setAutoStage("");
-    }
-  };
-
-  const handleReasoning = async () => {
-    if (!id) return;
-    setReasoningLoading(true);
-    setReportTab("reasoning");
-    try {
-      const res = await paperApi.reasoningAnalysis(id);
-      setReasoning(res.reasoning);
-      toast("success", "推理链分析完成");
-    } catch {
-      toast("error", "推理链分析失败");
-    } finally {
-      setReasoningLoading(false);
-    }
-  };
-
-  const handleToggleFavorite = useCallback(async () => {
-    if (!id || !paper) return;
-    const prevFavorited = paper.favorited;
-    try {
-      const res = await paperApi.toggleFavorite(id);
-      setPaper((prev) => (prev ? { ...prev, favorited: res.favorited } : prev));
-    } catch {
-      toast("error", "收藏操作失败");
-      setPaper((prev) => (prev ? { ...prev, favorited: prevFavorited } : prev));
-    }
-  }, [id, paper, toast]);
-
-  /* 标签管理 */
-  const handleToggleTag = useCallback(
-    async (tagId: string, isSelected: boolean) => {
-      if (!id) return;
-      try {
-        if (isSelected) {
-          await tagApi.removePaperTag(id, tagId);
-          setPaper((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  tags: (prev.tags || []).filter((t) => t.id !== tagId),
-                }
-              : prev
-          );
-        } else {
-          const res = await tagApi.addPaperTag(id, tagId);
-          setPaper((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  tags: [...(prev.tags || []), res.tag],
-                }
-              : prev
-          );
-        }
-      } catch {
-        toast("error", "标签操作失败");
-      }
-    },
-    [id, toast]
-  );
-
-  const handleCreateTag = useCallback(async () => {
-    if (!newTagName.trim()) {
-      toast("error", "标签名称不能为空");
-      return;
-    }
-    setTagsLoading(true);
-    try {
-      const newTag = await tagApi.create(newTagName.trim(), newTagColor);
-      setAllTags((prev) => [...prev, newTag]);
-      if (id) {
-        const res = await tagApi.addPaperTag(id, newTag.id);
-        setPaper((prev) =>
-          prev
-            ? {
-                ...prev,
-                tags: [...(prev.tags || []), res.tag],
-              }
-            : prev
-        );
-      }
-      toast("success", "标签创建成功");
-      setTagModalOpen(false);
-      setNewTagName("");
-      setNewTagColor("#3b82f6");
-    } catch {
-      toast("error", "创建标签失败");
-    } finally {
-      setTagsLoading(false);
-    }
-  }, [newTagName, newTagColor, id, toast]);
+  // 一键深度分析 hook（拥有 autoAnalyzing/autoStage + handleAutoAnalyze）
+  const hasSkim = !!(savedSkim || skimReport);
+  const hasDeep = !!(savedDeep || deepReport);
+  const { autoAnalyzing, autoStage, handleAutoAnalyze } = useAutoAnalyze({
+    id,
+    toast,
+    paper,
+    hasSkim,
+    hasDeep,
+    figures,
+    reasoning,
+    setReportTab,
+    setEmbedLoading,
+    setEmbedDone,
+    setSkimLoading,
+    setSkimReport,
+    setDeepLoading,
+    setDeepReport,
+    setFiguresAnalyzing,
+    setFigures,
+    setReasoningLoading,
+    setReasoning,
+  });
 
   if (loading) return <PaperDetailSkeleton />;
   if (!paper) {
@@ -544,8 +218,6 @@ export default function PaperDetail() {
   };
   const sc = statusConfig[paper.read_status] || statusConfig.unread;
 
-  const hasSkim = !!(savedSkim || skimReport);
-  const hasDeep = !!(savedDeep || deepReport);
   const hasFigures = figures.length > 0;
   const hasReasoning = !!reasoning;
   const hasSimilar = similarIds.length > 0;
@@ -1334,418 +1006,6 @@ export default function PaperDetail() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-/* ================================================================
- * 空状态报告占位
- * ================================================================ */
-
-function EmptyReport({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <div className="border-border bg-page/50 flex flex-col items-center justify-center rounded-2xl border border-dashed py-16 text-center">
-      <div className="text-ink-tertiary/50 mb-3">{icon}</div>
-      <p className="text-ink-tertiary text-sm">{label}</p>
-    </div>
-  );
-}
-
-/* ================================================================
- * 图表解读卡片
- * ================================================================ */
-
-const TYPE_ICONS: Record<string, React.ReactNode> = {
-  figure: <ImageIcon className="h-4 w-4 text-blue-500" />,
-  table: <Table2 className="h-4 w-4 text-amber-500" />,
-  algorithm: <FileCode2 className="h-4 w-4 text-green-500" />,
-  equation: <BarChart3 className="h-4 w-4 text-purple-500" />,
-};
-
-const TYPE_LABELS: Record<string, string> = {
-  figure: "图表",
-  table: "表格",
-  algorithm: "算法",
-  equation: "公式",
-};
-
-function FigureCard({
-  figure,
-  index,
-  paperId,
-}: {
-  figure: FigureAnalysisItem;
-  index: number;
-  paperId: string;
-}) {
-  const [expanded, setExpanded] = useState(index < 3);
-  const [lightbox, setLightbox] = useState(false);
-  const imgUrl = figure.image_url && figure.id ? paperApi.figureImageUrl(paperId, figure.id) : null;
-
-  return (
-    <>
-      <div className="border-border bg-surface/50 hover:border-border/80 overflow-hidden rounded-xl border transition-all">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="flex w-full items-center gap-3 px-4 py-3 text-left"
-        >
-          <div className="bg-page flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-            {TYPE_ICONS[figure.image_type] || TYPE_ICONS.figure}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="rounded-md bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
-                {TYPE_LABELS[figure.image_type] || figure.image_type}
-              </span>
-              <span className="text-ink-tertiary text-[10px]">第 {figure.page_number} 页</span>
-            </div>
-            {figure.caption && (
-              <p className="text-ink mt-0.5 truncate text-xs font-medium">{figure.caption}</p>
-            )}
-          </div>
-          {expanded ? (
-            <ChevronDown className="text-ink-tertiary h-4 w-4 shrink-0" />
-          ) : (
-            <ChevronRight className="text-ink-tertiary h-4 w-4 shrink-0" />
-          )}
-        </button>
-
-        {expanded && (
-          <div className="border-border border-t">
-            {/* 原图展示区 */}
-            {imgUrl ? (
-              <div className="bg-page/50 flex justify-center p-4 dark:bg-black/20">
-                <img
-                  src={imgUrl}
-                  alt={figure.caption || `Figure on page ${figure.page_number}`}
-                  className="max-h-[400px] max-w-full cursor-zoom-in rounded-lg object-contain shadow-sm transition-transform hover:scale-[1.02]"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setLightbox(true);
-                  }}
-                  loading="lazy"
-                />
-              </div>
-            ) : (
-              <div className="bg-page/30 text-ink-tertiary flex items-center justify-center px-4 py-6 text-xs">
-                <ImageIcon className="mr-1.5 h-4 w-4" /> 原图未提取（旧版分析结果）
-              </div>
-            )}
-
-            {/* AI 解读区 */}
-            <div className="border-border/50 border-t px-4 py-3">
-              <div className="text-primary/70 mb-1.5 flex items-center gap-1.5 text-[10px] font-medium tracking-wide uppercase">
-                <Sparkles className="h-3 w-3" /> AI 解读
-              </div>
-              <div className="prose prose-sm text-ink-secondary dark:prose-invert max-w-none">
-                <Suspense fallback={<div className="bg-surface h-8 animate-pulse rounded" />}>
-                  <Markdown>{figure.description}</Markdown>
-                </Suspense>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 图片灯箱 */}
-      {lightbox && imgUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
-          onClick={() => setLightbox(false)}
-        >
-          <button
-            className="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
-            onClick={() => setLightbox(false)}
-          >
-            <X className="h-5 w-5" />
-          </button>
-          <img
-            src={imgUrl}
-            alt={figure.caption || ""}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-          {figure.caption && (
-            <div className="absolute bottom-6 left-1/2 max-w-xl -translate-x-1/2 rounded-lg bg-black/60 px-4 py-2 text-center text-sm text-white/90">
-              {figure.caption}
-            </div>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-/* ================================================================
- * 推理链面板
- * ================================================================ */
-
-function ReasoningPanel({ reasoning }: { reasoning: ReasoningChainResult }) {
-  const steps = reasoning.reasoning_steps ?? [];
-  const mc = reasoning.method_chain ?? ({} as Record<string, string>);
-  const ec = reasoning.experiment_chain ?? ({} as Record<string, string>);
-  const ia = reasoning.impact_assessment ?? ({} as Record<string, unknown>);
-
-  const novelty = (ia.novelty_score as number) ?? 0;
-  const rigor = (ia.rigor_score as number) ?? 0;
-  const impact = (ia.impact_score as number) ?? 0;
-  const overall = (ia.overall_assessment as string) ?? "";
-  const strengths = (ia.strengths as string[]) ?? [];
-  const weaknesses = (ia.weaknesses as string[]) ?? [];
-  const suggestions = (ia.future_suggestions as string[]) ?? [];
-
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-4">
-        <ScoreCard
-          label="创新性"
-          score={novelty}
-          icon={<Zap className="h-4 w-4" />}
-          color="text-purple-500"
-          bg="bg-purple-500/10"
-        />
-        <ScoreCard
-          label="严谨性"
-          score={rigor}
-          icon={<Target className="h-4 w-4" />}
-          color="text-blue-500"
-          bg="bg-blue-500/10"
-        />
-        <ScoreCard
-          label="影响力"
-          score={impact}
-          icon={<TrendingUp className="h-4 w-4" />}
-          color="text-orange-500"
-          bg="bg-orange-500/10"
-        />
-      </div>
-
-      {overall && (
-        <div className="bg-page dark:bg-page/50 rounded-xl p-4">
-          <p className="text-ink-secondary text-sm leading-relaxed whitespace-pre-wrap">
-            {overall}
-          </p>
-        </div>
-      )}
-
-      {steps.length > 0 && (
-        <div>
-          <h4 className="text-ink mb-3 flex items-center gap-2 text-sm font-semibold">
-            <Brain className="h-4 w-4 text-purple-500" /> 推理过程
-          </h4>
-          <div className="space-y-2">
-            {steps.map((step, i) => (
-              <ReasoningStepCard key={step.step} step={step} index={i} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {Object.values(mc).some(Boolean) && (
-        <div>
-          <h4 className="text-ink mb-3 flex items-center gap-2 text-sm font-semibold">
-            <FlaskConical className="h-4 w-4 text-blue-500" /> 方法论推导链
-          </h4>
-          <div className="space-y-3">
-            {mc.problem_definition && <ChainItem label="问题定义" text={mc.problem_definition} />}
-            {mc.core_hypothesis && <ChainItem label="核心假设" text={mc.core_hypothesis} />}
-            {mc.method_derivation && <ChainItem label="方法推导" text={mc.method_derivation} />}
-            {mc.theoretical_basis && <ChainItem label="理论基础" text={mc.theoretical_basis} />}
-            {mc.innovation_analysis && (
-              <ChainItem label="创新性分析" text={mc.innovation_analysis} />
-            )}
-          </div>
-        </div>
-      )}
-
-      {Object.values(ec).some(Boolean) && (
-        <div>
-          <h4 className="text-ink mb-3 flex items-center gap-2 text-sm font-semibold">
-            <Microscope className="h-4 w-4 text-green-500" /> 实验验证链
-          </h4>
-          <div className="space-y-3">
-            {ec.experimental_design && <ChainItem label="实验设计" text={ec.experimental_design} />}
-            {ec.baseline_fairness && <ChainItem label="基线公平性" text={ec.baseline_fairness} />}
-            {ec.result_validation && <ChainItem label="结果验证" text={ec.result_validation} />}
-            {ec.ablation_insights && <ChainItem label="消融洞察" text={ec.ablation_insights} />}
-          </div>
-        </div>
-      )}
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        {strengths.length > 0 && (
-          <div>
-            <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
-              <ThumbsUp className="h-4 w-4 text-green-500" /> 优势
-            </h4>
-            <ul className="space-y-1.5">
-              {strengths.map((s, i) => (
-                <li
-                  key={`strength-${i}`}
-                  className="text-ink-secondary flex items-start gap-2 rounded-xl bg-green-500/5 px-3 py-2.5 text-sm dark:bg-green-500/10"
-                >
-                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
-                  {s}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {weaknesses.length > 0 && (
-          <div>
-            <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
-              <ThumbsDown className="h-4 w-4 text-red-500" /> 不足
-            </h4>
-            <ul className="space-y-1.5">
-              {weaknesses.map((w, i) => (
-                <li
-                  key={`weakness-${i}`}
-                  className="text-ink-secondary flex items-start gap-2 rounded-xl bg-red-500/5 px-3 py-2.5 text-sm dark:bg-red-500/10"
-                >
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
-                  {w}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-
-      {suggestions.length > 0 && (
-        <div>
-          <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
-            <Lightbulb className="h-4 w-4 text-amber-500" /> 未来研究建议
-          </h4>
-          <ul className="space-y-1.5">
-            {suggestions.map((f, i) => (
-              <li
-                key={`suggestion-${i}`}
-                className="text-ink-secondary flex items-start gap-2 rounded-xl bg-amber-500/5 px-3 py-2.5 text-sm dark:bg-amber-500/10"
-              >
-                <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                {f}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ReasoningStepCard({
-  step,
-  index,
-}: {
-  step: { step: string; thinking: string; conclusion: string };
-  index: number;
-}) {
-  const [open, setOpen] = useState(index < 2);
-  return (
-    <div className="border-border bg-surface/50 rounded-xl border transition-all">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
-      >
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-500/10 text-xs font-bold text-purple-500">
-          {index + 1}
-        </div>
-        <span className="text-ink flex-1 text-sm font-medium">{step.step}</span>
-        {open ? (
-          <ChevronDown className="text-ink-tertiary h-4 w-4" />
-        ) : (
-          <ChevronRight className="text-ink-tertiary h-4 w-4" />
-        )}
-      </button>
-      {open && (
-        <div className="border-border space-y-3 border-t px-4 py-3">
-          {step.thinking && (
-            <div className="rounded-xl bg-purple-500/5 px-3 py-2.5 dark:bg-purple-500/10">
-              <p className="mb-1 text-[10px] font-semibold tracking-wider text-purple-500 uppercase">
-                思考过程
-              </p>
-              <p className="text-ink-secondary text-sm leading-relaxed whitespace-pre-wrap">
-                {step.thinking}
-              </p>
-            </div>
-          )}
-          {step.conclusion && (
-            <div className="rounded-xl bg-green-500/5 px-3 py-2.5 dark:bg-green-500/10">
-              <p className="mb-1 text-[10px] font-semibold tracking-wider text-green-500 uppercase">
-                结论
-              </p>
-              <p className="text-ink-secondary text-sm leading-relaxed">{step.conclusion}</p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ScoreCard({
-  label,
-  score,
-  icon,
-  color,
-  bg,
-}: {
-  label: string;
-  score: number;
-  icon: React.ReactNode;
-  color: string;
-  bg: string;
-}) {
-  const pct = Math.round(score * 100);
-  return (
-    <div className="border-border bg-surface rounded-xl border p-4 text-center">
-      <div
-        className={`mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full ${bg} ${color}`}
-      >
-        {icon}
-      </div>
-      <div className="text-ink text-2xl font-bold">
-        {pct}
-        <span className="text-ink-tertiary text-sm">%</span>
-      </div>
-      <div className="text-ink-tertiary mt-1 text-xs">{label}</div>
-      <div className="bg-hover mt-2 h-1.5 w-full overflow-hidden rounded-full">
-        <div
-          className={`h-full rounded-full transition-all duration-700 ${score > 0.7 ? "bg-green-500" : score > 0.4 ? "bg-amber-500" : "bg-red-500"}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function ChainItem({ label, text }: { label: string; text: string }) {
-  return (
-    <div className="border-border bg-surface/50 rounded-xl border px-4 py-3">
-      <p className="text-ink-tertiary mb-1 text-xs font-semibold">{label}</p>
-      <p className="text-ink-secondary text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
-    </div>
-  );
-}
-
-function ReportSection({
-  icon,
-  title,
-  content,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  content: string;
-}) {
-  return (
-    <div>
-      <h4 className="text-ink mb-2 flex items-center gap-1.5 text-sm font-medium">
-        {icon}
-        {title}
-      </h4>
-      <div className="bg-page dark:bg-page/50 rounded-xl px-4 py-3">
-        <p className="text-ink-secondary text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
-      </div>
     </div>
   );
 }

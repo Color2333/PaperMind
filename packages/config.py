@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # 用户时区（影响"今天"判定、日报日期、按日分组等面向用户的日期逻辑）
     user_timezone: str = "Asia/Shanghai"
 
+    # Demo 站配置
+    demo_mode: bool = False
+    demo_ip_limit_per_hour: int = 30
+    demo_global_rpm: int = 50
+
     model_config = SettingsConfigDict(
         env_file=_resolve_env_file(),
         env_file_encoding="utf-8",

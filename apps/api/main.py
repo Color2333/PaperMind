@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
+from apps.api.middleware.demo_mode import DemoModeMiddleware
 from packages.auth import decode_access_token
 from packages.config import get_settings
 from packages.domain.exceptions import AppError
@@ -106,18 +107,24 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 settings = get_settings()
 
-if settings.auth_password and not settings.auth_secret_key:
+_WEAK_SECRET_KEYS = {
+    "",
+    "papermind-secret-key-change-in-production",
+}
+
+if settings.auth_password and settings.auth_secret_key in _WEAK_SECRET_KEYS:
     raise RuntimeError(
-        "安全错误: 启用了 AUTH_PASSWORD 但未配置 AUTH_SECRET_KEY。"
+        "安全错误: 启用了 AUTH_PASSWORD 但 AUTH_SECRET_KEY 为空或仍是公开示例值。"
         "请在 .env 中设置一个强随机密钥，例如: AUTH_SECRET_KEY=$(openssl rand -hex 32)"
     )
 
 app = FastAPI(title=settings.app_name)
 
 # 中间件注册顺序：Starlette 中间件为倒序执行（最后注册的最先执行）
-# 执行顺序: CORS -> GZip -> Auth -> RequestLog -> 路由处理
+# 执行顺序: CORS -> GZip -> DemoMode -> Auth -> RequestLog -> 路由处理
 app.add_middleware(RequestLogMiddleware)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(DemoModeMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # Starlette 内置跳过 text/event-stream
 
 
@@ -144,6 +151,20 @@ if origins:
 from packages.storage.db import run_migrations  # noqa: E402
 
 run_migrations()
+
+
+# ---------- 启动 batch consumer ----------
+from packages.agent_core import batch_consumer as _batch  # noqa: E402
+
+
+@app.on_event("startup")
+def _start_batch_consumer():
+    _batch.start()
+
+
+@app.on_event("shutdown")
+def _stop_batch_consumer():
+    _batch.stop()
 
 
 # ---------- 注册路由 ----------

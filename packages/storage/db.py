@@ -107,13 +107,18 @@ def _safe_create_index(conn, idx_name: str, table: str, column: str) -> None:
 
 
 def run_migrations() -> None:
-    """启动时执行轻量级数据库迁移"""
+    """启动时执行轻量级数据库迁移
+
+    注意：Alembic（infra/migrations）是 schema 迁移的权威路径，新库应通过
+    `alembic upgrade head` 建表。本函数仅作运行时增量兜底，处理历史遗留库的
+    列/索引补齐，不替代 alembic 工作流。新表应通过 alembic 迁移添加。
+    """
     with engine.connect() as conn:
         _safe_add_column(
             conn,
             "topic_subscriptions",
             "schedule_frequency",
-            "VARCHAR(20)",
+            "VARCHAR(32)",
             "'daily'",
         )
         _safe_add_column(
@@ -172,6 +177,33 @@ def run_migrations() -> None:
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_image_analyses_paper_id "
                     "ON image_analyses (paper_id)"
+                )
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        # paper_translations 表（翻译缓存）
+        try:
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS paper_translations (
+                    id VARCHAR(36) PRIMARY KEY,
+                    paper_id VARCHAR(36) NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                    target_lang VARCHAR(16) NOT NULL DEFAULT 'zh',
+                    mode VARCHAR(16) NOT NULL DEFAULT 'fast',
+                    segments JSON,
+                    bilingual_pdf_path VARCHAR(512),
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(paper_id, target_lang, mode)
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_paper_translations_paper_id "
+                    "ON paper_translations (paper_id)"
                 )
             )
             conn.commit()
@@ -252,6 +284,9 @@ def run_migrations() -> None:
 
         # 初始化标签表
         _init_tags_table(conn)
+
+        # batch_jobs 表
+        _init_batch_jobs_table(conn)
 
 
 def _init_tags_table(conn) -> None:
@@ -360,3 +395,32 @@ def _init_existing_papers_action(conn) -> None:
     except Exception:
         conn.rollback()
         logger.debug("init_existing_papers_action skipped (already done or error)")
+
+
+def _init_batch_jobs_table(conn) -> None:
+    """初始化 batch_jobs 表"""
+    try:
+        conn.execute(
+            text("""
+            CREATE TABLE IF NOT EXISTS batch_jobs (
+                id VARCHAR(36) PRIMARY KEY,
+                kind VARCHAR(32) NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                total INTEGER NOT NULL DEFAULT 0,
+                done INTEGER NOT NULL DEFAULT 0,
+                failed INTEGER NOT NULL DEFAULT 0,
+                paper_ids JSON NOT NULL DEFAULT '[]',
+                error_log JSON NOT NULL DEFAULT '{}',
+                created_by VARCHAR(64),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                started_at DATETIME,
+                finished_at DATETIME
+            )
+            """)
+        )
+        _safe_create_index(conn, "ix_batch_jobs_kind", "batch_jobs", "kind")
+        _safe_create_index(conn, "ix_batch_jobs_status", "batch_jobs", "status")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error("Failed to initialize batch_jobs table: %s", e)

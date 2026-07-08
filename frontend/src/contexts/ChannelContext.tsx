@@ -6,7 +6,7 @@
  */
 
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
-import { resolveApiBase } from '@/lib/tauri';
+import { resolveApiBase } from '@/services/api';
 
 export interface Channel {
   id: string;

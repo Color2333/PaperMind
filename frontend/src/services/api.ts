@@ -38,7 +38,6 @@ import type {
   CocitationResponse,
   TodaySummary,
   FolderStats,
-  TopicStats,
   TopicStatsResponse,
   PaperDistributionResponse,
   PaperListResponse,
@@ -56,8 +55,6 @@ import type {
   MultiSourceSearchResult,
   ChannelSuggestion,
   Tag,
-  TagCreate,
-  TagUpdate,
 } from "@/types";
 
 export type {
@@ -77,7 +74,12 @@ export type {
   LoginResponse,
   AuthStatusResponse,
 } from "@/types";
-import { resolveApiBase } from "@/lib/tauri";
+/** 解析 API base URL：优先 VITE_API_BASE → 开发环境 localhost → 生产相对路径 /api */
+export function resolveApiBase(): string {
+  if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
+  if (import.meta.env.DEV) return "http://localhost:8000";
+  return "/api";
+}
 
 function getApiBase(): string {
   return resolveApiBase();
@@ -147,6 +149,25 @@ async function extractErrorMessage(resp: Response): Promise<string> {
   }
 }
 
+/** 构建带认证的请求 headers */
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = getAuthToken();
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(extra || {}),
+  };
+}
+
+/** 处理 HTTP 错误响应：401 清除认证，其余提取错误消息 */
+async function handleHttpError(resp: Response): Promise<never> {
+  const msg = await extractErrorMessage(resp);
+  if (resp.status === 401) {
+    clearAuth();
+    window.location.reload();
+  }
+  throw new Error(msg);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${getApiBase().replace(/\/+$/, "")}${path}`;
   let resp: Response;
@@ -154,8 +175,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     resp = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
-        ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
-        ...((options.headers as Record<string, string>) || {}),
+        ...authHeaders((options.headers as Record<string, string>) || {}),
       },
       ...options,
     });
@@ -163,13 +183,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error("网络连接失败，请检查后端服务是否启动");
   }
   if (!resp.ok) {
-    const msg = await extractErrorMessage(resp);
-    // 401 未认证，清除 token 并刷新页面跳转登录
-    if (resp.status === 401) {
-      clearAuth();
-      window.location.reload();
-    }
-    throw new Error(msg);
+    await handleHttpError(resp);
   }
   return resp.json();
 }
@@ -391,6 +405,28 @@ export const ingestApi = {
   importStatus: (taskId: string) => get<ImportTaskStatus>(`/ingest/references/status/${taskId}`),
 };
 
+export interface BilingualSegment {
+  id: string;
+  type: string;
+  content: string;
+  translation?: string;
+  pageNumber?: number;
+}
+
+/* ========== 翻译 ========== */
+export const translateApi = {
+  startBilingualPdf: (paperId: string, mode: "fast" | "layout", targetLang = "zh") =>
+    post<{ task_id: string; status: string; message: string }>(`/translate/bilingual-pdf`, {
+      paper_id: paperId,
+      target_lang: targetLang,
+      mode,
+    }),
+  getBilingualPdfCache: (paperId: string, mode: "fast" | "layout", targetLang = "zh") =>
+    get<{ cached: boolean; segments?: BilingualSegment[]; pdf_url?: string }>(
+      `/translate/bilingual-pdf/${paperId}?target_lang=${targetLang}&mode=${mode}`
+    ),
+};
+
 /* ========== Pipeline ========== */
 export const pipelineApi = {
   skim: (paperId: string) => post<SkimReport>(`/pipelines/skim/${paperId}`),
@@ -559,25 +595,12 @@ export const writingApi = {
 import type { AgentMessage } from "@/types";
 
 async function fetchSSE(url: string, init?: RequestInit): Promise<Response> {
-  const authHeaders: Record<string, string> = {};
-  const token = getAuthToken();
-  if (token) {
-    authHeaders["Authorization"] = `Bearer ${token}`;
-  }
   const resp = await fetch(url, {
     ...init,
-    headers: {
-      ...authHeaders,
-      ...((init?.headers as Record<string, string>) || {}),
-    },
+    headers: authHeaders((init?.headers as Record<string, string>) || {}),
   });
   if (!resp.ok) {
-    if (resp.status === 401) {
-      clearAuth();
-      window.location.reload();
-    }
-    const msg = await extractErrorMessage(resp);
-    throw new Error(`请求失败 (${resp.status}): ${msg}`);
+    await handleHttpError(resp);
   }
   return resp;
 }
@@ -588,7 +611,7 @@ export const agentApi = {
     conversationId?: string,
     confirmedActionId?: string
   ): Promise<Response> => {
-    const url = `${getApiBase().replace(/\/\/+$/, "")}/agent/chat`;
+    const url = `${getApiBase().replace(/\/+$/, "")}/agent/chat`;
     return fetchSSE(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
