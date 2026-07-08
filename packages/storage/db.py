@@ -118,7 +118,7 @@ def run_migrations() -> None:
             conn,
             "topic_subscriptions",
             "schedule_frequency",
-            "VARCHAR(20)",
+            "VARCHAR(32)",
             "'daily'",
         )
         _safe_add_column(

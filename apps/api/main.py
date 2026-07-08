@@ -107,9 +107,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 settings = get_settings()
 
-if settings.auth_password and not settings.auth_secret_key:
+_WEAK_SECRET_KEYS = {
+    "",
+    "papermind-secret-key-change-in-production",
+}
+
+if settings.auth_password and settings.auth_secret_key in _WEAK_SECRET_KEYS:
     raise RuntimeError(
-        "安全错误: 启用了 AUTH_PASSWORD 但未配置 AUTH_SECRET_KEY。"
+        "安全错误: 启用了 AUTH_PASSWORD 但 AUTH_SECRET_KEY 为空或仍是公开示例值。"
         "请在 .env 中设置一个强随机密钥，例如: AUTH_SECRET_KEY=$(openssl rand -hex 32)"
     )
 

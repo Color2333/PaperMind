@@ -124,14 +124,6 @@ class TestDemoAllowsWhitelist:
         resp = client.post("/agent/chat")
         assert resp.status_code == 200
 
-    def test_agent_skim_allowed(self, monkeypatch):
-        _setup_demo_env(monkeypatch)
-        app = _create_app()
-        app.add_middleware(DemoModeMiddleware)
-        client = TestClient(app)
-        resp = client.post("/agent/skim/123")
-        assert resp.status_code == 200
-
     def test_papers_search_allowed(self, monkeypatch):
         _setup_demo_env(monkeypatch)
         app = _create_app()

@@ -20,22 +20,46 @@ from typing import TYPE_CHECKING
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from packages.config import get_settings
+
 if TYPE_CHECKING:
     from fastapi import Request
 
 WRITE_WHITELIST_PREFIX = (
     "/agent/chat",
-    "/agent/skim",
     "/papers/search",
 )
 
 
 class DemoModeMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, ip_limit_per_hour: int = 30, global_rpm: int = 50):
+    def __init__(
+        self,
+        app,
+        enabled: bool | None = None,
+        ip_limit_per_hour: int | None = None,
+        global_rpm: int | None = None,
+    ):
         super().__init__(app)
-        self.enabled = os.getenv("DEMO_MODE", "false").lower() == "true"
-        self.ip_limit = int(os.getenv("DEMO_IP_LIMIT_PER_HOUR", str(ip_limit_per_hour)))
-        self.global_rpm = int(os.getenv("DEMO_GLOBAL_RPM", str(global_rpm)))
+        settings = get_settings()
+        # 构造参数优先；其次环境变量（测试用 monkeypatch.setenv 覆盖）；最后 Settings 默认值
+        if enabled is not None:
+            self.enabled = enabled
+        elif os.getenv("DEMO_MODE", "").lower() == "true":
+            self.enabled = True
+        else:
+            self.enabled = settings.demo_mode
+
+        if ip_limit_per_hour is not None:
+            self.ip_limit = ip_limit_per_hour
+        else:
+            env_ip = int(os.getenv("DEMO_IP_LIMIT_PER_HOUR", "0"))
+            self.ip_limit = env_ip if env_ip else settings.demo_ip_limit_per_hour
+
+        if global_rpm is not None:
+            self.global_rpm = global_rpm
+        else:
+            env_rpm = int(os.getenv("DEMO_GLOBAL_RPM", "0"))
+            self.global_rpm = env_rpm if env_rpm else settings.demo_global_rpm
         self._ip_buckets: dict[str, deque[float]] = defaultdict(deque)
         self._global_bucket: deque[float] = deque()
         self._lock = asyncio.Lock()
