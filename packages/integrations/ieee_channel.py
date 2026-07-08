@@ -55,7 +55,7 @@ class IeeeChannel(ChannelBase):
             list[PaperCreate]: 论文列表，source 字段统一设置为 "ieee"
         """
         if not self.api_key:
-            return []
+            raise RuntimeError("IEEE_API_KEY 未配置，请在 .env 中设置 IEEE_API_KEY")
 
         return self._client.fetch_by_keywords(query, max_results)
 

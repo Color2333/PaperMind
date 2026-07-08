@@ -9,6 +9,7 @@ API 文档: https://api.semanticscholar.org/api-docs
 from __future__ import annotations
 
 import logging
+import os
 import time
 from contextlib import suppress
 from datetime import date
@@ -43,7 +44,8 @@ class SemanticScholarSearchClient:
     """
 
     def __init__(self, api_key: str | None = None) -> None:
-        self.api_key = api_key
+        # 优先用显式传入的 key，其次读环境变量（与 IeeeChannel 保持一致）
+        self.api_key = api_key or os.getenv("SEMANTIC_SCHOLAR_API_KEY")
         self._client: httpx.Client | None = None
 
     @property

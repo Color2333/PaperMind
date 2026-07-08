@@ -101,16 +101,22 @@ async def search_multi(
     import asyncio
     import logging
 
+    from packages.config import get_settings
     from packages.integrations.aggregator import ResultAggregator
     from packages.integrations.registry import ChannelRegistry
 
     logger = logging.getLogger(__name__)
 
     ChannelRegistry.register_default_channels()
+    settings = get_settings()
 
     async def fetch_channel(ch: str) -> tuple[str, list, dict]:
         try:
-            channel = ChannelRegistry.get(ch)
+            # Semantic Scholar 的 api_key 需从 Settings 注入（客户端仅 env 兜底）
+            kwargs: dict = {}
+            if ch == "semantic_scholar":
+                kwargs["api_key"] = settings.semantic_scholar_api_key
+            channel = ChannelRegistry.get(ch, **kwargs)
             if not channel:
                 return ch, [], {"error": "channel not found"}
             papers = await asyncio.to_thread(channel.fetch, query, max_results_per_channel)
