@@ -443,6 +443,133 @@ def build_wiki_section_prompt(
     )
 
 
+def build_act1_prompt(
+    paper_title: str,
+    paper_abstract: str,
+    full_text: str,
+    user_schema: dict,
+) -> str:
+    """认知重构 Act1「理解」—— 结合用户认知 schema 概括论文核心"""
+    schema_text = _format_user_schema(user_schema)
+    return (
+        "你是一位学术认知教练，引导用户「理解」一篇论文。请基于论文内容"
+        "和用户的研究背景，生成结构化理解结果。\n\n"
+        "## 输出要求\n"
+        "请输出严格的 JSON 对象：\n"
+        "```json\n"
+        "{\n"
+        '  "summary": "用中文概括论文核心贡献与思路（200-400字，'
+        '需结合用户的研究背景定向解读）",\n'
+        '  "key_findings": ["关键发现1", "关键发现2", "关键发现3"]\n'
+        "}\n```\n"
+        "## 要求\n"
+        "1. summary 要点出这篇论文对**该用户**最可能重要的方面\n"
+        "2. key_findings 提取 3-5 条最核心的发现/论点，用中文\n"
+        "3. 结合用户的研究主题与知识盲区做针对性解读\n\n"
+        f"## 用户认知背景:\n{schema_text}\n\n"
+        f"## 论文标题: {paper_title}\n\n"
+        f"## 摘要:\n{paper_abstract}\n\n"
+        f"## 全文摘录:\n{full_text[:6000]}\n"
+    )
+
+
+def build_act2_prompt(
+    paper_title: str,
+    paper_abstract: str,
+    full_text: str,
+    user_schema: dict,
+    act1_result: dict,
+) -> str:
+    """认知重构 Act2「碰撞」—— 用用户已有信念与论文观点碰撞，找冲突与疑问"""
+    schema_text = _format_user_schema(user_schema)
+    act1_text = _format_act1(act1_result)
+    return (
+        "你是一位认知碰撞引导者。基于用户对论文的理解（Act1）和用户已有的"
+        "认知（信念、知识盲区），找出论文观点与用户认知之间的冲突，"
+        "并生成值得深究的疑问。\n\n"
+        "## 输出要求\n"
+        "请输出严格的 JSON 对象：\n"
+        "```json\n"
+        "{\n"
+        '  "conflicts": ["冲突点1：论文X vs 用户认知Y", "冲突点2"],\n'
+        '  "questions": ["值得深究的疑问1", "疑问2", "疑问3"]\n'
+        "}\n```\n"
+        "## 要求\n"
+        "1. conflicts 要具体指出论文观点与用户信念/知识的张力，而非泛泛而谈\n"
+        "2. questions 生成 2-4 个能推动认知重构的开放性问题\n"
+        "3. 全部用中文\n\n"
+        f"## 用户认知背景:\n{schema_text}\n\n"
+        f"## Act1 理解结果:\n{act1_text}\n\n"
+        f"## 论文标题: {paper_title}\n\n"
+        f"## 摘要:\n{paper_abstract}\n\n"
+        f"## 全文摘录:\n{full_text[:4000]}\n"
+    )
+
+
+def build_act3_prompt(
+    paper_title: str,
+    user_schema: dict,
+    act1_result: dict,
+    act2_result: dict,
+) -> str:
+    """认知重构 Act3「重构」—— 对比读论文前后的认知变化，形成新认知"""
+    schema_text = _format_user_schema(user_schema)
+    act1_text = _format_act1(act1_result)
+    act2_text = _format_act2(act2_result)
+    return (
+        "你是一位认知重构引导者。基于 Act1 的理解与 Act2 的碰撞，"
+        "帮助用户对比读论文前后的认知变化，形成新认知。\n\n"
+        "## 输出要求\n"
+        "请输出严格的 JSON 对象：\n"
+        "```json\n"
+        "{\n"
+        '  "before": "读论文前的认知状态（结合用户原有信念，100-200字）",\n'
+        '  "after": "读论文后的新认知（100-200字）",\n'
+        '  "delta": "认知变化的核心描述（80-150字）",\n'
+        '  "one_change": "一句话概括最重要的认知转变"\n'
+        "}\n```\n"
+        "## 要求\n"
+        "1. before 要真实反映用户原有认知（参考 schema 的 beliefs/knowledge_gaps）\n"
+        "2. after 要体现论文带来的具体认知更新\n"
+        "3. one_change 需精炼有力，用中文\n\n"
+        f"## 用户认知背景:\n{schema_text}\n\n"
+        f"## Act1 理解结果:\n{act1_text}\n\n"
+        f"## Act2 碰撞结果:\n{act2_text}\n\n"
+        f"## 论文标题: {paper_title}\n"
+    )
+
+
+def _format_user_schema(schema: dict) -> str:
+    """把用户认知 schema 格式化为 prompt 片段"""
+    parts = [
+        f"研究主题: {', '.join(schema.get('research_topics', []) or []) or '未指定'}",
+        f"学术阶段: {schema.get('academic_level', '未指定')}",
+        f"当前挑战: {', '.join(schema.get('current_challenges', []) or []) or '无'}",
+        f"已有信念: {', '.join(schema.get('beliefs', []) or []) or '无'}",
+        f"知识盲区: {', '.join(schema.get('knowledge_gaps', []) or []) or '无'}",
+    ]
+    return "\n".join(parts)
+
+
+def _format_act1(act1: dict) -> str:
+    """从 act1_comprehension（含 comprehension 包装层）提取文本"""
+    inner = act1.get("comprehension", act1) if act1 else {}
+    summary = inner.get("summary", "无")
+    findings = inner.get("key_findings", [])
+    findings_text = "\n".join(f"- {f}" for f in findings) if findings else "无"
+    return f"摘要: {summary}\n关键发现:\n{findings_text}"
+
+
+def _format_act2(act2: dict) -> str:
+    """从 act2_collision（含 collision 包装层）提取文本"""
+    inner = act2.get("collision", act2) if act2 else {}
+    conflicts = inner.get("conflicts", [])
+    questions = inner.get("questions", [])
+    conflicts_text = "\n".join(f"- {c}" for c in conflicts) if conflicts else "无"
+    questions_text = "\n".join(f"- {q}" for q in questions) if questions else "无"
+    return f"冲突:\n{conflicts_text}\n疑问:\n{questions_text}"
+
+
 # ========== Agent 系统提示词 ==========
 
 SYSTEM_PROMPT = """\
