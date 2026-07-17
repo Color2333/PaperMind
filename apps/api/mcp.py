@@ -19,7 +19,13 @@ if _MCP_TOKEN:
     from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 
     _verifier = StaticTokenVerifier(
-        tokens={_MCP_TOKEN: {"sub": "hermes", "scopes": ["read", "write"]}},
+        tokens={
+            _MCP_TOKEN: {
+                "client_id": "hermes-agent",
+                "sub": "hermes",
+                "scopes": ["read", "write"],
+            }
+        },
         required_scopes=["read"],
     )
     mcp = FastMCP("papermind-mcp", auth=_verifier)
