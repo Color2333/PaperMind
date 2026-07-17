@@ -564,6 +564,18 @@ def similar(
     }
 
 
+@router.get("/papers/{paper_id}/duplicates")
+def paper_duplicates(
+    paper_id: UUID,
+    threshold: float = Query(default=0.92, ge=0.5, le=1.0),
+) -> dict:
+    """检测与库内论文相似度 > threshold 的疑似重复（同一工作的 arxiv 多版本）"""
+    from packages.ai.pipelines import PaperPipelines
+
+    pipelines = PaperPipelines()
+    return pipelines.detect_duplicates(paper_id, threshold=threshold)
+
+
 @router.post("/papers/{paper_id}/reasoning")
 def paper_reasoning(paper_id: UUID) -> dict:
     """推理链深度分析"""

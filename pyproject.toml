@@ -37,6 +37,12 @@ pdf = [
 pdf_translate = [
   "pdf2zh>=1.9",
 ]
+# 相似度散点图（UMAP 降维）用，similarity.py 隐式依赖；不进核心 dependencies 避免核心变重
+graph = [
+  "numpy>=1.26",
+  "scikit-learn>=1.4",
+  "umap-learn>=0.5",
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

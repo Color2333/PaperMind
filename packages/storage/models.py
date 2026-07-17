@@ -55,6 +55,13 @@ class Paper(Base):
         default=False,
         index=True,
     )
+    # 负反馈标记：用户标记"不感兴趣"的论文，推荐/候选查询统一排除。
+    # 本轮只预留字段 + 查询排除，UI 后续再加。
+    rejected: Mapped[bool] = mapped_column(
+        nullable=False,
+        default=False,
+        index=True,
+    )
     # 多渠道字段（IEEE / DOI 等非 arXiv 来源）
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="arxiv", index=True)
     source_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)

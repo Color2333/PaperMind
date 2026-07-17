@@ -6,13 +6,17 @@
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
+
 from packages.domain.math_utils import cosine_similarity as _cosine_sim
 from packages.storage.db import session_scope
+from packages.storage.models import PaperTopic, TopicSubscription
 from packages.storage.repositories import PaperRepository
 
 logger = logging.getLogger(__name__)
@@ -53,31 +57,151 @@ def _mean_vector(vectors: list[list[float]]) -> list[float]:
     return [x / n for x in result]
 
 
-class RecommendationService:
-    """基于阅读历史 embedding 的个性化推荐"""
+def _weighted_mean_vector(
+    weighted_vectors: list[tuple[list[float], float]],
+) -> list[float]:
+    """加权质心：每条向量乘权重后求平均。用于时间衰减。"""
+    if not weighted_vectors:
+        return []
+    dim = len(weighted_vectors[0][0])
+    total_w = 0.0
+    result = [0.0] * dim
+    for vec, w in weighted_vectors:
+        if len(vec) != dim:
+            continue
+        total_w += w
+        for i in range(dim):
+            result[i] += vec[i] * w
+    if total_w == 0:
+        return []
+    return [x / total_w for x in result]
 
-    def get_user_profile(self) -> list[float]:
-        """从已读论文（skimmed/deep_read）的 embedding 计算兴趣向量"""
+
+def _kmeans(
+    weighted_vectors: list[tuple[list[float], float]],
+    k: int,
+    max_iter: int = 10,
+) -> list[list[float]]:
+    """纯 Python 加权 k-means，返回 k 个质心。
+
+    用于多兴趣聚类：已读论文 embedding 聚成 N 簇（每个兴趣方向一簇），
+    每簇质心代表一个兴趣方向。时间衰减权重体现在质心计算里。
+
+    简单实现（避免引入 sklearn 依赖）：
+    - 初始质心：随机选 k 个向量（带权重概率）
+    - 迭代：每点分到最近质心 → 重新算加权质心 → 收敛或 max_iter 停止
+    """
+    if not weighted_vectors or k < 1:
+        return []
+    if k == 1:
+        return [_weighted_mean_vector(weighted_vectors)]
+    vectors = [v for v, _ in weighted_vectors]
+    n = len(vectors)
+    k = min(k, n)
+    dim = len(vectors[0])
+
+    # 初始质心：随机选 k 个不重复点
+    rng = random.Random(42)  # 固定种子保证可复现
+    indices = rng.sample(range(n), k)
+    centroids = [list(vectors[i]) for i in indices]
+
+    for _ in range(max_iter):
+        # 分配：每点分到最近质心（余弦距离，复用 cosine_similarity）
+        clusters: list[list[tuple[list[float], float]]] = [[] for _ in range(k)]
+        for vec, w in weighted_vectors:
+            if len(vec) != dim:
+                continue
+            best_c = 0
+            best_sim = -2.0
+            for ci, centroid in enumerate(centroids):
+                sim = _cosine_sim(vec, centroid)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_c = ci
+            clusters[best_c].append((vec, w))
+
+        # 更新质心：加权平均
+        new_centroids = []
+        for ci, cluster in enumerate(clusters):
+            if cluster:
+                new_centroids.append(_weighted_mean_vector(cluster))
+            else:
+                # 空簇保留旧质心
+                new_centroids.append(centroids[ci])
+
+        # 收敛检查（质心几乎不变）
+        moved = sum(
+            sum((a - b) ** 2 for a, b in zip(new_centroids[i], centroids[i])) for i in range(k)
+        )
+        centroids = new_centroids
+        if moved < 1e-6:
+            break
+
+    return centroids
+
+
+# 时间衰减半衰期（天）：最近 90 天权重高，半年前衰减到 ~0.16
+_DECAY_HALFLIFE_DAYS = 90.0
+# 主题加权倍数：候选若属于已订阅 topic，相似度乘 1.2
+_TOPIC_BOOST = 1.2
+
+
+class RecommendationService:
+    """基于阅读历史 embedding 的个性化推荐（多兴趣 + 时间衰减 + 主题加权）"""
+
+    def get_user_profile(self) -> list[list[float]]:
+        """从已读论文（skimmed/deep_read）的 embedding 计算多兴趣质心向量集合。
+
+        返回 list[list[float]] —— 每个质心代表一个兴趣方向（k-means 簇心）。
+        向后兼容：调用方按 list[centroid] 处理；单簇时退化为旧的单质心。
+        """
         with session_scope() as session:
             repo = PaperRepository(session)
             read_papers = repo.list_by_read_status_with_embedding(
-                statuses=["skimmed", "deep_read"], limit=200
+                statuses=["skimmed", "deep_read"], limit=500
             )
-            vectors = [list(p.embedding) for p in read_papers if p.embedding]
-        if not vectors:
+            now = datetime.now(UTC)
+            weighted_vectors = []
+            for p in read_papers:
+                if not p.embedding:
+                    continue
+                age_days = (now - p.created_at).total_seconds() / 86400
+                # 指数衰减：weight = 0.5 ^ (age / halflife)
+                weight = 0.5 ** (age_days / _DECAY_HALFLIFE_DAYS)
+                weighted_vectors.append((list(p.embedding), weight))
+
+        if not weighted_vectors:
             return []
-        return _mean_vector(vectors)
+
+        # k 自适应：已读论文多则多兴趣，少则单质心
+        n = len(weighted_vectors)
+        k = max(1, min(3, n // 5))
+        centroids = _kmeans(weighted_vectors, k)
+        return [c for c in centroids if c]
 
     def recommend(self, top_k: int = 10) -> list[dict]:
-        """推荐与用户兴趣最匹配的未读论文"""
-        profile = self.get_user_profile()
-        if not profile:
+        """推荐与用户兴趣最匹配的未读论文。
+
+        策略升级（替代旧的单质心）：
+        1. 多兴趣：已读论文 k-means 聚成 N 簇，每簇一个兴趣质心
+        2. 时间衰减：最近读的论文权重高（90 天半衰期），远的衰减
+        3. 主题加权：候选若属于已订阅 topic，相似度乘 1.2
+        4. 负反馈：候选查询已排除 rejected 论文（见 list_unread_with_embedding）
+        5. 多兴趣命中：候选对每个质心算相似度取 max（命中任一兴趣即可）
+        """
+        cache_key = f"recommend:{top_k}"
+        hit = _cached(cache_key)
+        if hit is not None:
+            return hit
+
+        profiles = self.get_user_profile()
+        if not profiles:
             return []
 
-        # 在 session 内提取所有需要的数据
+        # 在 session 内提取候选 + 订阅主题
         with session_scope() as session:
             repo = PaperRepository(session)
-            unread = repo.list_unread_with_embedding(limit=200)
+            unread = repo.list_unread_with_embedding(limit=500)
             candidates = []
             for p in unread:
                 if not p.embedding:
@@ -99,18 +223,46 @@ class RecommendationService:
                     }
                 )
 
-        profile_dim = len(profile)
+            # 取用户已订阅的 topic_id 集合，用于主题加权
+            subscribed_topic_ids = {
+                str(row[0])
+                for row in session.execute(
+                    select(TopicSubscription.id).where(TopicSubscription.enabled.is_(True))
+                ).all()
+            }
+            # 候选论文属于哪些已订阅 topic（PaperTopic 关联）
+            if candidates and subscribed_topic_ids:
+                cand_ids = [c["id"] for c in candidates]
+                rows = session.execute(
+                    select(PaperTopic.paper_id, PaperTopic.topic_id).where(
+                        PaperTopic.paper_id.in_(cand_ids),
+                        PaperTopic.topic_id.in_(list(subscribed_topic_ids)),
+                    )
+                ).all()
+                topic_boost_ids = {str(r[0]) for r in rows}
+            else:
+                topic_boost_ids = set()
+
         scored: list[tuple[float, dict]] = []
         for c in candidates:
             emb = c.pop("embedding")
-            if len(emb) != profile_dim:
+            if not emb:
                 continue
-            sim = _cosine_sim(profile, emb)
+            # 多兴趣命中：取所有质心相似度的最大值
+            sims = [_cosine_sim(profile, emb) for profile in profiles if len(emb) == len(profile)]
+            if not sims:
+                continue
+            sim = max(sims)
+            # 主题加权：候选属于已订阅 topic 则乘 1.2
+            if c["id"] in topic_boost_ids:
+                sim *= _TOPIC_BOOST
             c["similarity"] = round(sim, 4)
             scored.append((sim, c))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [item for _, item in scored[:top_k]]
+        result = [item for _, item in scored[:top_k]]
+        _set_cache(cache_key, result)
+        return result
 
 
 class TrendService:

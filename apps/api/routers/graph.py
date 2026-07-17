@@ -108,6 +108,24 @@ def similarity_map(
     return graph_service.similarity_map(topic_id=topic_id, limit=limit)
 
 
+@router.get("/graph/cluster-map")
+def cluster_map(
+    n_clusters: int = Query(default=12, ge=2, le=30),
+    limit: int = Query(default=5000, ge=10, le=20000),
+) -> dict:
+    """全库论文 embedding k-means 聚类（研究领域地图，每簇用 keywords 自动命名）"""
+    return graph_service.cluster_map(n_clusters=n_clusters, limit=limit)
+
+
+@router.get("/graph/similar-via-citation/{paper_id}")
+def similar_via_citation(
+    paper_id: str,
+    top_k: int = Query(default=5, ge=1, le=20),
+) -> dict:
+    """引用同一篇论文且语义相近的论文（co-citation + 向量补强）"""
+    return graph_service.similar_via_citation(paper_id=paper_id, top_k=top_k)
+
+
 @router.get("/graph/citation-tree/{paper_id}")
 def citation_tree(
     paper_id: str,
