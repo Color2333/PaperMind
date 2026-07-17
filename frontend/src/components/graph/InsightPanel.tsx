@@ -2,13 +2,13 @@
  * 领域洞察面板 — 一键查询: 时间线 + 演化 + 质量 + 研究空白
  * @author Color2333
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Button, Badge } from "@/components/ui";
 import { useToast } from "@/contexts/ToastContext";
 import { graphApi, topicApi, todayApi } from "@/services/api";
 import {
   Search, Network, Clock, BarChart3, TrendingUp, Star,
-  ArrowDown, ArrowRight, Layers, Lightbulb, HelpCircle,
+  ArrowDown, Layers, Lightbulb,
   Tag, Rss, Flame, Target, AlertTriangle, Zap,
   ChevronDown, ChevronRight, SlidersHorizontal, Compass, RotateCw,
 } from "lucide-react";
@@ -36,6 +36,8 @@ export default function InsightPanel() {
   const [qualityData, setQualityData] = useState<GraphQuality | null>(null);
   const [evolutionData, setEvolutionData] = useState<EvolutionResponse | null>(null);
   const [gapsData, setGapsData] = useState<ResearchGapsResponse | null>(null);
+  // runInsight 请求序号，防快速切换关键词时旧响应覆盖新结果
+  const runInsightSeq = useRef(0);
 
   /* 推荐关键词 */
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -71,19 +73,23 @@ export default function InsightPanel() {
     setKeyword(kw);
     setActiveKeyword(kw);
     setLoading(true);
-    try {
-      const [tl, ev, qa, gp] = await Promise.all([
-        graphApi.timeline(kw, limit).catch(() => null),
-        graphApi.evolution(kw, limit).catch(() => null),
-        graphApi.quality(kw, limit).catch(() => null),
-        graphApi.researchGaps(kw, limit).catch(() => null),
-      ]);
-      if (tl) setTimelineData(tl);
-      if (ev) setEvolutionData(ev);
-      if (qa) setQualityData(qa);
-      if (gp) setGapsData(gp);
-    } catch { toast("error", "查询失败，请重试"); }
-    finally { setLoading(false); }
+    // 请求序号：快速切换关键词时丢弃旧响应，避免结果错位覆盖
+    const reqId = ++runInsightSeq.current;
+    let failed = 0;
+    const try_ = async (p: Promise<unknown>) => { try { return await p; } catch { failed += 1; return null; } };
+    const [tl, ev, qa, gp] = await Promise.all([
+      try_(graphApi.timeline(kw, limit)),
+      try_(graphApi.evolution(kw, limit)),
+      try_(graphApi.quality(kw, limit)),
+      try_(graphApi.researchGaps(kw, limit)),
+    ]);
+    if (reqId !== runInsightSeq.current) return; // 已被更新的请求抢占
+    if (tl) setTimelineData(tl as TimelineResponse);
+    if (ev) setEvolutionData(ev as EvolutionResponse);
+    if (qa) setQualityData(qa as GraphQuality);
+    if (gp) setGapsData(gp as ResearchGapsResponse);
+    if (failed > 0) toast("error", `部分洞察加载失败（${failed}/4）`);
+    setLoading(false);
   }, [limit, toast]);
 
   const handleSubmit = useCallback(() => {
@@ -92,11 +98,27 @@ export default function InsightPanel() {
 
   const hasResults = timelineData || qualityData || evolutionData || gapsData;
 
-  /* 单项刷新 */
-  const refreshTimeline = useCallback(async () => { if (activeKeyword) setTimelineData(await graphApi.timeline(activeKeyword, limit)); }, [activeKeyword, limit]);
-  const refreshEvolution = useCallback(async () => { if (activeKeyword) setEvolutionData(await graphApi.evolution(activeKeyword, limit)); }, [activeKeyword, limit]);
-  const refreshQuality = useCallback(async () => { if (activeKeyword) setQualityData(await graphApi.quality(activeKeyword, limit)); }, [activeKeyword, limit]);
-  const refreshGaps = useCallback(async () => { if (activeKeyword) setGapsData(await graphApi.researchGaps(activeKeyword, limit)); }, [activeKeyword, limit]);
+  /* 单项刷新（失败 toast，不再静默） */
+  const refreshTimeline = useCallback(async () => {
+    if (!activeKeyword) return;
+    try { setTimelineData(await graphApi.timeline(activeKeyword, limit)); }
+    catch { toast("error", "时间线刷新失败"); }
+  }, [activeKeyword, limit, toast]);
+  const refreshEvolution = useCallback(async () => {
+    if (!activeKeyword) return;
+    try { setEvolutionData(await graphApi.evolution(activeKeyword, limit)); }
+    catch { toast("error", "演化路径刷新失败"); }
+  }, [activeKeyword, limit, toast]);
+  const refreshQuality = useCallback(async () => {
+    if (!activeKeyword) return;
+    try { setQualityData(await graphApi.quality(activeKeyword, limit)); }
+    catch { toast("error", "图谱质量刷新失败"); }
+  }, [activeKeyword, limit, toast]);
+  const refreshGaps = useCallback(async () => {
+    if (!activeKeyword) return;
+    try { setGapsData(await graphApi.researchGaps(activeKeyword, limit)); }
+    catch { toast("error", "研究空白刷新失败"); }
+  }, [activeKeyword, limit, toast]);
 
   return (
     <div className="space-y-5">
@@ -221,7 +243,7 @@ function CollapsibleSection({ title, icon, onRefresh, defaultOpen = false, child
   const handleRefresh = async () => {
     if (!onRefresh) return;
     setRefreshing(true);
-    try { await onRefresh(); } catch { /* refresh failed silently */ }
+    try { await onRefresh(); } catch { /* 单项刷新已自带 toast，此处兜底 */ }
     finally { setRefreshing(false); }
   };
 

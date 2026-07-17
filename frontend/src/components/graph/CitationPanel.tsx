@@ -112,7 +112,10 @@ export default function CitationPanel() {
         const res = await paperApi.latest({ search: q.trim(), pageSize: 10 });
         setPaperResults(res.items);
         setShowPaperDropdown(true);
-      } catch { setPaperResults([]); }
+      } catch {
+        setPaperResults([]);
+        toast("error", "论文搜索失败");
+      }
       finally { setPaperSearching(false); }
     }, 300);
   }, []);
@@ -165,12 +168,15 @@ export default function CitationPanel() {
     setLoading(true);
     setAnalysisMode("paper");
     try {
-      const [detail, tree] = await Promise.all([
+      // allSettled：detail 成功但 tree 失败时仍展示 detail，不整体丢失
+      const [detailR, treeR] = await Promise.allSettled([
         graphApi.citationDetail(paperId),
         graphApi.citationTree(paperId),
       ]);
-      setDetailData(detail);
-      setTreeData(tree);
+      if (detailR.status === "fulfilled") setDetailData(detailR.value);
+      if (treeR.status === "fulfilled") setTreeData(treeR.value);
+      else toast("error", "引用树加载失败，已展示详情");
+      if (detailR.status === "rejected") toast("error", "查询引用详情失败");
       setTopicNetData(null);
     } catch { toast("error", "查询引用详情失败"); }
     finally { setLoading(false); }
@@ -454,6 +460,8 @@ function RichCitationListView({ data }: { data: CitationDetail }) {
   };
 
   const startImport = async (indices: number[]) => {
+    // 并发锁：轮询进行中再次点击会覆盖 pollRef 造成定时器泄漏 + 双重轮询
+    if (pollRef.current) return;
     const entries: ReferenceImportEntry[] = indices.map((i) => {
       const e = allEntries[i];
       return {
@@ -478,14 +486,20 @@ function RichCitationListView({ data }: { data: CitationDetail }) {
           const status = await ingestApi.importStatus(task_id);
           setImportTask(status);
           if (status.status !== "running") {
-            clearInterval(pollRef.current);
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = undefined;
             toast(
               status.status === "completed" ? "success" : "error",
               `${status.status === "completed" ? "导入完成" : "导入失败"}: 成功 ${status.imported} / 跳过 ${status.skipped} / 失败 ${status.failed}`,
             );
           }
         } catch {
-          clearInterval(pollRef.current);
+          // 轮询出错：清状态 + 关弹窗 + 提示，避免 done 永假、关闭按钮不出现的卡死
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = undefined;
+          setImportTask(null);
+          setShowModal(false);
+          toast("error", "导入进度查询失败，请稍后在论文列表确认结果");
         }
       }, 1000);
     } catch (err) {
@@ -759,7 +773,7 @@ function ImportProgressModal({
           {/* 进度条 */}
           <div>
             <div className="flex items-center justify-between text-xs text-ink-secondary mb-1.5">
-              <span>{task?.status === "running" ? `正在导入: ${task.current || "..."}` : done ? "导入完成" : "准备中..."}</span>
+              <span>{task?.status === "running" ? `正在导入: ${task.current || "..."}` : done ? (task?.status === "failed" ? "导入失败" : "导入完成") : task ? "等待任务创建..." : "准备中..."}</span>
               <span>{pct}%</span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-page">

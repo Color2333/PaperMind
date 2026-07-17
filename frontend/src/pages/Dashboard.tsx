@@ -4,21 +4,18 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Badge } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { StatCardSkeleton } from "@/components/Skeleton";
 import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
+import { useToast } from "@/contexts/ToastContext";
 import { systemApi, metricsApi, pipelineApi, todayApi, paperApi } from "@/services/api";
 import { formatDuration, timeAgo } from "@/lib/utils";
 import type { SystemStatus, CostMetrics, PipelineRun, TodaySummary, RecommendedResponse } from "@/types";
 import {
   Activity,
   FileText,
-  AlertTriangle,
-  CheckCircle2,
   XCircle,
-  Clock,
   RefreshCw,
-  TrendingUp,
   Zap,
   Sparkles,
   Ban,
@@ -74,6 +71,7 @@ function fmtTokens(n: number): string {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const { activeTasks, hasRunning } = useGlobalTasks();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [costs, setCosts] = useState<CostMetrics | null>(null);
@@ -81,8 +79,21 @@ export default function Dashboard() {
   const [today, setToday] = useState<TodaySummary | null>(null);
   const [recommended, setRecommended] = useState<RecommendedResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [costLoading, setCostLoading] = useState(false); // 仅 Token 卡片局部 loading
   const [error, setError] = useState<string | null>(null);
   const [costDays, setCostDays] = useState<number>(7);
+
+  // 仅刷新 Token 成本（costDays 切换时调用，避免整页白屏闪烁）
+  const loadCosts = useCallback(async (days: number) => {
+    setCostLoading(true);
+    try {
+      setCosts(await metricsApi.costs(days));
+    } catch {
+      // 局部失败不打扰整页，保留旧值
+    } finally {
+      setCostLoading(false);
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -105,7 +116,9 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [costDays]);
+    // 注意：costDays 不在依赖里 —— 切换 costDays 走 loadCosts，不触发整页 reload
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -199,9 +212,9 @@ export default function Dashboard() {
           onClick={() => navigate("/pipelines")}
         />
         <StatCard
-          icon={<Zap className="h-5 w-5" />}
+          icon={<Zap className={`h-5 w-5 ${costLoading ? "animate-pulse text-ink-tertiary" : ""}`} />}
           label={costDays > 0 ? `${costDays}日 Token` : "历史 Token"}
-          value={fmtTokens((costs?.input_tokens ?? 0) + (costs?.output_tokens ?? 0))}
+          value={costLoading ? "…" : fmtTokens((costs?.input_tokens ?? 0) + (costs?.output_tokens ?? 0))}
           sub={`${costs?.calls ?? 0} 次调用`}
           color="success"
         />
@@ -225,7 +238,7 @@ export default function Dashboard() {
                 ].map((opt) => (
                   <button
                     key={opt.days}
-                    onClick={() => setCostDays(opt.days)}
+                    onClick={() => { setCostDays(opt.days); loadCosts(opt.days); }}
                     className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                       costDays === opt.days
                         ? "bg-primary text-white"
@@ -445,8 +458,9 @@ export default function Dashboard() {
                           // 刷新推荐（后端已排除 rejected，重新拉取即可）
                           const fresh = await paperApi.recommended(10);
                           setRecommended(fresh);
+                          toast("info", "已标记不感兴趣，已从推荐移除");
                         } catch {
-                          /* 静默失败，不打扰用户 */
+                          toast("error", "操作失败，该论文仍在推荐中");
                         }
                       }}
                       title="不再推荐此类论文"
