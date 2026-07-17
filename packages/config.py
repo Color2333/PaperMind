@@ -43,15 +43,15 @@ class Settings(BaseSettings):
 
     # LLM Provider: openai / anthropic / zhipu / xiaomi
     llm_provider: str = "xiaomi"
-    llm_model_skim: str = "mimo-v2-omni"
+    llm_model_skim: str = "mimo-v2.5"
     llm_model_deep: str = "mimo-v2.5-pro"
     llm_model_vision: str = "mimo-v2.5"
     llm_model_fallback: str = "mimo-v2.5-pro"
-    # Embedding 独立 provider（小米 MiMo 不提供 embedding，默认走阿里百炼 DashScope）
-    embedding_model: str = "text-embedding-v4"
+    # Embedding 独立 provider（小米 MiMo 不提供 embedding，默认走硅基流动 SiliconFlow 免费 bge-m3）
+    embedding_model: str = "BAAI/bge-m3"
     embedding_api_key: str | None = None
-    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    embedding_dimensions: int = 1024
+    embedding_base_url: str = "https://api.siliconflow.cn/v1"
+    embedding_dimensions: int | None = None
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
