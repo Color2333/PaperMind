@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Loader2, RefreshCw, Layers, Pencil, Check, X, Play } from "lucide-react";
 import { topicApi } from "@/services/api";
 import { Button } from "@/components/ui";
+import { useToast } from "@/contexts/ToastContext";
 
 interface CSCategory {
   code: string;
@@ -20,9 +21,11 @@ interface CSFeed {
 }
 
 export default function CSFeeds() {
+  const { toast } = useToast();
   const [categories, setCategories] = useState<CSCategory[]>([]);
   const [feeds, setFeeds] = useState<CSFeed[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [globalLimit, setGlobalLimit] = useState(30);
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [editLimit, setEditLimit] = useState(30);
@@ -30,14 +33,18 @@ export default function CSFeeds() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const [catRes, feedRes] = await Promise.all([topicApi.csCategories(), topicApi.csFeeds()]);
       setCategories(catRes.categories || []);
       setFeeds(feedRes.feeds || []);
+    } catch {
+      setLoadError(true);
+      toast("error", "加载 CS 分类失败");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     loadData();
@@ -46,27 +53,45 @@ export default function CSFeeds() {
   const subscribedCodes = new Set(feeds.map((f) => f.category_code));
 
   async function toggleCategory(code: string) {
-    if (subscribedCodes.has(code)) {
-      await topicApi.csFeedDelete(code);
-    } else {
-      await topicApi.csFeedCreate({ category_codes: [code], daily_limit: globalLimit });
+    // 乐观更新未做（checkbox 无独立 state），失败时 toast + 重新拉取以恢复一致
+    try {
+      if (subscribedCodes.has(code)) {
+        await topicApi.csFeedDelete(code);
+        toast("info", "已取消订阅");
+      } else {
+        await topicApi.csFeedCreate({ category_codes: [code], daily_limit: globalLimit });
+        toast("success", "已订阅");
+      }
+      await loadData();
+    } catch {
+      toast("error", "操作失败");
+      await loadData();
     }
-    await loadData();
   }
 
   async function handleFetch(code: string) {
     setFetchingCode(code);
     try {
       await topicApi.csFeedFetch(code);
+      toast("success", "抓取已触发");
+      await loadData();
+    } catch {
+      toast("error", "抓取失败");
     } finally {
       setFetchingCode(null);
     }
   }
 
   async function updateLimit(code: string, newLimit: number) {
-    await topicApi.csFeedUpdate(code, { daily_limit: newLimit });
-    setEditingCode(null);
-    await loadData();
+    try {
+      await topicApi.csFeedUpdate(code, { daily_limit: newLimit });
+      setEditingCode(null);
+      await loadData();
+      toast("success", "配额已更新");
+    } catch {
+      toast("error", "更新失败");
+      // 不清 editingCode，保留编辑态供用户重试
+    }
   }
 
   function startEdit(feed: CSFeed) {
@@ -97,7 +122,11 @@ export default function CSFeeds() {
           <input
             type="number"
             value={globalLimit}
-            onChange={(e) => setGlobalLimit(Number(e.target.value))}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              // NaN 时保留旧值，避免清空输入框被强制写 0/NaN 到后端
+              if (!Number.isNaN(v)) setGlobalLimit(Math.max(1, Math.min(200, v)));
+            }}
             className="border-border bg-page h-8 w-16 rounded-lg border px-2 text-center text-sm"
             min={1}
             max={200}
@@ -121,7 +150,15 @@ export default function CSFeeds() {
           </Button>
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4">
-          {categories.map((c) => {
+          {categories.length === 0 ? (
+            <div className="col-span-full flex flex-col items-center py-10 text-center">
+              <Layers className="h-8 w-8 text-ink-tertiary/30" />
+              <p className="mt-3 text-sm text-ink-tertiary">
+                {loadError ? "加载失败，请点右上角刷新重试" : "暂无 CS 分类"}
+              </p>
+            </div>
+          ) : (
+            categories.map((c) => {
             const subscribed = subscribedCodes.has(c.code);
             const feed = feeds.find((f) => f.category_code === c.code);
             return (
@@ -155,7 +192,8 @@ export default function CSFeeds() {
                 </div>
               </label>
             );
-          })}
+          })
+          )}
         </div>
       </div>
 
@@ -254,6 +292,14 @@ export default function CSFeeds() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {feeds.length === 0 && (
+        <div className="flex flex-col items-center rounded-xl border border-dashed border-border py-10 text-center">
+          <Play className="h-8 w-8 text-ink-tertiary/30" />
+          <p className="mt-3 text-sm text-ink-tertiary">暂无已订阅分类</p>
+          <p className="mt-1 text-xs text-ink-tertiary">请在上方勾选感兴趣的 CS 细分领域</p>
         </div>
       )}
     </div>

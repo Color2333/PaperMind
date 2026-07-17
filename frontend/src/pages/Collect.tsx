@@ -127,6 +127,8 @@ export default function Collect() {
   const [multiLoading, setMultiLoading] = useState(false);
   const [multiResults, setMultiResults] = useState<MultiSourcePaper[]>([]);
   const [multiSuggestions, setMultiSuggestions] = useState<ChannelSuggestion | null>(null);
+  // 渠道推荐防抖定时器（避免每次按键都打后端 suggestChannels）
+  const multiSuggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleMultiSearch = useCallback(async (q: string, channels: string[]) => {
     if (!q.trim()) return;
@@ -151,8 +153,8 @@ export default function Collect() {
     try {
       const res = await paperApi.suggestChannels(q.trim());
       setMultiSuggestions(res);
-    } catch { /* quiet */ }
-  }, []);
+    } catch { toast("error", "渠道推荐加载失败"); }
+  }, [toast]);
 
   const applyMultiRecommendation = useCallback(() => {
     if (multiSuggestions?.recommended) {
@@ -169,6 +171,7 @@ export default function Collect() {
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (multiSuggestTimer.current) clearTimeout(multiSuggestTimer.current);
     };
   }, []);
 
@@ -233,20 +236,22 @@ export default function Collect() {
         const res: TopicFetchResult = await topicApi.fetch(topicId);
         if (res.status === "started" || res.status === "already_running") {
           toast("info", res.topic_name || "抓取已在后台启动...");
-          // 轮询状态
+          // 轮询状态（3s 间隔，最多 5 分钟兜底，防后端无终止信号时无限轮询）
           if (pollRef.current) clearInterval(pollRef.current);
+          const pollStart = Date.now();
+          const POLL_TIMEOUT_MS = 5 * 60 * 1000;
           pollRef.current = setInterval(async () => {
+            if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+              if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+              setFetchingTopicId(null);
+              toast("warning", "抓取超时，请稍后在订阅列表确认结果");
+              return;
+            }
             try {
               const status = await topicApi.fetchStatus(topicId);
-              if (status.status === "running") {
-                // 显示进度
-                toast("info", "抓取中...");
-                return;
-              }
-              if (pollRef.current) {
-                clearInterval(pollRef.current);
-                pollRef.current = null;
-              }
+              if (status.status === "running") return; // 仍在跑，下次再查
+              // 终态：清理 + 刷新列表
+              if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
               setFetchingTopicId(null);
               if (status.status === "ok" || status.status === "no_new_papers") {
                 const newCount = status.inserted;
@@ -254,32 +259,17 @@ export default function Collect() {
                 let msg = `抓取完成：${newCount} 篇新论文`;
                 if (processed > 0) msg += `，${processed} 篇处理`;
                 toast("success", msg);
-                // 显示进度
-                return;
-              }
-              if (pollRef.current) {
-                clearInterval(pollRef.current);
-                pollRef.current = null;
-              }
-              setFetchingTopicId(null);
-              if (status.status === "ok" || status.status === "no_new_papers") {
-                // 刷新整个订阅列表，确保 last_run_at 和 paper_count 更新
-                const list = await topicApi.list(false);
-                setTopics(list.items);
-                return;
-              }
-              if (status.status === "failed") {
+              } else if (status.status === "failed") {
                 toast("error", `抓取失败：${status.error || "未知错误"}`);
               }
-              // 无论如何都刷新列表
+              // 终态无论如何都刷新订阅列表
               const list = await topicApi.list(false);
               setTopics(list.items);
             } catch {
-              if (pollRef.current) {
-                clearInterval(pollRef.current);
-                pollRef.current = null;
-              }
+              // 单次查询失败：清状态 + toast（此前静默，用户只见"抓取中"永不消失）
+              if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
               setFetchingTopicId(null);
+              toast("error", "抓取状态查询失败，请稍后在订阅列表确认结果");
             }
           }, 3000);
           return;
@@ -622,8 +612,11 @@ export default function Collect() {
                   type="text"
                   value={multiQuery}
                   onChange={(e) => {
-                    setMultiQuery(e.target.value);
-                    fetchMultiSuggestions(e.target.value);
+                    const v = e.target.value;
+                    setMultiQuery(v);
+                    // 防抖 300ms，避免每键请求 suggestChannels
+                    if (multiSuggestTimer.current) clearTimeout(multiSuggestTimer.current);
+                    multiSuggestTimer.current = setTimeout(() => fetchMultiSuggestions(v), 300);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleMultiSearch(multiQuery, multiChannels);

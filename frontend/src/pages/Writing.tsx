@@ -67,15 +67,38 @@ interface HistoryItem {
   timestamp: Date;
 }
 
+const WRITING_HISTORY_KEY = "pm_writing_history";
+
 export default function Writing() {
   const { toast } = useToast();
-  const [templates, setTemplates] = useState<WritingTemplate[]>([]);
-  const [selected, setSelected] = useState<WritingTemplate | null>(null);
+  const [templates, setTemplates] = useState<WritingTemplate[]>([]);  const [selected, setSelected] = useState<WritingTemplate | null>(null);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<WritingResult | null>(null);
   const [copied, setCopied] = useState(false);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  // 历史从 localStorage 恢复（此前仅内存，刷新即丢）
+  const [history, setHistory] = useState<HistoryItem[]>(() => {
+    try {
+      const raw = localStorage.getItem(WRITING_HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as Array<{ id: string; action: string; label: string; inputPreview: string; content: string; timestamp: string }>;
+      return parsed.map((it) => ({ ...it, timestamp: new Date(it.timestamp) }));
+    } catch {
+      return [];
+    }
+  });
+
+  // 历史变更同步写 localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        WRITING_HISTORY_KEY,
+        JSON.stringify(history.map((h) => ({ ...h, timestamp: h.timestamp.toISOString() })))
+      );
+    } catch {
+      // 配额满或隐私模式：静默忽略，不影响主功能
+    }
+  }, [history]);
 
   const [imageBase64, setImageBase64] = useState<string | null>(null);
 
@@ -193,15 +216,23 @@ export default function Writing() {
 
   const handleCopy = useCallback(async () => {
     if (!result) return;
-    await navigator.clipboard.writeText(result.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [result]);
+    try {
+      await navigator.clipboard.writeText(result.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast("error", "复制失败（剪贴板需 HTTPS 环境或用户授权）");
+    }
+  }, [result, toast]);
 
   const handleCopyMsg = useCallback(
     async (content: string) => {
-      await navigator.clipboard.writeText(content);
-      toast("success", "已复制到剪贴板");
+      try {
+        await navigator.clipboard.writeText(content);
+        toast("success", "已复制到剪贴板");
+      } catch {
+        toast("error", "复制失败");
+      }
     },
     [toast]
   );
@@ -346,7 +377,7 @@ export default function Writing() {
                     >
                       <Clock className="text-ink-tertiary h-3 w-3 shrink-0" />
                       <span className="flex-1 truncate">
-                        {item.label}: {item.inputPreview}...
+                        {item.label}: {item.inputPreview.length >= 60 ? `${item.inputPreview}...` : item.inputPreview}
                       </span>
                     </button>
                   ))}
@@ -503,7 +534,7 @@ export default function Writing() {
                             {msg.role === "assistant" && (
                               <button
                                 onClick={() => handleCopyMsg(msg.content)}
-                                className="text-ink-tertiary hover:text-primary rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 [.space-y-2:hover_&]:opacity-100"
+                                className="text-ink-tertiary hover:text-primary rounded p-0.5 opacity-0 transition-opacity [.space-y-2:hover_&]:opacity-100"
                               >
                                 <Copy className="h-2.5 w-2.5" />
                               </button>

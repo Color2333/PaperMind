@@ -16,6 +16,8 @@ import {
   Activity,
   Layers,
   BarChart3,
+  AlertCircle,
+  Compass,
 } from "lucide-react";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -108,7 +110,7 @@ function TopicCard({ stat }: { stat: TopicStats }) {
     <div className="bg-surface border-border hover-lift space-y-3 rounded-xl border p-4 transition-all">
       <div className="flex items-center justify-between">
         <h3 className="mr-3 flex-1 truncate text-sm font-semibold">{stat.topic_name}</h3>
-        <span className="text-muted-foreground bg-page shrink-0 rounded-full px-2 py-1 text-xs font-medium">
+        <span className="text-ink-tertiary bg-page shrink-0 rounded-full px-2 py-1 text-xs font-medium">
           {stat.paper_count} 篇
         </span>
       </div>
@@ -120,7 +122,7 @@ function TopicCard({ stat }: { stat: TopicStats }) {
           </div>
           <div>
             <p className="text-base font-bold">{stat.total_citations.toLocaleString()}</p>
-            <p className="text-muted-foreground text-[10px]">总引用</p>
+            <p className="text-ink-tertiary text-[10px]">总引用</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -129,14 +131,14 @@ function TopicCard({ stat }: { stat: TopicStats }) {
           </div>
           <div>
             <p className="text-base font-bold">{stat.recent_30d}</p>
-            <p className="text-muted-foreground text-[10px]">30天活跃</p>
+            <p className="text-ink-tertiary text-[10px]">30天活跃</p>
           </div>
         </div>
       </div>
 
       <div className="space-y-2">
         <div className="flex justify-between text-xs">
-          <span className="text-muted-foreground">阅读进度</span>
+          <span className="text-ink-tertiary">阅读进度</span>
           <span className="text-primary font-medium">{readRate}%</span>
         </div>
         <div className="bg-page flex h-2 overflow-hidden rounded-full shadow-inner">
@@ -157,7 +159,7 @@ function TopicCard({ stat }: { stat: TopicStats }) {
             </>
           )}
         </div>
-        <div className="text-muted-foreground flex justify-between text-[10px]">
+        <div className="text-ink-tertiary flex justify-between text-[10px]">
           <span className="flex items-center gap-1">
             <span className="bg-primary h-1.5 w-1.5 rounded-full" />
             精读 {stat.status_dist.deep_read}
@@ -213,18 +215,18 @@ function MonthlyTrend({ data }: { data: PaperDistributionResponse }) {
   return (
     <SectionCard title="月度入库趋势" icon={<Activity className="text-primary h-4 w-4" />}>
       {months.length === 0 ? (
-        <div className="text-muted-foreground py-8 text-center text-sm">暂无数据</div>
+        <div className="text-ink-tertiary py-8 text-center text-sm">暂无数据</div>
       ) : (
         <div className="flex gap-6">
           <div className="flex min-w-[140px] flex-col justify-between">
             <div>
               <p className="text-ink text-3xl font-bold">{total.toLocaleString()}</p>
-              <p className="text-muted-foreground text-xs">近{months.length}月总计</p>
+              <p className="text-ink-tertiary text-xs">近{months.length}月总计</p>
             </div>
             <div className="space-y-2">
               <div className="flex items-baseline gap-2">
                 <span className="text-ink text-lg font-semibold">{avg}</span>
-                <span className="text-muted-foreground text-xs">月均</span>
+                <span className="text-ink-tertiary text-xs">月均</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span
@@ -233,7 +235,7 @@ function MonthlyTrend({ data }: { data: PaperDistributionResponse }) {
                   {trend >= 0 ? "+" : ""}
                   {trend}%
                 </span>
-                <span className="text-muted-foreground text-xs">环比</span>
+                <span className="text-ink-tertiary text-xs">环比</span>
               </div>
             </div>
           </div>
@@ -291,12 +293,12 @@ function YearDistribution({ data }: { data: PaperDistributionResponse }) {
   return (
     <SectionCard title="论文年份分布" icon={<Calendar className="text-primary h-4 w-4" />}>
       {years.length === 0 ? (
-        <div className="text-muted-foreground py-8 text-center text-sm">暂无年份数据</div>
+        <div className="text-ink-tertiary py-8 text-center text-sm">暂无年份数据</div>
       ) : (
         <div className="space-y-3">
           {years.slice(0, 6).map((y, i) => (
             <div key={y.year} className="flex items-center gap-3">
-              <span className="text-muted-foreground w-10 shrink-0 font-mono text-sm">
+              <span className="text-ink-tertiary w-10 shrink-0 font-mono text-sm">
                 {y.year}
               </span>
               <div className="bg-page relative h-7 flex-1 overflow-hidden rounded-lg shadow-inner">
@@ -323,7 +325,7 @@ function SourceDistribution({ data }: { data: PaperDistributionResponse }) {
   return (
     <SectionCard title="论文来源" icon={<Globe className="text-info h-4 w-4" />}>
       {sources.length === 0 ? (
-        <div className="text-muted-foreground py-8 text-center text-sm">暂无来源数据</div>
+        <div className="text-ink-tertiary py-8 text-center text-sm">暂无来源数据</div>
       ) : (
         <div className="space-y-3">
           {sources.map((s) => {
@@ -359,13 +361,13 @@ function VenueDistribution({ data }: { data: PaperDistributionResponse }) {
   return (
     <SectionCard title="顶会/期刊分布" icon={<Layers className="text-warning h-4 w-4" />}>
       {venues.length === 0 ? (
-        <div className="text-muted-foreground py-8 text-center text-sm">暂无数据</div>
+        <div className="text-ink-tertiary py-8 text-center text-sm">暂无数据</div>
       ) : (
         <div className="space-y-3">
           {venues.slice(0, 5).map((v, i) => (
             <div key={v.venue} className="flex items-center gap-3">
               <span
-                className={`w-6 shrink-0 text-right text-lg font-bold ${i < 3 ? medals[i] : "text-muted-foreground"}`}
+                className={`w-6 shrink-0 text-right text-lg font-bold ${i < 3 ? medals[i] : "text-ink-tertiary"}`}
               >
                 {i + 1}
               </span>
@@ -392,7 +394,7 @@ function ActionSourceStats({ data }: { data: PaperDistributionResponse }) {
   return (
     <SectionCard title="入库来源统计" icon={<Activity className="h-4 w-4 text-purple-500" />}>
       {actions.length === 0 ? (
-        <div className="text-muted-foreground py-8 text-center text-sm">暂无数据</div>
+        <div className="text-ink-tertiary py-8 text-center text-sm">暂无数据</div>
       ) : (
         <div className="space-y-3">
           {actions.map((a) => {
@@ -426,7 +428,7 @@ function ReadStatusOverview({ data }: { data: PaperDistributionResponse }) {
   return (
     <SectionCard title="阅读状态概览" icon={<BookOpen className="h-4 w-4 text-cyan-500" />}>
       {statuses.length === 0 ? (
-        <div className="text-muted-foreground py-8 text-center text-sm">暂无数据</div>
+        <div className="text-ink-tertiary py-8 text-center text-sm">暂无数据</div>
       ) : (
         <>
           <div className="bg-page mb-4 flex h-3 overflow-hidden rounded-full shadow-inner">
@@ -456,7 +458,7 @@ function ReadStatusOverview({ data }: { data: PaperDistributionResponse }) {
                   <span className="text-xs font-medium">{s.status}</span>
                 </div>
                 <p className="mt-2 text-xl font-bold">{s.count}</p>
-                <p className="text-muted-foreground text-[10px]">
+                <p className="text-ink-tertiary text-[10px]">
                   {total > 0 ? ((s.count / total) * 100).toFixed(0) : 0}%
                 </p>
               </div>
@@ -495,7 +497,24 @@ export default function Statistics() {
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
+        <Loader2 className="text-ink-tertiary h-8 w-8 animate-spin" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center py-20">
+        <div className="bg-error/10 rounded-2xl p-6">
+          <AlertCircle className="text-error mx-auto h-10 w-10" />
+        </div>
+        <p className="text-error mt-4 text-sm">{error}</p>
+        <button
+          onClick={loadData}
+          className="border-border bg-surface text-ink-secondary hover:bg-hover mt-4 flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors"
+        >
+          <RefreshCw className="h-3.5 w-3.5" /> 重试
+        </button>
       </div>
     );
   }
@@ -503,6 +522,7 @@ export default function Statistics() {
   const topics = topicData?.topics ?? [];
   const totalPapers = topics.reduce((sum, t) => sum + t.paper_count, 0);
   const totalCitations = topics.reduce((sum, t) => sum + t.total_citations, 0);
+  const totalRecent30d = topics.reduce((sum, t) => sum + t.recent_30d, 0);
   const maxPaperCount = Math.max(...topics.map((t) => t.paper_count), 1);
 
   return (
@@ -545,9 +565,9 @@ export default function Statistics() {
           />
           <StatCard
             icon={<TrendingUp className="h-5 w-5" />}
-            label="总引用数"
-            value={totalCitations.toLocaleString()}
-            sub="跨所有主题"
+            label="30天新增"
+            value={totalRecent30d.toLocaleString()}
+            sub="近 30 天入库论文"
             color="success"
           />
           <StatCard
@@ -557,6 +577,14 @@ export default function Statistics() {
             sub="30天内有新增"
             color="warning"
           />
+        </div>
+      )}
+
+      {topics.length === 0 && (
+        <div className="flex flex-col items-center rounded-2xl border border-dashed border-border py-16 text-center">
+          <Compass className="h-8 w-8 text-ink-tertiary/30" />
+          <p className="mt-4 text-sm text-ink-tertiary">暂无主题数据</p>
+          <p className="mt-1 text-xs text-ink-tertiary">请先在「收集」页创建订阅主题，收集论文后再来查看统计</p>
         </div>
       )}
 

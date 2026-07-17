@@ -4,11 +4,12 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Badge, Spinner, Empty } from "@/components/ui";
+import { Button, Spinner, Empty } from "@/components/ui";
+import { useToast } from "@/contexts/ToastContext";
 import { pipelineApi } from "@/services/api";
 import { formatDuration, timeAgo } from "@/lib/utils";
 import type { PipelineRun } from "@/types";
-import { GitBranch, RefreshCw, CheckCircle2, XCircle, Clock, Activity, Cpu } from "lucide-react";
+import { GitBranch, RefreshCw, Cpu } from "lucide-react";
 
 const STATUS_FILTERS = [
   { key: "all", label: "全部" },
@@ -20,21 +21,26 @@ const STATUS_FILTERS = [
 
 export default function Pipelines() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState(50);
   const [filter, setFilter] = useState("all");
 
   const loadRuns = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await pipelineApi.runs(limit);
       setRuns(res.items);
     } catch {
+      setError("加载失败");
+      toast("error", "加载运行记录失败");
     } finally {
       setLoading(false);
     }
-  }, [limit]);
+  }, [limit, toast]);
 
   useEffect(() => {
     loadRuns();
@@ -71,6 +77,8 @@ export default function Pipelines() {
             <option value={30}>30</option>
             <option value={50}>50</option>
             <option value={100}>100</option>
+            <option value={200}>200</option>
+            <option value={500}>500</option>
           </select>
           <Button
             variant="secondary"
@@ -106,6 +114,12 @@ export default function Pipelines() {
       {/* 内容 */}
       {loading ? (
         <Spinner text="加载运行记录..." />
+      ) : error ? (
+        <Empty
+          icon={<GitBranch className="h-14 w-14" />}
+          title="加载失败"
+          description={`${error}，请点右上角刷新重试`}
+        />
       ) : filtered.length === 0 ? (
         <Empty
           icon={<GitBranch className="h-14 w-14" />}

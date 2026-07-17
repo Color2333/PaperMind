@@ -19,7 +19,6 @@ import {
   Calendar,
   Clock,
   Trash2,
-  ChevronRight,
   Sparkles,
   Plus,
   RefreshCw,
@@ -100,16 +99,19 @@ export default function DailyBrief() {
       // 轮询任务状态，直到完成或失败
       const POLL_INTERVAL = 3000;
       const MAX_WAIT_MS = 5 * 60 * 1000; // 最多等 5 分钟
+      const MAX_ERRORS = 10; // 连续查询失败上限，防网络持续异常时静默空转到超时
       const startTime = Date.now();
+      let consecutiveErrors = 0;
 
       await new Promise<void>((resolve, reject) => {
         const poll = async () => {
           if (Date.now() - startTime > MAX_WAIT_MS) {
-            reject(new Error("生成超时，请稍后刷新查看结果"));
+            reject(new Error("生成超时，请稍后在历史记录查看结果"));
             return;
           }
           try {
             const status = await tasksApi.getStatus(taskId);
+            consecutiveErrors = 0; // 成功一次就重置错误计数
             const pct = Math.round(status.progress * 100);
             setTaskProgress(status.message || `生成中... ${pct}%`);
             if (status.status === "completed") {
@@ -121,7 +123,12 @@ export default function DailyBrief() {
               return;
             }
           } catch {
-            // 轮询出错不中断，继续重试
+            // 查询失败：累计错误，超过上限则中断（此前无限静默重试到 5min 超时）
+            consecutiveErrors += 1;
+            if (consecutiveErrors >= MAX_ERRORS) {
+              reject(new Error("持续无法查询任务状态，请稍后在历史记录查看结果"));
+              return;
+            }
           }
           setTimeout(poll, POLL_INTERVAL);
         };
