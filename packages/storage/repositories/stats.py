@@ -8,8 +8,9 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, func, select, text
 
+from packages.storage.db import _is_sqlite
 from packages.storage.models import (
     CollectionAction,
     Paper,
@@ -19,6 +20,30 @@ from packages.storage.models import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+def _json_field(column, key: str):
+    """方言通用的 JSON 字段提取：SQLite 用 json_extract，PG 用 ->> 。"""
+    if _is_sqlite:
+        return func.json_extract(column, f"$.{key}")
+    # PG: metadata_json->>'key'（jsonb/json 文本取值）
+    return column[key].astext
+
+
+def _date_trunc_day(column, offset_hours: float):
+    """方言通用的"按用户时区取日期"：SQLite 用 datetime(date(+N));PG 用 date + interval。"""
+    offset_str = f"{offset_hours:+.0f} hours"
+    if _is_sqlite:
+        return func.date(func.datetime(column, offset_str))
+    # PG: (created_at + interval 'N hours')::date
+    return func.cast(column + text(f"interval '{offset_str}'"), text("date"))
+
+
+def _year_of(column):
+    """方言通用的取年份：SQLite strftime('%Y',x)；PG to_char(x,'YYYY')。"""
+    if _is_sqlite:
+        return func.strftime("%Y", column)
+    return func.to_char(column, "YYYY")
 
 
 def get_folder_stats(session: Session) -> dict:
@@ -62,10 +87,9 @@ def get_folder_stats(session: Session) -> dict:
     by_status = {r[0].value: r[1] for r in status_rows}
 
     # 按日期分组（最近 30 天），用用户时区偏移
-    # SQLite: datetime(created_at, '+N hours') 将 UTC 转为用户本地时间再取 date
+    # 方言通用：SQLite datetime(created_at,'+N hours');PG (created_at + interval 'N hours')::date
     offset_h = utc_offset_hours()
-    offset_str = f"{offset_h:+.0f} hours"
-    date_expr = func.date(func.datetime(Paper.created_at, offset_str))
+    date_expr = _date_trunc_day(Paper.created_at, offset_h)
     since_30d = user_today_utc - timedelta(days=30)
     date_q = (
         select(date_expr.label("d"), func.count().label("c"))
@@ -122,9 +146,7 @@ def get_topic_stats(session: Session) -> dict:
         select(
             PaperTopic.topic_id,
             func.coalesce(
-                func.sum(
-                    func.cast(func.json_extract(Paper.metadata_json, "$.citation_count"), Integer)
-                ),
+                func.sum(func.cast(_json_field(Paper.metadata_json, "citation_count"), Integer)),
                 0,
             ).label("total_citations"),
         )
@@ -205,23 +227,21 @@ def get_paper_distribution_stats(session: Session) -> dict:
 
     by_year_q = (
         select(
-            func.coalesce(func.strftime("%Y", Paper.publication_date), "未知").label("year"),
+            func.coalesce(_year_of(Paper.publication_date), "未知").label("year"),
             func.count().label("count"),
         )
-        .group_by(func.strftime("%Y", Paper.publication_date))
-        .order_by(func.strftime("%Y", Paper.publication_date).desc())
+        .group_by(_year_of(Paper.publication_date))
+        .order_by(_year_of(Paper.publication_date).desc())
     )
     year_rows = session.execute(by_year_q).all()
     by_year = [{"year": r[0], "count": r[1]} for r in year_rows]
 
     by_source_q = (
         select(
-            func.coalesce(func.json_extract(Paper.metadata_json, "$.source"), "unknown").label(
-                "source"
-            ),
+            func.coalesce(_json_field(Paper.metadata_json, "source"), "unknown").label("source"),
             func.count().label("count"),
         )
-        .group_by(func.json_extract(Paper.metadata_json, "$.source"))
+        .group_by(_json_field(Paper.metadata_json, "source"))
         .order_by(func.count().desc())
     )
     source_rows = session.execute(by_source_q).all()
@@ -275,11 +295,11 @@ def get_paper_distribution_stats(session: Session) -> dict:
 
     by_venue_q = (
         select(
-            func.coalesce(func.json_extract(Paper.metadata_json, "$.venue"), "未知").label("venue"),
+            func.coalesce(_json_field(Paper.metadata_json, "venue"), "未知").label("venue"),
             func.count().label("count"),
         )
-        .where(func.json_extract(Paper.metadata_json, "$.venue").is_not(None))
-        .group_by(func.json_extract(Paper.metadata_json, "$.venue"))
+        .where(_json_field(Paper.metadata_json, "venue").is_not(None))
+        .group_by(_json_field(Paper.metadata_json, "venue"))
         .order_by(func.count().desc())
         .limit(15)
     )

@@ -7,7 +7,6 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
-    JSON,
     Boolean,
     Date,
     DateTime,
@@ -23,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
-from packages.storage.db import Base
+from packages.storage.db import Base, JSONB_or_JSON
 
 
 def _utcnow() -> datetime:
@@ -39,14 +38,16 @@ class Paper(Base):
     abstract: Mapped[str] = mapped_column(Text, nullable=False, default="")
     pdf_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     publication_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(JSONB_or_JSON(), nullable=True)
     read_status: Mapped[ReadStatus] = mapped_column(
         Enum(ReadStatus, name="read_status"),
         nullable=False,
         default=ReadStatus.unread,
         index=True,
     )
-    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    metadata_json: Mapped[dict] = mapped_column(
+        "metadata", JSONB_or_JSON(), nullable=False, default=dict
+    )
     favorited: Mapped[bool] = mapped_column(
         nullable=False,
         default=False,
@@ -78,7 +79,7 @@ class AnalysisReport(Base):
     )
     summary_md: Mapped[str | None] = mapped_column(Text, nullable=True)
     deep_dive_md: Mapped[str | None] = mapped_column(Text, nullable=True)
-    key_insights: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    key_insights: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
     skim_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -104,7 +105,7 @@ class ImageAnalysis(Base):
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     image_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    bbox_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    bbox_json: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
@@ -206,7 +207,7 @@ class TopicSubscription(Base):
 
     # 完整版新增：多渠道支持
     sources: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=lambda: ["arxiv"]
+        JSONB_or_JSON(), nullable=False, default=lambda: ["arxiv"]
     )  # ["arxiv", "ieee"]
 
     # IEEE 特定配置
@@ -289,7 +290,7 @@ class GeneratedContent(Base):
         String(36), ForeignKey("papers.id", ondelete="SET NULL"), nullable=True, index=True
     )
     markdown: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False, index=True
     )
@@ -331,7 +332,7 @@ class AgentMessage(Base):
         nullable=False,  # user/assistant/system
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False, index=True
     )
@@ -350,9 +351,9 @@ class AgentPendingAction(Base):
         index=True,
     )
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    tool_args: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    tool_args: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
     tool_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    conversation_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    conversation_state: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False, index=True
     )
@@ -364,7 +365,7 @@ class AgentPendingAction(Base):
         index=True,
     )
     markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_json: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
 
 
 class CollectionAction(Base):
@@ -563,11 +564,11 @@ class UserSchema(Base):
     user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
 
-    research_topics: Mapped[list[str]] = mapped_column(JSON, default=list)
+    research_topics: Mapped[list[str]] = mapped_column(JSONB_or_JSON(), default=list)
     academic_level: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    current_challenges: Mapped[list[str]] = mapped_column(JSON, default=list)
-    beliefs: Mapped[list[str]] = mapped_column(JSON, default=list)
-    knowledge_gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
+    current_challenges: Mapped[list[str]] = mapped_column(JSONB_or_JSON(), default=list)
+    beliefs: Mapped[list[str]] = mapped_column(JSONB_or_JSON(), default=list)
+    knowledge_gaps: Mapped[list[str]] = mapped_column(JSONB_or_JSON(), default=list)
 
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
@@ -585,12 +586,12 @@ class SensemakingSession(Base):
         String(36), ForeignKey("user_schemas.id", ondelete="CASCADE"), nullable=False
     )
 
-    act1_comprehension: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    act2_collision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    act3_reconstruction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    act1_comprehension: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
+    act2_collision: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
+    act3_reconstruction: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
 
     status: Mapped[str] = mapped_column(String(32), default="in_progress")
-    conversation_history: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    conversation_history: Mapped[list[dict]] = mapped_column(JSONB_or_JSON(), default=list)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -609,7 +610,7 @@ class SchemaPaperInteraction(Base):
     paper_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
 
     interaction_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    cognitive_delta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    cognitive_delta: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
@@ -631,7 +632,7 @@ class PaperTranslation(Base):
     )
     target_lang: Mapped[str] = mapped_column(String(16), nullable=False, default="zh")
     mode: Mapped[str] = mapped_column(String(16), nullable=False, default="fast")
-    segments: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    segments: Mapped[list | None] = mapped_column(JSONB_or_JSON(), nullable=True)
     bilingual_pdf_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -648,8 +649,8 @@ class BatchJob(Base):
     total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    paper_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    error_log: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    paper_ids: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    error_log: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

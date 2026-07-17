@@ -35,6 +35,11 @@ services:
       - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002,https://pm.vibingu.cn
       - DEMO_MODE=false
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+        # DATABASE_URL=sqlite://... 时 backend 不实际连 postgres，但 compose
+        # 仍会拉起 postgres 容器，无副作用；切到 PG 后自动等待 ready
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
@@ -70,7 +75,10 @@ services:
       - SITE_URL=https://pm.vibingu.cn
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/worker_heartbeat"]
       interval: 30s
@@ -85,6 +93,30 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+
+  # ==========================================
+  # 数据库服务 (PostgreSQL + pgvector)
+  # ==========================================
+  # 镜像带 pgvector 扩展（即使当前不用 ANN 也已就绪）。
+  # DATABASE_URL=sqlite://... 时 backend/worker 不会实际连接，但容器会启动占位；
+  # 切到 postgresql+psycopg2://... 后即自动使用。
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: papermind-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: papermind
+      POSTGRES_USER: papermind
+      POSTGRES_PASSWORD: papermind
+    ports:
+      - "127.0.0.1:5432:5432"  # 只对宿主本地暴露，外部不直连
+    volumes:
+      - papermind_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U papermind -d papermind"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ==========================================
   # 前端服务 (Nginx 托管静态文件)
@@ -121,3 +153,5 @@ volumes:
   pm_logs:
     name: papermind_logs
   pm_pip_cache:
+  papermind_pgdata:
+    name: papermind_pgdata
