@@ -29,15 +29,32 @@ from __future__ import annotations
 
 import argparse
 import logging
+import pathlib
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
-from sqlalchemy import select, text
+# 让脚本能直接 `python scripts/x.py` 运行（不依赖 PYTHONPATH 环境变量）
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+from sqlalchemy import func, select
 
 from packages.ai.pipelines import PaperPipelines
 from packages.ai.rate_limiter import acquire_api
-from packages.storage.db import session_scope
+from packages.storage.db import _is_sqlite, session_scope
 from packages.storage.models import Paper
+
+
+def _embedding_dim_expr():
+    """方言通用的 embedding 维度计算表达式。
+
+    - SQLite：json_array_length(embedding)（NULL 兜底 0）
+    - PostgreSQL：jsonb_array_length(embedding)（NULL 兜底 0）
+    """
+    if _is_sqlite:
+        return func.coalesce(func.json_array_length(Paper.embedding), 0)
+    return func.coalesce(func.jsonb_array_length(Paper.embedding), 0)
+
 
 # 目标维度（bge-m3 固定 1024 维）
 TARGET_DIM = 1024
@@ -67,9 +84,8 @@ def get_all_papers(
     with session_scope() as session:
         stmt = select(Paper.id, Paper.title, Paper.embedding)
         if only_mismatched:
-            # SQLite json_array_length 对 NULL 返回 NULL，用 COALESCE 兜底成 0
-            dim_expr = text("COALESCE(json_array_length(embedding), 0)")
-            stmt = stmt.where(dim_expr != TARGET_DIM)
+            # 方言通用的 embedding 维度表达式（NULL 兜底 0）
+            stmt = stmt.where(_embedding_dim_expr() != TARGET_DIM)
         stmt = stmt.order_by(Paper.created_at.asc())
         if limit > 0:
             stmt = stmt.limit(limit)

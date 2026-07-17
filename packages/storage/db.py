@@ -10,7 +10,8 @@ import uuid as _uuid
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from sqlalchemy import StaticPool, create_engine, event, text
+from sqlalchemy import JSON, StaticPool, create_engine, event, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from packages.config import get_settings
@@ -23,6 +24,18 @@ logger = logging.getLogger(__name__)
 
 class Base(DeclarativeBase):
     pass
+
+
+def JSONB_or_JSON():
+    """方言通用的 JSON 列类型工厂。
+
+    - PostgreSQL：返回 JSONB（支持 @> 容器算子、可建 GIN 索引）
+    - SQLite：返回 JSON（函数式 json_extract）
+
+    在 models.py 的列定义里替代直接写 JSON。根据 _is_sqlite 在导入期
+    选定类型，运行时 ORM 即用对应方言编译 SQL。
+    """
+    return JSONB() if not _is_sqlite else JSON()
 
 
 settings = get_settings()
@@ -112,7 +125,13 @@ def run_migrations() -> None:
     注意：Alembic（infra/migrations）是 schema 迁移的权威路径，新库应通过
     `alembic upgrade head` 建表。本函数仅作运行时增量兜底，处理历史遗留库的
     列/索引补齐，不替代 alembic 工作流。新表应通过 alembic 迁移添加。
+
+    PostgreSQL 等远程库由 alembic 管理schema，此处跳过 DDL 兜底
+    （其内部含 sqlite_master、DATETIME DEFAULT、JSON 等 SQLite 专属写法）。
     """
+    if not _is_sqlite:
+        logger.info("非 SQLite 库，跳过 run_migrations 兜底（由 alembic 管理 schema）")
+        return
     with engine.connect() as conn:
         _safe_add_column(
             conn,

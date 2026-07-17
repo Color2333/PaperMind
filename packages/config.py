@@ -99,8 +99,10 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.pdf_storage_root.mkdir(parents=True, exist_ok=True)
     settings.brief_output_root.mkdir(parents=True, exist_ok=True)
-    db_parent = Path(settings.database_url.replace("sqlite:///", "")).parent
-    db_parent.mkdir(parents=True, exist_ok=True)
+    # SQLite 需要预先创建数据库文件所在目录；PostgreSQL 等远程库无需
+    if settings.database_url.startswith("sqlite:"):
+        db_parent = Path(settings.database_url.replace("sqlite:///", "")).parent
+        db_parent.mkdir(parents=True, exist_ok=True)
     return settings
 
 

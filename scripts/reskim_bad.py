@@ -27,8 +27,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import pathlib
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+
+# 让脚本能直接 `python scripts/x.py` 运行（不依赖 PYTHONPATH 环境变量）
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select
 
