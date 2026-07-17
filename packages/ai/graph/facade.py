@@ -145,9 +145,13 @@ class GraphService:
     ) -> dict:
         return self._similarity.similarity_map(topic_id=topic_id, limit=limit)
 
-    def cluster_map(self, n_clusters: int = 12, limit: int = 5000) -> dict:
+    def cluster_map(
+        self, n_clusters: int = 12, limit: int = 5000, papers_per_cluster: int = 5
+    ) -> dict:
         """全库 embedding k-means 聚类（研究领域地图）"""
-        return self._similarity.cluster_map(n_clusters=n_clusters, limit=limit)
+        return self._similarity.cluster_map(
+            n_clusters=n_clusters, limit=limit, papers_per_cluster=papers_per_cluster
+        )
 
     def similar_via_citation(self, paper_id: str, top_k: int = 5) -> dict:
         """引用同一篇论文且语义相近的论文（co-citation + 向量补强）"""

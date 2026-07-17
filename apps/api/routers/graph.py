@@ -119,13 +119,19 @@ async def similarity_map(
 async def cluster_map(
     n_clusters: int = Query(default=12, ge=2, le=30),
     limit: int = Query(default=5000, ge=10, le=20000),
+    papers_per_cluster: int = Query(default=5, ge=1, le=50),
 ) -> dict:
     """全库论文 embedding k-means 聚类（研究领域地图，60s 缓存，线程池执行）"""
-    cache_key = f"graph_cluster_map_{n_clusters}_{limit}"
+    cache_key = f"graph_cluster_map_{n_clusters}_{limit}_{papers_per_cluster}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.cluster_map, n_clusters=n_clusters, limit=limit)
+    result = await run_in_threadpool(
+        graph_service.cluster_map,
+        n_clusters=n_clusters,
+        limit=limit,
+        papers_per_cluster=papers_per_cluster,
+    )
     cache.set(cache_key, result, ttl=60)
     return result
 

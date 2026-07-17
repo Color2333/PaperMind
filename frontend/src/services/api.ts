@@ -521,8 +521,8 @@ export const graphApi = {
     post<{ papers: number; edges_linked: number; errors: number }>("/graph/auto-link", paperIds),
   similarityMap: (topicId?: string, limit = 200) =>
     get<SimilarityMapData>(`/graph/similarity-map?topic_id=${topicId || ""}&limit=${limit}`),
-  clusterMap: (nClusters = 12, limit = 5000) =>
-    get<ClusterMapData>(`/graph/cluster-map?n_clusters=${nClusters}&limit=${limit}`),
+  clusterMap: (nClusters = 12, limit = 5000, papersPerCluster = 5) =>
+    get<ClusterMapData>(`/graph/cluster-map?n_clusters=${nClusters}&limit=${limit}&papers_per_cluster=${papersPerCluster}`),
   similarViaCitation: (paperId: string, topK = 5) =>
     get<SimilarViaCitationResponse>(`/graph/similar-via-citation/${paperId}?top_k=${topK}`),
 };
