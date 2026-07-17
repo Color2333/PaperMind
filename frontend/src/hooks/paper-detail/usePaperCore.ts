@@ -88,10 +88,24 @@ export function usePaperCore({
     }
   }, [id, paper, toast]);
 
+  const handleToggleRejected = useCallback(async () => {
+    if (!id || !paper) return;
+    const prevRejected = paper.rejected;
+    try {
+      const res = await paperApi.toggleRejected(id);
+      setPaper((prev) => (prev ? { ...prev, rejected: res.rejected } : prev));
+      toast(res.rejected ? "info" : "info", res.rejected ? "已标记为不感兴趣" : "已取消标记");
+    } catch {
+      toast("error", "操作失败");
+      setPaper((prev) => (prev ? { ...prev, rejected: prevRejected } : prev));
+    }
+  }, [id, paper, toast]);
+
   return {
     loading,
     embedDone,
     setEmbedDone,
     handleToggleFavorite,
+    handleToggleRejected,
   };
 }

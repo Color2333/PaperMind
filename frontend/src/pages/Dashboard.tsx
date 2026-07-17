@@ -7,9 +7,9 @@ import { useNavigate } from "react-router-dom";
 import { Button, Badge } from "@/components/ui";
 import { StatCardSkeleton } from "@/components/Skeleton";
 import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
-import { systemApi, metricsApi, pipelineApi, todayApi } from "@/services/api";
+import { systemApi, metricsApi, pipelineApi, todayApi, paperApi } from "@/services/api";
 import { formatDuration, timeAgo } from "@/lib/utils";
-import type { SystemStatus, CostMetrics, PipelineRun, TodaySummary } from "@/types";
+import type { SystemStatus, CostMetrics, PipelineRun, TodaySummary, RecommendedResponse } from "@/types";
 import {
   Activity,
   FileText,
@@ -21,6 +21,7 @@ import {
   TrendingUp,
   Zap,
   Sparkles,
+  Ban,
   ArrowUpRight,
   BarChart3,
   Cpu,
@@ -78,6 +79,7 @@ export default function Dashboard() {
   const [costs, setCosts] = useState<CostMetrics | null>(null);
   const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [today, setToday] = useState<TodaySummary | null>(null);
+  const [recommended, setRecommended] = useState<RecommendedResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [costDays, setCostDays] = useState<number>(7);
@@ -86,16 +88,18 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [s, c, r, t] = await Promise.all([
+      const [s, c, r, t, rec] = await Promise.all([
         systemApi.status(),
         metricsApi.costs(costDays),
         pipelineApi.runs(10),
         todayApi.summary().catch(() => null),
+        paperApi.recommended(10).catch(() => null),
       ]);
       setStatus(s);
       setCosts(c);
       setRuns(r.items);
       setToday(t);
+      setRecommended(rec);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {
@@ -408,8 +412,53 @@ export default function Dashboard() {
             </SectionCard>
           )}
 
-          {/* 推荐论文 */}
-          {today && today.recommendations.length > 0 && (
+          {/* 推荐论文（升级版：多兴趣+时间衰减，优先用新 API） */}
+          {recommended && recommended.items.length > 0 ? (
+            <SectionCard title="推荐阅读（多兴趣+时间衰减）" icon={<Sparkles className="text-warning h-4 w-4" />}>
+              <div className="space-y-2">
+                {recommended.items.slice(0, 6).map((rec) => (
+                  <div key={rec.id} className="bg-page hover:bg-hover rounded-xl p-3 transition-colors group">
+                    <button
+                      onClick={() => navigate(`/papers/${rec.id}`)}
+                      className="block w-full text-left"
+                    >
+                      <p className="text-ink mb-1 line-clamp-2 text-xs font-medium">
+                        {rec.title_zh || rec.title}
+                      </p>
+                      {rec.abstract && (
+                        <p className="text-ink-tertiary mb-1 line-clamp-1 text-[10px]">{rec.abstract}</p>
+                      )}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-primary text-[10px] font-medium">
+                          相似度 {(rec.similarity * 100).toFixed(0)}%
+                        </span>
+                        {rec.keywords.slice(0, 2).map((kw) => (
+                          <span key={kw} className="text-[9px] text-ink-tertiary bg-hover px-1 rounded">{kw}</span>
+                        ))}
+                      </div>
+                    </button>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          await paperApi.toggleRejected(rec.id);
+                          // 刷新推荐（后端已排除 rejected，重新拉取即可）
+                          const fresh = await paperApi.recommended(10);
+                          setRecommended(fresh);
+                        } catch {
+                          /* 静默失败，不打扰用户 */
+                        }
+                      }}
+                      title="不再推荐此类论文"
+                      className="mt-1 opacity-0 group-hover:opacity-100 text-[10px] text-ink-tertiary hover:text-error transition-all inline-flex items-center gap-1"
+                    >
+                      <Ban className="h-3 w-3" /> 不感兴趣
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          ) : today && today.recommendations.length > 0 ? (
             <SectionCard title="推荐阅读" icon={<Sparkles className="text-warning h-4 w-4" />}>
               <div className="space-y-2">
                 {today.recommendations.slice(0, 4).map((rec) => (
@@ -430,7 +479,7 @@ export default function Dashboard() {
                 ))}
               </div>
             </SectionCard>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

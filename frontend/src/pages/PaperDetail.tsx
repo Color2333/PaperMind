@@ -21,6 +21,8 @@ import {
   useDeepRead,
   useEmbed,
   useSimilarPapers,
+  useDuplicates,
+  useSimilarViaCitation,
   useFigures,
   useReasoning,
   usePaperTags,
@@ -48,6 +50,9 @@ import {
   Shield,
   Sparkles,
   Link2,
+  Copy,
+  Network,
+  Ban,
   Tag,
   Folder,
   Heart,
@@ -140,6 +145,7 @@ export default function PaperDetail() {
     embedDone,
     setEmbedDone,
     handleToggleFavorite,
+    handleToggleRejected,
   } = usePaperCore({
     id,
     toast,
@@ -168,6 +174,20 @@ export default function PaperDetail() {
     similarLoading,
     handleSimilar,
   } = useSimilarPapers({ id, toast, setReportTab });
+
+  // 查重 hook（检测疑似重复论文，相似度 > 0.92）
+  const {
+    duplicateItems,
+    duplicateLoading,
+    handleDuplicates,
+  } = useDuplicates({ id, toast, setReportTab });
+
+  // 引用图补强 hook（co-citation + 向量相似度排序）
+  const {
+    citationSimilarItems,
+    citationSimilarLoading,
+    handleCitationSimilar,
+  } = useSimilarViaCitation({ id, toast, setReportTab });
 
   // 一键深度分析 hook（拥有 autoAnalyzing/autoStage + handleAutoAnalyze）
   const hasSkim = !!(savedSkim || skimReport);
@@ -221,6 +241,8 @@ export default function PaperDetail() {
   const hasFigures = figures.length > 0;
   const hasReasoning = !!reasoning;
   const hasSimilar = similarIds.length > 0;
+  const hasDuplicates = duplicateItems.length > 0;
+  const hasCitationSimilar = citationSimilarItems.length > 0;
 
   const skimStatus: "idle" | "loading" | "done" = skimLoading
     ? "loading"
@@ -247,6 +269,16 @@ export default function PaperDetail() {
     : hasSimilar
       ? "done"
       : "idle";
+  const duplicateStatus: "idle" | "loading" | "done" = duplicateLoading
+    ? "loading"
+    : hasDuplicates
+      ? "done"
+      : "idle";
+  const citationSimilarStatus: "idle" | "loading" | "done" = citationSimilarLoading
+    ? "loading"
+    : hasCitationSimilar
+      ? "done"
+      : "idle";
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -268,6 +300,18 @@ export default function PaperDetail() {
           />
           <span className={paper.favorited ? "text-red-500" : "text-ink-tertiary"}>
             {paper.favorited ? "已收藏" : "收藏"}
+          </span>
+        </button>
+        <button
+          onClick={handleToggleRejected}
+          className="hover:bg-error/10 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors"
+          title={paper.rejected ? "取消不感兴趣" : "不感兴趣（推荐系统将不再推荐此类论文）"}
+        >
+          <Ban
+            className={`h-5 w-5 transition-all ${paper.rejected ? "text-error" : "text-ink-tertiary"}`}
+          />
+          <span className={paper.rejected ? "text-error" : "text-ink-tertiary"}>
+            {paper.rejected ? "已屏蔽" : "不感兴趣"}
           </span>
         </button>
       </div>
@@ -610,6 +654,32 @@ export default function PaperDetail() {
             )}
             {!paper.has_embedding ? "相似 (需嵌入)" : "相似论文"}
           </button>
+          <button
+            onClick={handleDuplicates}
+            disabled={duplicateLoading || !paper.has_embedding}
+            title={!paper.has_embedding ? "请先执行向量嵌入" : "检测相似度 > 92% 的疑似重复论文"}
+            className="border-border bg-surface text-ink-secondary hover:border-primary/30 hover:text-ink inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-all disabled:opacity-50"
+          >
+            {duplicateLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+            查重
+          </button>
+          <button
+            onClick={handleCitationSimilar}
+            disabled={citationSimilarLoading || !paper.has_embedding}
+            title={!paper.has_embedding ? "请先执行向量嵌入" : "引用同一篇论文且语义相近的论文"}
+            className="border-border bg-surface text-ink-secondary hover:border-primary/30 hover:text-ink inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-all disabled:opacity-50"
+          >
+            {citationSimilarLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Network className="h-3.5 w-3.5" />
+            )}
+            引用补强
+          </button>
         </div>
       </div>
 
@@ -645,6 +715,8 @@ export default function PaperDetail() {
             { id: "figures", label: <TabLabel label="图表" status={figureStatus} /> },
             { id: "reasoning", label: <TabLabel label="推理链" status={reasoningStatus} /> },
             { id: "similar", label: <TabLabel label="相似" status={similarStatus} /> },
+            { id: "duplicates", label: <TabLabel label="查重" status={duplicateStatus} /> },
+            { id: "citation-similar", label: <TabLabel label="引用补强" status={citationSimilarStatus} /> },
           ]}
           active={reportTab}
           onChange={setReportTab}
@@ -878,6 +950,92 @@ export default function PaperDetail() {
                   icon={<Link2 className="h-8 w-8" />}
                   label={
                     embedDone ? "点击「相似论文」按钮查找" : "请先执行「向量嵌入」，再查找相似论文"
+                  }
+                />
+              )}
+            </div>
+          )}
+
+          {/* Tab: 查重（疑似重复论文，相似度 > 92%） */}
+          {reportTab === "duplicates" && (
+            <div className="animate-fade-in">
+              {duplicateLoading ? null : duplicateItems.length > 0 ? (
+                <Card className="rounded-2xl">
+                  <CardHeader
+                    title="疑似重复论文"
+                    description={`检测到 ${duplicateItems.length} 篇相似度 > 92% 的论文（可能是同一工作的多版本）`}
+                  />
+                  <div className="space-y-2">
+                    {duplicateItems.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => navigate(`/papers/${item.id}`)}
+                        className="bg-page hover:bg-hover flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-ink truncate text-sm font-medium">{item.title}</p>
+                          {item.arxiv_id && (
+                            <p className="text-ink-tertiary mt-0.5 truncate text-[10px]">{item.arxiv_id}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-primary text-xs font-medium">
+                            {(item.similarity * 100).toFixed(1)}%
+                          </span>
+                          <ExternalLink className="text-ink-tertiary h-3.5 w-3.5" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              ) : (
+                <EmptyReport
+                  icon={<Copy className="h-8 w-8" />}
+                  label={
+                    embedDone ? "点击「查重」按钮检测" : "请先执行「向量嵌入」，再检测重复论文"
+                  }
+                />
+              )}
+            </div>
+          )}
+
+          {/* Tab: 引用补强（co-citation + 向量相似度排序） */}
+          {reportTab === "citation-similar" && (
+            <div className="animate-fade-in">
+              {citationSimilarLoading ? null : citationSimilarItems.length > 0 ? (
+                <Card className="rounded-2xl">
+                  <CardHeader
+                    title="引用图补强"
+                    description={`${citationSimilarItems.length} 篇引用同一论文且语义相近的论文`}
+                  />
+                  <div className="space-y-2">
+                    {citationSimilarItems.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => navigate(`/papers/${item.id}`)}
+                        className="bg-page hover:bg-hover flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-ink truncate text-sm font-medium">{item.title}</p>
+                          {item.arxiv_id && (
+                            <p className="text-ink-tertiary mt-0.5 truncate text-[10px]">{item.arxiv_id}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-primary text-xs font-medium">
+                            {(item.similarity * 100).toFixed(1)}%
+                          </span>
+                          <ExternalLink className="text-ink-tertiary h-3.5 w-3.5" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              ) : (
+                <EmptyReport
+                  icon={<Network className="h-8 w-8" />}
+                  label={
+                    embedDone ? "点击「引用补强」按钮查找" : "请先执行「向量嵌入」，再查找引用补强论文"
                   }
                 />
               )}

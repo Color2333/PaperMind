@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import type {
   LibraryOverview, OverviewNode, BridgesResponse,
-  FrontierResponse, CocitationResponse, SimilarityMapData,
+  FrontierResponse, CocitationResponse, SimilarityMapData, ClusterMapData,
 } from "@/types";
 import { Section, StatCard } from "./shared";
 import SimilarityMap from "./SimilarityMap";
@@ -26,24 +26,27 @@ export default function OverviewPanel() {
   const [frontier, setFrontier] = useState<FrontierResponse | null>(null);
   const [cocitation, setCocitation] = useState<CocitationResponse | null>(null);
   const [simMap, setSimMap] = useState<SimilarityMapData | null>(null);
+  const [clusterMap, setClusterMap] = useState<ClusterMapData | null>(null);
   const [loading, setLoading] = useState(true);
   const loaded = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ov, br, fr, co, sm] = await Promise.all([
+      const [ov, br, fr, co, sm, cm] = await Promise.all([
         graphApi.overview().catch(() => null),
         graphApi.bridges().catch(() => null),
         graphApi.frontier().catch(() => null),
         graphApi.cocitationClusters().catch(() => null),
         graphApi.similarityMap().catch(() => null),
+        graphApi.clusterMap().catch(() => null),
       ]);
       if (ov) setOverview(ov);
       if (br) setBridges(br);
       if (fr) setFrontier(fr);
       if (co) setCocitation(co);
       if (sm) setSimMap(sm);
+      if (cm) setClusterMap(cm);
     } catch { toast("error", "加载概览数据失败"); }
     finally { setLoading(false); }
   }, [toast]);
@@ -68,18 +71,19 @@ export default function OverviewPanel() {
     </div>
   );
 
-  return <OverviewContent overview={overview} bridges={bridges} frontier={frontier} cocitation={cocitation} simMap={simMap} onRefresh={load} />;
+  return <OverviewContent overview={overview} bridges={bridges} frontier={frontier} cocitation={cocitation} simMap={simMap} clusterMap={clusterMap} onRefresh={load} />;
 }
 
 /* ---- 内部内容组件 ---- */
 function OverviewContent({
-  overview, bridges, frontier, cocitation, simMap, onRefresh,
+  overview, bridges, frontier, cocitation, simMap, clusterMap, onRefresh,
 }: {
   overview: LibraryOverview;
   bridges: BridgesResponse | null;
   frontier: FrontierResponse | null;
   cocitation: CocitationResponse | null;
   simMap: SimilarityMapData | null;
+  clusterMap: ClusterMapData | null;
   onRefresh: () => void;
 }) {
   const graphRef = useRef<HTMLDivElement>(null);
@@ -227,6 +231,40 @@ function OverviewContent({
                   {cl.papers.map((p) => (
                     <Link key={p.id} to={`/papers/${p.id}`} className="block text-sm text-ink hover:text-primary line-clamp-1">{p.title}</Link>
                   ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* 研究领域聚类（基于 embedding 的语义聚类） */}
+      {clusterMap && clusterMap.clusters.length > 0 && (
+        <Section title="研究领域聚类" icon={<Layers className="h-4 w-4 text-primary" />}
+                 desc="基于论文 embedding 的语义聚类，每簇用关键词自动命名">
+          <div className="space-y-3">
+            {clusterMap.clusters.slice(0, 12).map((cl) => (
+              <div key={cl.cluster_id} className="rounded-xl border border-border bg-page p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <Badge variant="info">{cl.name}</Badge>
+                  <span className="text-xs text-ink-tertiary">{cl.size} 篇论文</span>
+                </div>
+                {cl.keywords.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1">
+                    {cl.keywords.map((kw) => (
+                      <span key={kw} className="text-[10px] text-ink-tertiary bg-hover px-1.5 py-0.5 rounded">
+                        {kw}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="space-y-1">
+                  {cl.papers.slice(0, 5).map((p) => (
+                    <Link key={p.id} to={`/papers/${p.id}`} className="block text-sm text-ink hover:text-primary line-clamp-1">
+                      {p.title_zh || p.title}
+                    </Link>
+                  ))}
+                  {cl.size > 5 && <span className="text-[10px] text-ink-tertiary">+{cl.size - 5} 篇</span>}
                 </div>
               </div>
             ))}
