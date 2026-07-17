@@ -29,8 +29,10 @@ llm = [
   "anthropic>=0.62.0",
 ]
 pdf = [
-  "pdf2zh>=1.9",
   "pymupdf>=1.25.5",
+]
+pdf_translate = [
+  "pdf2zh>=1.9",
 ]
 
 [build-system]

@@ -23,7 +23,8 @@ RUN npm run build
 # ============================================================
 # Stage 2: Nginx 托管
 # ============================================================
-FROM nginx:alpine
+# 锁定 nginx 1.27 alpine：1.31+ 在 CentOS 7 老内核上写 pid 被拒(Operation not permitted)
+FROM nginx:1.27-alpine
 
 # 复制自定义 Nginx 配置（已包含 .mjs MIME type）
 COPY nginx.conf /etc/nginx/conf.d/default.conf
