@@ -36,6 +36,10 @@ import type {
   BridgesResponse,
   FrontierResponse,
   CocitationResponse,
+  ClusterMapData,
+  SimilarViaCitationResponse,
+  DuplicatesResponse,
+  RecommendedResponse,
   TodaySummary,
   FolderStats,
   TopicStatsResponse,
@@ -341,6 +345,12 @@ export const paperApi = {
     }>(`/papers/${id}/similar?top_k=${topK}`),
   toggleFavorite: (id: string) =>
     patch<{ id: string; favorited: boolean }>(`/papers/${id}/favorite`),
+  toggleRejected: (id: string) =>
+    patch<{ id: string; rejected: boolean }>(`/papers/${id}/reject`),
+  duplicates: (id: string, threshold = 0.92) =>
+    get<DuplicatesResponse>(`/papers/${id}/duplicates?threshold=${threshold}`),
+  recommended: (topK = 10) =>
+    get<RecommendedResponse>(`/papers/recommended?top_k=${topK}`),
   getFigures: (id: string) => get<{ items: FigureAnalysisItem[] }>(`/papers/${id}/figures`),
   analyzeFigures: (id: string, maxFigures = 10) =>
     post<{ paper_id: string; count: number; items: FigureAnalysisItem[] }>(
@@ -511,6 +521,10 @@ export const graphApi = {
     post<{ papers: number; edges_linked: number; errors: number }>("/graph/auto-link", paperIds),
   similarityMap: (topicId?: string, limit = 200) =>
     get<SimilarityMapData>(`/graph/similarity-map?topic_id=${topicId || ""}&limit=${limit}`),
+  clusterMap: (nClusters = 12, limit = 5000) =>
+    get<ClusterMapData>(`/graph/cluster-map?n_clusters=${nClusters}&limit=${limit}`),
+  similarViaCitation: (paperId: string, topK = 5) =>
+    get<SimilarViaCitationResponse>(`/graph/similar-via-citation/${paperId}?top_k=${topK}`),
 };
 
 /* ========== Wiki ========== */

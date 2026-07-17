@@ -147,6 +147,7 @@ export interface Paper {
   metadata?: Record<string, unknown>;
   has_embedding?: boolean;
   favorited?: boolean;
+  rejected?: boolean;
   categories?: string[];
   keywords?: string[];
   authors?: string[];
@@ -541,6 +542,68 @@ export interface SimilarityMapData {
   points: SimilarityMapPoint[];
   total?: number;
   message?: string;
+}
+
+// ========== 研究领域聚类（cluster-map） ==========
+export interface ClusterMapPaper {
+  id: string;
+  title: string;
+  arxiv_id: string;
+  title_zh: string;
+}
+
+export interface ClusterGroup {
+  cluster_id: number;
+  name: string;
+  keywords: string[];
+  size: number;
+  papers: ClusterMapPaper[];
+}
+
+export interface ClusterMapData {
+  clusters: ClusterGroup[];
+  total_clusters?: number;
+  total_papers?: number;
+  message?: string;
+}
+
+// ========== 查重 + 引用图补强（共用 SimilarityItem） ==========
+export interface SimilarityItem {
+  id: string;
+  title: string;
+  arxiv_id?: string;
+  similarity: number;
+}
+
+export interface DuplicatesResponse {
+  paper_id: string;
+  duplicates: SimilarityItem[];
+  count: number;
+  note?: string;
+}
+
+export interface SimilarViaCitationResponse {
+  paper_id: string;
+  items: SimilarityItem[];
+  count?: number;
+  note?: string;
+}
+
+// ========== 推荐升级（多兴趣+时间衰减） ==========
+export interface RecommendedPaper {
+  id: string;
+  title: string;
+  arxiv_id: string;
+  abstract: string;
+  publication_date: string | null;
+  keywords: string[];
+  categories: string[];
+  title_zh: string;
+  similarity: number;
+}
+
+export interface RecommendedResponse {
+  items: RecommendedPaper[];
 }
 
 export interface LibraryOverview {

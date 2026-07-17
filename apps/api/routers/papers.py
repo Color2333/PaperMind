@@ -256,6 +256,7 @@ def paper_detail(paper_id: UUID) -> dict:
             "read_status": p.read_status.value,
             "pdf_path": p.pdf_path,
             "favorited": getattr(p, "favorited", False),
+            "rejected": getattr(p, "rejected", False),
             "categories": (p.metadata_json or {}).get("categories", []),
             "authors": (p.metadata_json or {}).get("authors", []),
             "keywords": (p.metadata_json or {}).get("keywords", []),
@@ -284,6 +285,21 @@ def toggle_favorite(paper_id: UUID) -> dict:
         session.commit()
         cache.invalidate("folder_stats")
         return {"id": str(p.id), "favorited": p.favorited}
+
+
+@router.patch("/papers/{paper_id}/reject")
+def toggle_reject(paper_id: UUID) -> dict:
+    """切换论文"不感兴趣"状态（推荐系统负反馈）"""
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        try:
+            p = repo.get_by_id(paper_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        p.rejected = not getattr(p, "rejected", False)
+        session.commit()
+        cache.invalidate("folder_stats")
+        return {"id": str(p.id), "rejected": p.rejected}
 
 
 # ---------- PDF 服务 ----------

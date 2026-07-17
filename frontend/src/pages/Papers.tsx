@@ -27,6 +27,7 @@ import {
   Zap,
   CheckCircle2,
   Heart,
+  Ban,
   LayoutGrid,
   LayoutList,
   Folder,
@@ -409,6 +410,25 @@ export default function Papers() {
       }
     },
     [loadFolderStats, toast]
+  );
+
+  const handleToggleRejected = useCallback(
+    async (e: React.MouseEvent, id: string) => {
+      e.stopPropagation();
+      /* 乐观更新 */
+      setPapers((prev) => prev.map((p) => (p.id === id ? { ...p, rejected: !p.rejected } : p)));
+      try {
+        const res = await paperApi.toggleRejected(id);
+        setPapers((prev) =>
+          prev.map((p) => (p.id === res.id ? { ...p, rejected: res.rejected } : p))
+        );
+        toast("info", res.rejected ? "已标记为不感兴趣" : "已取消标记");
+      } catch {
+        toast("error", "操作失败");
+        setPapers((prev) => prev.map((p) => (p.id === id ? { ...p, rejected: !p.rejected } : p)));
+      }
+    },
+    [toast]
   );
 
   const handleBatchSkim = async () => {
@@ -1093,6 +1113,7 @@ export default function Papers() {
                       selected={selected.has(paper.id)}
                       onSelect={() => toggleSelect(paper.id)}
                       onFavorite={(e) => handleToggleFavorite(e, paper.id)}
+                      onReject={(e) => handleToggleRejected(e, paper.id)}
                       onClick={() => navigate(`/papers/${paper.id}`)}
                     />
                   ))}
@@ -1104,6 +1125,7 @@ export default function Papers() {
                       key={paper.id}
                       paper={paper}
                       onFavorite={(e) => handleToggleFavorite(e, paper.id)}
+                      onReject={(e) => handleToggleRejected(e, paper.id)}
                       onClick={() => navigate(`/papers/${paper.id}`)}
                     />
                   ))}
@@ -1232,12 +1254,14 @@ const PaperListItem = memo(function PaperListItem({
   selected,
   onSelect,
   onFavorite,
+  onReject,
   onClick,
 }: {
   paper: Paper;
   selected: boolean;
   onSelect: () => void;
   onFavorite: (e: React.MouseEvent) => void;
+  onReject: (e: React.MouseEvent) => void;
   onClick: () => void;
 }) {
   const sc = statusBadge[paper.read_status] || statusBadge.unread;
@@ -1350,6 +1374,15 @@ const PaperListItem = memo(function PaperListItem({
             className={`h-3.5 w-3.5 ${paper.favorited ? "fill-red-500 text-red-500" : "text-ink-tertiary"}`}
           />
         </button>
+        <button
+          aria-label={paper.rejected ? "取消不感兴趣" : "不感兴趣"}
+          onClick={onReject}
+          className="hover:bg-error/10 mt-0.5 shrink-0 rounded-lg p-1 transition-colors"
+        >
+          <Ban
+            className={`h-3.5 w-3.5 ${paper.rejected ? "text-error" : "text-ink-tertiary"}`}
+          />
+        </button>
       </div>
     </div>
   );
@@ -1359,10 +1392,12 @@ const PaperListItem = memo(function PaperListItem({
 const PaperGridItem = memo(function PaperGridItem({
   paper,
   onFavorite,
+  onReject,
   onClick,
 }: {
   paper: Paper;
   onFavorite: (e: React.MouseEvent) => void;
+  onReject: (e: React.MouseEvent) => void;
   onClick: () => void;
 }) {
   const sc = statusBadge[paper.read_status] || statusBadge.unread;
@@ -1383,6 +1418,15 @@ const PaperGridItem = memo(function PaperGridItem({
         >
           <Heart
             className={`h-3.5 w-3.5 ${paper.favorited ? "fill-red-500 text-red-500" : "text-ink-tertiary"}`}
+          />
+        </button>
+        <button
+          aria-label={paper.rejected ? "取消不感兴趣" : "不感兴趣"}
+          onClick={onReject}
+          className="hover:bg-error/10 rounded-lg p-1 transition-colors"
+        >
+          <Ban
+            className={`h-3.5 w-3.5 ${paper.rejected ? "text-error" : "text-ink-tertiary"}`}
           />
         </button>
       </div>
