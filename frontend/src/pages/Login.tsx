@@ -15,6 +15,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true); // 检查认证状态期间显示 loading，防竞态
 
   useEffect(() => {
     // 页面加载时检查是否需要认证
@@ -29,7 +30,10 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
         onLoginSuccess();
       }
     } catch {
-      // 忽略错误，继续显示登录页
+      // 接口失败：保留登录页，但提示用户可尝试输入（认证可能仍启用）
+      setError("无法确认认证状态，若已启用密码请直接输入");
+    } finally {
+      setCheckingAuth(false);
     }
   }
 
@@ -78,7 +82,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="访问密码"
               className="focus:ring-primary w-full rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-3 pr-12 text-white placeholder-slate-500 transition-all focus:border-transparent focus:ring-2 focus:outline-none"
-              disabled={loading}
+              disabled={loading || checkingAuth}
               autoFocus
             />
             <button
@@ -94,10 +98,15 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || checkingAuth}
             className="bg-primary hover:bg-primary-hover mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-medium text-white transition-colors disabled:bg-slate-600"
           >
-            {loading ? (
+            {checkingAuth ? (
+              <>
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span>检查认证状态...</span>
+              </>
+            ) : loading ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span>验证中...</span>
