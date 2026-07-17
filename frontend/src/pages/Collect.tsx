@@ -2,7 +2,7 @@
  * 论文收集与订阅管理（重构版：手动抓取 + 丰富结果展示）
  * @author Color2333
  */
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Empty, Spinner } from "@/components/ui";
 import {
@@ -161,6 +161,13 @@ export default function Collect() {
       setMultiChannels(multiSuggestions.recommended);
     }
   }, [multiSuggestions]);
+
+  // 稳定 callback：避免 SearchResultCard memo 被内联箭头击穿（每项 expanded 切换只重渲染该项）
+  const handleResultToggle = useCallback((index: number) => {
+    setResults((prev) =>
+      prev.map((x, j) => (j === index ? { ...x, expanded: !x.expanded } : x))
+    );
+  }, []);
 
   // ========== 订阅管理 ==========
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -577,12 +584,9 @@ export default function Collect() {
                 <SearchResultCard
                   key={`result-${r.query}-${i}`}
                   result={r}
-                  onToggle={() =>
-                    setResults((prev) =>
-                      prev.map((x, j) => (j === i ? { ...x, expanded: !x.expanded } : x))
-                    )
-                  }
-                  onNavigate={(paperId) => navigate(`/papers/${paperId}`)}
+                  index={i}
+                  onToggle={handleResultToggle}
+                  onNavigate={navigate}
                 />
               ))}
             </div>
@@ -1121,19 +1125,21 @@ function TopicCard({
 /* ================================================================
  * 即时搜索结果卡片
  * ================================================================ */
-function SearchResultCard({
+const SearchResultCard = memo(function SearchResultCard({
   result: r,
+  index,
   onToggle,
   onNavigate,
 }: {
   result: SearchResult;
-  onToggle: () => void;
-  onNavigate: (id: string) => void;
+  index: number;
+  onToggle: (index: number) => void;
+  onNavigate: (path: string) => void;
 }) {
   return (
     <div className="border-success/20 bg-success/[0.03] rounded-xl border transition-all">
       {/* 头部：摘要信息 */}
-      <button onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+      <button onClick={() => onToggle(index)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
         <CheckCircle2 className="text-success h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -1178,7 +1184,7 @@ function SearchResultCard({
                   </div>
                 </div>
                 <button
-                  onClick={() => onNavigate(p.id)}
+                  onClick={() => onNavigate(`/papers/${p.id}`)}
                   className="text-ink-tertiary hover:bg-primary/10 hover:text-primary shrink-0 rounded-md p-1 transition-colors"
                   title="查看论文"
                 >
@@ -1191,7 +1197,7 @@ function SearchResultCard({
       )}
     </div>
   );
-}
+});
 
 /* ================================================================
  * 通用表单字段

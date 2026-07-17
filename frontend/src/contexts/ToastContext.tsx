@@ -2,7 +2,7 @@
  * 全局 Toast 通知上下文
  * @author Color2333
  */
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 export type ToastType = "success" | "error" | "info" | "warning";
 
@@ -34,8 +34,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setTimeout(() => dismiss(id), 3500);
   }, [dismiss]);
 
+  // value useMemo：toast/dismiss 已是 useCallback（稳定），仅 toasts 变化时重建 value，
+  // 避免每次 Provider render 都新建 value 对象导致所有 useToast 消费者重渲染
+  const value = useMemo(() => ({ toasts, toast, dismiss }), [toasts, toast, dismiss]);
   return (
-    <Ctx.Provider value={{ toasts, toast, dismiss }}>
+    <Ctx.Provider value={value}>
       {children}
     </Ctx.Provider>
   );
