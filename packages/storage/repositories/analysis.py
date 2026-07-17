@@ -28,7 +28,12 @@ class AnalysisRepository:
         innovations = "".join([f"  - {x}\n" for x in skim.innovations])
         report.summary_md = f"- 一句话: {skim.one_liner}\n- 创新点:\n{innovations}"
         report.skim_score = skim.relevance_score
-        report.key_insights = {"skim_innovations": skim.innovations}
+        # key_insights 同时存 innovations 和 one_liner：
+        # one_liner 干净存一份，避免下游（如 embed_paper）解析 summary_md
+        report.key_insights = {
+            "skim_innovations": skim.innovations,
+            "skim_one_liner": skim.one_liner,
+        }
 
     def upsert_deep_dive(self, paper_id: UUID, deep: DeepDiveReport) -> None:
         report = self._get_or_create(paper_id)

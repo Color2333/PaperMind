@@ -120,13 +120,14 @@ class PaperRepository:
     def list_by_read_status_with_embedding(
         self, statuses: list[str], limit: int = 200
     ) -> list[Paper]:
-        """查询指定阅读状态且有 embedding 的论文"""
+        """查询指定阅读状态且有 embedding 的论文（排除 rejected 负反馈）"""
         status_enums = [ReadStatus(s) for s in statuses]
         q = (
             select(Paper)
             .where(
                 Paper.read_status.in_(status_enums),
                 Paper.embedding.is_not(None),
+                Paper.rejected.is_(False),
             )
             .order_by(Paper.created_at.desc())
             .limit(limit)
@@ -134,12 +135,13 @@ class PaperRepository:
         return list(self.session.execute(q).scalars())
 
     def list_unread_with_embedding(self, limit: int = 200) -> list[Paper]:
-        """查询未读但有 embedding 的论文"""
+        """查询未读但有 embedding 的论文（排除 rejected 负反馈）"""
         q = (
             select(Paper)
             .where(
                 Paper.read_status == ReadStatus.unread,
                 Paper.embedding.is_not(None),
+                Paper.rejected.is_(False),
             )
             .order_by(Paper.created_at.desc())
             .limit(limit)
@@ -151,7 +153,7 @@ class PaperRepository:
         topic_id: str | None = None,
         limit: int = 200,
     ) -> list[Paper]:
-        """查询有 embedding 的论文，可选按 topic 过滤"""
+        """查询有 embedding 的论文，可选按 topic 过滤（排除 rejected 负反馈）"""
         if topic_id:
             q = (
                 select(Paper)
@@ -159,6 +161,7 @@ class PaperRepository:
                 .where(
                     PaperTopic.topic_id == topic_id,
                     Paper.embedding.is_not(None),
+                    Paper.rejected.is_(False),
                 )
                 .order_by(Paper.created_at.desc())
                 .limit(limit)
@@ -166,7 +169,7 @@ class PaperRepository:
         else:
             q = (
                 select(Paper)
-                .where(Paper.embedding.is_not(None))
+                .where(Paper.embedding.is_not(None), Paper.rejected.is_(False))
                 .order_by(Paper.created_at.desc())
                 .limit(limit)
             )
