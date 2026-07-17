@@ -79,8 +79,21 @@ export default function Sidebar() {
       }).catch(() => {});
     };
     fetchUnread();
-    const timer = setInterval(fetchUnread, 60000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | null = setInterval(fetchUnread, 60000);
+    // visibility 暂停：后台标签不再每 60s 拉文件夹统计
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (timer) { clearInterval(timer); timer = null; }
+      } else {
+        fetchUnread();
+        timer = setInterval(fetchUnread, 60000);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
   const {
     metas,

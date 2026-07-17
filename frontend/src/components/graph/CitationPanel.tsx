@@ -481,7 +481,16 @@ function RichCitationListView({ data }: { data: CitationDetail }) {
         source_paper_title: data.paper_title,
         entries,
       });
+      const pollStart = Date.now();
+      const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟超时兜底
       pollRef.current = setInterval(async () => {
+        if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = undefined; }
+          setImportTask(null);
+          setShowModal(false);
+          toast("warning", "导入超时，请稍后在论文列表确认结果");
+          return;
+        }
         try {
           const status = await ingestApi.importStatus(task_id);
           setImportTask(status);
@@ -501,7 +510,7 @@ function RichCitationListView({ data }: { data: CitationDetail }) {
           setShowModal(false);
           toast("error", "导入进度查询失败，请稍后在论文列表确认结果");
         }
-      }, 1000);
+      }, 2000);
     } catch (err) {
       toast("error", `导入启动失败: ${String(err)}`);
       setShowModal(false);

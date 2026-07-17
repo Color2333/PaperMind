@@ -93,8 +93,23 @@ export function GlobalTaskProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     fetchTasks();
     intervalRef.current = setInterval(fetchTasks, POLL_IDLE);
+
+    // visibility 暂停：标签页不可见时停止轮询（此前后台标签 360-1800 次/小时冗余请求）
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      } else {
+        // 恢复可见：立即拉一次 + 按当前状态重启轮询
+        fetchTasks();
+        const interval = hasRunningRef.current ? POLL_FAST : POLL_IDLE;
+        intervalRef.current = setInterval(fetchTasks, interval);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [fetchTasks]);
 

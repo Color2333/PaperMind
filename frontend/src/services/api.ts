@@ -2,6 +2,7 @@
  * PaperMind - API 服务层
  * @author Color2333
  */
+import { retryAsync } from "@/lib/errorHandler";
 import type {
   SystemStatus,
   Topic,
@@ -192,8 +193,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return resp.json();
 }
 
+// GET 幂等，套 retryAsync（3 次指数退避，仅 NETWORK/SERVER/timeout 重试）；
+// POST/PATCH/PUT/DELETE 不套，避免重复写入
 function get<T>(path: string, opts?: { signal?: AbortSignal }) {
-  return request<T>(path, { signal: opts?.signal });
+  return retryAsync(() => request<T>(path, { signal: opts?.signal }));
 }
 
 function post<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }) {
