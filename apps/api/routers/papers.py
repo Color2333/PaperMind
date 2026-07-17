@@ -560,28 +560,30 @@ def similar(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     items = []
     if ids:
+        # N+1 修复：一次 list_by_ids 查完，按 ids 顺序构建（缺失的补 UUID 占位）
         with session_scope() as session:
             repo = PaperRepository(session)
-            for pid in ids:
-                try:
-                    p = repo.get_by_id(pid)
-                    items.append(
-                        {
-                            "id": str(p.id),
-                            "title": p.title,
-                            "arxiv_id": p.arxiv_id,
-                            "read_status": p.read_status.value if p.read_status else "unread",
-                        }
-                    )
-                except Exception:
-                    items.append(
-                        {
-                            "id": str(pid),
-                            "title": str(pid),
-                            "arxiv_id": None,
-                            "read_status": "unread",
-                        }
-                    )
+            by_id = {str(p.id): p for p in repo.list_by_ids([str(i) for i in ids])}
+        for pid in ids:
+            p = by_id.get(str(pid))
+            if p is not None:
+                items.append(
+                    {
+                        "id": str(p.id),
+                        "title": p.title,
+                        "arxiv_id": p.arxiv_id,
+                        "read_status": p.read_status.value if p.read_status else "unread",
+                    }
+                )
+            else:
+                items.append(
+                    {
+                        "id": str(pid),
+                        "title": str(pid),
+                        "arxiv_id": None,
+                        "read_status": "unread",
+                    }
+                )
     return {
         "paper_id": str(paper_id),
         "similar_ids": [str(x) for x in ids],
