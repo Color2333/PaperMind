@@ -239,6 +239,13 @@ export default function Agent() {
     [handleConfirm]
   );
 
+  // useCallback 稳定化：setCanvas 是 useState setter（稳定），避免每次 render 新建函数击穿 ChatBlock memo
+  const handleOpenArtifact = useCallback(
+    (title: string, content: string, isHtml?: boolean) =>
+      setCanvas({ title, markdown: content, isHtml }),
+    [setCanvas],
+  );
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -261,7 +268,7 @@ export default function Agent() {
           className="relative flex-1 overflow-y-auto"
         >
           {items.length === 0 ? (
-            <EmptyState onSelect={(p) => handleSend(p)} />
+            <EmptyState onSelect={handleSend} />
           ) : (
             <div className="mx-auto max-w-3xl px-4 py-6">
               {items.map((item, idx) => {
@@ -284,9 +291,7 @@ export default function Agent() {
                     isConfirming={item.actionId ? confirmingActions.has(item.actionId) : false}
                     onConfirm={handleConfirmAction}
                     onReject={handleReject}
-                    onOpenArtifact={(title, content, isHtml) =>
-                      setCanvas({ title, markdown: content, isHtml })
-                    }
+                    onOpenArtifact={handleOpenArtifact}
                     onRetry={retryFn}
                   />
                 );

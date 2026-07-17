@@ -2,7 +2,7 @@
  * Pipelines - 运行记录（现代精致版）
  * @author Color2333
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Spinner, Empty } from "@/components/ui";
 import { useToast } from "@/contexts/ToastContext";
@@ -10,6 +10,43 @@ import { pipelineApi } from "@/services/api";
 import { formatDuration, timeAgo } from "@/lib/utils";
 import type { PipelineRun } from "@/types";
 import { GitBranch, RefreshCw, Cpu } from "lucide-react";
+
+// 行 memo：navigate 用稳定引用，避免筛选切换时全量行重渲染
+const RunRow = memo(function RunRow({ run, onNavigate }: { run: PipelineRun; onNavigate: (path: string) => void }) {
+  return (
+    <tr key={run.id} className="hover:bg-hover transition-colors">
+      <td className="px-4 py-3">
+        <RunStatus status={run.status} />
+      </td>
+      <td className="text-ink px-4 py-3 text-sm font-medium">{run.pipeline_name}</td>
+      <td className="px-4 py-3">
+        {run.paper_id ? (
+          <button
+            onClick={() => onNavigate(`/papers/${run.paper_id}`)}
+            className="text-primary font-mono text-xs hover:underline"
+          >
+            {run.paper_id.slice(0, 8)}…
+          </button>
+        ) : (
+          <span className="text-ink-tertiary text-xs">—</span>
+        )}
+      </td>
+      <td className="max-w-[200px] px-4 py-3">
+        {run.decision_note ? (
+          <span className="text-ink-secondary truncate text-xs">{run.decision_note}</span>
+        ) : run.error_message ? (
+          <span className="text-error truncate text-xs">{run.error_message}</span>
+        ) : (
+          <span className="text-ink-tertiary text-xs">—</span>
+        )}
+      </td>
+      <td className="text-ink-secondary px-4 py-3 text-xs">
+        {run.elapsed_ms != null ? formatDuration(run.elapsed_ms) : "—"}
+      </td>
+      <td className="text-ink-tertiary px-4 py-3 text-xs">{timeAgo(run.created_at)}</td>
+    </tr>
+  );
+});
 
 const STATUS_FILTERS = [
   { key: "all", label: "全部" },
@@ -144,41 +181,7 @@ export default function Pipelines() {
               </thead>
               <tbody className="divide-border-light divide-y">
                 {filtered.map((run) => (
-                  <tr key={run.id} className="hover:bg-hover transition-colors">
-                    <td className="px-4 py-3">
-                      <RunStatus status={run.status} />
-                    </td>
-                    <td className="text-ink px-4 py-3 text-sm font-medium">{run.pipeline_name}</td>
-                    <td className="px-4 py-3">
-                      {run.paper_id ? (
-                        <button
-                          onClick={() => navigate(`/papers/${run.paper_id}`)}
-                          className="text-primary font-mono text-xs hover:underline"
-                        >
-                          {run.paper_id.slice(0, 8)}…
-                        </button>
-                      ) : (
-                        <span className="text-ink-tertiary text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="max-w-[200px] px-4 py-3">
-                      {run.decision_note ? (
-                        <span className="text-ink-secondary truncate text-xs">
-                          {run.decision_note}
-                        </span>
-                      ) : run.error_message ? (
-                        <span className="text-error truncate text-xs">{run.error_message}</span>
-                      ) : (
-                        <span className="text-ink-tertiary text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="text-ink-secondary px-4 py-3 text-xs">
-                      {run.elapsed_ms != null ? formatDuration(run.elapsed_ms) : "—"}
-                    </td>
-                    <td className="text-ink-tertiary px-4 py-3 text-xs">
-                      {timeAgo(run.created_at)}
-                    </td>
-                  </tr>
+                  <RunRow key={run.id} run={run} onNavigate={navigate} />
                 ))}
               </tbody>
             </table>

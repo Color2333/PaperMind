@@ -1111,10 +1111,10 @@ export default function Papers() {
                       key={paper.id}
                       paper={paper}
                       selected={selected.has(paper.id)}
-                      onSelect={() => toggleSelect(paper.id)}
-                      onFavorite={(e) => handleToggleFavorite(e, paper.id)}
-                      onReject={(e) => handleToggleRejected(e, paper.id)}
-                      onClick={() => navigate(`/papers/${paper.id}`)}
+                      onSelect={toggleSelect}
+                      onFavorite={handleToggleFavorite}
+                      onReject={handleToggleRejected}
+                      onNavigate={navigate}
                     />
                   ))}
                 </div>
@@ -1124,9 +1124,9 @@ export default function Papers() {
                     <PaperGridItem
                       key={paper.id}
                       paper={paper}
-                      onFavorite={(e) => handleToggleFavorite(e, paper.id)}
-                      onReject={(e) => handleToggleRejected(e, paper.id)}
-                      onClick={() => navigate(`/papers/${paper.id}`)}
+                      onFavorite={handleToggleFavorite}
+                      onReject={handleToggleRejected}
+                      onNavigate={navigate}
                     />
                   ))}
                 </div>
@@ -1255,14 +1255,14 @@ const PaperListItem = memo(function PaperListItem({
   onSelect,
   onFavorite,
   onReject,
-  onClick,
+  onNavigate,
 }: {
   paper: Paper;
   selected: boolean;
-  onSelect: () => void;
-  onFavorite: (e: React.MouseEvent) => void;
-  onReject: (e: React.MouseEvent) => void;
-  onClick: () => void;
+  onSelect: (id: string) => void;
+  onFavorite: (e: React.MouseEvent, id: string) => void;
+  onReject: (e: React.MouseEvent, id: string) => void;
+  onNavigate: (path: string) => void;
 }) {
   const sc = statusBadge[paper.read_status] || statusBadge.unread;
   return (
@@ -1275,11 +1275,11 @@ const PaperListItem = memo(function PaperListItem({
         <input
           type="checkbox"
           checked={selected}
-          onChange={onSelect}
+          onChange={() => onSelect(paper.id)}
           onClick={(e) => e.stopPropagation()}
           className="border-border text-primary focus:ring-primary/30 mt-1 h-3.5 w-3.5 shrink-0 rounded"
         />
-        <button className="flex min-w-0 flex-1 items-start gap-2.5 text-left" onClick={onClick}>
+        <button className="flex min-w-0 flex-1 items-start gap-2.5 text-left" onClick={() => onNavigate(`/papers/${paper.id}`)}>
           {/* 状态图标 */}
           <div
             className={`mt-0.5 shrink-0 rounded-lg p-1.5 ${
@@ -1367,7 +1367,7 @@ const PaperListItem = memo(function PaperListItem({
         </button>
         <button
           aria-label={paper.favorited ? "取消收藏" : "收藏"}
-          onClick={onFavorite}
+          onClick={(e) => onFavorite(e, paper.id)}
           className="hover:bg-error/10 mt-0.5 shrink-0 rounded-lg p-1 transition-colors"
         >
           <Heart
@@ -1376,7 +1376,7 @@ const PaperListItem = memo(function PaperListItem({
         </button>
         <button
           aria-label={paper.rejected ? "取消不感兴趣" : "不感兴趣"}
-          onClick={onReject}
+          onClick={(e) => onReject(e, paper.id)}
           className="hover:bg-error/10 mt-0.5 shrink-0 rounded-lg p-1 transition-colors"
         >
           <Ban
@@ -1393,27 +1393,28 @@ const PaperGridItem = memo(function PaperGridItem({
   paper,
   onFavorite,
   onReject,
-  onClick,
+  onNavigate,
 }: {
   paper: Paper;
-  onFavorite: (e: React.MouseEvent) => void;
-  onReject: (e: React.MouseEvent) => void;
-  onClick: () => void;
+  onFavorite: (e: React.MouseEvent, id: string) => void;
+  onReject: (e: React.MouseEvent, id: string) => void;
+  onNavigate: (path: string) => void;
 }) {
   const sc = statusBadge[paper.read_status] || statusBadge.unread;
+  const go = () => onNavigate(`/papers/${paper.id}`);
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => e.key === "Enter" && onClick()}
+      onClick={go}
+      onKeyDown={(e) => e.key === "Enter" && go()}
       className="group border-border/60 bg-surface flex cursor-pointer flex-col rounded-xl border p-3.5 text-left transition-all hover:shadow-sm"
     >
       <div className="mb-2 flex items-center justify-between">
         <Badge variant={sc.variant}>{sc.label}</Badge>
         <button
           aria-label={paper.favorited ? "取消收藏" : "收藏"}
-          onClick={onFavorite}
+          onClick={(e) => onFavorite(e, paper.id)}
           className="hover:bg-error/10 rounded-lg p-1 transition-colors"
         >
           <Heart
@@ -1422,7 +1423,7 @@ const PaperGridItem = memo(function PaperGridItem({
         </button>
         <button
           aria-label={paper.rejected ? "取消不感兴趣" : "不感兴趣"}
-          onClick={onReject}
+          onClick={(e) => onReject(e, paper.id)}
           className="hover:bg-error/10 rounded-lg p-1 transition-colors"
         >
           <Ban

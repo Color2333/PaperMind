@@ -2,7 +2,7 @@
  * Statistics - 主题统计分析
  * @author Color2333
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, memo } from "react";
 import { topicApi } from "@/services/api";
 import type { TopicStats, TopicStatsResponse, PaperDistributionResponse } from "@/types";
 import {
@@ -99,7 +99,7 @@ function StatCard({
   );
 }
 
-function TopicCard({ stat }: { stat: TopicStats }) {
+const TopicCard = memo(function TopicCard({ stat }: { stat: TopicStats }) {
   const total = stat.status_dist.unread + stat.status_dist.skimmed + stat.status_dist.deep_read;
   const readRate =
     total > 0
@@ -176,7 +176,7 @@ function TopicCard({ stat }: { stat: TopicStats }) {
       </div>
     </div>
   );
-}
+});
 
 function CitationBar({ stat, max, index }: { stat: TopicStats; max: number; index: number }) {
   const colors = [

@@ -5,7 +5,7 @@
  * @author Color2333
  */
 
-import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useMemo } from 'react';
 import { resolveApiBase } from '@/services/api';
 
 export interface Channel {
@@ -79,19 +79,21 @@ export function ChannelProvider({ children }: { children: ReactNode }) {
     setDefaultChannels(ids);
   }, []);
 
+  // value useMemo：各 callback 已稳定，仅依赖数据变化时重建 value，避免每次 Provider render
+  // 新建 value 对象导致所有 useChannels 消费者重渲染
+  const value = useMemo<ChannelContextValue>(() => ({
+    channels,
+    defaultChannels,
+    loading,
+    error,
+    getChannel,
+    updateChannelStatus,
+    setDefaultChannels: setDefault,
+    refreshChannels: fetchChannels,
+  }), [channels, defaultChannels, loading, error, getChannel, updateChannelStatus, setDefault, fetchChannels]);
+
   return (
-    <ChannelContext.Provider
-      value={{
-        channels,
-        defaultChannels,
-        loading,
-        error,
-        getChannel,
-        updateChannelStatus,
-        setDefaultChannels: setDefault,
-        refreshChannels: fetchChannels,
-      }}
-    >
+    <ChannelContext.Provider value={value}>
       {children}
     </ChannelContext.Provider>
   );
