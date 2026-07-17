@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
-from packages.storage.db import Base, JSONB_or_JSON
+from packages.storage.db import Base, JSONB_or_JSON, Vector_or_JSON
 
 
 def _utcnow() -> datetime:
@@ -38,7 +38,9 @@ class Paper(Base):
     abstract: Mapped[str] = mapped_column(Text, nullable=False, default="")
     pdf_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     publication_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(JSONB_or_JSON(), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        "embedding_vec", Vector_or_JSON(1024), nullable=True
+    )
     read_status: Mapped[ReadStatus] = mapped_column(
         Enum(ReadStatus, name="read_status"),
         nullable=False,

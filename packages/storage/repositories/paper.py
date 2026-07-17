@@ -13,6 +13,7 @@ from sqlalchemy.orm import defer
 
 from packages.domain.enums import ReadStatus
 from packages.domain.math_utils import cosine_distance as _cosine_distance
+from packages.storage.db import _is_sqlite
 from packages.storage.models import (
     AnalysisReport,
     Paper,
@@ -382,6 +383,17 @@ class PaperRepository:
     ) -> list[Paper]:
         if not vector:
             return []
+        if not _is_sqlite:
+            # PostgreSQL：用 pgvector cosine_distance 算子 + HNSW 索引走 ANN
+            q = (
+                select(Paper)
+                .where(Paper.id != str(exclude))
+                .where(Paper.embedding.is_not(None))
+                .order_by(Paper.embedding.cosine_distance(vector))
+                .limit(limit)
+            )
+            return list(self.session.execute(q).scalars())
+        # SQLite（测试用）：拉 max_candidates 篇到内存做 Python cosine 排序
         q = (
             select(Paper)
             .where(Paper.id != str(exclude))
@@ -418,6 +430,16 @@ class PaperRepository:
     ) -> list[Paper]:
         if not query_vector:
             return []
+        if not _is_sqlite:
+            # PostgreSQL：用 pgvector cosine_distance 算子 + HNSW 索引走 ANN
+            q = (
+                select(Paper)
+                .where(Paper.embedding.is_not(None))
+                .order_by(Paper.embedding.cosine_distance(query_vector))
+                .limit(limit)
+            )
+            return list(self.session.execute(q).scalars())
+        # SQLite（测试用）：拉 max_candidates 篇到内存做 Python cosine 排序
         q = (
             select(Paper)
             .where(Paper.embedding.is_not(None))

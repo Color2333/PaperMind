@@ -38,6 +38,26 @@ def JSONB_or_JSON():
     return JSONB() if not _is_sqlite else JSON()
 
 
+def Vector_or_JSON(dim: int = 1024):
+    """方言通用的 embedding 向量列类型工厂。
+
+    - PostgreSQL：返回 pgvector 的 Vector(dim) —— 原生 vector 类型，支持
+      cosine_distance/l2_distance/max_inner_product 算子、HNSW/IVFFlat 索引。
+      读写都自动转 list[float]（pgvector SQLAlchemy 适配器内置 bind/result processor）。
+    - SQLite：返回 JSON —— 退化为 JSON 数组，测试用。SQLite 无 vector 类型，
+      距离算子不可用，但相似度查询在 _is_sqlite 分支里走 Python 端 cosine，
+      不依赖 SQL 算子，测试照过。
+
+    在 models.py 的 embedding 列定义里替代直接写 JSON/JSONB。根据 _is_sqlite
+    在导入期选定类型。
+    """
+    if _is_sqlite:
+        return JSON()
+    from pgvector.sqlalchemy import Vector
+
+    return Vector(dim)
+
+
 settings = get_settings()
 _is_sqlite = settings.database_url.startswith("sqlite")
 connect_args: dict = {}
