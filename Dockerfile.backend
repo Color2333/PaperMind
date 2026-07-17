@@ -25,17 +25,15 @@ COPY scripts/ scripts/
 COPY alembic.ini ./
 COPY infra/migrations/ infra/migrations/
 
-# 使用国内 pip 镜像源安装依赖（含超时+重试，避免大文件下载卡死）
-# 注: 暂只装 [llm] 不装 [pdf]，pymupdf/pdf2zh 大文件在阿里云镜像下载不稳，
-# 跳过避免构建卡死；PDF 功能降级（fitz 运行时按需 import，缺失不影响核心）
-RUN pip install --cache-dir=/.pip-cache ".[llm]" \
-    -i https://mirrors.aliyun.com/pypi/simple/ \
+# 使用腾讯云 pip 镜像源（阿里云镜像下载大文件不稳，腾讯云源稳定且 ECS 内网快）
+RUN pip install --cache-dir=/.pip-cache ".[llm,pdf]" \
+    -i https://mirrors.cloud.tencent.com/pypi/simple \
     --timeout 60 --retries 5 \
     && pip install --cache-dir=/.pip-cache \
         umap-learn \
         psutil \
         supervisor \
-    -i https://mirrors.aliyun.com/pypi/simple/ \
+    -i https://mirrors.cloud.tencent.com/pypi/simple \
     --timeout 60 --retries 5
 
 # 创建数据目录和日志目录
