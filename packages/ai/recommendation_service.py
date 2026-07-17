@@ -41,6 +41,17 @@ def _set_cache(key: str, value: object):
         _ttl_cache[key] = (time.monotonic(), value)
 
 
+def invalidate_recommendations() -> None:
+    """清空推荐与今日简报缓存（toggle_reject 后调用，使负反馈立即生效）。
+
+    覆盖 `recommend:{top_k}` 与 `today_summary`（简报内嵌 recommend(top_k=5)）。
+    与 deps.cache 是两套独立 dict，不能复用 deps.cache.invalidate。
+    """
+    with _ttl_lock:
+        for k in [k for k in _ttl_cache if k.startswith("recommend:") or k == "today_summary"]:
+            del _ttl_cache[k]
+
+
 def _mean_vector(vectors: list[list[float]]) -> list[float]:
     """计算向量集合的质心（自动过滤维度不一致的向量）"""
     if not vectors:

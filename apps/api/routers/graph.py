@@ -4,7 +4,8 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 
 from apps.api.deps import cache, get_paper_title, graph_service
 from packages.domain.task_tracker import global_tracker
@@ -100,30 +101,48 @@ def sync_citations(
 
 
 @router.get("/graph/similarity-map")
-def similarity_map(
+async def similarity_map(
     topic_id: str | None = None,
     limit: int = Query(default=200, ge=5, le=500),
 ) -> dict:
-    """论文相似度 2D 散点图（UMAP 降维）"""
-    return graph_service.similarity_map(topic_id=topic_id, limit=limit)
+    """论文相似度 2D 散点图（UMAP 降维，60s 缓存，线程池执行避免阻塞事件循环）"""
+    cache_key = f"graph_similarity_map_{topic_id}_{limit}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    result = await run_in_threadpool(graph_service.similarity_map, topic_id=topic_id, limit=limit)
+    cache.set(cache_key, result, ttl=60)
+    return result
 
 
 @router.get("/graph/cluster-map")
-def cluster_map(
+async def cluster_map(
     n_clusters: int = Query(default=12, ge=2, le=30),
     limit: int = Query(default=5000, ge=10, le=20000),
 ) -> dict:
-    """全库论文 embedding k-means 聚类（研究领域地图，每簇用 keywords 自动命名）"""
-    return graph_service.cluster_map(n_clusters=n_clusters, limit=limit)
+    """全库论文 embedding k-means 聚类（研究领域地图，60s 缓存，线程池执行）"""
+    cache_key = f"graph_cluster_map_{n_clusters}_{limit}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    result = await run_in_threadpool(graph_service.cluster_map, n_clusters=n_clusters, limit=limit)
+    cache.set(cache_key, result, ttl=60)
+    return result
 
 
 @router.get("/graph/similar-via-citation/{paper_id}")
-def similar_via_citation(
-    paper_id: str,
+async def similar_via_citation(
+    paper_id: UUID,
     top_k: int = Query(default=5, ge=1, le=20),
 ) -> dict:
     """引用同一篇论文且语义相近的论文（co-citation + 向量补强）"""
-    return graph_service.similar_via_citation(paper_id=paper_id, top_k=top_k)
+    try:
+        return await run_in_threadpool(
+            graph_service.similar_via_citation, paper_id=str(paper_id), top_k=top_k
+        )
+    except ValueError as exc:
+        # get_by_id 在论文不存在时抛 ValueError，统一转 404（此前返回 500）
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/graph/citation-tree/{paper_id}")

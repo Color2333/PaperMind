@@ -185,8 +185,6 @@ class SimilarityService:
         with session_scope() as session:
             repo = PaperRepository(session)
             seed = repo.get_by_id(paper_id)
-            if not seed:
-                return {"paper_id": str(paper_id), "items": [], "note": "论文不存在"}
             if not seed.embedding:
                 return {
                     "paper_id": str(paper_id),
@@ -195,13 +193,15 @@ class SimilarityService:
                 }
             seed_vec = list(seed.embedding)
 
-            # 1. 取种子论文引用 / 被引的论文（双向）
+            # 1. 取种子论文引用 / 被引的论文（双向，限 200 防高被引 hub 过载）
             cited_rows = (
                 session.execute(
-                    _sa_select(Citation).where(
+                    _sa_select(Citation)
+                    .where(
                         (Citation.source_paper_id == str(paper_id))
                         | (Citation.target_paper_id == str(paper_id))
                     )
+                    .limit(200)
                 )
                 .scalars()
                 .all()
@@ -215,13 +215,15 @@ class SimilarityService:
             if not cited_ids:
                 return {"paper_id": str(paper_id), "items": [], "note": "无引用关系"}
 
-            # 2. 找也引用了 cited 中任一篇的论文（co-citation）
+            # 2. 找也引用了 cited 中任一篇的论文（co-citation，限 2000 防无界扩张）
             co_cite_rows = (
                 session.execute(
-                    _sa_select(Citation).where(
+                    _sa_select(Citation)
+                    .where(
                         Citation.source_paper_id.in_(list(cited_ids))
                         | Citation.target_paper_id.in_(list(cited_ids))
                     )
+                    .limit(2000)
                 )
                 .scalars()
                 .all()
@@ -236,13 +238,16 @@ class SimilarityService:
             if not co_cite_ids:
                 return {"paper_id": str(paper_id), "items": [], "note": "无 co-citation 候选"}
 
-            # 3. 在 co-citation 集合里按 embedding cosine 排序
+            # 3. 在 co-citation 集合里按 embedding cosine 排序（排除被屏蔽论文）
             candidates = (
                 session.execute(
-                    _sa_select(Paper).where(
+                    _sa_select(Paper)
+                    .where(
                         Paper.id.in_(list(co_cite_ids)),
                         Paper.embedding.is_not(None),
+                        Paper.rejected.is_(False),
                     )
+                    .limit(500)
                 )
                 .scalars()
                 .all()

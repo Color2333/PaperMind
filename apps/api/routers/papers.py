@@ -290,6 +290,8 @@ def toggle_favorite(paper_id: UUID) -> dict:
 @router.patch("/papers/{paper_id}/reject")
 def toggle_reject(paper_id: UUID) -> dict:
     """切换论文"不感兴趣"状态（推荐系统负反馈）"""
+    from packages.ai.recommendation_service import invalidate_recommendations
+
     with session_scope() as session:
         repo = PaperRepository(session)
         try:
@@ -298,7 +300,10 @@ def toggle_reject(paper_id: UUID) -> dict:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         p.rejected = not getattr(p, "rejected", False)
         session.commit()
+        # 失效 folder_stats（左侧文件夹计数）+ 推荐缓存（被拒论文立即从推荐列表移除，
+        # 否则 recommend:{top_k} / today_summary 最长 5min 仍含该论文）
         cache.invalidate("folder_stats")
+        invalidate_recommendations()
         return {"id": str(p.id), "rejected": p.rejected}
 
 
@@ -548,7 +553,11 @@ def similar(
     paper_id: UUID,
     top_k: int = Query(default=5, ge=1, le=20),
 ) -> dict:
-    ids = rag_service.similar_papers(paper_id, top_k=top_k)
+    try:
+        ids = rag_service.similar_papers(paper_id, top_k=top_k)
+    except ValueError as exc:
+        # get_by_id 在论文不存在时抛 ValueError，统一转 404（此前返回 500）
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     items = []
     if ids:
         with session_scope() as session:
@@ -589,7 +598,11 @@ def paper_duplicates(
     from packages.ai.pipelines import PaperPipelines
 
     pipelines = PaperPipelines()
-    return pipelines.detect_duplicates(paper_id, threshold=threshold)
+    try:
+        return pipelines.detect_duplicates(paper_id, threshold=threshold)
+    except ValueError as exc:
+        # get_by_id 在论文不存在时抛 ValueError，统一转 404（此前返回 500）
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/papers/{paper_id}/reasoning")
