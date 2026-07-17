@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from jinja2 import Template
 from sqlalchemy import select
@@ -18,7 +18,7 @@ from packages.integrations.notifier import NotificationService
 from packages.storage.db import session_scope
 from packages.storage.models import AnalysisReport, PaperTopic, TopicSubscription
 from packages.storage.repositories import AnalysisRepository, PaperRepository
-from packages.timezone import user_date_str
+from packages.timezone import user_date_str, user_today_start_utc
 
 logger = logging.getLogger(__name__)
 
@@ -406,6 +406,40 @@ class DailyBriefService:
     def __init__(self) -> None:
         self.notifier = NotificationService()
 
+    def _select_papers_for_brief(self, limit: int = 30) -> list:
+        """简报选文：高分优先 + 回溯补齐，排除未 skim 论文。
+
+        策略：
+          1. 今日（用户时区）入库且 skim_score >= 阈值，按分数降序
+          2. 不够则回溯近 7 天高分论文补齐
+          3. 仍不够则近 7 天全部已 skim 论文补齐，保证邮件不空
+        """
+        settings = get_settings()
+        score_threshold = settings.skim_score_threshold
+        today_start = user_today_start_utc()
+        week_start = today_start - timedelta(days=6)
+
+        with session_scope() as session:
+            repo = PaperRepository(session)
+
+            # 第一级：今日高分
+            papers = list(repo.list_for_brief(today_start, score_threshold, limit=limit))
+            if len(papers) < limit:
+                # 第二级：近 7 天高分补齐
+                existing_ids = {p.id for p in papers}
+                more = repo.list_for_brief(week_start, score_threshold, limit=limit * 2)
+                papers.extend(p for p in more if p.id not in existing_ids)
+            if len(papers) < limit:
+                # 第三级：近 7 天全部已 skim 补齐（不限分数）
+                existing_ids = {p.id for p in papers}
+                more = repo.list_recent_skimmed(week_start, limit=limit * 2)
+                papers.extend(p for p in more if p.id not in existing_ids)
+
+            # expunge 让 papers 脱离 session 但保留已加载属性，避免后续访问报错
+            for p in papers:
+                session.expunge(p)
+        return papers[:limit]
+
     def build_html(self, limit: int = 30) -> str:
         from packages.ai.recommendation_service import (
             RecommendationService,
@@ -426,10 +460,10 @@ class DailyBriefService:
         summary = f_sum.result()
         ai_summary = f_ai.result()
 
-        # 获取论文列表（按主题分组）
+        # 获取论文列表（高分优先 + 回溯补齐，按主题分组）
+        papers = self._select_papers_for_brief(limit=limit)
+        paper_ids = [p.id for p in papers]
         with session_scope() as session:
-            papers = PaperRepository(session).list_latest(limit=limit)
-            paper_ids = [p.id for p in papers]
             summaries = AnalysisRepository(session).summaries_for_papers(paper_ids)
 
             # 获取所有分析reports（包含深读内容）
@@ -519,18 +553,18 @@ class DailyBriefService:
         """生成 AI 驱动的今日洞察"""
         from packages.integrations.llm_client import LLMClient
 
-        with session_scope() as session:
-            papers = PaperRepository(session).list_latest(limit=limit)
-            if not papers:
-                return "今日暂无新论文"
+        # 复用简报选文逻辑：高分优先 + 回溯补齐，避免给 LLM 喂低质/未 skim 论文
+        papers = self._select_papers_for_brief(limit=limit)
+        if not papers:
+            return "今日暂无新论文"
 
-            # 提取标题和摘要（前 15 篇）
-            paper_info = []
-            for p in papers[:15]:
-                info = f"- {p.title}"
-                if hasattr(p, "abstract") and p.abstract:
-                    info += f"\n  摘要：{p.abstract[:150]}"
-                paper_info.append(info)
+        # 提取标题和摘要（前 15 篇）
+        paper_info = []
+        for p in papers[:15]:
+            info = f"- {p.title}"
+            if hasattr(p, "abstract") and p.abstract:
+                info += f"\n  摘要：{p.abstract[:150]}"
+            paper_info.append(info)
 
             prompt = f"""请作为一位资深研究员，分析以下最新论文列表，用中文撰写今日研究简报的核心洞察（200-400 字）。
 

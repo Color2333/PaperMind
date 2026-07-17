@@ -14,6 +14,7 @@ from sqlalchemy.orm import defer
 from packages.domain.enums import ReadStatus
 from packages.domain.math_utils import cosine_distance as _cosine_distance
 from packages.storage.models import (
+    AnalysisReport,
     Paper,
     PaperTag,
     PaperTopic,
@@ -185,6 +186,36 @@ class PaperRepository:
         q = (
             select(Paper)
             .where(Paper.created_at >= start, Paper.created_at < end)
+            .order_by(Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def list_for_brief(self, since: datetime, min_score: float, limit: int = 30) -> list[Paper]:
+        """简报专用：取 since 之后入库、skim_score >= min_score 的论文，按分数降序。
+
+        排除未 skim 的论文（无 AnalysisReport 或 skim_score 为空）。
+        分数相同再按 created_at 降序，保证新论文优先。
+        """
+        q = (
+            select(Paper)
+            .join(AnalysisReport, AnalysisReport.paper_id == Paper.id)
+            .where(Paper.created_at >= since)
+            .where(AnalysisReport.skim_score >= min_score)
+            .order_by(AnalysisReport.skim_score.desc(), Paper.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(q).scalars())
+
+    def list_recent_skimmed(self, since: datetime, limit: int = 30) -> list[Paper]:
+        """简报回退用：取 since 之后已 skim 的全部论文（不限分数），按 created_at 降序。
+
+        用于高分论文不足时补齐简报，保证邮件不空。
+        """
+        q = (
+            select(Paper)
+            .join(AnalysisReport, AnalysisReport.paper_id == Paper.id)
+            .where(Paper.created_at >= since)
             .order_by(Paper.created_at.desc())
             .limit(limit)
         )
