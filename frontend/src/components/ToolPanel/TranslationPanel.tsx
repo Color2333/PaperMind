@@ -4,6 +4,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
 import { paperApi, translateApi, tasksApi, type BilingualSegment } from '@/services/api';
+import { useToast } from '@/contexts/ToastContext';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -66,6 +67,8 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
 
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null); // 翻译轮询定时器（卸载时清理）
+  const { toast } = useToast();
 
   const [containerWidth, setContainerWidth] = useState(400);
   const scale = useMemo(() => {
@@ -121,30 +124,52 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
     setTranslating(true);
     try {
       const { task_id } = await translateApi.startBilingualPdf(paperId, mode);
-      const poll = setInterval(async () => {
-        // 后端 /tasks/{id} 返回 global_tracker.to_dict()：含 finished/success
-        const status = (await tasksApi.getStatus(task_id)) as unknown as {
-          finished: boolean;
-          success: boolean;
-          error: string | null;
-        };
-        if (!status.finished) return;
-        clearInterval(poll);
-        if (status.success) {
-          const result = (await tasksApi.getResult(task_id)) as {
-            segments?: BilingualSegment[];
-            pdf_url?: string;
-          };
-          if (mode === 'fast' && result.segments) {
-            setSegments(result.segments);
-          } else if (mode === 'layout' && result.pdf_url) {
-            setLayoutPdfUrl(result.pdf_url);
-          }
-          setViewMode('bilingual');
-        } else {
-          alert(status.error || '翻译失败，请稍后重试');
+      const pollStart = Date.now();
+      const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟超时兜底
+      const MAX_ERRORS = 10; // 连续查询失败上限
+      let consecutiveErrors = 0;
+      pollRef.current = setInterval(async () => {
+        // 超时兜底：任务挂起时不再无限轮询（此前 1800 次/小时泄漏）
+        if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          setTranslating(false);
+          toast('error', '翻译超时，请稍后重试');
+          return;
         }
-        setTranslating(false);
+        try {
+          // 后端 /tasks/{id} 返回 global_tracker.to_dict()：含 finished/success
+          const status = (await tasksApi.getStatus(task_id)) as unknown as {
+            finished: boolean;
+            success: boolean;
+            error: string | null;
+          };
+          consecutiveErrors = 0;
+          if (!status.finished) return;
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          if (status.success) {
+            const result = (await tasksApi.getResult(task_id)) as {
+              segments?: BilingualSegment[];
+              pdf_url?: string;
+            };
+            if (mode === 'fast' && result.segments) {
+              setSegments(result.segments);
+            } else if (mode === 'layout' && result.pdf_url) {
+              setLayoutPdfUrl(result.pdf_url);
+            }
+            setViewMode('bilingual');
+          } else {
+            toast('error', status.error || '翻译失败，请稍后重试');
+          }
+          setTranslating(false);
+        } catch {
+          // 连续错误上限：网络持续异常时中断，不再静默空转
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= MAX_ERRORS) {
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            setTranslating(false);
+            toast('error', '翻译状态查询持续失败，请稍后重试');
+          }
+        }
       }, 2000);
     } catch (err) {
       console.error('Failed to start translation:', err);
@@ -168,6 +193,13 @@ export function TranslationPanel({ selectedText, paperId, paperArxivId, paperPdf
     }
 
     return () => observer.disconnect();
+  }, []);
+
+  // 卸载时清理翻译轮询定时器，防泄漏
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
   }, []);
 
   const pdfUrl = useMemo(() => {
