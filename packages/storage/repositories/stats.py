@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Integer, func, select, text
+from sqlalchemy import Date, Integer, func, select, text
 
 from packages.storage.db import _is_sqlite
 from packages.storage.models import (
@@ -36,7 +36,8 @@ def _date_trunc_day(column, offset_hours: float):
     if _is_sqlite:
         return func.date(func.datetime(column, offset_str))
     # PG: (created_at + interval 'N hours')::date
-    return func.cast(column + text(f"interval '{offset_str}'"), text("date"))
+    # 用 Date() 类型（而非 text("date")）使结果可 .desc() / .label()
+    return func.cast(column + text(f"interval '{offset_str}'"), Date)
 
 
 def _year_of(column):

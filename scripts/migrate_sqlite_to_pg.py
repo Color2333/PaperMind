@@ -44,7 +44,7 @@ import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select
 
 # 让脚本能直接 `python scripts/x.py` 运行（不依赖 PYTHONPATH）
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -100,6 +100,12 @@ def _row_count(engine: Engine, table_name: str) -> int:
         )
 
 
+def _table_exists(engine: Engine, table_name: str) -> bool:
+    """检查表在目标库是否存在（源 SQLite 可能缺新表，PG 由 alembic 建全）。"""
+    insp = inspect(engine)
+    return insp.has_table(table_name)
+
+
 def migrate(dry_run: bool = False, only: str | None = None) -> None:
     src = _source_engine()
     dst = _target_engine()
@@ -115,14 +121,26 @@ def migrate(dry_run: bool = False, only: str | None = None) -> None:
     logger.info("待迁表（按外键顺序）: %s", tables)
 
     # 1. 预检：源库各表行数 + 目标库是否为空
+    # 源 SQLite 可能缺新表（如 sensemaking 系列），跳过不存在的表
     total_src_rows = 0
+    skipped_missing: list[str] = []
     for t in tables:
+        if not _table_exists(src, t):
+            skipped_missing.append(t)
+            logger.info("  %-30s 源库无此表，跳过", t)
+            continue
         n = _row_count(src, t)
         total_src_rows += n
         dst_n = _row_count(dst, t)
         logger.info("  %-30s 源=%6d  目标=%6d", t, n, dst_n)
         if dst_n > 0 and not dry_run:
             logger.warning("  ⚠ 目标表 %s 已有 %d 行，将追加（可能撞唯一键冲突）", t, dst_n)
+    if skipped_missing:
+        logger.info(
+            "源库缺失 %d 张表（ newer schema 的新表，PG 侧为空即可）: %s",
+            len(skipped_missing),
+            skipped_missing,
+        )
     logger.info("源库总行数 = %d", total_src_rows)
 
     if dry_run:
@@ -137,6 +155,8 @@ def migrate(dry_run: bool = False, only: str | None = None) -> None:
     started = datetime.now(UTC)
     migrated_rows = 0
     for t in tables:
+        if not _table_exists(src, t):
+            continue
         table_obj = Base.metadata.tables[t]
         cols = [c.name for c in table_obj.columns]
 
@@ -161,6 +181,8 @@ def migrate(dry_run: bool = False, only: str | None = None) -> None:
     logger.info("=== 后置校验 ===")
     all_match = True
     for t in tables:
+        if not _table_exists(src, t):
+            continue
         src_n = _row_count(src, t)
         dst_n = _row_count(dst, t)
         match = "✓" if src_n == dst_n else "✗"
