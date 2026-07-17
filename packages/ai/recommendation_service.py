@@ -163,9 +163,13 @@ class RecommendationService:
             now = datetime.now(UTC)
             weighted_vectors = []
             for p in read_papers:
-                if not p.embedding:
+                if not p.embedding or not p.created_at:
                     continue
-                age_days = (now - p.created_at).total_seconds() / 86400
+                # PG timestamp without time zone 返回 naive datetime，统一转 UTC
+                created = p.created_at
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+                age_days = (now - created).total_seconds() / 86400
                 # 指数衰减：weight = 0.5 ^ (age / halflife)
                 weight = 0.5 ** (age_days / _DECAY_HALFLIFE_DAYS)
                 weighted_vectors.append((list(p.embedding), weight))
