@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { Empty } from "@/components/ui/Empty";
 import { Modal } from "@/components/ui/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { emailConfigApi, dailyReportApi } from "@/services/api";
 import type { EmailConfig, EmailConfigForm, DailyReportConfig } from "@/types";
 import { getErrorMessage } from "@/lib/errorHandler";
@@ -29,8 +30,6 @@ import {
   FileText,
   Bell,
   Sparkles,
-  CheckCircle2,
-  AlertCircle,
 } from "lucide-react";
 
 const SMTP_PRESETS: Record<
@@ -56,6 +55,9 @@ export default function EmailSettings() {
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [testingEmail, setTestingEmail] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  // ConfirmDialog 状态（替代原生 confirm，与 app 风格统一）
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmRunDaily, setConfirmRunDaily] = useState(false);
 
   // 表单状态
   const [emailForm, setEmailForm] = useState<EmailConfigForm>({
@@ -107,13 +109,20 @@ export default function EmailSettings() {
   };
 
   const handleDeleteEmailConfig = async (configId: string) => {
-    if (!confirm("确定要删除这个邮箱配置吗？")) return;
+    // 改用 ConfirmDialog（原生 confirm 与 app 风格不一致）
+    setConfirmDeleteId(configId);
+  };
+
+  const confirmDeleteEmailConfig = async () => {
+    if (!confirmDeleteId) return;
     try {
-      await emailConfigApi.delete(configId);
+      await emailConfigApi.delete(confirmDeleteId);
       toast("success", "邮箱配置删除成功");
       await loadEmailConfigs();
     } catch (error) {
       toast("error", getErrorMessage(error));
+    } finally {
+      setConfirmDeleteId(null);
     }
   };
 
@@ -153,13 +162,20 @@ export default function EmailSettings() {
     }
   };
 
-  const handleRunDailyReport = async () => {
-    if (!confirm("确定要立即执行每日报告工作流吗？这将自动精读论文并发送邮件报告。")) return;
+  const handleRunDailyReport = () => {
+    // 改用 ConfirmDialog
+    setConfirmRunDaily(true);
+  };
+
+  const confirmRunDailyReport = async () => {
     try {
-      const data = await dailyReportApi.runOnce();
-      toast("success", `每日报告工作流已启动！`);
+      const res = await dailyReportApi.runOnce();
+      const message = (res as { message?: string }).message;
+      toast("success", message ? `${message}，可在侧边栏查看进度` : "每日报告工作流已启动，可在侧边栏查看进度");
     } catch (error) {
       toast("error", getErrorMessage(error));
+    } finally {
+      setConfirmRunDaily(false);
     }
   };
 
@@ -660,6 +676,24 @@ export default function EmailSettings() {
           </div>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        title="删除邮箱配置"
+        description="删除后将无法用此配置发送邮件，确定要删除吗？"
+        variant="danger"
+        confirmLabel="删除"
+        onConfirm={confirmDeleteEmailConfig}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
+      <ConfirmDialog
+        open={confirmRunDaily}
+        title="立即执行每日报告"
+        description="这将自动精读论文并发送邮件报告，可能耗时较长。可在侧边栏查看进度。"
+        confirmLabel="执行"
+        onConfirm={confirmRunDailyReport}
+        onCancel={() => setConfirmRunDaily(false)}
+      />
     </div>
   );
 }

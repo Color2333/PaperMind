@@ -43,7 +43,7 @@ export default function Operations() {
     setResults((prev) => ({ ...prev, [key]: result }));
 
   const handleSyncPaper = async () => {
-    if (!syncPaperId.trim()) return;
+    if (!syncPaperId.trim()) { toast("warning", "请输入 Paper ID"); return; }
     setLoading("syncPaper", true);
     try {
       const res = await citationApi.syncPaper(syncPaperId);
@@ -68,7 +68,7 @@ export default function Operations() {
   };
 
   const handleSyncTopic = async () => {
-    if (!syncTopicId.trim()) return;
+    if (!syncTopicId.trim()) { toast("warning", "请输入 Topic ID"); return; }
     setLoading("syncTopic", true);
     try {
       const res = await citationApi.syncTopic(syncTopicId);
@@ -173,6 +173,7 @@ export default function Operations() {
         success: false,
         message: err instanceof Error ? err.message : "检查失败",
       });
+      toast("error", err instanceof Error ? err.message : "健康检查失败");
     } finally {
       setLoading("health", false);
     }

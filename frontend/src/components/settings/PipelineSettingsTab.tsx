@@ -11,18 +11,37 @@ import type { PipelineRun } from "@/types";
 export function PipelineSettingsTab() {
   const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [filter, setFilter] = useState<"all" | "succeeded" | "failed" | "running">("all");
 
   const loadRuns = useCallback(async () => {
-    try { setRuns((await pipelineApi.runs(50)).items || []); } catch { /* quiet */ } finally { setLoading(false); }
+    setLoading(true);
+    setError(false);
+    try { setRuns((await pipelineApi.runs(50)).items || []); }
+    catch { setError(true); /* toast 由父级 Settings 统一处理或此处静默 */ }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
 
   if (loading) return <div className="flex h-64 items-center justify-center"><Spinner /></div>;
+  if (error) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16">
+        <p className="text-sm text-ink-tertiary">加载运行记录失败</p>
+        <Button size="sm" variant="secondary" onClick={loadRuns}>重试</Button>
+      </div>
+    );
+  }
 
   const filtered = filter === "all" ? runs : runs.filter((r) => r.status === filter);
-  const counts = { all: runs.length, succeeded: runs.filter((r) => r.status === "succeeded").length, failed: runs.filter((r) => r.status === "failed").length, running: runs.filter((r) => r.status === "running" || r.status === "pending").length };
+  // counts.running 仅计 running（与 filter "running" 一致），pending 不混入
+  const counts = {
+    all: runs.length,
+    succeeded: runs.filter((r) => r.status === "succeeded").length,
+    failed: runs.filter((r) => r.status === "failed").length,
+    running: runs.filter((r) => r.status === "running").length,
+  };
 
   return (
     <div className="space-y-6">

@@ -149,7 +149,14 @@ export function LLMSettingsTab() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setEditCfg(activeInfo.config)}>
+              {/* .env 来源配置 config 为 null，编辑会落入"新增"分支（P0 修复：禁用+提示） */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setEditCfg(activeInfo.config)}
+                disabled={activeInfo.source !== "database" || !activeInfo.config}
+                title={activeInfo.source !== "database" ? ".env 来源配置请编辑 .env 文件修改" : "编辑此配置"}
+              >
                 <Pencil className="mr-1.5 h-3.5 w-3.5" />
                 编辑
               </Button>
