@@ -25,14 +25,16 @@ COPY scripts/ scripts/
 COPY alembic.ini ./
 COPY infra/migrations/ infra/migrations/
 
-# 使用国内 pip 镜像源安装依赖
+# 使用国内 pip 镜像源安装依赖（含超时+重试，避免大文件下载卡死）
 RUN pip install --cache-dir=/.pip-cache ".[llm,pdf]" \
     -i https://mirrors.aliyun.com/pypi/simple/ \
+    --timeout 60 --retries 5 \
     && pip install --cache-dir=/.pip-cache \
         umap-learn \
         psutil \
         supervisor \
-    -i https://mirrors.aliyun.com/pypi/simple/
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --timeout 60 --retries 5
 
 # 创建数据目录和日志目录
 RUN mkdir -p /app/data/papers /app/data/briefs /app/logs
