@@ -6,6 +6,7 @@ PaperMind API - FastAPI 入口
 import logging
 import time
 import uuid as _uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,6 +58,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/health",
         "/auth/login",
         "/auth/status",
+        "/mcp",
     }
 
     async def dispatch(self, request: Request, call_next):
@@ -69,7 +71,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # 白名单路径跳过认证
-        if request.url.path in self.WHITELIST:
+        if request.url.path in self.WHITELIST or request.url.path.startswith("/mcp"):
             return await call_next(request)
 
         # 静态文件和文档跳过
@@ -118,7 +120,28 @@ if settings.auth_password and settings.auth_secret_key in _WEAK_SECRET_KEYS:
         "请在 .env 中设置一个强随机密钥，例如: AUTH_SECRET_KEY=$(openssl rand -hex 32)"
     )
 
-app = FastAPI(title=settings.app_name)
+# ---------- lifespan（batch consumer + MCP session manager）----------
+# MCP ASGI 子 app（fastmcp），挂到 /mcp 供 hermes 接入
+from apps.api.mcp import get_mcp_asgi_app  # noqa: E402
+from packages.agent_core import batch_consumer as _batch  # noqa: E402
+
+_mcp_app = get_mcp_asgi_app()
+
+
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    """应用 lifespan：启动/关闭 batch consumer（替代 @app.on_event）。
+
+    MCP 子 app 的 lifespan 通过挂载自动管理（starlette Mount 会调用子 app lifespan）。
+    """
+    _batch.start()
+    try:
+        yield
+    finally:
+        _batch.stop()
+
+
+app = FastAPI(title=settings.app_name, lifespan=app_lifespan)
 
 # 中间件注册顺序：Starlette 中间件为倒序执行（最后注册的最先执行）
 # 执行顺序: CORS -> GZip -> DemoMode -> Auth -> RequestLog -> 路由处理
@@ -151,20 +174,6 @@ if origins:
 from packages.storage.db import run_migrations  # noqa: E402
 
 run_migrations()
-
-
-# ---------- 启动 batch consumer ----------
-from packages.agent_core import batch_consumer as _batch  # noqa: E402
-
-
-@app.on_event("startup")
-def _start_batch_consumer():
-    _batch.start()
-
-
-@app.on_event("shutdown")
-def _stop_batch_consumer():
-    _batch.stop()
 
 
 # ---------- 注册路由 ----------
@@ -206,3 +215,6 @@ app.include_router(auth.router)
 app.include_router(sensemaking.router)
 app.include_router(translate.router)
 app.include_router(llm_configs.router)
+
+# ---------- 挂载 MCP server（端点 /mcp/，供 hermes agent 接入）----------
+app.mount("/mcp", _mcp_app)
