@@ -85,11 +85,14 @@ class SimilarityService:
 
         return {"points": points, "total": len(points)}
 
-    def cluster_map(self, n_clusters: int = 12, limit: int = 5000) -> dict:
+    def cluster_map(
+        self, n_clusters: int = 12, limit: int = 5000, papers_per_cluster: int = 5
+    ) -> dict:
         """全库 embedding k-means 聚类，每簇用 skim keywords 自动命名。
 
         返回研究领域地图：每个簇一个名称（取簇内论文 keywords 频率 top 3）+
         论文 id 列表 + 簇大小。前端可可视化展示"研究领域地图"。
+        papers_per_cluster 控制每簇返回的代表论文数（默认 5，前端通常只渲染 5 篇）。
 
         复用 recommendation_service._kmeans（加权 k-means，这里权重全部为 1.0，
         即不加权，纯空间聚类）。
@@ -156,7 +159,9 @@ class SimilarityService:
                         "name": " / ".join(top_kws) if top_kws else f"簇 {ci + 1}",
                         "keywords": top_kws,
                         "size": len(cluster_buckets[ci]),
-                        "papers": cluster_buckets[ci][:50],  # 每簇最多返回 50 篇，避免过大
+                        "papers": cluster_buckets[ci][
+                            :papers_per_cluster
+                        ],  # 每簇只返回代表论文，避免 over-fetch
                     }
                 )
 
