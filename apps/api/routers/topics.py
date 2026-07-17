@@ -66,9 +66,61 @@ def _topic_dict(t, session=None) -> dict:
 
 @router.get("/topics")
 def list_topics(enabled_only: bool = False) -> dict:
+    from sqlalchemy import func, select
+
+    from packages.storage.models import CollectionAction, PaperTopic
+
     with session_scope() as session:
         topics = TopicRepository(session).list_topics(enabled_only=enabled_only)
-        return {"items": [_topic_dict(t, session) for t in topics]}
+        if not topics:
+            return {"items": []}
+        topic_ids = [t.id for t in topics]
+
+        # N+1 修复：2 次批量聚合代替每主题 2 次查询（2N+1 → 3）
+        # 1. 批量论文计数（GROUP BY topic_id）
+        count_rows = session.execute(
+            select(PaperTopic.topic_id, func.count())
+            .where(PaperTopic.topic_id.in_(topic_ids))
+            .group_by(PaperTopic.topic_id)
+        ).all()
+        paper_counts = {row[0]: row[1] for row in count_rows}
+
+        # 2. 批量最近一次行动（用窗口函数或每组取首条；SQLite/PG 通用：按 topic 分组取 created_at 最大）
+        #    一次查询拿所有相关 topic 的最新 action
+        latest_actions: dict = {}
+        action_rows = (
+            session.execute(
+                select(CollectionAction)
+                .where(CollectionAction.topic_id.in_(topic_ids))
+                .order_by(CollectionAction.topic_id, CollectionAction.created_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+        for a in action_rows:
+            if a.topic_id not in latest_actions:  # 已按 topic + created_at desc 排序，首个即最新
+                latest_actions[a.topic_id] = a
+
+        items = []
+        for t in topics:
+            d = {
+                "id": str(t.id),
+                "name": t.name,
+                "query": t.query,
+                "enabled": t.enabled,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "paper_count": paper_counts.get(t.id, 0),
+                "last_run_at": None,
+                "last_run_count": None,
+            }
+            last_action = latest_actions.get(t.id)
+            if last_action:
+                d["last_run_at"] = (
+                    last_action.created_at.isoformat() if last_action.created_at else None
+                )
+                d["last_run_count"] = last_action.paper_count
+            items.append(d)
+        return {"items": items}
 
 
 @router.post("/topics")

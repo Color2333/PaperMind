@@ -32,7 +32,8 @@ def health() -> dict:
 def system_status() -> dict:
     with session_scope() as session:
         topics = TopicRepository(session).list_topics(enabled_only=False)
-        papers = PaperRepository(session).list_latest(limit=200)
+        # 浪费的全量加载修复：此前拉 200 行 ORM 仅为 len()，改 count_all() 一次 COUNT 查询
+        papers_total = PaperRepository(session).count_all()
         runs = PipelineRunRepository(session).list_latest(limit=50)
         failed = [r for r in runs if r.status.value == "failed"]
         return {
@@ -40,7 +41,7 @@ def system_status() -> dict:
             "counts": {
                 "topics": len(topics),
                 "enabled_topics": len([t for t in topics if t.enabled]),
-                "papers_latest_200": len(papers),
+                "papers_latest_200": papers_total,
                 "runs_latest_50": len(runs),
                 "failed_runs_latest_50": len(failed),
             },
