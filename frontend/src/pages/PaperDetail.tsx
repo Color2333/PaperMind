@@ -124,6 +124,7 @@ export default function PaperDetail() {
     skimLoading,
     setSkimLoading,
     skimAbort,
+    cancelSkim,
     handleSkim,
   } = useSkim({ id, toast, setReportTab, setPaper });
 
@@ -136,6 +137,7 @@ export default function PaperDetail() {
     deepLoading,
     setDeepLoading,
     deepAbort,
+    cancelDeep,
     handleDeep,
   } = useDeepRead({ id, toast, setReportTab });
 
@@ -160,7 +162,7 @@ export default function PaperDetail() {
   });
 
   // 嵌入 hook
-  const { embedLoading, setEmbedLoading, handleEmbed } = useEmbed({
+  const { embedLoading, setEmbedLoading, handleEmbed, cancelEmbed } = useEmbed({
     id,
     toast,
     embedDone,
@@ -691,9 +693,8 @@ export default function PaperDetail() {
         <PipelineProgress
           type="skim"
           onCancel={() => {
-            skimAbort.current?.abort();
-            setSkimLoading(false);
-            toast("info", "已取消（后台可能仍在处理，结果稍后可在详情页查看）");
+            cancelSkim();
+            toast("info", "已取消（后台任务可能仍在处理）");
           }}
         />
       )}
@@ -701,9 +702,8 @@ export default function PaperDetail() {
         <PipelineProgress
           type="deep"
           onCancel={() => {
-            deepAbort.current?.abort();
-            setDeepLoading(false);
-            toast("info", "已取消（后台可能仍在处理，结果稍后可在详情页查看）");
+            cancelDeep();
+            toast("info", "已取消（后台任务可能仍在处理）");
           }}
         />
       )}
@@ -730,8 +730,8 @@ export default function PaperDetail() {
         <PipelineProgress
           type="embed"
           onCancel={() => {
-            setEmbedLoading(false);
-            toast("info", "已取消（后台可能仍在处理）");
+            cancelEmbed();
+            toast("info", "已取消（后台任务可能仍在处理）");
           }}
         />
       )}

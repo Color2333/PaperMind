@@ -9,6 +9,7 @@ import type {
   DeepDiveReport,
   SkimReport,
 } from "@/types";
+import { pollTaskUntilDone } from "./pollTask";
 
 type Toast = (type: ToastType, message: string) => void;
 
@@ -65,7 +66,8 @@ export function useAutoAnalyze({
         setAutoStage("向量嵌入中...");
         setEmbedLoading(true);
         try {
-          await pipelineApi.embed(id);
+          const { task_id } = await pipelineApi.embed(id);
+          await pollTaskUntilDone<{ status: string; paper_id: string }>(task_id, () => false);
           setEmbedDone(true);
         } catch {}
         setEmbedLoading(false);
@@ -77,7 +79,8 @@ export function useAutoAnalyze({
         setSkimLoading(true);
         setReportTab("skim");
         try {
-          const r = await pipelineApi.skim(id);
+          const { task_id } = await pipelineApi.skim(id);
+          const r = await pollTaskUntilDone<SkimReport>(task_id, () => false);
           setSkimReport(r);
         } catch {}
         setSkimLoading(false);
@@ -90,7 +93,8 @@ export function useAutoAnalyze({
           setDeepLoading(true);
           setReportTab("deep");
           try {
-            const r = await pipelineApi.deep(id);
+            const { task_id } = await pipelineApi.deep(id);
+            const r = await pollTaskUntilDone<DeepDiveReport>(task_id, () => false);
             setDeepReport(r);
           } catch {}
           setDeepLoading(false);

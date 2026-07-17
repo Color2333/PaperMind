@@ -45,6 +45,12 @@ class TaskInfo:
 
     def to_dict(self) -> dict:
         elapsed = time.time() - self.started_at
+        # status 便利字段：前端 TaskStatus.status 期望 "pending"|"running"|"completed"|"failed"
+        # 此前前端读 status.status 拿 undefined，靠 finished/success 判断的轮询点失配
+        if not self.finished:
+            status = "running" if self.current > 0 else "pending"
+        else:
+            status = "completed" if self.success else "failed"
         return {
             "task_id": self.task_id,
             "task_type": self.task_type,
@@ -56,8 +62,12 @@ class TaskInfo:
             "created_at": self.created_at,
             "elapsed_seconds": round(elapsed, 1),
             "progress_pct": round(self.current / self.total * 100) if self.total > 0 else 0,
+            "progress": round(self.current / self.total, 4)
+            if self.total > 0
+            else 0,  # 0-1 小数（前端期望）
             "finished": self.finished,
             "success": self.success,
+            "status": status,  # 便利字段，由 finished/success 派生
             "error": self.error,
             "has_result": self.result is not None,
         }

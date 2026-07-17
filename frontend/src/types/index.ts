@@ -1010,11 +1010,14 @@ export interface TaskStatus {
   task_type: string;
   title: string;
   status: "pending" | "running" | "completed" | "failed";
-  progress: number;
+  progress: number; // 0-1 小数
+  progress_pct?: number; // 0-100 百分比
   message: string;
   error: string | null;
   created_at: number;
-  updated_at: number;
+  finished: boolean; // 后端 to_dict 真实字段
+  success: boolean;
+  elapsed_seconds?: number;
   has_result: boolean;
 }
 

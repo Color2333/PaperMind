@@ -1,8 +1,9 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ToastType } from "@/contexts/ToastContext";
 import { pipelineApi } from "@/services/api";
 import type { DeepDiveReport } from "@/types";
+import { pollTaskUntilDone } from "./pollTask";
 
 type Toast = (type: ToastType, message: string) => void;
 
@@ -20,21 +21,31 @@ export function useDeepRead({ id, toast, setReportTab }: UseDeepReadParams) {
   } | null>(null);
   const [deepLoading, setDeepLoading] = useState(false);
   const deepAbort = useRef<AbortController | null>(null);
+  const cancelledRef = useRef(false);
 
-  const handleDeep = async () => {
+  const handleDeep = useCallback(async () => {
     if (!id) return;
     setDeepLoading(true);
     setReportTab("deep");
+    cancelledRef.current = false;
     try {
-      const report = await pipelineApi.deep(id);
+      const { task_id } = await pipelineApi.deep(id);
+      const report = await pollTaskUntilDone<DeepDiveReport>(task_id, () => cancelledRef.current);
       setDeepReport(report);
       toast("success", "精读完成");
-    } catch {
-      toast("error", "精读失败");
+    } catch (e) {
+      if (!cancelledRef.current) {
+        toast("error", e instanceof Error ? e.message : "精读失败");
+      }
     } finally {
       setDeepLoading(false);
     }
-  };
+  }, [id, setReportTab, toast]);
+
+  const cancelDeep = useCallback(() => {
+    cancelledRef.current = true;
+    setDeepLoading(false);
+  }, []);
 
   return {
     deepReport,
@@ -44,6 +55,7 @@ export function useDeepRead({ id, toast, setReportTab }: UseDeepReadParams) {
     deepLoading,
     setDeepLoading,
     deepAbort,
+    cancelDeep,
     handleDeep,
   };
 }
