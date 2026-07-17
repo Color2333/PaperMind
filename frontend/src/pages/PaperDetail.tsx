@@ -227,6 +227,9 @@ export default function PaperDetail() {
       />
     );
   }
+  // paper 已加载意味着 id 此前一定有值；此处收窄类型，避免下游 paperId={id!} 的非空断言
+  if (!id) return null;
+  const paperId = id;
 
   const statusConfig: Record<
     string,
@@ -690,6 +693,7 @@ export default function PaperDetail() {
           onCancel={() => {
             skimAbort.current?.abort();
             setSkimLoading(false);
+            toast("info", "已取消（后台可能仍在处理，结果稍后可在详情页查看）");
           }}
         />
       )}
@@ -699,12 +703,38 @@ export default function PaperDetail() {
           onCancel={() => {
             deepAbort.current?.abort();
             setDeepLoading(false);
+            toast("info", "已取消（后台可能仍在处理，结果稍后可在详情页查看）");
           }}
         />
       )}
-      {figuresAnalyzing && <PipelineProgress type="figure" />}
-      {reasoningLoading && <PipelineProgress type="reasoning" />}
-      {embedLoading && <PipelineProgress type="embed" />}
+      {/* figure/reasoning/embed 无后端 cancel 端点，onCancel 仅停 UI + 提示 */}
+      {figuresAnalyzing && (
+        <PipelineProgress
+          type="figure"
+          onCancel={() => {
+            setFiguresAnalyzing(false);
+            toast("info", "已取消（后台可能仍在处理）");
+          }}
+        />
+      )}
+      {reasoningLoading && (
+        <PipelineProgress
+          type="reasoning"
+          onCancel={() => {
+            setReasoningLoading(false);
+            toast("info", "已取消（后台可能仍在处理）");
+          }}
+        />
+      )}
+      {embedLoading && (
+        <PipelineProgress
+          type="embed"
+          onCancel={() => {
+            setEmbedLoading(false);
+            toast("info", "已取消（后台可能仍在处理）");
+          }}
+        />
+      )}
 
       {/* ========== Tab 化报告区域 ========== */}
       <div className="space-y-4">
@@ -871,7 +901,7 @@ export default function PaperDetail() {
                         className="animate-fade-in"
                         style={{ animationDelay: `${i * 80}ms` }}
                       >
-                        <FigureCard figure={fig} index={i} paperId={id!} />
+                        <FigureCard figure={fig} index={i} paperId={paperId} />
                       </div>
                     ))}
                   </div>
@@ -925,7 +955,7 @@ export default function PaperDetail() {
                   <div className="space-y-2">
                     {(similarItems.length > 0
                       ? similarItems
-                      : similarIds.map((sid) => ({ id: sid, title: sid }))
+                      : similarIds.map((sid) => ({ id: sid, title: "点击查看详情" }))
                     ).map((item) => (
                       <button
                         key={item.id}
@@ -1054,7 +1084,7 @@ export default function PaperDetail() {
           }
         >
           <PdfReader
-            paperId={id!}
+            paperId={paperId}
             paperTitle={paper.title}
             paperArxivId={paper.arxiv_id}
             paperPdfPath={paper.pdf_path}
