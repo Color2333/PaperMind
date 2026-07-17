@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { Card, CardHeader, Button, Tabs, Spinner, Empty } from "@/components/ui";
+import { useToast } from "@/contexts/ToastContext";
 import { wikiApi, generatedApi, tasksApi } from "@/services/api";
 import type {
   PaperWiki,
@@ -48,6 +49,7 @@ const wikiTabs = [
 ];
 
 export default function Wiki() {
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("topic");
   const [keyword, setKeyword] = useState("");
   const [paperId, setPaperId] = useState("");
@@ -81,11 +83,11 @@ export default function Wiki() {
       const res = await generatedApi.list(type, 50);
       setHistory(res.items);
     } catch {
-      /* */
+      toast("error", "历史记录加载失败");
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     loadHistory(contentType);
@@ -93,7 +95,16 @@ export default function Wiki() {
 
   const pollTask = useCallback(
     async (tid: string) => {
+      const start = Date.now();
+      const MAX_WAIT_MS = 5 * 60 * 1000; // 5 分钟上限，防任务挂起无限轮询
       const poll = async (): Promise<void> => {
+        if (Date.now() - start > MAX_WAIT_MS) {
+          setLoading(false);
+          setTaskId(null);
+          pollTimerRef.current = null;
+          toast("error", "研究超时，请稍后在历史记录查看结果");
+          return;
+        }
         try {
           const status: TaskStatus = await tasksApi.getStatus(tid);
           // progress 是 0-1 的小数
@@ -118,22 +129,26 @@ export default function Wiki() {
             setTaskId(null);
             pollTimerRef.current = null;
             loadHistory(contentType);
-            return;
+            if (status.status === "failed") toast("error", status.message || "研究失败");
+            return; // 完成：不再调度下一次 poll
           }
           if (status.error) {
             setLoading(false);
             setTaskId(null);
             pollTimerRef.current = null;
+            toast("error", status.error);
             return;
           }
+          // 仍在运行：仅在此处调度下一次 poll（此前 catch + 无条件双重调度造成累积）
+          pollTimerRef.current = setTimeout(poll, 2000);
         } catch {
+          // 单次查询失败：退避 5s 后重试（不双重调度）
           pollTimerRef.current = setTimeout(poll, 5000);
         }
-        pollTimerRef.current = setTimeout(poll, 2000);
       };
       poll();
     },
-    [contentType, loadHistory]
+    [contentType, loadHistory, toast]
   );
 
   const handleQuery = async () => {
@@ -156,7 +171,8 @@ export default function Wiki() {
       }
       loadHistory(contentType);
     } catch {
-      /* */
+      toast("error", "生成失败，请重试");
+      setLoading(false);
     } finally {
       if (activeTab !== "topic") setLoading(false);
     }
@@ -170,7 +186,7 @@ export default function Wiki() {
       const detail = await generatedApi.detail(item.id);
       setSelectedContent(detail);
     } catch {
-      /* */
+      toast("error", "加载详情失败");
     } finally {
       setDetailLoading(false);
     }
@@ -178,12 +194,15 @@ export default function Wiki() {
 
   const handleDeleteHistory = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const prev = history;
     try {
       await generatedApi.delete(id);
       setHistory((prev) => prev.filter((h) => h.id !== id));
       if (selectedContent?.id === id) setSelectedContent(null);
     } catch {
-      /* */
+      // 失败回滚，UI 与后端保持一致
+      setHistory(prev);
+      toast("error", "删除失败");
     }
   };
 

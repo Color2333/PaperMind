@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect, useCallback, memo, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/contexts/ToastContext";
 
 // Markdown 含 katex，懒加载避免首屏拉取大 chunk
 const Markdown = lazy(() => import("@/components/Markdown"));
@@ -143,6 +144,7 @@ function getToolMeta(name: string) {
 
 export default function Agent() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const {
     items,
     loading,
@@ -203,14 +205,14 @@ export default function Agent() {
     (ability: Ability) => {
       if (ability.direct) {
         isAtBottomRef.current = true;
-        sendMessage(ability.prefix).catch(() => {});
+        sendMessage(ability.prefix).catch(() => toast("error", "操作失败，请重试"));
         return;
       }
       setActiveAbility(ability);
       setInput(ability.prefix);
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    [sendMessage]
+    [sendMessage, toast]
   );
 
   const handleSend = useCallback(
@@ -223,9 +225,10 @@ export default function Agent() {
         await sendMessage(text);
       } catch {
         setInput(savedInput);
+        toast("error", "发送失败，请重试");
       }
     },
-    [sendMessage]
+    [sendMessage, toast]
   );
 
   const handleConfirmAction = useCallback(
