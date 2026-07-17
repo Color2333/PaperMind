@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { ToastType } from "@/contexts/ToastContext";
 import { paperApi, pipelineApi } from "@/services/api";
 import type { Paper, SkimReport } from "@/types";
+import { pollTaskUntilDone } from "./pollTask";
 
 type Toast = (type: ToastType, message: string) => void;
 
@@ -22,25 +23,37 @@ export function useSkim({ id, toast, setReportTab, setPaper }: UseSkimParams) {
   } | null>(null);
   const [skimLoading, setSkimLoading] = useState(false);
   const skimAbort = useRef<AbortController | null>(null);
+  const cancelledRef = useRef(false);
 
-  const handleSkim = async () => {
+  const handleSkim = useCallback(async () => {
     if (!id) return;
     setSkimLoading(true);
     setReportTab("skim");
+    cancelledRef.current = false;
     try {
-      const report = await pipelineApi.skim(id);
+      // 后台任务化：端点返回 task_id，轮询直到完成再 getResult 取结果
+      const { task_id } = await pipelineApi.skim(id);
+      const report = await pollTaskUntilDone<SkimReport>(task_id, () => cancelledRef.current);
       setSkimReport(report);
       // 刷新论文信息，更新粗读报告
       const updated = await paperApi.detail(id);
       setPaper(updated);
       if (updated.skim_report) setSavedSkim(updated.skim_report);
       toast("success", "粗读完成");
-    } catch {
-      toast("error", "粗读失败");
+    } catch (e) {
+      if (!cancelledRef.current) {
+        toast("error", e instanceof Error ? e.message : "粗读失败");
+      }
     } finally {
       setSkimLoading(false);
     }
-  };
+  }, [id, setReportTab, toast, setPaper]);
+
+  // onCancel：标记取消，pollTaskUntilDone 下次检查时抛错退出
+  const cancelSkim = useCallback(() => {
+    cancelledRef.current = true;
+    setSkimLoading(false);
+  }, []);
 
   return {
     skimReport,
@@ -50,6 +63,7 @@ export function useSkim({ id, toast, setReportTab, setPaper }: UseSkimParams) {
     skimLoading,
     setSkimLoading,
     skimAbort,
+    cancelSkim,
     handleSkim,
   };
 }

@@ -439,10 +439,11 @@ export const translateApi = {
 
 /* ========== Pipeline ========== */
 export const pipelineApi = {
-  skim: (paperId: string) => post<SkimReport>(`/pipelines/skim/${paperId}`),
-  deep: (paperId: string) => post<DeepDiveReport>(`/pipelines/deep/${paperId}`),
+  // 后台任务化：返回 task_id，前端轮询 tasksApi.getStatus + getResult 取结果
+  skim: (paperId: string) => post<{ task_id: string; status: string }>(`/pipelines/skim/${paperId}`),
+  deep: (paperId: string) => post<{ task_id: string; status: string }>(`/pipelines/deep/${paperId}`),
   embed: (paperId: string) =>
-    post<{ status: string; paper_id: string }>(`/pipelines/embed/${paperId}`),
+    post<{ task_id: string; status: string }>(`/pipelines/embed/${paperId}`),
   runs: (limit = 30) => get<{ items: PipelineRun[] }>(`/pipelines/runs?limit=${limit}`),
 };
 
