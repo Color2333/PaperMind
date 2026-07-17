@@ -392,6 +392,7 @@ class PaperRepository:
                 select(Paper)
                 .where(Paper.id != str(exclude))
                 .where(Paper.embedding.is_not(None))
+                .where(Paper.rejected.is_(False))
                 .order_by(Paper.embedding.cosine_distance(vector))
                 .limit(limit)
             )
@@ -401,6 +402,7 @@ class PaperRepository:
             select(Paper)
             .where(Paper.id != str(exclude))
             .where(Paper.embedding.is_not(None))
+            .where(Paper.rejected.is_(False))
             .order_by(Paper.created_at.desc())
             .limit(max_candidates)
         )
@@ -438,6 +440,7 @@ class PaperRepository:
             q = (
                 select(Paper)
                 .where(Paper.embedding.is_not(None))
+                .where(Paper.rejected.is_(False))
                 .order_by(Paper.embedding.cosine_distance(query_vector))
                 .limit(limit)
             )
@@ -446,6 +449,7 @@ class PaperRepository:
         q = (
             select(Paper)
             .where(Paper.embedding.is_not(None))
+            .where(Paper.rejected.is_(False))
             .order_by(Paper.created_at.desc())
             .limit(max_candidates)
         )
