@@ -122,6 +122,8 @@ if settings.auth_password and settings.auth_secret_key in _WEAK_SECRET_KEYS:
 
 # ---------- lifespan（batch consumer + MCP session manager）----------
 # MCP ASGI 子 app（fastmcp），挂到 /mcp 供 hermes 接入
+from fastmcp.utilities.lifespan import combine_lifespans  # noqa: E402
+
 from apps.api.mcp import get_mcp_asgi_app  # noqa: E402
 from packages.agent_core import batch_consumer as _batch  # noqa: E402
 
@@ -129,17 +131,17 @@ _mcp_app = get_mcp_asgi_app()
 
 
 @asynccontextmanager
-async def app_lifespan(app: FastAPI):
-    """应用 lifespan：启动/关闭 batch consumer（替代 @app.on_event）。
-
-    MCP 子 app 的 lifespan 通过挂载自动管理（starlette Mount 会调用子 app lifespan）。
-    """
+async def _batch_lifespan(app: FastAPI):
+    """batch consumer 启动/关闭（替代 @app.on_event）。"""
     _batch.start()
     try:
         yield
     finally:
         _batch.stop()
 
+
+# 合并 batch lifespan + MCP session manager lifespan（fastmcp 要求必须传 mcp_app.lifespan）
+app_lifespan = combine_lifespans(_batch_lifespan, _mcp_app.lifespan)
 
 app = FastAPI(title=settings.app_name, lifespan=app_lifespan)
 

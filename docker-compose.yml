@@ -33,7 +33,7 @@ services:
       - API_PORT=8000
       - SITE_URL=https://pm.vibingu.cn
       - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002,https://pm.vibingu.cn
-      - DEMO_MODE=true
+      - DEMO_MODE=false
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
