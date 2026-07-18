@@ -6,17 +6,15 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from collections.abc import Callable  # noqa: TC003  FastAPI 需运行时可见以解析 body 注解
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from packages.ai.agent_service import confirm_action, reject_action, stream_chat
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from packages.domain.schemas import AgentChatRequest
+from packages.domain.schemas import (
+    AgentChatRequest,  # noqa: TC001  FastAPI 需运行时可见以解析 body 注解
+)
 
 router = APIRouter()
 
