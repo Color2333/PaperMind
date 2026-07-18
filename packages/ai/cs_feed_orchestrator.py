@@ -149,6 +149,12 @@ class CSFeedOrchestrator:
                     if title:
                         titles.append(title)
 
+                # 关联论文到 cs_feed 分类对应的 topic（每分类一个 disabled topic）
+                # 使 cs_feed 论文接入主题侧边栏/图谱/统计。enabled=False 防
+                # topic_dispatch 重复抓取同一分类（仅 cs_feed_dispatch 负责）
+                if paper_ids:
+                    self._link_cs_papers_to_topic(sub_session, category_code, paper_ids)
+
                 sub_repo.update_run_status(category_code, count)
                 sub_session.commit()
                 logger.info("[CSFeed] %s: ingested %d papers", category_code, count)
@@ -158,6 +164,8 @@ class CSFeedOrchestrator:
                     # 此前 cs_feed 论文处于 unread 无 embedding 无 topic，只能靠
                     # idle_processor 事后补——改为抓取即处理
                     self._process_cs_papers(paper_ids)
+                    # 抓取后触发引用自动关联（与 ingest_arxiv 对齐，此前 cs_feed 缺这步）
+                    self._trigger_auto_link(paper_ids)
             except Exception as e:
                 sub_session.rollback()
                 err_str = str(e)
@@ -216,6 +224,43 @@ class CSFeedOrchestrator:
                     logger.warning("[CSFeed] skim %s 失败: %s", pid, e)
             finally:
                 limiter.end_task()
+
+    @staticmethod
+    def _link_cs_papers_to_topic(session, category_code: str, paper_ids: list[str]) -> None:
+        """把 cs_feed 抓取的论文关联到对应分类的 topic（每分类一个 disabled topic）。
+
+        命名约定：topic name = `csfeed:{category_code}`，query = `cat:{category_code}`，
+        enabled=False（防 topic_dispatch 重复抓取同一分类，仅 cs_feed_dispatch 负责）。
+        upsert_topic 按 name 幂等，link_to_topic 受 uq_paper_topic 约束兜底幂等。
+        关联后 cs_feed 论文即接入主题侧边栏/图谱视图/统计/推荐 boost。
+        """
+        from packages.storage.repositories import PaperRepository, TopicRepository
+
+        topic_repo = TopicRepository(session)
+        topic = topic_repo.upsert_topic(
+            name=f"csfeed:{category_code}",
+            query=f"cat:{category_code}",
+            enabled=False,
+        )
+        paper_repo = PaperRepository(session)
+        for pid in paper_ids:
+            paper_repo.link_to_topic(pid, topic.id)
+
+    @staticmethod
+    def _trigger_auto_link(paper_ids: list[str]) -> None:
+        """抓取后触发引用自动关联（复用 paper_pipelines 的有界线程池）。
+
+        此前 cs_feed 只入库不 auto_link，论文间引用关系靠后续 sync_incremental 补。
+        与 ingest_arxiv 对齐，抓取即提交后台关联。
+        """
+        if not paper_ids:
+            return
+        try:
+            from packages.ai.pipelines.paper_pipelines import _auto_link_pool, _bg_auto_link
+
+            _auto_link_pool.submit(_bg_auto_link, paper_ids)
+        except Exception as exc:
+            logger.warning("[CSFeed] 触发 auto_link 失败: %s", exc)
 
     def _notify_digest(self, digest: list[tuple[str, int, list[str]]]) -> None:
         """抓取入库后发送邮件摘要；SMTP 未配置或无收件人时静默跳过"""

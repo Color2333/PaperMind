@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import SessionLocal
 from packages.storage.repositories import CSFeedRepository
@@ -165,18 +166,27 @@ def fetch_category(
             progress_callback(f"开始入库 ({total_papers} 篇)...", 50, 100)
 
         count = 0
+        paper_ids: list[str] = []
         with session_scope() as session:
             paper_repo = PaperRepository(session)
             for i, p in enumerate(papers):
-                paper_repo.upsert_paper(p)
+                saved = paper_repo.upsert_paper(p)
                 count += 1
+                paper_ids.append(saved.id)
                 if progress_callback:
                     progress_callback(
                         f"入库中 ({i + 1}/{total_papers})...",
                         50 + int((i + 1) / total_papers * 40),
                         100,
                     )
+            # 关联到 cs_feed 分类 topic + 触发 auto_link（与 orchestrator 行为一致）
+            if paper_ids:
+                CSFeedOrchestrator._link_cs_papers_to_topic(session, category_code, paper_ids)
             repo.update_run_status(category_code, count)
+
+        # 抓取后触发引用自动关联（与 orchestrator 对齐）
+        if paper_ids:
+            CSFeedOrchestrator._trigger_auto_link(paper_ids)
 
         if progress_callback:
             progress_callback("抓取完成", 95, 100)
