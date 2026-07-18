@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 import logging
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -90,6 +90,12 @@ def _bg_auto_link(paper_ids: list[str]) -> None:
         logger.info("bg auto_link: %s", result)
     except Exception as exc:
         logger.warning("bg auto_link failed: %s", exc)
+
+
+# High 3c：复用有界线程池替代无界 daemon 线程。此前每次 collect 都
+# threading.Thread(...).start()，5 个 topic 各起线程可能失控。
+# max_workers=2 限制并发 auto_link，避免线程数膨胀。
+_auto_link_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="bg-auto-link")
 
 
 class PaperPipelines:
@@ -228,11 +234,8 @@ class PaperPipelines:
 
                 run_repo.finish(run.id)
                 if inserted_ids:
-                    threading.Thread(
-                        target=_bg_auto_link,
-                        args=(inserted_ids,),
-                        daemon=True,
-                    ).start()
+                    # High 3c：提交到有界线程池，替代无界 daemon 线程
+                    _auto_link_pool.submit(_bg_auto_link, inserted_ids)
 
                 logger.info(
                     "抓取完成：共 %d 篇新论文（从 %d 篇中筛选）",
@@ -375,12 +378,8 @@ class PaperPipelines:
                         topic_id=topic_id,
                     )
 
-                    # 后台关联引用
-                    threading.Thread(
-                        target=_bg_auto_link,
-                        args=(inserted_ids,),
-                        daemon=True,
-                    ).start()
+                    # 后台关联引用（High 3c：提交到有界线程池）
+                    _auto_link_pool.submit(_bg_auto_link, inserted_ids)
 
                 run_repo.finish(run.id)
 

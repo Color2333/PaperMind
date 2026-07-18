@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -15,6 +16,46 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
+
+# High 3d：PDF 下载后台线程池（有界，避免逐篇同步 90s 阻塞 ingest 主流程）
+_pdf_download_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pdf-dl")
+
+
+def _download_pdf_async(arxiv_client, arxiv_id: str, paper_id: str, repo) -> None:
+    """后台异步下载 PDF 并回填路径；失败记录到论文 metadata（deep_dive 可见）。
+
+    在独立线程执行：不阻塞 ingest 主流程的入库与进度上报。下载需新开 session
+    （与 ingest 主 session 隔离），失败时把 pdf_download_failed 写入 metadata_json。
+    """
+    from packages.storage.db import SessionLocal
+    from packages.storage.repositories import PaperRepository as _PR
+
+    def _do_download():
+        dl_session = SessionLocal()
+        try:
+            dl_repo = _PR(dl_session)
+            try:
+                pdf_path = arxiv_client.download_pdf(arxiv_id)
+                dl_repo.set_pdf_path(paper_id, pdf_path)
+                dl_session.commit()
+                logger.info("ingest: PDF 下载完成 %s", arxiv_id)
+            except Exception as exc:
+                dl_session.rollback()
+                # 记录失败到 metadata，deep_dive 时可见（此前失败静默丢失）
+                try:
+                    paper = dl_repo.get_by_id(paper_id)
+                    if paper is not None:
+                        meta = dict(paper.metadata_json or {})
+                        meta["pdf_download_failed"] = str(exc)[:200]
+                        paper.metadata_json = meta
+                        dl_session.commit()
+                except Exception:
+                    dl_session.rollback()
+                logger.warning("ingest: PDF 下载失败 %s: %s", arxiv_id, exc)
+        finally:
+            dl_session.close()
+
+    _pdf_download_pool.submit(_do_download)
 
 
 def _search_arxiv(
@@ -159,11 +200,10 @@ def _ingest_arxiv(
                     if topic_id:
                         repo.link_to_topic(saved.id, topic_id)
                     inserted_ids.append(saved.id)
-                    try:
-                        pdf_path = arxiv_client.download_pdf(paper.arxiv_id)
-                        repo.set_pdf_path(saved.id, pdf_path)
-                    except Exception:
-                        pass
+                    # High 3d：download_pdf 改后台异步，不阻塞 ingest 主流程（此前
+                    # 逐篇同步下载 90s 超时阻塞）。失败记录到论文 metadata
+                    # （pdf_download_failed），deep_dive 时可见
+                    _download_pdf_async(arxiv_client, paper.arxiv_id, saved.id, repo)
                     ingested_papers.append(
                         {
                             "arxiv_id": paper.arxiv_id,
