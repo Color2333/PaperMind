@@ -234,27 +234,41 @@ def run_worker() -> None:
     │ 闲时自动处理      │ 全天检测      │ 全天检测           │
     └─────────────────────────────────────────────────────────┘
     """
+    # High 3e：显式配置 max_instances / misfire_grace_time / coalesce，避免
+    # 重复触发与 misfire 丢失；用 apscheduler 的 ThreadPoolExecutor(max_workers=3)
+    # 替代默认单线程池，允许 topic_dispatch / cs_feed / brief 适度并发
+    from apscheduler.executors.pool import ThreadPoolExecutor as APSThreadPoolExecutor
+
     scheduler = BlockingScheduler(timezone="UTC")
+    scheduler.add_executor(APSThreadPoolExecutor(max_workers=3))
+
+    # 公共 job 配置：单实例 + 5 分钟 misfire 容忍 + 合并错过的触发
+    _job_kwargs = {
+        "max_instances": 1,
+        "misfire_grace_time": 300,
+        "coalesce": True,
+        "replace_existing": True,
+    }
 
     settings = get_settings()
 
-    # 每整点检查主题调度（UTC 时间）
+    # 每整点检查主题调度（UTC 时间）—— 整点第 0 分钟
     scheduler.add_job(
         topic_dispatch_job,
         trigger=CronTrigger(minute=0),
         id="topic_dispatch",
-        replace_existing=True,
+        **_job_kwargs,
     )
     logger.info("✅ 已添加：主题分发任务（每小时整点，UTC）")
 
-    # CS 分类订阅调度（每小时整点）
+    # CS 分类订阅调度 —— 错开 5 分钟，避免与 topic_dispatch 同分钟抢线程
     scheduler.add_job(
         cs_feed_dispatch_job,
-        trigger=CronTrigger(minute=0),
+        trigger=CronTrigger(minute=5),
         id="cs_feed_dispatch",
-        replace_existing=True,
+        **_job_kwargs,
     )
-    logger.info("✅ 已添加：CS分类订阅调度任务（每小时整点，UTC）")
+    logger.info("✅ 已添加：CS分类订阅调度任务（每小时 :05，UTC）")
 
     # 每日简报（从数据库读取 cron 表达式）
     from packages.storage.db import session_scope
@@ -273,7 +287,7 @@ def run_worker() -> None:
         brief_job,
         trigger=daily_trigger,
         id="daily_brief",
-        replace_existing=True,
+        **_job_kwargs,
     )
     logger.info(
         "✅ 已添加：每日简报任务（cron: %s）",
@@ -286,16 +300,17 @@ def run_worker() -> None:
         weekly_graph_job,
         trigger=weekly_trigger,
         id="weekly_graph",
-        replace_existing=True,
+        **_job_kwargs,
     )
     logger.info("✅ 已添加：每周图谱维护任务（UTC 周日 22:00）")
 
-    # 优雅关闭
+    # 优雅关闭（High 3f：等待进行中任务跑完，避免已下载 PDF 未 set_pdf_path
+    # 的中间态丢失；wait=True + 60s 超时兜底）
     def _graceful_stop(*_: object) -> None:
         logger.info("收到终止信号，正在关闭...")
         stop_event.set()
         stop_idle_processor()  # 停止闲时处理器
-        scheduler.shutdown(wait=False)
+        scheduler.shutdown(wait=True)
         logger.info("Worker 已关闭")
 
     signal.signal(signal.SIGINT, _graceful_stop)

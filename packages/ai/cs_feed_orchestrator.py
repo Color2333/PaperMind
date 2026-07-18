@@ -68,83 +68,154 @@ class CSFeedOrchestrator:
             session.close()
 
     def run(self):
-        """每小时执行一次"""
-        session = SessionLocal()
+        """每小时执行一次（High 3a：每 sub 独立 session，异常隔离）"""
+        # 先读订阅列表（独立 session，读后即关）
+        read_session = SessionLocal()
         try:
-            repo = CSFeedRepository(session)
+            repo = CSFeedRepository(read_session)
             subs = repo.get_active_subscriptions()
-            now = datetime.now(UTC)
-            digest: list[tuple[str, int, list[str]]] = []
-
-            for sub in subs:
-                # 冷却中检查
-                if sub.status == "cool_down" and sub.cool_down_until and now < sub.cool_down_until:
-                    logger.info(
-                        "[CSFeed] Skipping %s (cool down until %s)",
-                        sub.category_code,
-                        sub.cool_down_until,
-                    )
-                    continue
-
-                # 每日配额检查
-                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                if sub.last_run_at and sub.last_run_at >= today_start:
-                    remaining = sub.daily_limit - sub.last_run_count
-                else:
-                    remaining = sub.daily_limit
-
-                if remaining <= 0:
-                    logger.info("[CSFeed] Skipping %s (daily limit reached)", sub.category_code)
-                    continue
-
-                # 请求间隔
-                if not self.bucket.acquire(timeout=30):
-                    logger.warning("[CSFeed] Token bucket timeout, skipping %s", sub.category_code)
-                    continue
-                time.sleep(REQUEST_INTERVAL)
-
-                # 抓取
-                try:
-                    client = ArxivClient()
-                    papers = client.fetch_latest(
-                        query=f"cat:{sub.category_code}",
-                        max_results=remaining,
-                        days_back=7,
-                    )
-                    from packages.storage.repositories import PaperRepository
-
-                    paper_repo = PaperRepository(session)
-                    count = 0
-                    titles: list[str] = []
-                    for p in papers:
-                        paper_repo.upsert_paper(p)
-                        count += 1
-                        title = getattr(p, "title", None)
-                        if title:
-                            titles.append(title)
-
-                    repo.update_run_status(sub.category_code, count)
-                    logger.info("[CSFeed] %s: ingested %d papers", sub.category_code, count)
-                    if count > 0:
-                        digest.append((sub.category_code, count, titles))
-
-                except Exception as e:
-                    err_str = str(e)
-                    if "429" in err_str or "Too Many Requests" in err_str:
-                        repo.set_cool_down(
-                            sub.category_code, now + timedelta(minutes=COOL_DOWN_MINUTES)
-                        )
-                        logger.warning(
-                            "[CSFeed] Rate limited %s, cool down 30min", sub.category_code
-                        )
-                    else:
-                        logger.error("[CSFeed] Error fetching %s: %s", sub.category_code, e)
-
-            # 入库后推送邮件摘要（README 宣传的「邮件推送」）；SMTP 未配置时静默跳过
-            if digest:
-                self._notify_digest(digest)
+            sub_specs = [
+                (
+                    s.category_code,
+                    s.status,
+                    s.cool_down_until,
+                    s.last_run_at,
+                    s.last_run_count,
+                    s.daily_limit,
+                )
+                for s in subs
+            ]
         finally:
-            session.close()
+            read_session.close()
+
+        now = datetime.now(UTC)
+        digest: list[tuple[str, int, list[str]]] = []
+
+        for (
+            category_code,
+            status,
+            cool_down_until,
+            last_run_at,
+            last_run_count,
+            daily_limit,
+        ) in sub_specs:
+            # 冷却中检查
+            if status == "cool_down" and cool_down_until and now < cool_down_until:
+                logger.info(
+                    "[CSFeed] Skipping %s (cool down until %s)",
+                    category_code,
+                    cool_down_until,
+                )
+                continue
+
+            # 每日配额检查
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if last_run_at and last_run_at >= today_start:
+                remaining = daily_limit - last_run_count
+            else:
+                remaining = daily_limit
+
+            if remaining <= 0:
+                logger.info("[CSFeed] Skipping %s (daily limit reached)", category_code)
+                continue
+
+            # 请求间隔
+            if not self.bucket.acquire(timeout=30):
+                logger.warning("[CSFeed] Token bucket timeout, skipping %s", category_code)
+                continue
+            time.sleep(REQUEST_INTERVAL)
+
+            # 每 sub 独立 session：一个 sub 抓取异常不会污染下个 sub 的脏数据
+            sub_session = SessionLocal()
+            try:
+                sub_repo = CSFeedRepository(sub_session)
+                client = ArxivClient()
+                papers = client.fetch_latest(
+                    query=f"cat:{category_code}",
+                    max_results=remaining,
+                    days_back=7,
+                )
+                from packages.storage.repositories import PaperRepository
+
+                paper_repo = PaperRepository(sub_session)
+                count = 0
+                titles: list[str] = []
+                paper_ids: list[str] = []
+                for p in papers:
+                    saved = paper_repo.upsert_paper(p)
+                    count += 1
+                    paper_ids.append(saved.id)
+                    title = getattr(p, "title", None)
+                    if title:
+                        titles.append(title)
+
+                sub_repo.update_run_status(category_code, count)
+                sub_session.commit()
+                logger.info("[CSFeed] %s: ingested %d papers", category_code, count)
+                if count > 0:
+                    digest.append((category_code, count, titles))
+                    # High 3b：抓取的论文触发 embed + skim（复用 PaperPipelines），
+                    # 此前 cs_feed 论文处于 unread 无 embedding 无 topic，只能靠
+                    # idle_processor 事后补——改为抓取即处理
+                    self._process_cs_papers(paper_ids)
+            except Exception as e:
+                sub_session.rollback()
+                err_str = str(e)
+                if "429" in err_str or "Too Many Requests" in err_str:
+                    # 冷却设置需独立 session（当前已回滚）
+                    cool_session = SessionLocal()
+                    try:
+                        CSFeedRepository(cool_session).set_cool_down(
+                            category_code, now + timedelta(minutes=COOL_DOWN_MINUTES)
+                        )
+                        cool_session.commit()
+                    finally:
+                        cool_session.close()
+                    logger.warning("[CSFeed] Rate limited %s, cool down 30min", category_code)
+                else:
+                    logger.error("[CSFeed] Error fetching %s: %s", category_code, e)
+            finally:
+                sub_session.close()
+
+        # 入库后推送邮件摘要（README 宣传的「邮件推送」）；SMTP 未配置时静默跳过
+        if digest:
+            self._notify_digest(digest)
+
+    def _process_cs_papers(self, paper_ids: list[str]) -> None:
+        """对 cs_feed 抓取的论文触发 embed + skim（High 3b，抓取即处理）。
+
+        复用 PaperPipelines 的 embed_paper / skim，使 cs_feed 论文不再只入库后
+        处于 unread 无 embedding 状态。失败不抛（仅记录日志），不阻断抓取主流程。
+        """
+        if not paper_ids:
+            return
+        from packages.ai.pipelines import PaperPipelines
+        from packages.ai.rate_limiter import acquire_api, get_rate_limiter
+
+        pipelines = PaperPipelines()
+        limiter = get_rate_limiter()
+        for pid in paper_ids:
+            if not limiter.start_task():
+                logger.debug("[CSFeed] 并发满，跳过处理 %s", pid)
+                break
+            try:
+                if not acquire_api("embedding", timeout=30.0):
+                    logger.warning("[CSFeed] Embedding 限流，跳过 %s", pid)
+                    continue
+                try:
+                    pipelines.embed_paper(pid)
+                except Exception as e:
+                    logger.warning("[CSFeed] embed %s 失败: %s", pid, e)
+                    continue
+                if not acquire_api("llm", timeout=30.0):
+                    logger.warning("[CSFeed] LLM 限流，跳过 skim %s", pid)
+                    continue
+                try:
+                    pipelines.skim(pid)
+                except Exception as e:
+                    logger.warning("[CSFeed] skim %s 失败: %s", pid, e)
+            finally:
+                limiter.end_task()
 
     def _notify_digest(self, digest: list[tuple[str, int, list[str]]]) -> None:
         """抓取入库后发送邮件摘要；SMTP 未配置或无收件人时静默跳过"""
