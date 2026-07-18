@@ -41,6 +41,19 @@ def _write_heartbeat() -> None:
         _HEALTH_FILE.write_text(str(time.time()))
 
 
+def _update_topic_run_status(topic_id: str, *, error: str | None) -> None:
+    """记录主题抓取的最近运行时间与错误（Critical #4：失败可查可补抓）。
+
+    抓取失败此前静默无痕，定位不到出问题的主题。这里在每次抓取后持久化
+    last_run_at / last_error，失败信息入库便于排查与补抓。
+    """
+    try:
+        with session_scope() as session:
+            TopicRepository(session).update_run_status(topic_id, error=error)
+    except Exception:
+        logger.exception("Failed to persist topic run status for %s", topic_id)
+
+
 def _retry_with_backoff(fn, *args, max_retries: int = 3, base_delay: float = 5.0, **kwargs):
     """带指数退避的重试执行"""
     for attempt in range(max_retries):
@@ -120,8 +133,10 @@ def topic_dispatch_job() -> None:
                 result.get("inserted", 0) if result else 0,
                 result.get("processed", 0) if result else 0,
             )
-        except Exception:
+            _update_topic_run_status(c["id"], error=None)
+        except Exception as e:
             logger.exception("topic_dispatch failed for %s", c["name"])
+            _update_topic_run_status(c["id"], error=str(e))
     _write_heartbeat()
 
 

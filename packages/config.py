@@ -4,6 +4,7 @@
 @author Color2333
 """
 
+import contextlib
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -32,6 +33,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:////app/data/papermind.db"
     pdf_storage_root: Path = Path("./data/papers")
     brief_output_root: Path = Path("./data/briefs")
+    # 跨进程共享限流器状态目录：backend/api 与 worker 容器需挂载同一目录才能共享令牌桶。
+    # 默认 /app/data 是 docker-compose 中两个服务共享的 pm_data 数据卷挂载点。
+    rate_limiter_state_dir: Path = Path("/app/data")
     skim_score_threshold: float = 0.65
     daily_cron: str = "0 21 * * *"
     weekly_cron: str = "0 22 * * 0"
@@ -64,6 +68,8 @@ class Settings(BaseSettings):
     # Worker 调度
     worker_retry_max: int = 2
     worker_retry_base_delay: float = 5.0
+    # 闲时补偿精读配额：闲时对已 skim 但卡住未精读的论文补一次精读的上限（0 禁用）
+    deep_read_compensation: int = 2
 
     # 并发与缓存
     paper_concurrency: int = 5
@@ -99,6 +105,9 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.pdf_storage_root.mkdir(parents=True, exist_ok=True)
     settings.brief_output_root.mkdir(parents=True, exist_ok=True)
+    # 跨进程限流器状态目录（容器共享卷），无写权限时静默降级到进程内内存桶
+    with contextlib.suppress(OSError):
+        settings.rate_limiter_state_dir.mkdir(parents=True, exist_ok=True)
     # SQLite 需要预先创建数据库文件所在目录；PostgreSQL 等远程库无需
     if settings.database_url.startswith("sqlite:"):
         db_parent = Path(settings.database_url.replace("sqlite:///", "")).parent

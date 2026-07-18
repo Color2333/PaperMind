@@ -238,6 +238,10 @@ class TopicSubscription(Base):
         nullable=False, default=7
     )  # 日期范围（最近 N 天）
 
+    # 抓取状态追踪（修 Critical #4：此前无 last_run_at，抓取失败静默无痕无法补抓）
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False

@@ -110,6 +110,15 @@ class TopicRepository:
         self.session.flush()
         return topic
 
+    def update_run_status(self, topic_id: str, *, error: str | None = None) -> None:
+        """记录主题最近一次抓取的时间与错误（Critical #4：失败有持久化痕迹，可查可补抓）"""
+        topic = self.session.get(TopicSubscription, topic_id)
+        if topic is None:
+            return
+        topic.last_run_at = datetime.now(UTC)
+        topic.last_error = None if error is None else error[:500]
+        self.session.commit()
+
     def delete_topic(self, topic_id: str) -> None:
         topic = self.session.get(TopicSubscription, topic_id)
         if topic is not None:

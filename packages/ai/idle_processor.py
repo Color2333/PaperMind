@@ -170,6 +170,26 @@ class IdleProcessor:
             ).all()
             return [(str(p.id), p.title) for p in papers]
 
+    def _get_stuck_skimmed_papers(self, limit: int = 3) -> list[tuple[str, str]]:
+        """获取已 skim 但卡住未精读的论文（Critical #6 补偿）
+
+        之前只挑 unread 无 AnalysisReport 的论文走 embed+skim，但 skim 之后
+        read_status 变 skimmed、deep_dive_md 仍为空——这些论文卡在 skimmed 永远
+        不会被闲时补偿精读。这里挑出 skimmed 且 AnalysisReport 有 summary_md 但
+        deep_dive_md 为空的论文，单独走 deep_dive 补偿，配额受限避免一次补偿太多。
+        """
+        with session_scope() as session:
+            papers = session.execute(
+                select(Paper.id, Paper.title)
+                .where(Paper.read_status == "skimmed")
+                .join(AnalysisReport, Paper.id == AnalysisReport.paper_id)
+                .where(AnalysisReport.summary_md.is_not(None))
+                .where(AnalysisReport.deep_dive_md.is_(None))
+                .order_by(Paper.created_at.asc())  # 优先处理旧的
+                .limit(limit)
+            ).all()
+            return [(str(p.id), p.title) for p in papers]
+
     def _process_batch(self) -> int:
         """
         处理一批论文（带任务追踪）
@@ -277,7 +297,56 @@ class IdleProcessor:
         self._papers_processed += processed
         self.detector.mark_task_executed()
 
-        return processed
+        # Critical #6 补偿：对已 skim 但卡住未精读的论文补一次精读（独立配额受限）
+        deep_compensated = self._compensate_stuck_skimmed()
+        return processed + deep_compensated
+
+    def _compensate_stuck_skimmed(self) -> int:
+        """补偿已 skim 但未精读的论文（Critical #6）。
+
+        skim 完成后 read_status 变 skimmed，但 deep_dive_md 仍空的论文此前无人再
+        触发精读，永久卡在 skimmed。这里在 skim 批次跑完后单独补一批精读，配额严格
+        受限（deep_read_compensation，默认 2），避免闲时一次精读太多拖垮 LLM 速率。
+        """
+        # 闲时精读配额：保守默认 2，可通过 settings 调整
+        quota = getattr(get_settings(), "deep_read_compensation", 2)
+        if quota <= 0:
+            return 0
+
+        stuck = self._get_stuck_skimmed_papers(limit=quota)
+        if not stuck:
+            return 0
+
+        logger.info("🔧 闲时补偿精读：%d 篇卡在 skimmed 的论文", len(stuck))
+        limiter = get_rate_limiter()
+        pipelines = PaperPipelines()
+        compensated = 0
+
+        for paper_id, title in stuck:
+            # 繁忙时放弃剩余补偿，避免与用户请求争抢 LLM
+            if not self.detector.is_idle():
+                logger.warning("系统不再空闲，中止 skimmed 补偿")
+                break
+            if not limiter.start_task():
+                logger.debug("并发数已达上限，中止 skimmed 补偿")
+                break
+            try:
+                # 精读走 LLM 限流；失败不抛出，下一篇继续
+                if not acquire_api("llm", timeout=30.0):
+                    logger.warning("LLM API 限流，跳过精读补偿：%s", title[:40])
+                    continue
+                try:
+                    pipelines.deep_dive(paper_id)
+                    compensated += 1
+                    logger.info("✅ 闲时补偿精读完成：%s", title[:40])
+                except Exception as e:
+                    logger.warning("闲时补偿精读失败：%s - %s", title[:40], e)
+            finally:
+                limiter.end_task()
+            time.sleep(1)
+
+        logger.info("📊 skimmed 补偿完成：精读=%d/%d", compensated, len(stuck))
+        return compensated
 
     def _run_loop(self):
         """主循环"""

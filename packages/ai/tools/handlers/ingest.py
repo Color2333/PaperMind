@@ -129,15 +129,16 @@ def _ingest_arxiv(
     all_papers = arxiv_client.fetch_latest(query=query, max_results=50)
     selected_papers = [p for p in all_papers if p.arxiv_id in selected_set]
 
-    # 补充搜索结果中没有的（可能 ID 不在前50条中），逐个按 ID 拉取
+    # 补充搜索结果中没有的（可能 ID 不在前50条中），批量按 ID 拉取
+    # 此前用 fetch_latest(query=f"id:{mid}") —— arxiv 不支持 id: 作为 search_query 前缀，
+    # 永远拿不到目标论文。改用 fetch_by_ids（走 id_list 参数，正确入口），一次批量查
     found_ids = {p.arxiv_id for p in selected_papers}
     missing_ids = selected_set - found_ids
-    for mid in missing_ids:
+    if missing_ids:
         try:
-            extra = arxiv_client.fetch_latest(query=f"id:{mid}", max_results=1)
-            selected_papers.extend(extra)
+            selected_papers.extend(arxiv_client.fetch_by_ids(list(missing_ids)))
         except Exception:
-            logger.warning("Failed to fetch arxiv paper %s", mid)
+            logger.warning("Failed to fetch arxiv papers by ids: %s", list(missing_ids)[:5])
 
     failed_papers: list[dict] = []
     ingested_papers: list[dict] = []

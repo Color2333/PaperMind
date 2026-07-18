@@ -5,30 +5,105 @@ API 并发控制器 - 智能限流 + 动态并发
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
+import os
 import time
 from datetime import UTC, datetime
 from threading import Lock
+from typing import Any
 
 from packages.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 
-class TokenBucket:
-    """令牌桶算法实现"""
+def _shared_state_dir() -> Any:
+    """获取跨进程共享状态目录（backend/api 与 worker 容器挂载同一卷）。
 
-    def __init__(self, rate: float = 10.0, capacity: int = 20):
+    无写权限或目录不可用时返回 None，调用方降级到进程内内存桶。
+    """
+    try:
+        d = get_settings().rate_limiter_state_dir
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    except Exception:  # 配置缺失 / 无写权限
+        return None
+
+
+class TokenBucket:
+    """令牌桶算法实现（跨进程共享版本）
+
+    状态持久化到共享状态文件，通过 fcntl.flock(LOCK_EX) 互斥，使 api/worker
+    两个进程共享同一令牌桶。此前每个进程各持一份内存桶，实际速率是配置值的 2 倍，
+    arxiv 全局限流时容易触发 429。无共享文件或写失败时降级到进程内内存桶（行为
+    与旧版一致），不会因共享层故障而阻塞业务。
+    """
+
+    def __init__(self, rate: float = 10.0, capacity: int = 20, api_type: str = ""):
         """
         Args:
             rate: 令牌生成速率 (个/秒)
             capacity: 桶容量 (最大令牌数)
+            api_type: API 类型，用于命名共享状态文件（如 arxiv → pm_rate_arxiv.state）
         """
         self.rate = rate
         self.capacity = capacity
+        self.api_type = api_type
+        # 进程内内存桶（共享文件不可用时降级使用，也作 _refill 兜底初值）
         self.tokens = float(capacity)
         self.last_update = time.time()
         self._lock = Lock()
+
+        # 跨进程共享状态文件 + flock 互斥
+        self._state_path: Any = None
+        self._state_fp = None
+        self._shared = False
+        state_dir = _shared_state_dir()
+        if state_dir is not None and api_type:
+            path = state_dir / f"pm_rate_{api_type}.state"
+            try:
+                # 句柄保持打开以复用 flock；用 a+b：不存在则创建，flock 对同一
+                # inode 生效（跨容器共享卷同主机 inode）。close() 释放。
+                self._state_fp = open(path, "a+b")  # noqa: SIM115
+                self._state_path = path
+                self._shared = True
+            except OSError:
+                logger.warning("TokenBucket(%s): 共享状态文件不可写，降级进程内内存桶", api_type)
+                self._shared = False
+
+    def close(self) -> None:
+        """释放共享状态文件句柄"""
+        if self._state_fp is not None:
+            with contextlib.suppress(OSError):
+                self._state_fp.close()
+            self._state_fp = None
+            self._shared = False
+
+    def __del__(self):
+        self.close()
+
+    def _read_shared(self) -> tuple[float, float]:
+        """从共享文件读 (tokens, last_update)。文件空/损坏时用当前内存值初始化。"""
+        self._state_fp.seek(0)
+        raw = self._state_fp.read()
+        if not raw:
+            return float(self.capacity), time.time()
+        try:
+            data = json.loads(raw)
+            return float(data.get("tokens", self.capacity)), float(
+                data.get("last_update", time.time())
+            )
+        except (ValueError, TypeError):
+            return float(self.capacity), time.time()
+
+    def _write_shared(self, tokens: float, last_update: float) -> None:
+        self._state_fp.seek(0)
+        self._state_fp.truncate()
+        self._state_fp.write(json.dumps({"tokens": tokens, "last_update": last_update}).encode())
+        self._state_fp.flush()
+        os.fsync(self._state_fp.fileno())
 
     def acquire(self, tokens: int = 1, timeout: float | None = None) -> bool:
         """获取令牌
@@ -43,17 +118,36 @@ class TokenBucket:
         start_time = time.time()
 
         while True:
-            with self._lock:
-                now = time.time()
-                # 补充令牌
-                elapsed = now - self.last_update
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
-                self.last_update = now
+            # 共享路径：flock 互斥，跨进程读写同一桶状态
+            if self._shared:
+                import fcntl
 
-                # 尝试获取
-                if self.tokens >= tokens:
-                    self.tokens -= tokens
-                    return True
+                with self._lock:  # 进程内串行化（避免同进程多线程争抢 flock）
+                    fcntl.flock(self._state_fp.fileno(), fcntl.LOCK_EX)
+                    try:
+                        now = time.time()
+                        cur_tokens, last_update = self._read_shared()
+                        elapsed = now - last_update
+                        cur_tokens = min(self.capacity, cur_tokens + elapsed * self.rate)
+                        if cur_tokens >= tokens:
+                            cur_tokens -= tokens
+                            self._write_shared(cur_tokens, now)
+                            # 同步进程内缓存（get_available_tokens 读它）
+                            self.tokens = cur_tokens
+                            self.last_update = now
+                            return True
+                    finally:
+                        fcntl.flock(self._state_fp.fileno(), fcntl.LOCK_UN)
+            else:
+                # 降级路径：进程内内存桶（与旧版行为一致）
+                with self._lock:
+                    now = time.time()
+                    elapsed = now - self.last_update
+                    self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+                    self.last_update = now
+                    if self.tokens >= tokens:
+                        self.tokens -= tokens
+                        return True
 
             # 检查超时
             if timeout is not None and (time.time() - start_time) >= timeout:
@@ -63,7 +157,19 @@ class TokenBucket:
             time.sleep(0.1)
 
     def get_available_tokens(self) -> float:
-        """获取当前可用令牌数"""
+        """获取当前可用令牌数（跨进程读，非强一致）"""
+        if self._shared:
+            import fcntl
+
+            with self._lock:
+                fcntl.flock(self._state_fp.fileno(), fcntl.LOCK_SH)
+                try:
+                    now = time.time()
+                    cur_tokens, last_update = self._read_shared()
+                    elapsed = now - last_update
+                    return min(self.capacity, cur_tokens + elapsed * self.rate)
+                finally:
+                    fcntl.flock(self._state_fp.fileno(), fcntl.LOCK_UN)
         with self._lock:
             now = time.time()
             elapsed = now - self.last_update
@@ -95,12 +201,12 @@ class APIRateLimiter:
     def __init__(self):
         self.settings = get_settings()
 
-        # 初始化令牌桶（多个 API 独立限流）
+        # 初始化令牌桶（多个 API 独立限流）；api_type 用于命名跨进程共享状态文件
         self._buckets = {
-            "llm": TokenBucket(rate=5.0, capacity=10),
-            "arxiv": TokenBucket(rate=2.0, capacity=5),
-            "embedding": TokenBucket(rate=3.0, capacity=8),
-            "vision": TokenBucket(rate=1.0, capacity=3),
+            "llm": TokenBucket(rate=5.0, capacity=10, api_type="llm"),
+            "arxiv": TokenBucket(rate=2.0, capacity=5, api_type="arxiv"),
+            "embedding": TokenBucket(rate=3.0, capacity=8, api_type="embedding"),
+            "vision": TokenBucket(rate=1.0, capacity=3, api_type="vision"),
         }
 
         # 当前并发配置
