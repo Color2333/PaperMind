@@ -79,6 +79,10 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+    # worker 共用 Dockerfile.backend（含 HEALTHCHECK curl 8000/health），但 worker
+    # 不跑 uvicorn，继承的 healthcheck 会误判 unhealthy。显式禁用 worker healthcheck。
+    healthcheck:
+      test: ["NONE"]
     deploy:
       resources:
         limits:
