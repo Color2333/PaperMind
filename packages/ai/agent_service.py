@@ -121,10 +121,13 @@ def _build_user_profile() -> str:
                 titles = [p.title[:60] for p in deep_read]
                 parts.append(f"最近精读：{'; '.join(titles)}")
 
-            skimmed = paper_repo.list_by_read_status(ReadStatus.skimmed, limit=200)
-            unread = paper_repo.list_by_read_status(ReadStatus.unread, limit=200)
+            # 修⑭：此前用 limit 列表的 len 当总数（limit=5 → 精读永远≤5，真实 366）。
+            # 改用 count_by_read_status 查真实总数
+            deep_count = paper_repo.count_by_read_status(ReadStatus.deep_read)
+            skim_count = paper_repo.count_by_read_status(ReadStatus.skimmed)
+            unread_count = paper_repo.count_by_read_status(ReadStatus.unread)
             parts.append(
-                f"论文库状态：{len(deep_read)} 篇精读、{len(skimmed)} 篇粗读、{len(unread)} 篇未读"
+                f"论文库状态：{deep_count} 篇精读、{skim_count} 篇粗读、{unread_count} 篇未读"
             )
 
         if parts:
@@ -254,7 +257,7 @@ def stream_chat(
 
         def _confirm_iter():
             yield from loop.execute_and_continue(action, conversation)
-            yield make_sse("done", {})
+            # 修④：loop 内部已发 done，service 不再重复 yield（此前导致 done=2~3 重复持久化）
 
         return _confirm_iter(), conversation
 
@@ -263,7 +266,7 @@ def stream_chat(
 
     def _chat_iter():
         yield from loop.run(conversation)
-        yield make_sse("done", {})
+        # 修④：loop 内部已发 done，service 不再重复
 
     return _chat_iter(), conversation
 
@@ -304,7 +307,7 @@ def confirm_action(action_id: str) -> tuple[Iterator[str], list[dict]]:
 
     def _confirm_iter():
         yield from loop.execute_confirmed_action(action, conversation)
-        yield make_sse("done", {})
+        # 修④：loop 内部已发 done，service 不再重复
 
     return _confirm_iter(), conversation
 
@@ -340,7 +343,7 @@ def reject_action(action_id: str) -> tuple[Iterator[str], list[dict]]:
         )
         if loop:
             yield from loop.execute_rejected_action(action, conversation)
-        yield make_sse("done", {})
+        # 修④：loop 内部已发 done，service 不再重复
 
     return _reject_iter(), conversation
 

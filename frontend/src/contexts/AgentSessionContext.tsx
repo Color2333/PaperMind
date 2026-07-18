@@ -87,7 +87,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const pendingActions = useMemo(() => new Set(pendingActionIds), [pendingActionIds]);
   const confirmingActions = useMemo(() => new Set(confirmingActionIds), [confirmingActionIds]);
 
-  const { activeId, createConversation, saveMessages } = useConversationCtx();
+  const { activeId, createConversation, saveMessages, setActiveId } = useConversationCtx();
   const justCreatedRef = useRef(false);
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
@@ -266,6 +266,15 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       const id = uid();
 
       switch (type as SSEEventType) {
+        case "conversation_init": {
+          // 修①：后端返回真实 conversation_id。新会话前端曾用临时 id 创建，
+          // 现采用后端 id。把当前 items 迁移到后端 id 下（saveMessages 用 activeId）。
+          const backendId = data.conversation_id as string;
+          if (backendId && backendId !== activeIdRef.current) {
+            setActiveId(backendId);
+          }
+          break;
+        }
         case "text_delta": {
           streamBufRef.current += (data.content as string) || "";
           scheduleFlush();
@@ -558,7 +567,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         }
       }
     },
-    [scheduleFlush, drainBuffer, applyPendingText]
+    [scheduleFlush, drainBuffer, applyPendingText, setActiveId]
   );
 
   /**
@@ -610,8 +619,6 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   );
 
   /* ---- 发送消息 ---- */
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -629,37 +636,9 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         ...prev,
         { id: `user_${uid()}`, type: "user" as const, content: text.trim(), timestamp: new Date() },
       ]);
-      // 使用 ref 获取最新 items，避免闭包过时
-      const currentItems = itemsRef.current;
-      const msgs: AgentMessage[] = [];
-      for (const it of currentItems) {
-        if (it.type === "user") {
-          msgs.push({ role: "user", content: it.content });
-        } else if (it.type === "assistant") {
-          msgs.push({ role: "assistant", content: it.content });
-        } else if (it.type === "step_group" && it.steps) {
-          const summaries = it.steps
-            .filter((s) => s.status === "done" || s.status === "error")
-            .map((s) => `[工具: ${s.toolName}] ${s.success ? "成功" : "失败"}: ${s.summary || ""}`)
-            .join("\n");
-          if (summaries) {
-            msgs.push({ role: "assistant", content: `执行了以下操作:\n${summaries}` });
-          }
-        } else if (it.type === "action_confirm") {
-          msgs.push({
-            role: "assistant",
-            content: `[等待确认] ${it.actionDescription || it.actionTool || ""}`,
-          });
-        } else if (it.type === "artifact") {
-          msgs.push({
-            role: "assistant",
-            content: `[已生成内容: ${it.artifactTitle || "未命名"}]\n${it.artifactContent || ""}`,
-          });
-        } else if (it.type === "error") {
-          msgs.push({ role: "assistant", content: `[错误: ${it.content}]` });
-        }
-      }
-      msgs.push({ role: "user" as const, content: text.trim() });
+      // 修②③：后端真相源——前端只发本次新 user 消息，历史由后端从 DB 拼。
+      // convId 可能为临时前端 id（新会话），后端收到后经 conversation_init 返真实 id。
+      const msgs: AgentMessage[] = [{ role: "user" as const, content: text.trim() }];
       try {
         const ac = new AbortController();
         abortRef.current = ac;

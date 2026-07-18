@@ -18,6 +18,8 @@ interface ConversationCtx {
   switchConversation: (id: string) => void;
   saveMessages: (messages: ConversationMessage[]) => void;
   deleteConversation: (id: string) => void;
+  /** 修①：直接设置当前会话 id（供后端 SSE 返 id 后采用后端 id 作 localStorage key） */
+  setActiveId: (id: string | null) => void;
 }
 
 const Ctx = createContext<ConversationCtx | null>(null);
