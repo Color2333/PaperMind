@@ -74,8 +74,13 @@ class CSFeedRepository:
     def update_run_status(self, category_code: str, count: int):
         sub = self.get_subscription(category_code)
         if sub:
-            sub.last_run_at = datetime.now(UTC)
-            sub.last_run_count = count
+            now = datetime.now(UTC)
+            # 修 daily_limit 失效 bug：此前 last_run_count = count（覆盖），当日多次抓取会重置配额，
+            # 绕过 daily_limit。改累加；跨天先清零，避免昨天余量带进今天
+            if sub.last_run_at is not None and sub.last_run_at.date() != now.date():
+                sub.last_run_count = 0
+            sub.last_run_at = now
+            sub.last_run_count = (sub.last_run_count or 0) + count
             sub.status = "active"
             self.session.commit()
 

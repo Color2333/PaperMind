@@ -29,13 +29,16 @@ class TokenBucket:
         self.lock = threading.Lock()
 
     def acquire(self, timeout: float = 60) -> bool:
+        # 修超时判定 bug：此前用 last_refill（每次 _refill 都更新为 now），time.time()-last_refill
+        # 永远≈0，永不超时 → arxiv 全局限流时 acquire 卡死 worker 线程。改用 start_time 判定
+        start_time = time.time()
         while True:
             with self.lock:
                 self._refill()
                 if self.tokens >= 1:
                     self.tokens -= 1
                     return True
-            if time.time() - self.last_refill > timeout:
+            if time.time() - start_time > timeout:
                 return False
             time.sleep(1)
 
