@@ -318,9 +318,7 @@ class IdleProcessor:
         self._papers_processed += processed
         self.detector.mark_task_executed()
 
-        # Critical #6 补偿：对已 skim 但卡住未精读的论文补一次精读（独立配额受限）
-        deep_compensated = self._compensate_stuck_skimmed()
-        return processed + deep_compensated
+        return processed
 
     def _compensate_stuck_skimmed(self) -> int:
         """补偿已 skim 但未精读的论文（Critical #6）。
@@ -380,6 +378,11 @@ class IdleProcessor:
                     if not self._is_processing:
                         self._is_processing = True
                         self._process_batch()
+                        # Critical #6 补偿：独立于 skim 批次触发。此前补偿挂在
+                        # _process_batch 末尾，但无 unread 论文时它提前 return 0，
+                        # 补偿永远不跑 → 1239 篇卡在 skimmed 未精读。改为在 _run_loop
+                        # 独立调用，无论有无 unread 都尝试补偿 stuck 论文。
+                        self._compensate_stuck_skimmed()
                         self._is_processing = False
                 else:
                     if self._is_processing:
