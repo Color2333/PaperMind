@@ -493,3 +493,52 @@ class TestTopicLastErrorExposed:
         repo.update_run_status(topic.id, error=None)
         db_session.refresh(topic)
         assert topic.last_error is None
+
+
+class TestIdleCompensationTrigger:
+    """Critical #6 补偿触发 bug 回归：补偿须独立于 skim 批次，无 unread 时也跑
+
+    此前 _compensate_stuck_skimmed 挂在 _process_batch 末尾，但无 unread 论文时
+    _process_batch 提前 return 0，补偿永远不触发 → stuck 论文卡死。
+    """
+
+    def test_process_batch_returns_zero_when_no_unread(self, db_session, monkeypatch):
+        """无 unread 论文时 _process_batch 返回 0（主路径提前返回）"""
+        from packages.ai.idle_processor import IdleProcessor
+
+        ip = IdleProcessor()
+        # 无论文时 _get_unread_papers 返回空 → _process_batch 直接 return 0
+        monkeypatch.setattr(ip, "_get_unread_papers", lambda limit=10: [])
+        # 不应触发补偿（补偿已移出 _process_batch）
+        called = []
+        monkeypatch.setattr(ip, "_compensate_stuck_skimmed", lambda: called.append(1) or 0)
+        result = ip._process_batch()
+        assert result == 0
+        assert called == [], "_process_batch 不应再调用补偿（已移到 _run_loop）"
+
+    def test_compensate_runs_independently_of_unread(self, db_session, monkeypatch):
+        """补偿独立触发：无 unread 但有 stuck skimmed 时仍补偿精读"""
+        from uuid import uuid4
+
+        from packages.domain.enums import ReadStatus
+        from packages.storage.models import AnalysisReport
+
+        repo = PaperRepository(db_session)
+        paper = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00301", title="stuck", abstract="a", metadata={})
+        )
+        repo.update_read_status(paper.id, ReadStatus.skimmed)
+        db_session.add(
+            AnalysisReport(id=str(uuid4()), paper_id=paper.id, summary_md="skim", deep_dive_md=None)
+        )
+        db_session.commit()
+
+        from packages.ai.idle_processor import IdleProcessor
+
+        ip = IdleProcessor()
+        # 无 unread 论文
+        monkeypatch.setattr(ip, "_get_unread_papers", lambda limit=10: [])
+        # 补偿应能捞到这篇 stuck 论文（验证查询独立可用）
+        stuck = ip._get_stuck_skimmed_papers(limit=5)
+        assert len(stuck) == 1, "应捞到 1 篇 stuck skimmed 论文"
+        assert stuck[0][0] == paper.id
