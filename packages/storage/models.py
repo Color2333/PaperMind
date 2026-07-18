@@ -85,6 +85,7 @@ class AnalysisReport(Base):
         ForeignKey("papers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+        unique=True,
     )
     summary_md: Mapped[str | None] = mapped_column(Text, nullable=True)
     deep_dive_md: Mapped[str | None] = mapped_column(Text, nullable=True)

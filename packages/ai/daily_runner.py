@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -167,6 +168,23 @@ def run_topic_ingest(topic_id: str, progress_callback: callable | None = None) -
                 break
             except Exception as exc:
                 last_error = str(exc)
+                # 修 High：内层 retry 此前无 sleep 无退避，失败后立即重发请求，限流场景
+                # 下加速触发 429。改指数退避；429/限流类错误用更长退避，其余快速失败重试。
+                if _attempt < topic.retry_limit:
+                    is_rate_limited = any(
+                        tok in str(exc).lower()
+                        for tok in ("429", "rate limit", "限流", "timeout", "timed out")
+                    )
+                    delay = 10.0 * (2**_attempt) if is_rate_limited else 3.0 * (2**_attempt)
+                    logger.warning(
+                        "topic %s 抓取失败 (attempt %d/%d): %s — %.0fs 后重试",
+                        topic_name,
+                        attempts,
+                        topic.retry_limit + 1,
+                        str(exc)[:120],
+                        delay,
+                    )
+                    time.sleep(delay)
 
         if last_error is not None:
             return {

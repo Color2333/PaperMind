@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -57,7 +58,14 @@ class AnalysisRepository:
             return found
         report = AnalysisReport(paper_id=pid, key_insights={})
         self.session.add(report)
-        self.session.flush()
+        try:
+            self.session.flush()
+        except IntegrityError:
+            # 并发 skim 同一论文时，另一事务已插入行（paper_id 现为 unique）。
+            # 回滚本事务未提交改动并取已存在的行，避免重复插入并防止抛 IntegrityError
+            # 中断 skim 流程。此前无 unique 约束 → 重复 skim 产生重复行。
+            self.session.rollback()
+            return self.session.execute(q).scalar_one()
         return report
 
     def summaries_for_papers(self, paper_ids: list[str]) -> dict[str, str]:

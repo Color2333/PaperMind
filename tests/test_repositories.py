@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 from packages.domain.enums import ReadStatus
 from packages.domain.schemas import PaperCreate
 from packages.storage.repositories import (
+    AnalysisRepository,
     CSFeedRepository,
     IeeeQuotaRepository,
     PaperRepository,
@@ -46,6 +47,49 @@ class TestPaperRepository:
         assert updated.id == first_id
         assert updated.title == "Updated Title"
         assert updated.abstract == "upd"
+
+    def test_upsert_preserves_skim_metadata_on_refetch(self, db_session):
+        """重复抓取同一论文时保留 skim 写入的 keywords/title_zh/abstract_zh（High 2a）
+
+        此前更新分支 existing.metadata_json = data.metadata（整体覆盖）会抹掉 skim 产物，
+        重复抓取丢失已花钱算出的中文翻译/关键词。
+        """
+        repo = PaperRepository(db_session)
+        saved = repo.upsert_paper(
+            PaperCreate(
+                arxiv_id="2401.00002",
+                title="Orig",
+                abstract="a",
+                metadata={"categories": ["cs.AI"], "authors": ["X"]},
+            )
+        )
+        # 模拟 skim 写入的派生字段
+        saved.metadata_json = {
+            "categories": ["cs.AI"],
+            "authors": ["X"],
+            "keywords": ["llm", "reasoning"],
+            "title_zh": "大语言模型推理",
+            "abstract_zh": "摘要中文",
+        }
+        db_session.flush()
+
+        # 二次抓取：arxiv 原始元数据不含 skim 字段
+        updated = repo.upsert_paper(
+            PaperCreate(
+                arxiv_id="2401.00002",
+                title="New Title",
+                abstract="b",
+                metadata={"categories": ["cs.AI", "cs.CL"], "authors": ["X", "Y"]},
+            )
+        )
+        meta = updated.metadata_json or {}
+        # skim 派生字段应保留
+        assert meta.get("keywords") == ["llm", "reasoning"]
+        assert meta.get("title_zh") == "大语言模型推理"
+        assert meta.get("abstract_zh") == "摘要中文"
+        # arxiv 原始字段应更新
+        assert meta.get("categories") == ["cs.AI", "cs.CL"]
+        assert meta.get("authors") == ["X", "Y"]
 
     def test_upsert_multi_source_arxiv_id_synthesis(self, db_session):
         """非 arXiv 源（arxiv_id=None）用 source:source_id 合成 arxiv_id"""
@@ -220,3 +264,94 @@ class TestCSFeedRepository:
         """未知 category_code：静默跳过，不抛"""
         repo = CSFeedRepository(db_session)
         repo.update_run_status("cs.NONEXIST", count=5)
+
+
+class TestAnalysisRepository:
+    def test_get_or_create_idempotent(self, db_session):
+        """_get_or_create 首次创建、二次返回同一行"""
+        repo = AnalysisRepository(db_session)
+        # 需要先有 paper（外键约束）
+        paper_repo = PaperRepository(db_session)
+        paper = paper_repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00010", title="t", abstract="a", metadata={})
+        )
+        db_session.flush()
+
+        r1 = repo._get_or_create(paper.id)
+        r2 = repo._get_or_create(paper.id)
+        assert r1.id == r2.id
+
+    def test_get_or_create_unique_no_duplicates(self, db_session):
+        """AnalysisReport.paper_id 唯一：重复 _get_or_create 不产生重复行（High 2b）"""
+        from sqlalchemy import func, select
+
+        from packages.storage.models import AnalysisReport
+
+        paper_repo = PaperRepository(db_session)
+        paper = paper_repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00011", title="t", abstract="a", metadata={})
+        )
+        db_session.flush()
+
+        repo = AnalysisRepository(db_session)
+        r1 = repo._get_or_create(paper.id)
+        db_session.flush()
+        r2 = repo._get_or_create(paper.id)
+        db_session.flush()
+        assert r1.id == r2.id  # 同一行
+
+        # 全表只有这一条该 paper_id 的 report
+        count = db_session.execute(
+            select(func.count())
+            .select_from(AnalysisReport)
+            .where(AnalysisReport.paper_id == str(paper.id))
+        ).scalar_one()
+        assert count == 1
+
+    def test_get_or_create_integrity_error_recovers(self, db_session):
+        """直接插入违反 unique 后，_get_or_create 回滚并取已存在行（High 2b IntegrityError 路径）"""
+        from uuid import uuid4
+
+        from packages.storage.models import AnalysisReport
+
+        paper_repo = PaperRepository(db_session)
+        paper = paper_repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00013", title="t", abstract="a", metadata={})
+        )
+        db_session.flush()
+        pid = str(paper.id)
+
+        # 先 commit 一行（模拟并发事务 A 已提交）
+        existing = AnalysisReport(id=str(uuid4()), paper_id=pid, key_insights={"a": 1})
+        db_session.add(existing)
+        db_session.commit()
+
+        # 再次 _get_or_create：select 命中已存在行，不走插入分支，不抛 IntegrityError
+        repo = AnalysisRepository(db_session)
+        again = repo._get_or_create(paper.id)
+        assert again.id == existing.id
+
+    def test_skim_report_roundtrip(self, db_session):
+        """upsert_skim 写入 summary_md/skim_score/key_insights"""
+        from packages.domain.schemas import SkimReport
+
+        paper_repo = PaperRepository(db_session)
+        paper = paper_repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00012", title="t", abstract="a", metadata={})
+        )
+        db_session.flush()
+
+        repo = AnalysisRepository(db_session)
+        skim = SkimReport(
+            one_liner="一句话总结",
+            innovations=["创新1", "创新2"],
+            relevance_score=0.85,
+        )
+        repo.upsert_skim(paper.id, skim)
+        db_session.flush()
+
+        report = repo._get_or_create(paper.id)
+        assert report.summary_md is not None
+        assert "一句话总结" in report.summary_md
+        assert report.skim_score == 0.85
+        assert report.key_insights.get("skim_one_liner") == "一句话总结"
