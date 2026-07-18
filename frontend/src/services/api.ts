@@ -5,6 +5,7 @@
 import { retryAsync } from "@/lib/errorHandler";
 import type {
   SystemStatus,
+  WorkerHeartbeat,
   Topic,
   TopicCreate,
   TopicUpdate,
@@ -231,6 +232,7 @@ function del<T>(path: string, opts?: { signal?: AbortSignal }) {
 export const systemApi = {
   health: () => get<{ status: string; app: string; env: string }>("/health"),
   status: () => get<SystemStatus>("/system/status"),
+  worker: () => get<{ heartbeat: WorkerHeartbeat | null; stale_threshold: number }>("/system/worker"),
 };
 
 export const todayApi = {
@@ -239,7 +241,8 @@ export const todayApi = {
 
 /* ========== 主题 ========== */
 export const topicApi = {
-  list: (enabledOnly = false) => get<{ items: Topic[] }>(`/topics?enabled_only=${enabledOnly}`),
+  list: (enabledOnly = false, failed = false) =>
+    get<{ items: Topic[] }>(`/topics?enabled_only=${enabledOnly}${failed ? "&failed=true" : ""}`),
   create: (data: TopicCreate) => post<Topic>("/topics", data),
   update: (id: string, data: TopicUpdate) => patch<Topic>(`/topics/${id}`, data),
   delete: (id: string) => del<{ deleted: string }>(`/topics/${id}`),

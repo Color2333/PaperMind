@@ -36,8 +36,12 @@ def _topic_dict(t, session=None) -> dict:
         "enable_date_filter": getattr(t, "enable_date_filter", False),
         "date_filter_days": getattr(t, "date_filter_days", 7),
         "paper_count": 0,
-        "last_run_at": None,
+        # last_run_at/last_error 读 TopicSubscription 真实抓取状态（PR1 存的），
+        # 此前被 CollectionAction.created_at 覆盖掩盖了抓取失败
+        "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
+        "last_error": t.last_error,
         "last_run_count": None,
+        "last_action_at": None,  # 最近一次收集行动（与 last_run_at 区分）
     }
     if session is not None:
         from sqlalchemy import func, select
@@ -49,7 +53,7 @@ def _topic_dict(t, session=None) -> dict:
             select(func.count()).select_from(PaperTopic).where(PaperTopic.topic_id == t.id)
         )
         d["paper_count"] = cnt or 0
-        # 最近一次行动
+        # 最近一次收集行动（单独字段，不再覆盖 last_run_at）
         last_action = session.execute(
             select(CollectionAction)
             .where(CollectionAction.topic_id == t.id)
@@ -57,7 +61,7 @@ def _topic_dict(t, session=None) -> dict:
             .limit(1)
         ).scalar_one_or_none()
         if last_action:
-            d["last_run_at"] = (
+            d["last_action_at"] = (
                 last_action.created_at.isoformat() if last_action.created_at else None
             )
             d["last_run_count"] = last_action.paper_count
@@ -65,13 +69,16 @@ def _topic_dict(t, session=None) -> dict:
 
 
 @router.get("/topics")
-def list_topics(enabled_only: bool = False) -> dict:
+def list_topics(enabled_only: bool = False, failed: bool = False) -> dict:
     from sqlalchemy import func, select
 
     from packages.storage.models import CollectionAction, PaperTopic
 
     with session_scope() as session:
         topics = TopicRepository(session).list_topics(enabled_only=enabled_only)
+        # failed=true：只返回最近抓取出错的 topic（供可观测性面板）
+        if failed:
+            topics = [t for t in topics if t.last_error]
         if not topics:
             return {"items": []}
         topic_ids = [t.id for t in topics]
@@ -110,12 +117,16 @@ def list_topics(enabled_only: bool = False) -> dict:
                 "enabled": t.enabled,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "paper_count": paper_counts.get(t.id, 0),
-                "last_run_at": None,
+                # last_run_at/last_error 读 TopicSubscription 真实抓取状态（PR1），
+                # 此前被 CollectionAction.created_at 覆盖，抓取失败被掩盖
+                "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
+                "last_error": t.last_error,
+                "last_action_at": None,
                 "last_run_count": None,
             }
             last_action = latest_actions.get(t.id)
             if last_action:
-                d["last_run_at"] = (
+                d["last_action_at"] = (
                     last_action.created_at.isoformat() if last_action.created_at else None
                 )
                 d["last_run_count"] = last_action.paper_count
