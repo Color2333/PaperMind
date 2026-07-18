@@ -37,20 +37,17 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 # 心跳改写共享卷 pm_data（/app/data），backend 也能读同一文件暴露 worker 状态。
-# 此前写 /tmp（容器内，后端读不到），可观测性端点无法查询 worker 健康。
+# status 页（/system/worker 端点 + Operations 面板）读此文件展示 worker 健康。
 _HEALTH_FILE = Path("/app/data/worker_heartbeat.json")
-# 心跳健康判定：最近一次心跳距现在超过此秒数视为不健康（捕获 worker 卡死/全部任务失败）
-_HEARTBEAT_STALE_SECONDS = 1200  # 20 分钟（cron job 最小间隔 30min，留足缓冲）
-# 告警去重：同一告警类型在此秒数内不重复发邮件（防刷屏）
-_ALERT_DEDUP_SECONDS = 3600  # 1 小时
+# 心跳健康判定：最近一次心跳距现在超过此秒数视为不健康（status 页展示用）
+_HEARTBEAT_STALE_SECONDS = 1200  # 20 分钟
 
 
 def _write_heartbeat(error: str | None = None) -> None:
-    """写入心跳文件供外部健康检查（High 2e：记录最近一次错误，不再掩盖故障）。
+    """写入心跳文件供 status 页查询（记录最近一次错误，不再掩盖故障）。
 
-    此前无条件写时间戳，healthcheck 仅 test -f → 即使所有 job 失败 worker 仍判健康。
-    现写入 JSON {ts, error}：健康检查读 ts 判定时效，error 字段记录最近致命错误。
-    job 全部失败时不写心跳（让心跳自然过期 → healthcheck 反映故障）。
+    写入 JSON {ts, error}：status 页读 ts 判定时效，error 字段记录最近致命错误。
+    job 全部失败时不写心跳（让心跳自然过期 → status 页反映故障）。
     """
     import json
 
@@ -61,89 +58,13 @@ def _write_heartbeat(error: str | None = None) -> None:
 
 
 def _read_heartbeat() -> dict | None:
-    """读共享卷心跳文件，供自检告警 + 端点查询。文件缺失/损坏返回 None。"""
+    """读共享卷心跳文件，供 status 端点查询。文件缺失/损坏返回 None。"""
     import json
 
     try:
         return json.loads(_HEALTH_FILE.read_text())
     except (OSError, ValueError, TypeError):
         return None
-
-
-# 告警去重状态：{alert_key: last_alert_ts}（进程内，重启后重置——可接受）
-_last_alerts: dict[str, float] = {}
-
-
-def _send_alert(subject: str, html: str, alert_key: str) -> None:
-    """发告警邮件给 notify_default_to，带 1h 去重。SMTP 未配置时静默跳过。"""
-    now = time.time()
-    last = _last_alerts.get(alert_key, 0)
-    if now - last < _ALERT_DEDUP_SECONDS:
-        logger.debug(
-            "告警 %s 去重中（距上次 %.0fs < %ds），跳过",
-            alert_key,
-            now - last,
-            _ALERT_DEDUP_SECONDS,
-        )
-        return
-    from packages.config import get_settings
-    from packages.integrations.notifier import NotificationService
-
-    recipient = get_settings().notify_default_to
-    if not recipient:
-        logger.debug("notify_default_to 未配置，跳过告警 %s", alert_key)
-        return
-    ok = NotificationService().send_email_html(recipient, subject, html)
-    if ok:
-        _last_alerts[alert_key] = now
-        logger.info("告警邮件已发送: %s -> %s", alert_key, recipient)
-    else:
-        logger.warning("告警邮件发送失败（SMTP 未配置或出错）: %s", alert_key)
-
-
-def heartbeat_alert_job() -> None:
-    """每 10min 自检：心跳过期 + 主题抓取错误 → 发告警邮件（可观测性闭环）。
-
-    心跳过期说明 worker 卡死或全部 job 失败；主题 last_error 说明某主题抓取失败。
-    两者此前只记日志无人知，现在发邮件给 notify_default_to（带 1h 去重防刷屏）。
-    """
-    import html as html_lib
-
-    # 1. 心跳过期检查
-    hb = _read_heartbeat()
-    if hb is None or (time.time() - float(hb.get("ts", 0))) > _HEARTBEAT_STALE_SECONDS:
-        age = (
-            "未知（文件缺失/损坏）"
-            if hb is None
-            else f"{int(time.time() - float(hb.get('ts', 0)))}s"
-        )
-        body = (
-            f"<h2>⚠️ Worker 心跳过期</h2>"
-            f"<p>心跳距今 <b>{age}</b>（阈值 {_HEARTBEAT_STALE_SECONDS}s）。</p>"
-            f"<p>可能原因：worker 卡死、全部 job 失败、或容器异常。</p>"
-            f"<p>最近错误：{(hb or {}).get('error') or 'N/A'}</p>"
-            f"<p>请检查 worker 容器状态与日志。</p>"
-        )
-        _send_alert("[PaperMind] Worker 心跳过期告警", body, "heartbeat_stale")
-    # 2. 主题抓取错误检查
-    try:
-        with session_scope() as session:
-            topics = TopicRepository(session).list_topics(enabled_only=True)
-            errored = [t for t in topics if t.last_error]
-            if errored:
-                rows = "".join(
-                    f"<tr><td>{html_lib.escape(t.name)}</td>"
-                    f"<td>{html_lib.escape((t.last_error or '')[:200])}</td></tr>"
-                    for t in errored
-                )
-                body = (
-                    f"<h2>⚠️ 主题抓取错误（{len(errored)} 个）</h2>"
-                    f"<table border='1' cellpadding='6' style='border-collapse:collapse'>"
-                    f"<tr><th>主题</th><th>最近错误</th></tr>{rows}</table>"
-                )
-                _send_alert(f"[PaperMind] {len(errored)} 个主题抓取失败", body, "topic_errors")
-    except Exception:
-        logger.exception("heartbeat_alert_job 检查主题错误失败")
 
 
 def _update_topic_run_status(topic_id: str, *, error: str | None) -> None:
@@ -393,15 +314,6 @@ def run_worker() -> None:
         **_job_kwargs,
     )
     logger.info("✅ 已添加：每周图谱维护任务（UTC 周日 22:00）")
-
-    # 可观测性：心跳过期 + 主题抓取错误告警（每 10min 自检发邮件）
-    scheduler.add_job(
-        heartbeat_alert_job,
-        trigger=CronTrigger(minute="*/10"),
-        id="heartbeat_alert",
-        **_job_kwargs,
-    )
-    logger.info("✅ 已添加：心跳告警自检任务（每 10min）")
 
     # 优雅关闭（High 3f：等待进行中任务跑完，避免已下载 PDF 未 set_pdf_path
     # 的中间态丢失；wait=True + 60s 超时兜底）

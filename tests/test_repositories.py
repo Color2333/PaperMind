@@ -426,58 +426,6 @@ class TestCSFeedTopicLink:
         assert t_ai.id != t_lg.id
 
 
-class TestWorkerAlertDedup:
-    """Worker 告警去重逻辑测试（可观测性：同错误 1h 内不重复发邮件）"""
-
-    def test_send_alert_dedup_within_window(self, monkeypatch):
-        from apps.worker import main as wm
-
-        # 重置去重状态
-        wm._last_alerts.clear()
-        sent: list[str] = []
-
-        def fake_send(self, recipient, subject, html):
-            sent.append(subject)
-            return True
-
-        monkeypatch.setattr(
-            "packages.integrations.notifier.NotificationService.send_email_html", fake_send
-        )
-        monkeypatch.setattr(
-            "packages.config.get_settings",
-            lambda: type("S", (), {"notify_default_to": "test@example.com"})(),
-        )
-
-        wm._send_alert("[PaperMind] Test Alert", "<p>x</p>", "test_key")
-        assert len(sent) == 1, "首次告警应发送"
-        # 窗口内再次告警 → 去重，不发送
-        wm._send_alert("[PaperMind] Test Alert", "<p>x</p>", "test_key")
-        assert len(sent) == 1, "去重窗口内不应重复发送"
-        wm._last_alerts.clear()
-
-    def test_send_alert_no_recipient_silent(self, monkeypatch):
-        from apps.worker import main as wm
-
-        wm._last_alerts.clear()
-        sent: list[str] = []
-
-        def fake_send(self, recipient, subject, html):
-            sent.append(subject)
-            return True
-
-        monkeypatch.setattr(
-            "packages.integrations.notifier.NotificationService.send_email_html", fake_send
-        )
-        # notify_default_to 未配置
-        monkeypatch.setattr(
-            "packages.config.get_settings",
-            lambda: type("S", (), {"notify_default_to": None})(),
-        )
-        wm._send_alert("[PaperMind] Test", "<p>x</p>", "no_recv")
-        assert len(sent) == 0, "无收件人应静默跳过"
-        wm._last_alerts.clear()
-
-
 class TestTopicLastErrorExposed:
     """主题 last_error 经 repository 可读（可观测性：API 不再掩盖）"""
 

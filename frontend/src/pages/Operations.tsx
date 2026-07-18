@@ -394,7 +394,7 @@ export default function Operations() {
                 <div>
                   <p className="font-medium">心跳过期（{heartbeat.age_seconds}s &gt; {staleThreshold}s）</p>
                   <p className="mt-1 text-xs">worker 可能卡死或全部任务失败。最近错误：{heartbeat.error || "N/A"}</p>
-                  <p className="mt-1 text-xs">worker 每 10min 自检发告警邮件给 notify_default_to。</p>
+                  <p className="mt-1 text-xs">请检查 worker 容器状态与日志，必要时手动重启。</p>
                 </div>
               </div>
             ) : (
