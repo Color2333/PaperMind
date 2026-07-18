@@ -424,3 +424,72 @@ class TestCSFeedTopicLink:
         assert len(PaperRepository(db_session).list_by_topic(t_ai.id)) == 1
         assert len(PaperRepository(db_session).list_by_topic(t_lg.id)) == 1
         assert t_ai.id != t_lg.id
+
+
+class TestWorkerAlertDedup:
+    """Worker 告警去重逻辑测试（可观测性：同错误 1h 内不重复发邮件）"""
+
+    def test_send_alert_dedup_within_window(self, monkeypatch):
+        from apps.worker import main as wm
+
+        # 重置去重状态
+        wm._last_alerts.clear()
+        sent: list[str] = []
+
+        def fake_send(self, recipient, subject, html):
+            sent.append(subject)
+            return True
+
+        monkeypatch.setattr(
+            "packages.integrations.notifier.NotificationService.send_email_html", fake_send
+        )
+        monkeypatch.setattr(
+            "packages.config.get_settings",
+            lambda: type("S", (), {"notify_default_to": "test@example.com"})(),
+        )
+
+        wm._send_alert("[PaperMind] Test Alert", "<p>x</p>", "test_key")
+        assert len(sent) == 1, "首次告警应发送"
+        # 窗口内再次告警 → 去重，不发送
+        wm._send_alert("[PaperMind] Test Alert", "<p>x</p>", "test_key")
+        assert len(sent) == 1, "去重窗口内不应重复发送"
+        wm._last_alerts.clear()
+
+    def test_send_alert_no_recipient_silent(self, monkeypatch):
+        from apps.worker import main as wm
+
+        wm._last_alerts.clear()
+        sent: list[str] = []
+
+        def fake_send(self, recipient, subject, html):
+            sent.append(subject)
+            return True
+
+        monkeypatch.setattr(
+            "packages.integrations.notifier.NotificationService.send_email_html", fake_send
+        )
+        # notify_default_to 未配置
+        monkeypatch.setattr(
+            "packages.config.get_settings",
+            lambda: type("S", (), {"notify_default_to": None})(),
+        )
+        wm._send_alert("[PaperMind] Test", "<p>x</p>", "no_recv")
+        assert len(sent) == 0, "无收件人应静默跳过"
+        wm._last_alerts.clear()
+
+
+class TestTopicLastErrorExposed:
+    """主题 last_error 经 repository 可读（可观测性：API 不再掩盖）"""
+
+    def test_last_error_persisted_and_readable(self, db_session):
+        repo = TopicRepository(db_session)
+        topic = repo.upsert_topic(name="ErrTopic", query="q")
+        db_session.flush()
+        repo.update_run_status(topic.id, error="arxiv 429 限流")
+        db_session.refresh(topic)
+        assert topic.last_error == "arxiv 429 限流"
+        assert topic.last_run_at is not None
+        # 成功后清空
+        repo.update_run_status(topic.id, error=None)
+        db_session.refresh(topic)
+        assert topic.last_error is None

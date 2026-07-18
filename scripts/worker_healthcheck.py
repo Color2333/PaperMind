@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Worker 健康检查脚本（High 2e）。
+"""Worker 健康检查脚本（High 2e + 可观测性：改读共享卷）。
 
-读取 /tmp/worker_heartbeat（JSON {ts, error}），判定心跳时效：
+读取 /app/data/worker_heartbeat.json（pm_data 共享卷，backend 也可读），
+判定心跳时效：
 - 文件不存在 / 解析失败 → 不健康（exit 1）
 - ts 距今超过 1200 秒 → 不健康（worker 卡死或全部任务失败，心跳已过期）
 - 否则健康（exit 0）
 
 此前 healthcheck 仅 test -f 文件存在 → 即使所有 job 失败 worker 仍判健康。
+心跳改共享卷后，backend /system/worker 端点也能读同一文件暴露 worker 状态。
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-HEALTH_FILE = Path("/tmp/worker_heartbeat")
+HEALTH_FILE = Path("/app/data/worker_heartbeat.json")
 STALE_SECONDS = 1200  # 20 分钟
 
 

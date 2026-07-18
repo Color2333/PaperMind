@@ -3,11 +3,11 @@
  * 覆盖 API: POST /citations/sync/*, POST /jobs/*, GET /system/status
  * @author Color2333
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardHeader, Button, Input } from "@/components/ui";
 import { useToast } from "@/contexts/ToastContext";
-import { citationApi, jobApi, systemApi } from "@/services/api";
-import type { CitationSyncResult, SystemStatus } from "@/types";
+import { citationApi, jobApi, systemApi, topicApi } from "@/services/api";
+import type { CitationSyncResult, SystemStatus, Topic, WorkerHeartbeat } from "@/types";
 import {
   Settings,
   Link2,
@@ -18,6 +18,8 @@ import {
   Network,
   Calendar,
   Zap,
+  HeartPulse,
+  RotateCw,
 } from "lucide-react";
 
 interface OperationResult {
@@ -35,6 +37,46 @@ export default function Operations() {
   const [syncPaperId, setSyncPaperId] = useState("");
   /* 引用同步 - 主题 */
   const [syncTopicId, setSyncTopicId] = useState("");
+  /* 可观测性：worker 心跳 + 主题抓取错误 */
+  const [heartbeat, setHeartbeat] = useState<WorkerHeartbeat | null>(null);
+  const [staleThreshold, setStaleThreshold] = useState(1200);
+  const [failedTopics, setFailedTopics] = useState<Topic[]>([]);
+  const [obsLoading, setObsLoading] = useState(false);
+  const [refetchingId, setRefetchingId] = useState<string | null>(null);
+
+  const refreshObservability = async () => {
+    setObsLoading(true);
+    try {
+      const [workerRes, topicsRes] = await Promise.all([
+        systemApi.worker(),
+        topicApi.list(false, true),
+      ]);
+      setHeartbeat(workerRes.heartbeat);
+      setStaleThreshold(workerRes.stale_threshold);
+      setFailedTopics(topicsRes.items);
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "可观测性数据加载失败");
+    } finally {
+      setObsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshObservability();
+  }, []);
+
+  const handleRefetchTopic = async (id: string, name: string) => {
+    setRefetchingId(id);
+    try {
+      await topicApi.fetch(id);
+      toast("success", `✅ 主题「${name}」重新抓取已启动`);
+      refreshObservability();
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "重新抓取失败");
+    } finally {
+      setRefetchingId(null);
+    }
+  };
 
   const setLoading = (key: string, val: boolean) =>
     setLoadings((prev) => ({ ...prev, [key]: val }));
@@ -318,6 +360,95 @@ export default function Operations() {
               </Button>
               <ResultMessage result={results.health} />
             </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* 可观测性：Worker 心跳 + 主题抓取错误 */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Worker 心跳 */}
+        <Card>
+          <CardHeader
+            title="Worker 心跳"
+            description="worker 健康状态（心跳时效）"
+            action={
+              <button
+                onClick={refreshObservability}
+                disabled={obsLoading}
+                className="text-ink-tertiary hover:text-ink transition-colors disabled:opacity-50"
+                aria-label="刷新"
+              >
+                <RefreshCw className={`h-5 w-5 ${obsLoading ? "animate-spin" : ""}`} />
+              </button>
+            }
+          />
+          <div className="space-y-3">
+            {heartbeat === null ? (
+              <div className="flex items-center gap-2 rounded-lg bg-error-light px-3 py-3 text-sm text-error">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>心跳文件缺失或损坏 — worker 可能未启动或共享卷未挂载</span>
+              </div>
+            ) : heartbeat.is_stale ? (
+              <div className="flex items-start gap-2 rounded-lg bg-error-light px-3 py-3 text-sm text-error">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <p className="font-medium">心跳过期（{heartbeat.age_seconds}s &gt; {staleThreshold}s）</p>
+                  <p className="mt-1 text-xs">worker 可能卡死或全部任务失败。最近错误：{heartbeat.error || "N/A"}</p>
+                  <p className="mt-1 text-xs">worker 每 10min 自检发告警邮件给 notify_default_to。</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 rounded-lg bg-success-light px-3 py-3 text-sm text-success">
+                <HeartPulse className="h-4 w-4 shrink-0" />
+                <span>正常 — 心跳距今 {heartbeat.age_seconds}s（阈值 {staleThreshold}s）</span>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* 主题抓取错误 */}
+        <Card>
+          <CardHeader
+            title="主题抓取错误"
+            description="最近抓取失败的 topic（可重新抓取）"
+            action={<AlertTriangle className="text-ink-tertiary h-5 w-5" />}
+          />
+          <div className="space-y-3">
+            {failedTopics.length === 0 ? (
+              <div className="flex items-center gap-2 rounded-lg bg-success-light px-3 py-3 text-sm text-success">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>无抓取错误的 topic</span>
+              </div>
+            ) : (
+              <div className="max-h-80 space-y-2 overflow-y-auto">
+                {failedTopics.map((t) => (
+                  <div
+                    key={t.id}
+                    className="rounded-lg border border-border-light p-3 text-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-ink font-medium">{t.name}</span>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={<RotateCw className="h-3.5 w-3.5" />}
+                        onClick={() => handleRefetchTopic(t.id, t.name)}
+                        loading={refetchingId === t.id}
+                        className="shrink-0"
+                      >
+                        重新抓取
+                      </Button>
+                    </div>
+                    <p className="text-ink-tertiary mt-1 text-xs">
+                      {t.last_run_at ? `最近运行：${new Date(t.last_run_at).toLocaleString()}` : "无运行记录"}
+                    </p>
+                    <p className="text-error mt-1 text-xs break-words">
+                      {t.last_error || "未知错误"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Card>
       </div>

@@ -19,7 +19,16 @@ export interface SystemStatus {
     runs_latest_50: number;
     failed_runs_latest_50: number;
   };
+  worker_heartbeat?: WorkerHeartbeat | null;
+  topic_errors?: number;
   latest_run: PipelineRun | null;
+}
+
+export interface WorkerHeartbeat {
+  ts: number;
+  error: string | null;
+  age_seconds: number;
+  is_stale: boolean;
 }
 
 /* ========== 主题 ========== */
@@ -38,6 +47,8 @@ export interface Topic {
   date_filter_days: number;
   paper_count?: number;
   last_run_at?: string | null;
+  last_error?: string | null;
+  last_action_at?: string | null;
   last_run_count?: number | null;
 }
 
