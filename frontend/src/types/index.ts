@@ -1059,6 +1059,7 @@ export interface AuthStatusResponse {
 }
 
 export type SSEEventType =
+  | "conversation_init"
   | "text_delta"
   | "tool_start"
   | "tool_result"

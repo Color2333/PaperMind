@@ -293,10 +293,29 @@ class StreamingAgentLoop:
 
             # 有确认工具时，pending 并暂停
             if confirm_calls:
+                # 修⑧：LLM 一轮内可能返回多个 confirm 工具，之前只处理 confirm_calls[0]
+                # 其余被丢弃，导致 tool_calls 与 tool_result 不配对，下轮 LLM 报错。
+                # 现处理首个（挂起），其余转文本提示让 LLM 下一轮重提。
                 tc = confirm_calls[0]
+                if len(confirm_calls) > 1:
+                    extra = len(confirm_calls) - 1
+                    for extra_tc in confirm_calls[1:]:
+                        conversation.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": extra_tc.tool_call_id,
+                                "content": f"还有 {extra} 个待确认操作（{extra_tc.tool_name}），"
+                                f"请先确认当前操作后再继续。",
+                            }
+                        )
                 yield from self._handle_confirm_tool(tc, conversation)
                 return
 
+        # 修⑩：max_rounds 耗尽不应静默截断，给用户一个提示再 done
+        yield make_sse(
+            "text_delta",
+            {"content": "\n\n[已达到本轮最大对话轮次，如有需要请继续提问]"},
+        )
         yield make_sse("done", {})
 
     def _handle_stream_event(
@@ -309,18 +328,37 @@ class StreamingAgentLoop:
         if event.type == "text_delta":
             return make_sse("text_delta", {"content": event.content})
         elif event.type == "tool_call":
+            # 修⑨：tool_arguments 非法 JSON 时不应崩整个 run，跳过该 tool_call + 报错
+            args: dict = {}
+            if event.tool_arguments:
+                try:
+                    args = json.loads(event.tool_arguments)
+                    if not isinstance(args, dict):
+                        args = {}
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(
+                        "tool_call 参数 JSON 解析失败，跳过: %s [%s] err=%s",
+                        event.tool_call_id,
+                        event.tool_name,
+                        e,
+                    )
+                    return make_sse(
+                        "error",
+                        {"message": f"工具 {event.tool_name} 参数解析失败，已跳过"},
+                    )
             tool_calls.append(
                 PaperMindToolCall(
                     tool_call_id=event.tool_call_id,
                     tool_name=event.tool_name,
-                    arguments=json.loads(event.tool_arguments) if event.tool_arguments else {},
+                    arguments=args,
                 )
             )
         elif event.type == "error":
             return make_sse("error", {"message": event.content})
         elif event.type == "usage" and self._on_usage:
+            # 修⑬：provider 应从 llm 取真实 provider，model 从 event 取；之前两个参数都传 event.model
             self._on_usage(
-                event.model or "",
+                self.llm.provider or "",
                 event.model or "",
                 event.input_tokens or 0,
                 event.output_tokens or 0,

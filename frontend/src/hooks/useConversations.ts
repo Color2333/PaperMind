@@ -261,6 +261,7 @@ export function useConversations() {
     switchConversation,
     saveMessages,
     deleteConversation,
+    setActiveId,
   };
 }
 

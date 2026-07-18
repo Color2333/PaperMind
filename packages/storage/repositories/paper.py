@@ -238,6 +238,11 @@ class PaperRepository:
         q = select(func.count()).select_from(Paper)
         return self.session.execute(q).scalar() or 0
 
+    def count_by_read_status(self, status: ReadStatus) -> int:
+        """按阅读状态计数（供用户画像等用真实总数，不用 limit 列表的 len）"""
+        q = select(func.count()).select_from(Paper).where(Paper.read_status == status)
+        return self.session.execute(q).scalar() or 0
+
     def list_paginated(
         self,
         page: int = 1,
