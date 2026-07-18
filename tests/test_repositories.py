@@ -355,3 +355,72 @@ class TestAnalysisRepository:
         assert "一句话总结" in report.summary_md
         assert report.skim_score == 0.85
         assert report.key_insights.get("skim_one_liner") == "一句话总结"
+
+
+class TestCSFeedTopicLink:
+    def test_link_creates_disabled_topic_and_links_papers(self, db_session):
+        """cs_feed 论文关联到每分类的 disabled topic（接入主题侧边栏/图谱/统计）"""
+        from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
+
+        repo = PaperRepository(db_session)
+        p1 = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00201", title="t1", abstract="a", metadata={})
+        )
+        p2 = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00202", title="t2", abstract="a", metadata={})
+        )
+        db_session.flush()
+
+        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.AI", [p1.id, p2.id])
+        db_session.commit()
+
+        topic = TopicRepository(db_session).get_by_name("csfeed:cs.AI")
+        assert topic is not None
+        # enabled=False 防 topic_dispatch 重复抓取同一分类
+        assert topic.enabled is False
+        assert topic.query == "cat:cs.AI"
+        linked = PaperRepository(db_session).list_by_topic(topic.id)
+        assert len(linked) == 2
+
+    def test_link_idempotent_no_duplicate_rows(self, db_session):
+        """重复关联同一 (paper, topic) 不产生重复行（uq_paper_topic 兜底）"""
+        from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
+
+        repo = PaperRepository(db_session)
+        p = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00203", title="t", abstract="a", metadata={})
+        )
+        db_session.flush()
+
+        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.LG", [p.id])
+        db_session.commit()
+        # 再关联一次
+        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.LG", [p.id])
+        db_session.commit()
+
+        topic = TopicRepository(db_session).get_by_name("csfeed:cs.LG")
+        linked = PaperRepository(db_session).list_by_topic(topic.id)
+        assert len(linked) == 1  # 幂等，不重复
+
+    def test_link_category_isolation(self, db_session):
+        """不同分类建独立 topic，论文不串"""
+        from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
+
+        repo = PaperRepository(db_session)
+        p_ai = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00204", title="ai", abstract="a", metadata={})
+        )
+        p_lg = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00205", title="lg", abstract="a", metadata={})
+        )
+        db_session.flush()
+
+        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.AI", [p_ai.id])
+        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.LG", [p_lg.id])
+        db_session.commit()
+
+        t_ai = TopicRepository(db_session).get_by_name("csfeed:cs.AI")
+        t_lg = TopicRepository(db_session).get_by_name("csfeed:cs.LG")
+        assert len(PaperRepository(db_session).list_by_topic(t_ai.id)) == 1
+        assert len(PaperRepository(db_session).list_by_topic(t_lg.id)) == 1
+        assert t_ai.id != t_lg.id
