@@ -19,6 +19,22 @@ from packages.storage.models import AnalysisReport, Paper
 
 logger = logging.getLogger(__name__)
 
+# 进程内调度标志（High 2d）：topic_dispatch 抓取/处理期间置 True，
+# idle 检测读到即视为繁忙，避免 idle 与 topic_dispatch 抢同一批 unread 论文重复
+# embed/skim。仅 worker 进程内生效（idle_processor 与 topic_dispatch 同在 worker 容器）。
+_dispatching = False
+
+
+def set_dispatching(value: bool) -> None:
+    """设置 topic_dispatch 是否正在跑（供 worker main 调用）"""
+    global _dispatching
+    _dispatching = value
+
+
+def is_dispatching() -> bool:
+    """查询 topic_dispatch 是否正在跑"""
+    return _dispatching
+
 
 class IdleDetector:
     """
@@ -90,6 +106,11 @@ class IdleDetector:
         Returns:
             bool: 是否空闲
         """
+        # High 2d：topic_dispatch 正在抓取/处理时不算空闲，避免与 idle 抢同一批论文
+        if is_dispatching():
+            logger.debug("topic_dispatch 正在跑，不满足空闲条件")
+            return False
+
         # 检查距离上次任务执行的时间
         if time.time() - self._last_task_time < self.idle_interval:
             return False

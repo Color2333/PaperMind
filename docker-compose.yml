@@ -80,7 +80,9 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/worker_heartbeat"]
+      # High 2e：改判时效而非仅文件存在——所有 job 失败时心跳不再写，文件过期即不健康。
+      # 心跳超过 20 分钟（1200s）视为不健康（worker 卡死或全部任务失败）
+      test: ["CMD", "python", "-m", "scripts.worker_healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 40s

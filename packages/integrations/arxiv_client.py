@@ -75,10 +75,6 @@ class ArxivClient:
         days_back 默认 0 = 不加日期过滤（否则经典老论文如 OpenShape/Uni3D 都会被筛掉）。
         订阅/定时任务需要最新增量时，由调用方显式传 days_back。
         """
-        # 获取速率限制许可（10 秒超时）
-        if not acquire_api("arxiv", timeout=10.0):
-            raise httpx.TimeoutException("ArXiv 速率限制等待超时，请稍后重试")
-
         structured_query = _build_arxiv_query(query, days_back)
         logger.info(
             "ArXiv search: %s → %s (sort=%s start=%d days_back=%d)",
@@ -96,9 +92,13 @@ class ArxivClient:
             "max_results": max_results,
         }
         # 自动重试（429 限流 + 网络抖动 + 500 回退）
+        # 修 High 2f：acquire_api 移入循环内，每次请求都重新获取限流许可
+        # （此前循环外只 acquire 一次，500 回退的二次请求绕过限流器）
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
+                if not acquire_api("arxiv", timeout=10.0):
+                    raise httpx.TimeoutException("ArXiv 速率限制等待超时，请稍后重试")
                 response = self.client.get(ARXIV_API_URL, params=params)
                 response.raise_for_status()
                 return self._parse_atom(response.text)
@@ -112,13 +112,12 @@ class ArxivClient:
                     time.sleep(wait)
                     continue
                 elif status == 500 and "submittedDate:" in structured_query:
-                    # arXiv API 日期过滤可能有问题，尝试不带日期的查询
-                    logger.warning("ArXiv 500 错误（可能是日期过滤问题），尝试不带日期的查询")
-                    simple_query = _build_arxiv_query(query, days_back=0)  # 不添加日期
-                    params["search_query"] = simple_query
-                    response = self.client.get(ARXIV_API_URL, params=params)
-                    response.raise_for_status()
-                    return self._parse_atom(response.text)
+                    # arXiv API 日期过滤可能有问题，改不带日期的查询重试。
+                    # continue 回循环顶部重新 acquire_api（限流），二次失败由循环统一处理
+                    logger.warning("ArXiv 500 错误（可能是日期过滤问题），切无日期查询重试")
+                    structured_query = _build_arxiv_query(query, days_back=0)
+                    params["search_query"] = structured_query
+                    continue
                 raise
             except httpx.TimeoutException as exc:
                 last_exc = exc

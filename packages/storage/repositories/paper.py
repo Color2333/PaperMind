@@ -45,7 +45,16 @@ class PaperRepository:
             existing.title = data.title
             existing.abstract = data.abstract
             existing.publication_date = data.publication_date
-            existing.metadata_json = data.metadata
+            # 修 High：此前 existing.metadata_json = data.metadata（整体覆盖）会把 skim
+            # 写入的 keywords/title_zh/abstract_zh 抹掉——重复抓取同一论文时丢失已花钱
+            # 算出来的 skim 产物。改为合并：保留已有的 skim 派生字段，其余由 arxiv 原始
+            # 元数据更新覆盖（categories/authors/source 等原始字段）
+            new_meta = dict(data.metadata or {})
+            old_meta = existing.metadata_json or {}
+            for skim_key in ("keywords", "title_zh", "abstract_zh"):
+                if skim_key in old_meta and old_meta[skim_key]:
+                    new_meta[skim_key] = old_meta[skim_key]
+            existing.metadata_json = new_meta
             existing.updated_at = datetime.now(UTC)
             self.session.flush()
             return existing

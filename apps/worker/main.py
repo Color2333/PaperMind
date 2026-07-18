@@ -23,7 +23,11 @@ from packages.ai.daily_runner import (
     run_topic_ingest,
     run_weekly_graph_maintenance,
 )
-from packages.ai.idle_processor import start_idle_processor, stop_idle_processor
+from packages.ai.idle_processor import (
+    set_dispatching,
+    start_idle_processor,
+    stop_idle_processor,
+)
 from packages.config import get_settings
 from packages.logging_setup import setup_logging
 from packages.storage.db import session_scope
@@ -33,12 +37,23 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 _HEALTH_FILE = Path("/tmp/worker_heartbeat")
+# 心跳健康判定：最近一次心跳距现在超过此秒数视为不健康（捕获 worker 卡死/全部任务失败）
+_HEARTBEAT_STALE_SECONDS = 1200  # 20 分钟（cron job 最小间隔 30min，留足缓冲）
 
 
-def _write_heartbeat() -> None:
-    """写入心跳文件供外部健康检查"""
+def _write_heartbeat(error: str | None = None) -> None:
+    """写入心跳文件供外部健康检查（High 2e：记录最近一次错误，不再掩盖故障）。
+
+    此前无条件写时间戳，healthcheck 仅 test -f → 即使所有 job 失败 worker 仍判健康。
+    现写入 JSON {ts, error}：健康检查读 ts 判定时效，error 字段记录最近致命错误。
+    job 全部失败时不写心跳（让心跳自然过期 → healthcheck 反映故障）。
+    """
+    import json
+
     with contextlib.suppress(OSError):
-        _HEALTH_FILE.write_text(str(time.time()))
+        _HEALTH_FILE.write_text(
+            json.dumps({"ts": time.time(), "error": error[:200] if error else None})
+        )
 
 
 def _update_topic_run_status(topic_id: str, *, error: str | None) -> None:
@@ -122,22 +137,34 @@ def topic_dispatch_job() -> None:
         len(candidates),
         ", ".join(c["name"] for c in candidates),
     )
-    for c in candidates:
-        try:
-            result = _retry_with_backoff(
-                run_topic_ingest, c["id"], max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY
-            )
-            logger.info(
-                "topic %s done: inserted=%s, processed=%s",
-                c["name"],
-                result.get("inserted", 0) if result else 0,
-                result.get("processed", 0) if result else 0,
-            )
-            _update_topic_run_status(c["id"], error=None)
-        except Exception as e:
-            logger.exception("topic_dispatch failed for %s", c["name"])
-            _update_topic_run_status(c["id"], error=str(e))
-    _write_heartbeat()
+    # High 2d：置调度标志，idle_processor 检测到即视为繁忙，避免抢同一批论文重复处理
+    # High 2e：全部失败不写 heartbeat，让心跳自然过期 → healthcheck 反映故障
+    set_dispatching(True)
+    failures: list[str] = []
+    try:
+        for c in candidates:
+            try:
+                result = _retry_with_backoff(
+                    run_topic_ingest, c["id"], max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY
+                )
+                logger.info(
+                    "topic %s done: inserted=%s, processed=%s",
+                    c["name"],
+                    result.get("inserted", 0) if result else 0,
+                    result.get("processed", 0) if result else 0,
+                )
+                _update_topic_run_status(c["id"], error=None)
+            except Exception as e:
+                logger.exception("topic_dispatch failed for %s", c["name"])
+                _update_topic_run_status(c["id"], error=str(e))
+                failures.append(f"{c['name']}: {e}")
+    finally:
+        set_dispatching(False)
+    if not failures:
+        _write_heartbeat()
+    else:
+        # 全部失败时不写健康心跳，仅记录致命错误到日志（healthcheck 靠时效捕获）
+        logger.error("topic_dispatch 全部失败，跳过心跳写入：%s", failures)
 
 
 def brief_job() -> None:
@@ -160,8 +187,10 @@ def brief_job() -> None:
             result.get("saved_path", "N/A") if result else "N/A",
             result.get("email_sent", False) if result else False,
         )
-    except Exception:
-        logger.exception("Daily brief job failed after retries")
+    except Exception as e:
+        # High 2e：失败不写心跳，让健康检查靠时效捕获故障
+        logger.exception("Daily brief job failed after retries: %s", e)
+        return
     _write_heartbeat()
 
 
@@ -171,15 +200,22 @@ def weekly_graph_job() -> None:
         _retry_with_backoff(
             run_weekly_graph_maintenance, max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY
         )
-    except Exception:
-        logger.exception("Weekly graph job failed after retries")
+    except Exception as e:
+        # High 2e：失败不写心跳
+        logger.exception("Weekly graph job failed after retries: %s", e)
+        return
     _write_heartbeat()
 
 
 def cs_feed_dispatch_job():
-    """每小时同步分类 + 执行订阅抓取"""
-    cs_orchestrator.sync_categories()
-    cs_orchestrator.run()
+    """每小时同步分类 + 执行订阅抓取（High 2e：失败不写心跳）"""
+    try:
+        cs_orchestrator.sync_categories()
+        cs_orchestrator.run()
+    except Exception as e:
+        logger.exception("cs_feed_dispatch failed: %s", e)
+        return
+    _write_heartbeat()
 
 
 def run_worker() -> None:
