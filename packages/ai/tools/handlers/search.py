@@ -49,33 +49,34 @@ def _get_paper_detail(paper_id: str) -> ToolResult:
     p, err = _require_paper(paper_id)
     if err:
         return err
-    with session_scope() as session:
-        p = PaperRepository(session).get_by_id(UUID(paper_id))
-        title = p.title or ""
-        data = {
-            "id": str(p.id),
-            "title": title,
-            "arxiv_id": p.arxiv_id,
-            "abstract": (p.abstract or "")[:1000],
-            "publication_date": str(p.publication_date) if p.publication_date else None,
-            "read_status": p.read_status.value,
-            "pdf_path": p.pdf_path,
-            "has_embedding": p.embedding is not None,
-            "categories": (p.metadata_json or {}).get("categories", []),
-            "authors": (p.metadata_json or {}).get("authors", []),
-        }
-        return ToolResult(
-            success=True,
-            data=data,
-            summary=f"论文: {title[:60]}" + ("..." if len(title) > 60 else ""),
-        )
+    # p 已是 _require_paper 解析出的完整论文对象（detached 但属性已加载）。
+    # 不再用 UUID(paper_id) 重新查——短前缀会崩，且重复查询无意义。
+    title = p.title or ""
+    data = {
+        "id": str(p.id),
+        "title": title,
+        "arxiv_id": p.arxiv_id,
+        "abstract": (p.abstract or "")[:1000],
+        "publication_date": str(p.publication_date) if p.publication_date else None,
+        "read_status": p.read_status.value,
+        "pdf_path": p.pdf_path,
+        "has_embedding": p.embedding is not None,
+        "categories": (p.metadata_json or {}).get("categories", []),
+        "authors": (p.metadata_json or {}).get("authors", []),
+    }
+    return ToolResult(
+        success=True,
+        data=data,
+        summary=f"论文: {title[:60]}" + ("..." if len(title) > 60 else ""),
+    )
 
 
 def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
     paper, err = _require_paper(paper_id)
     if err:
         return err
-    pid = UUID(paper_id)
+    # 用 paper.id（完整 UUID），不用原始短前缀调 UUID()
+    pid = UUID(paper.id)
     if not paper.embedding:
         return ToolResult(
             success=False,
@@ -103,7 +104,7 @@ def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
         return ToolResult(
             success=True,
             data={
-                "paper_id": paper_id,
+                "paper_id": paper.id,
                 "similar_ids": [str(x) for x in ids],
                 "items": items,
             },
@@ -173,11 +174,12 @@ def _ask_knowledge_base(
 
 
 def _get_citation_tree(paper_id: str, depth: int = 2) -> ToolResult:
-    _, err = _require_paper(paper_id)
+    paper, err = _require_paper(paper_id)
     if err:
         return err
     try:
-        result = GraphService().citation_tree(root_paper_id=paper_id, depth=depth)
+        # 用完整 UUID（paper.id），不用原始短前缀（citation_tree 内部用 paper.id 作 dict key）
+        result = GraphService().citation_tree(root_paper_id=paper.id, depth=depth)
         node_count = len(result.get("nodes", []))
         edge_count = len(result.get("edges", []))
         return ToolResult(
