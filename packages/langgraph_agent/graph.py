@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from uuid import uuid4
 
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
@@ -36,9 +35,17 @@ DEFAULT_RECURSION_LIMIT = 24
 
 
 def _make_action_id(thread_id: str, tool_call_id: str) -> str:
-    """从 thread_id + tool_call_id 派生 action_id（与老 act_<12hex> 不同，但唯一）。"""
+    """从 thread_id + tool_call_id 确定性派生 action_id。
+
+    必须确定性：LangGraph 恢复时会重新执行 call_tools 节点，再次走 interrupt()
+    分支（此时 interrupt 立即返回 resume 值不暂停），若 action_id 随机则与首次
+    interrupt 时不一致，导致路由层 pending action 反查失败。
+    """
+    import hashlib
+
     raw = f"{thread_id}:{tool_call_id}"
-    return f"act_{uuid4().hex[:8]}_{abs(hash(raw)) % (10**8):08d}"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    return f"act_{digest[:8]}_{digest[8:16]}"
 
 
 def _build_agent_node(model: PaperMindChatModel):

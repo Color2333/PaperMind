@@ -136,6 +136,24 @@ async def agent_chat_v2(req: AgentChatRequest):
                             ),
                             meta={"tool_call_id": tool_call_id},
                         )
+                elif event_type == "action_confirm":
+                    # LangGraph interrupt 不存 AgentPendingAction（checkpoint 已存状态），
+                    # 但 /agent/v2/confirm 路由需从 action_id 反查 conversation_id，
+                    # 故这里写一行 pending action（conversation_state 留空）。
+                    from packages.storage.repositories import AgentPendingActionRepository
+
+                    action_id = data.get("id")
+                    if action_id:
+                        with session_scope() as session:
+                            pending_repo = AgentPendingActionRepository(session)
+                            pending_repo.create(
+                                action_id=action_id,
+                                tool_name=data.get("tool", ""),
+                                tool_args=data.get("args") or {},
+                                tool_call_id=None,
+                                conversation_id=conversation_id,
+                                conversation_state=None,
+                            )
                 elif event_type == "action_result":
                     tool_records.append(
                         {
@@ -145,6 +163,12 @@ async def agent_chat_v2(req: AgentChatRequest):
                             "data": data.get("data"),
                         }
                     )
+                    # 确认/拒绝后 pending action 已消费，删掉
+                    action_id = data.get("id")
+                    if action_id:
+                        with session_scope() as session:
+                            pending_repo = AgentPendingActionRepository(session)
+                            pending_repo.delete(action_id)
                 elif event_type == "done" and not saved_done and (text_buf or tool_records):
                     saved_done = True
                     import json
@@ -169,6 +193,8 @@ async def agent_chat_v2(req: AgentChatRequest):
 async def agent_confirm_v2(action_id: str):
     """确认挂起的操作（LangGraph 后端，复用持久化逻辑）"""
     conversation_id = _resolve_conversation_id_from_action(action_id)
+    # LangGraph resume 靠 checkpoint（不靠 pending action），可提前删 pending action
+    _delete_pending_action(action_id)
     return StreamingResponse(
         _stream_with_save_for_action(
             conversation_id,
@@ -183,6 +209,7 @@ async def agent_confirm_v2(action_id: str):
 async def agent_reject_v2(action_id: str):
     """拒绝挂起的操作（LangGraph 后端，复用持久化逻辑）"""
     conversation_id = _resolve_conversation_id_from_action(action_id)
+    _delete_pending_action(action_id)
     return StreamingResponse(
         _stream_with_save_for_action(
             conversation_id,
@@ -191,6 +218,18 @@ async def agent_reject_v2(action_id: str):
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
+
+
+def _delete_pending_action(action_id: str) -> None:
+    """删除 pending action（confirm/reject 后已消费）。"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import AgentPendingActionRepository
+
+    try:
+        with session_scope() as session:
+            AgentPendingActionRepository(session).delete(action_id)
+    except Exception:
+        pass
 
 
 __all__ = ["router"]
