@@ -27,7 +27,8 @@ COPY infra/migrations/ infra/migrations/
 
 # 使用腾讯云 pip 镜像源（阿里云镜像下载大文件不稳，腾讯云源稳定且 ECS 内网快）
 # graph extra 含 numpy/scikit-learn/umap-learn（similarity.py 降维散点图用）
-RUN pip install --cache-dir=/.pip-cache ".[llm,pdf,graph]" \
+# langgraph extra 含 langgraph + langgraph-checkpoint-postgres + psycopg v3（/agent/v2 PoC）
+RUN pip install --cache-dir=/.pip-cache ".[llm,pdf,graph,langgraph]" \
     -i https://mirrors.cloud.tencent.com/pypi/simple \
     --timeout 60 --retries 5 \
     && pip install --cache-dir=/.pip-cache \
