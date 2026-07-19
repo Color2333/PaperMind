@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from packages.ai.tools.types import ToolProgress, ToolResult
-from packages.storage.db import session_scope
-from packages.storage.repositories import PaperRepository
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -16,20 +14,20 @@ if TYPE_CHECKING:
 def _reasoning_analysis(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     """推理链深度分析"""
     from packages.ai.reasoning_service import ReasoningService
+    from packages.ai.tools.base import _require_paper
 
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        try:
-            paper = repo.get_by_id(UUID(paper_id))
-        except (ValueError, Exception) as exc:
-            yield ToolResult(success=False, summary=f"论文不存在: {exc}")
-            return
-        title = paper.title
+    # 用 _require_paper 统一解析（支持短前缀，返回 detached 但属性已加载的 paper）
+    paper, err = _require_paper(paper_id)
+    if err:
+        yield err
+        return
+    title = paper.title
+    pid = UUID(paper.id)  # 用完整 UUID，不用原始短前缀
 
     yield ToolProgress(message=f"正在分析「{(title or '')[:30]}」的推理链...", current=1, total=2)
     svc = ReasoningService()
     try:
-        result = svc.analyze(UUID(paper_id))
+        result = svc.analyze(pid)
     except Exception as exc:
         yield ToolResult(success=False, summary=f"推理链分析失败: {exc}")
         return

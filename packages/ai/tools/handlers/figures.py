@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from packages.ai.tools.types import ToolProgress, ToolResult
-from packages.storage.db import session_scope
-from packages.storage.repositories import PaperRepository
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -16,25 +14,25 @@ if TYPE_CHECKING:
 def _analyze_figures(paper_id: str, max_figures: int = 10) -> Iterator[ToolProgress | ToolResult]:
     """提取并解读论文图表"""
     from packages.ai.figure_service import FigureService
+    from packages.ai.tools.base import _require_paper
 
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        try:
-            paper = repo.get_by_id(UUID(paper_id))
-        except (ValueError, Exception) as exc:
-            yield ToolResult(success=False, summary=f"论文不存在: {exc}")
-            return
-        if not paper.pdf_path:
-            yield ToolResult(success=False, summary="论文没有 PDF 文件，无法提取图表")
-            return
-        pdf_path = paper.pdf_path
-        title = paper.title
+    # 用 _require_paper 统一解析（支持短前缀，返回 detached 但属性已加载的 paper）
+    paper, err = _require_paper(paper_id)
+    if err:
+        yield err
+        return
+    if not paper.pdf_path:
+        yield ToolResult(success=False, summary="论文没有 PDF 文件，无法提取图表")
+        return
+    pdf_path = paper.pdf_path
+    title = paper.title
+    pid = UUID(paper.id)  # 用完整 UUID，不用原始短前缀
 
     yield ToolProgress(message=f"正在提取「{(title or '')[:30]}」中的图表...", current=1, total=3)
     svc = FigureService()
     try:
         results = svc.analyze_paper_figures(
-            UUID(paper_id),
+            pid,
             pdf_path,
             max_figures=max_figures,
         )
