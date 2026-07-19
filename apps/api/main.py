@@ -208,6 +208,13 @@ app.include_router(tags.router)
 app.include_router(cs_feeds.router)
 app.include_router(graph.router)
 app.include_router(agent.router)
+# PoC：LangGraph 后端 /agent/v2/*。需安装 .[langgraph] extra；未装时跳过以保证核心可用。
+try:
+    from apps.api.routers import agent_v2
+
+    app.include_router(agent_v2.router)
+except ImportError:
+    pass
 app.include_router(content.router)
 app.include_router(pipelines.router)
 app.include_router(settings_router.router)

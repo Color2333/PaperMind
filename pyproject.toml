@@ -43,6 +43,14 @@ graph = [
   "scikit-learn>=1.4",
   "umap-learn>=0.5",
 ]
+# LangGraph agent harness PoC（/agent/v2/* 路由）。不进核心 dependencies：
+# 仅 PoC 分支用，与现有自研 StreamingAgentLoop 并行，拍板替换后再决定是否进核心。
+langgraph = [
+  "langgraph>=1.2.9",
+  "langgraph-checkpoint-postgres>=2.0",
+  "psycopg[binary]>=3.2",  # PostgresSaver 用 psycopg v3（核心仍用 psycopg2-binary，并存）
+  "langchain-core>=0.3",   # BaseChatModel 基类
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
