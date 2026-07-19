@@ -37,7 +37,14 @@ def _resolve_paper_id(val: str) -> tuple[UUID | None, str | None]:
 
 
 def _require_paper(paper_id: str):
-    """校验 paper_id（支持短 ID 前缀）+ 查库"""
+    """校验 paper_id（支持短 ID 前缀）+ 查库。
+
+    返回的 paper 对象已从 session expunge（detached），但其所有列属性在
+    session 内已加载，离开 session 后访问 title/abstract/embedding 等不会
+    触发 lazy load（Paper 无 relationship 字段，全是普通列）。
+    修 detached session bug：此前 return paper 后 session 关闭，handler
+    访问 paper.title 报 "Instance not bound to a Session"。
+    """
     pid, err = _resolve_paper_id(paper_id)
     if err:
         return None, ToolResult(success=False, summary=err)
@@ -45,6 +52,25 @@ def _require_paper(paper_id: str):
     with session_scope() as session:
         try:
             paper = PaperRepository(session).get_by_id(pid)
+            # 在 session 关闭前 expunge，让 paper 带着已加载的列属性离开。
+            # 触发所有列属性加载（防 expunge 后访问未加载列报错）：
+            _ = (
+                paper.id,
+                paper.title,
+                paper.arxiv_id,
+                paper.abstract,
+                paper.pdf_path,
+                paper.publication_date,
+                paper.embedding,
+                paper.read_status,
+                paper.metadata_json,
+                paper.favorited,
+                paper.rejected,
+                paper.source,
+                paper.source_id,
+                paper.doi,
+            )
+            session.expunge(paper)
             return paper, None
         except ValueError:
             return None, ToolResult(
