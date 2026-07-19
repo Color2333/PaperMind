@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.types import Command
 
 from packages.langgraph_agent.checkpointer import get_checkpointer
-from packages.langgraph_agent.graph import DEFAULT_RECURSION_LIMIT, build_graph
+from packages.langgraph_agent.graph import DEFAULT_RECURSION_LIMIT, get_compiled_graph
 from packages.langgraph_agent.sse_adapter import stream_to_sse
 
 if TYPE_CHECKING:
@@ -107,7 +107,7 @@ def stream_chat_v2(
         langchain_msgs = _build_langchain_messages(openai_msgs)
         input_data = {"messages": langchain_msgs}
 
-    graph = build_graph(cp, thread_id=conversation_id)
+    graph = get_compiled_graph(cp)
     sse_iter = stream_to_sse(graph, input_data, config)
     return sse_iter, conversation_id
 
@@ -123,7 +123,7 @@ def confirm_v2(action_id: str, conversation_id: str | None) -> tuple[Iterator[st
         "configurable": {"thread_id": conversation_id},
         "recursion_limit": DEFAULT_RECURSION_LIMIT,
     }
-    graph = build_graph(cp, thread_id=conversation_id)
+    graph = get_compiled_graph(cp)
     sse_iter = stream_to_sse(
         graph, Command(resume={"confirmed": True, "action_id": action_id}), config
     )
@@ -141,7 +141,7 @@ def reject_v2(action_id: str, conversation_id: str | None) -> tuple[Iterator[str
         "configurable": {"thread_id": conversation_id},
         "recursion_limit": DEFAULT_RECURSION_LIMIT,
     }
-    graph = build_graph(cp, thread_id=conversation_id)
+    graph = get_compiled_graph(cp)
     sse_iter = stream_to_sse(
         graph, Command(resume={"confirmed": False, "action_id": action_id}), config
     )
