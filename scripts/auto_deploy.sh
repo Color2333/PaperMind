@@ -97,6 +97,12 @@ if ! docker compose up -d 2>&1 | tee -a "$LOG_FILE" | tail -10; then
     exit 1
 fi
 
+# 6.1 清理悬空镜像（防止磁盘满导致 postgres 崩溃进 recovery mode）
+# 历史教训：docker images 积累到 15GB 占满磁盘 → postgres 崩 → 每日简报任务连不上 DB 失败
+log "清理悬空 docker 镜像..."
+docker image prune -f 2>&1 | tail -2 | while read -r line; do log "image prune: $line"; done || true
+docker builder prune -f 2>&1 | tail -2 | while read -r line; do log "builder prune: $line"; done || true
+
 # 7. 健康检查
 log "等待健康检查 (40s)..."
 sleep 40

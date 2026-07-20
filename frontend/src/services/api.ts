@@ -54,6 +54,7 @@ import type {
   EmailConfig,
   EmailConfigForm,
   DailyReportConfig,
+  WorkerScheduleConfig,
   TaskStatus,
   ActiveTaskInfo,
   LoginResponse,
@@ -75,6 +76,7 @@ export type {
   EmailConfig,
   EmailConfigForm,
   DailyReportConfig,
+  WorkerScheduleConfig,
   TaskStatus,
   ActiveTaskInfo,
   LoginResponse,
@@ -681,6 +683,15 @@ export const dailyReportApi = {
     ),
   generateOnly: (useCache = false) =>
     post<{ html: string }>(`/jobs/daily-report/generate-only?use_cache=${useCache}`),
+};
+
+/* ========== Worker 调度配置 ========== */
+// 网页端修改 cron / 闲时处理器开关，worker 轮询线程 30s 内热重载，
+// 无需重启容器。getConfig 返回 last_applied_at 供 UI 显示"已生效"。
+export const workerScheduleApi = {
+  getConfig: () => get<WorkerScheduleConfig>("/settings/worker-schedule"),
+  updateConfig: (data: Record<string, unknown>) =>
+    put<{ config: WorkerScheduleConfig }>("/settings/worker-schedule", data),
 };
 
 /* ========== 后台任务 ========== */

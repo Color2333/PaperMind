@@ -449,6 +449,38 @@ class EmailConfig(Base):
     )
 
 
+class WorkerScheduleConfig(Base):
+    """Worker 调度配置 - cron 表达式 + 闲时处理器开关
+
+    单例表（单行）。worker 启动时读一次注册 APScheduler job，
+    运行时通过轮询线程（30s）检测 updated_at 变化后热重载。
+    last_applied_at 由 worker 写回，供前端显示"已生效"状态。
+    """
+
+    __tablename__ = "worker_schedule_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    topic_dispatch_cron: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="0 * * * *", doc="主题分发 cron（UTC）"
+    )
+    cs_feed_dispatch_cron: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="5 * * * *", doc="CS分类订阅 cron（UTC）"
+    )
+    weekly_graph_cron: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="0 22 * * 0", doc="每周图谱维护 cron（UTC）"
+    )
+    idle_processor_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, doc="闲时自动处理器开关"
+    )
+    last_applied_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True, doc="worker 最后一次应用配置的时间（worker 写、前端读）"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
 class DailyReportConfig(Base):
     """每日报告配置 - 自动精读和邮件发送设置"""
 

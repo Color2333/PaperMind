@@ -57,6 +57,19 @@ class DailyReportConfigUpdate(BaseModel):
     include_graph_insights: bool | None = None
 
 
+class WorkerScheduleConfigUpdate(BaseModel):
+    """Worker 调度配置更新请求（cron 表达式 + 闲时处理器开关）
+
+    所有字段可选，仅传入字段会被更新（None 被过滤）。worker 轮询线程
+    检测到 updated_at 变化后热重载 APScheduler job，30s 内生效。
+    """
+
+    topic_dispatch_cron: str | None = None
+    cs_feed_dispatch_cron: str | None = None
+    weekly_graph_cron: str | None = None
+    idle_processor_enabled: bool | None = None
+
+
 # ---------- 辅助函数 ----------
 
 
@@ -308,6 +321,51 @@ def update_daily_report_config(body: DailyReportConfigUpdate):
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     config = AutoReadService().update_config(**update_data)
     return {"message": "每日报告配置已更新", "config": config}
+
+
+# ---------- Worker 调度配置 ----------
+
+
+def _worker_schedule_to_out(cfg) -> dict:
+    """序列化 WorkerScheduleConfig 为前端可读的 dict（含 iso 时间）"""
+    return {
+        "id": cfg.id,
+        "topic_dispatch_cron": cfg.topic_dispatch_cron,
+        "cs_feed_dispatch_cron": cfg.cs_feed_dispatch_cron,
+        "weekly_graph_cron": cfg.weekly_graph_cron,
+        "idle_processor_enabled": cfg.idle_processor_enabled,
+        "last_applied_at": iso_dt(cfg.last_applied_at),
+        "updated_at": iso_dt(cfg.updated_at),
+    }
+
+
+@router.get("/settings/worker-schedule")
+def get_worker_schedule_config():
+    """获取 worker 调度配置
+
+    返回 cron 表达式 + 闲时处理器开关 + last_applied_at（worker 热重载时间）。
+    前端据此显示"已生效"状态（last_applied_at >= updated_at 即已同步）。
+    """
+    from packages.storage.repositories import WorkerScheduleConfigRepository
+
+    with session_scope() as session:
+        cfg = WorkerScheduleConfigRepository(session).get_config()
+        return _worker_schedule_to_out(cfg)
+
+
+@router.put("/settings/worker-schedule")
+def update_worker_schedule_config(body: WorkerScheduleConfigUpdate):
+    """更新 worker 调度配置
+
+    写入 DB 后，worker 轮询线程在 30s 内检测到 updated_at 变化并热重载
+    APScheduler job。无需重启 worker 容器。
+    """
+    from packages.storage.repositories import WorkerScheduleConfigRepository
+
+    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    with session_scope() as session:
+        cfg = WorkerScheduleConfigRepository(session).update_config(**update_data)
+        return {"message": "worker 调度配置已更新", "config": _worker_schedule_to_out(cfg)}
 
 
 # ---------- SMTP 配置预设 ----------

@@ -490,3 +490,73 @@ class TestIdleCompensationTrigger:
         stuck = ip._get_stuck_skimmed_papers(limit=5)
         assert len(stuck) == 1, "应捞到 1 篇 stuck skimmed 论文"
         assert stuck[0][0] == paper.id
+
+
+class TestWorkerScheduleConfigRepository:
+    """Worker 调度配置仓储 —— 单例 + 热重载写回时间戳"""
+
+    def test_get_config_creates_default_singleton(self, db_session):
+        """首次 get_config 惰性创建默认单例行（cron 默认值 + idle 开）"""
+        from packages.storage.repositories import WorkerScheduleConfigRepository
+
+        repo = WorkerScheduleConfigRepository(db_session)
+        cfg = repo.get_config()
+        db_session.flush()
+
+        assert cfg.id is not None
+        assert cfg.topic_dispatch_cron == "0 * * * *"
+        assert cfg.cs_feed_dispatch_cron == "5 * * * *"
+        assert cfg.weekly_graph_cron == "0 22 * * 0"
+        assert cfg.idle_processor_enabled is True
+        assert cfg.last_applied_at is None  # worker 尚未应用
+
+    def test_get_config_returns_same_singleton(self, db_session):
+        """二次 get_config 返回同一行（不创建新行）"""
+        from packages.storage.repositories import WorkerScheduleConfigRepository
+
+        repo = WorkerScheduleConfigRepository(db_session)
+        first = repo.get_config()
+        db_session.flush()
+        first_id = first.id
+        second = repo.get_config()
+        assert second.id == first_id, "get_config 应返回同一单例"
+
+    def test_update_config_partial_fields(self, db_session):
+        """update_config 仅更新传入字段，未传字段保留原值"""
+        from packages.storage.repositories import WorkerScheduleConfigRepository
+
+        repo = WorkerScheduleConfigRepository(db_session)
+        repo.get_config()
+        db_session.flush()
+
+        # 只改一个 cron + idle 开关
+        updated = repo.update_config(
+            topic_dispatch_cron="*/10 * * * *",
+            idle_processor_enabled=False,
+        )
+        db_session.flush()
+
+        assert updated.topic_dispatch_cron == "*/10 * * * *"
+        assert updated.idle_processor_enabled is False
+        # 未传字段保留默认
+        assert updated.cs_feed_dispatch_cron == "5 * * * *"
+        assert updated.weekly_graph_cron == "0 22 * * 0"
+
+    def test_update_last_applied_at_sets_timestamp(self, db_session):
+        """update_last_applied_at 写入时间戳（worker 热重载后回写）"""
+        from packages.storage.repositories import WorkerScheduleConfigRepository
+
+        repo = WorkerScheduleConfigRepository(db_session)
+        repo.get_config()
+        db_session.flush()
+
+        ts = datetime.now(UTC)
+        repo.update_last_applied_at(ts)
+        db_session.flush()
+
+        cfg = repo.get_config()
+        assert cfg.last_applied_at is not None
+        # SQLite DateTime 不存 tz，比较到秒级（剥离 tzinfo 与微秒）
+        stored = cfg.last_applied_at.replace(tzinfo=None, microsecond=0)
+        expected = ts.replace(tzinfo=None, microsecond=0)
+        assert stored == expected

@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import signal
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,7 +32,11 @@ from packages.ai.idle_processor import (
 from packages.config import get_settings
 from packages.logging_setup import setup_logging
 from packages.storage.db import session_scope
-from packages.storage.repositories import TopicRepository
+from packages.storage.repositories import (
+    DailyReportConfigRepository,
+    TopicRepository,
+    WorkerScheduleConfigRepository,
+)
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -41,6 +46,10 @@ logger = logging.getLogger(__name__)
 _HEALTH_FILE = Path("/app/data/worker_heartbeat.json")
 # 心跳健康判定：最近一次心跳距现在超过此秒数视为不健康（status 页展示用）
 _HEARTBEAT_STALE_SECONDS = 1200  # 20 分钟
+
+# 配置轮询间隔（秒）：worker 每 N 秒查 DB 配置 updated_at，检测变化即热重载。
+# 30s 是"网页端及时控制"与"DB 查询频率"的平衡点（用户改完最多 30s 生效）。
+_CONFIG_POLL_INTERVAL = 30
 
 
 def _write_heartbeat(error: str | None = None) -> None:
@@ -105,6 +114,179 @@ _RETRY_MAX = settings.worker_retry_max
 _RETRY_DELAY = settings.worker_retry_base_delay
 
 cs_orchestrator = CSFeedOrchestrator()
+
+# 模块级 scheduler 单例 + 访问器（镜像 get_idle_processor 模式）。
+# BlockingScheduler.start() 会阻塞主线程，scheduler 对象本应活在 run_worker()
+# 栈帧；提升到模块级后，reload_worker_schedule() / 轮询线程才能拿到它热重载 job。
+_scheduler: BlockingScheduler | None = None
+# 内存中缓存上次应用的配置时间戳，用于轮询时检测 DB 是否有新变化
+_last_worker_cfg_ts: datetime | None = None
+_last_daily_cfg_ts: datetime | None = None
+# 闲时处理器当前运行状态镜像（避免无谓的 stop/start 循环）
+_idle_running: bool = False
+
+
+def get_scheduler() -> BlockingScheduler | None:
+    """获取运行中的 scheduler 单例（run_worker 启动前为 None）"""
+    return _scheduler
+
+
+# 公共 job 配置：单实例 + 5 分钟 misfire 容忍 + 合并错过的触发
+# 模块级常量，_register_all_jobs / reload_worker_schedule 共用
+_JOB_KWARGS = {
+    "max_instances": 1,
+    "misfire_grace_time": 300,
+    "coalesce": True,
+    "replace_existing": True,
+}
+
+
+def _read_schedule_config() -> dict:
+    """从 DB 读所有调度 cron + idle 开关，DB 不可用时回退到安全默认值。
+
+    返回 dict：
+        topic_dispatch_cron, cs_feed_dispatch_cron, weekly_graph_cron,
+        daily_brief_cron, idle_processor_enabled,
+        worker_cfg_ts, daily_cfg_ts  # 用于变更检测
+    """
+    result = {
+        "topic_dispatch_cron": "0 * * * *",
+        "cs_feed_dispatch_cron": "5 * * * *",
+        "weekly_graph_cron": getattr(settings, "weekly_cron", "0 22 * * 0"),
+        "daily_brief_cron": "0 4 * * *",
+        "idle_processor_enabled": True,
+        "worker_cfg_ts": None,
+        "daily_cfg_ts": None,
+    }
+    try:
+        with session_scope() as session:
+            wcfg = WorkerScheduleConfigRepository(session).get_config()
+            result["topic_dispatch_cron"] = (
+                wcfg.topic_dispatch_cron or result["topic_dispatch_cron"]
+            )
+            result["cs_feed_dispatch_cron"] = (
+                wcfg.cs_feed_dispatch_cron or result["cs_feed_dispatch_cron"]
+            )
+            result["weekly_graph_cron"] = wcfg.weekly_graph_cron or result["weekly_graph_cron"]
+            result["idle_processor_enabled"] = wcfg.idle_processor_enabled
+            result["worker_cfg_ts"] = wcfg.updated_at
+            dcfg = DailyReportConfigRepository(session).get_config()
+            result["daily_brief_cron"] = dcfg.cron_expression or result["daily_brief_cron"]
+            result["daily_cfg_ts"] = dcfg.updated_at
+    except Exception as e:
+        logger.warning("读取调度配置失败，使用安全默认值：%s", e)
+    return result
+
+
+def _register_all_jobs(scheduler: BlockingScheduler, cfg: dict) -> None:
+    """（重新）注册全部 4 个 APScheduler job。
+
+    所有 job 都用 replace_existing=True，所以重复调用安全 —— 等价于 reschedule。
+    这是热重载的核心：每次轮询检测到配置变化后调用此函数即可。
+    """
+    scheduler.add_job(
+        topic_dispatch_job,
+        trigger=CronTrigger.from_crontab(cfg["topic_dispatch_cron"]),
+        id="topic_dispatch",
+        **_JOB_KWARGS,
+    )
+    scheduler.add_job(
+        cs_feed_dispatch_job,
+        trigger=CronTrigger.from_crontab(cfg["cs_feed_dispatch_cron"]),
+        id="cs_feed_dispatch",
+        **_JOB_KWARGS,
+    )
+    scheduler.add_job(
+        brief_job,
+        trigger=CronTrigger.from_crontab(cfg["daily_brief_cron"]),
+        id="daily_brief",
+        **_JOB_KWARGS,
+    )
+    scheduler.add_job(
+        weekly_graph_job,
+        trigger=CronTrigger.from_crontab(cfg["weekly_graph_cron"]),
+        id="weekly_graph",
+        **_JOB_KWARGS,
+    )
+
+
+def _sync_idle_processor(enabled: bool) -> None:
+    """按配置开关同步 idle_processor 运行状态（避免无谓 stop/start）"""
+    global _idle_running
+    if enabled and not _idle_running:
+        logger.info("🤖 启动闲时自动处理器")
+        start_idle_processor()
+        _idle_running = True
+    elif not enabled and _idle_running:
+        logger.info("🛑 停止闲时自动处理器（配置已关闭）")
+        stop_idle_processor()
+        _idle_running = False
+
+
+def reload_worker_schedule() -> bool:
+    """热重载：重读 DB 配置 → reschedule 所有 job → 同步 idle_processor → 写 last_applied_at。
+
+    返回 True 表示成功应用新配置（含无变化时），False 表示失败（DB 不可用等）。
+    供轮询线程和未来 HTTP 端点调用。
+    """
+    global _scheduler, _last_worker_cfg_ts, _last_daily_cfg_ts
+    if _scheduler is None:
+        logger.warning("reload_worker_schedule: scheduler 尚未启动，跳过")
+        return False
+    try:
+        cfg = _read_schedule_config()
+        _register_all_jobs(_scheduler, cfg)
+        _sync_idle_processor(cfg["idle_processor_enabled"])
+        # 更新内存时间戳缓存（下次轮询与此对比）
+        _last_worker_cfg_ts = cfg["worker_cfg_ts"]
+        _last_daily_cfg_ts = cfg["daily_cfg_ts"]
+        # 写回 last_applied_at 供前端显示"已生效"
+        try:
+            with session_scope() as session:
+                WorkerScheduleConfigRepository(session).update_last_applied_at(datetime.now(UTC))
+        except Exception as e:
+            logger.warning("写回 last_applied_at 失败（不影响调度）：%s", e)
+        logger.info(
+            "🔄 worker 调度已热重载：topic=%s, cs=%s, brief=%s, weekly=%s, idle=%s",
+            cfg["topic_dispatch_cron"],
+            cfg["cs_feed_dispatch_cron"],
+            cfg["daily_brief_cron"],
+            cfg["weekly_graph_cron"],
+            cfg["idle_processor_enabled"],
+        )
+        return True
+    except Exception as e:
+        logger.exception("reload_worker_schedule 失败：%s", e)
+        return False
+
+
+def _config_poll_loop(stop: Event) -> None:
+    """配置轮询线程主循环：每 _CONFIG_POLL_INTERVAL 秒查 DB，检测到变化即热重载。
+
+    变更检测基于 WorkerScheduleConfig.updated_at + DailyReportConfig.updated_at
+    与内存缓存对比 —— 任何配置写入都会 bump 对应表的 updated_at。
+    """
+    global _last_worker_cfg_ts, _last_daily_cfg_ts
+    logger.info("📡 配置轮询线程已启动（间隔 %ds）", _CONFIG_POLL_INTERVAL)
+    while not stop.wait(_CONFIG_POLL_INTERVAL):
+        try:
+            with session_scope() as session:
+                wcfg = WorkerScheduleConfigRepository(session).get_config()
+                dcfg = DailyReportConfigRepository(session).get_config()
+                w_ts = wcfg.updated_at
+                d_ts = dcfg.updated_at
+            changed = (
+                _last_worker_cfg_ts is None
+                or _last_daily_cfg_ts is None
+                or w_ts != _last_worker_cfg_ts
+                or d_ts != _last_daily_cfg_ts
+            )
+            if changed:
+                logger.info("📥 检测到调度配置变化（worker_ts=%s, daily_ts=%s）", w_ts, d_ts)
+                reload_worker_schedule()
+        except Exception as e:
+            logger.warning("配置轮询查询失败（下次重试）：%s", e)
+    logger.info("📡 配置轮询线程已退出")
 
 
 def _should_run(freq: str, time_utc: int, hour: int, weekday: int) -> bool:
@@ -231,89 +413,44 @@ def cs_feed_dispatch_job():
 
 def run_worker() -> None:
     """
-    Worker 主函数 - UTC 时间智能调度
+    Worker 主函数 - UTC 时间智能调度 + 网页端实时热重载
 
-    调度时间表（UTC）：
+    调度时间表（UTC，默认值，均可在网页端 Worker / 调度 tab 修改）：
     ┌─────────────────────────────────────────────────────────┐
-    │ 任务              │ 时间 (UTC)    │ 北京时间          │
+    │ 任务              │ 默认 cron (UTC) │ 北京时间          │
     ├─────────────────────────────────────────────────────────┤
-    │ 主题论文抓取      │ 02:00 每小时  │ 10:00 每小时       │
-    │ 论文处理缓冲      │ 02:00-04:00   │ 10:00-12:00        │
-    │ 每日简报生成      │ 04:00         │ 12:00              │
-    │ 简报邮件发送      │ 04:30         │ 12:30 (午饭时间)   │
-    │ 每周图谱维护      │ 22:00 周日    │ 周一 06:00         │
-    │ 闲时自动处理      │ 全天检测      │ 全天检测           │
+    │ 主题论文抓取      │ 0 * * * *       │ 每小时整点        │
+    │ CS分类订阅        │ 5 * * * *       │ 每小时 :05        │
+    │ 每日简报生成      │ 0 4 * * *       │ 12:00             │
+    │ 每周图谱维护      │ 0 22 * * 0      │ 周一 06:00        │
+    │ 闲时自动处理      │ 全天检测        │ 全天检测          │
     └─────────────────────────────────────────────────────────┘
+
+    热重载：网页端改配置 → 写 DB → 轮询线程 30s 内检测 updated_at 变化
+    → reload_worker_schedule() 重排 job + 同步 idle_processor → 写 last_applied_at
     """
+    global _scheduler, _idle_running
+    from apscheduler.executors.pool import ThreadPoolExecutor as APSThreadPoolExecutor
+
     # High 3e：显式配置 max_instances / misfire_grace_time / coalesce，避免
     # 重复触发与 misfire 丢失；用 apscheduler 的 ThreadPoolExecutor(max_workers=3)
     # 替代默认单线程池，允许 topic_dispatch / cs_feed / brief 适度并发
-    from apscheduler.executors.pool import ThreadPoolExecutor as APSThreadPoolExecutor
-
     scheduler = BlockingScheduler(timezone="UTC")
     scheduler.add_executor(APSThreadPoolExecutor(max_workers=3))
+    _scheduler = scheduler  # 暴露给模块级访问器，供 reload 使用
 
-    # 公共 job 配置：单实例 + 5 分钟 misfire 容忍 + 合并错过的触发
-    _job_kwargs = {
-        "max_instances": 1,
-        "misfire_grace_time": 300,
-        "coalesce": True,
-        "replace_existing": True,
-    }
-
-    settings = get_settings()
-
-    # 每整点检查主题调度（UTC 时间）—— 整点第 0 分钟
-    scheduler.add_job(
-        topic_dispatch_job,
-        trigger=CronTrigger(minute=0),
-        id="topic_dispatch",
-        **_job_kwargs,
-    )
-    logger.info("✅ 已添加：主题分发任务（每小时整点，UTC）")
-
-    # CS 分类订阅调度 —— 错开 5 分钟，避免与 topic_dispatch 同分钟抢线程
-    scheduler.add_job(
-        cs_feed_dispatch_job,
-        trigger=CronTrigger(minute=5),
-        id="cs_feed_dispatch",
-        **_job_kwargs,
-    )
-    logger.info("✅ 已添加：CS分类订阅调度任务（每小时 :05，UTC）")
-
-    # 每日简报（从数据库读取 cron 表达式）
-    from packages.storage.db import session_scope
-    from packages.storage.repositories import DailyReportConfigRepository
-
-    try:
-        with session_scope() as session:
-            config = DailyReportConfigRepository(session).get_config()
-            daily_cron = config.cron_expression or "0 4 * * *"
-    except Exception as e:
-        logger.warning(f"从数据库读取 cron 失败：{e}，使用默认值")
-        daily_cron = "0 4 * * *"
-
-    daily_trigger = CronTrigger.from_crontab(daily_cron)
-    scheduler.add_job(
-        brief_job,
-        trigger=daily_trigger,
-        id="daily_brief",
-        **_job_kwargs,
-    )
+    # 初始注册：从 DB 读配置（失败回退默认值），replace_existing=True 保证可重复
+    cfg = _read_schedule_config()
+    _register_all_jobs(scheduler, cfg)
+    _last_worker_cfg_ts = cfg["worker_cfg_ts"]
+    _last_daily_cfg_ts = cfg["daily_cfg_ts"]
     logger.info(
-        "✅ 已添加：每日简报任务（cron: %s）",
-        daily_cron,
+        "✅ 初始调度已注册：topic=%s, cs=%s, brief=%s, weekly=%s",
+        cfg["topic_dispatch_cron"],
+        cfg["cs_feed_dispatch_cron"],
+        cfg["daily_brief_cron"],
+        cfg["weekly_graph_cron"],
     )
-
-    # 每周图谱维护（UTC 周日 22 点 = 北京时间周一 6 点）
-    weekly_trigger = CronTrigger.from_crontab(getattr(settings, "weekly_cron", "0 22 * * 0"))
-    scheduler.add_job(
-        weekly_graph_job,
-        trigger=weekly_trigger,
-        id="weekly_graph",
-        **_job_kwargs,
-    )
-    logger.info("✅ 已添加：每周图谱维护任务（UTC 周日 22:00）")
 
     # 优雅关闭（High 3f：等待进行中任务跑完，避免已下载 PDF 未 set_pdf_path
     # 的中间态丢失；wait=True + 60s 超时兜底）
@@ -321,6 +458,7 @@ def run_worker() -> None:
         logger.info("收到终止信号，正在关闭...")
         stop_event.set()
         stop_idle_processor()  # 停止闲时处理器
+        _idle_running = False
         scheduler.shutdown(wait=True)
         logger.info("Worker 已关闭")
 
@@ -330,18 +468,25 @@ def run_worker() -> None:
     # 写入初始心跳
     _write_heartbeat()
 
-    # 启动闲时处理器
-    logger.info("🤖 启动闲时自动处理器...")
-    start_idle_processor()
+    # 启动闲时处理器（按配置开关）
+    _sync_idle_processor(cfg["idle_processor_enabled"])
+
+    # 启动配置轮询线程（daemon，随主进程退出）
+    poll_thread = threading.Thread(
+        target=_config_poll_loop, args=(stop_event,), daemon=True, name="cfg-poll"
+    )
+    poll_thread.start()
 
     # 启动调度器
-    logger.info("🚀 Worker 启动完成 - UTC 智能调度 + 闲时处理")
+    logger.info("🚀 Worker 启动完成 - UTC 智能调度 + 闲时处理 + 配置热重载")
     logger.info("=" * 60)
-    logger.info("调度时间表（UTC → 北京时间）:")
-    logger.info("  • 主题抓取：每小时整点 → 每小时整点")
-    logger.info("  • 每日简报：04:00 → 12:00")
-    logger.info("  • 每周图谱：周日 22:00 → 周一 06:00")
-    logger.info("  • 闲时处理：全天自动检测 → 全天自动检测")
+    logger.info("调度时间表（UTC → 北京时间，可在网页端 Worker / 调度 tab 修改）:")
+    logger.info("  • 主题抓取：%s", cfg["topic_dispatch_cron"])
+    logger.info("  • CS订阅： %s", cfg["cs_feed_dispatch_cron"])
+    logger.info("  • 每日简报：%s", cfg["daily_brief_cron"])
+    logger.info("  • 每周图谱：%s", cfg["weekly_graph_cron"])
+    logger.info("  • 闲时处理：%s", "开启" if cfg["idle_processor_enabled"] else "关闭")
+    logger.info("  • 配置热重载：每 %ds 轮询 DB", _CONFIG_POLL_INTERVAL)
     logger.info("=" * 60)
 
     scheduler.start()
