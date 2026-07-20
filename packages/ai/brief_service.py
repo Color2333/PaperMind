@@ -597,7 +597,6 @@ class DailyBriefService:
 
         # 如果没有指定收件人，从数据库读取配置
         if not recipient:
-            from packages.storage.db import session_scope
             from packages.storage.repositories import DailyReportConfigRepository
 
             with session_scope() as session:

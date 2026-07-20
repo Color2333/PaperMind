@@ -1015,6 +1015,19 @@ export interface DailyReportConfig {
   include_graph_insights: boolean;
 }
 
+/* ========== Worker 调度配置 ========== */
+// Worker 的 cron 调度 + 闲时处理器开关。网页端修改后 worker 轮询线程
+// 在 30s 内检测 updated_at 变化并热重载，无需重启容器。
+// last_applied_at 由 worker 写回，前端据此显示"已生效"状态。
+export interface WorkerScheduleConfig {
+  topic_dispatch_cron: string;      // 主题分发 cron（UTC）
+  cs_feed_dispatch_cron: string;   // CS分类订阅 cron（UTC）
+  weekly_graph_cron: string;       // 每周图谱维护 cron（UTC）
+  idle_processor_enabled: boolean; // 闲时自动处理器开关
+  last_applied_at: string | null;  // worker 最后应用配置的时间（ISO）
+  updated_at: string;              // 配置最后更新时间（ISO）
+}
+
 /* ========== 后台任务 ========== */
 export interface TaskStatus {
   task_id: string;

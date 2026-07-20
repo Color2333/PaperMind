@@ -27,6 +27,7 @@ from packages.storage.repositories.pipeline import PipelineRunRepository
 from packages.storage.repositories.prompt_trace import PromptTraceRepository
 from packages.storage.repositories.tag import TagRepository
 from packages.storage.repositories.topic import TopicRepository
+from packages.storage.repositories.worker_schedule import WorkerScheduleConfigRepository
 
 __all__ = [
     "BaseQuery",
@@ -48,4 +49,5 @@ __all__ = [
     "AgentPendingActionRepository",
     "CSFeedRepository",
     "BatchJobRepository",
+    "WorkerScheduleConfigRepository",
 ]

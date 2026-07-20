@@ -2,18 +2,20 @@
  * Claude 风格的设置页面 - 左侧导航 + 右侧内容
  */
 import { useState } from "react";
-import { Cpu, Mail, GitBranch, Settings, ChevronRight } from "lucide-react";
+import { Cpu, Mail, GitBranch, Settings, ChevronRight, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LLMSettingsTab } from "@/components/settings/LLMSettingsTab";
 import { EmailSettingsTab } from "@/components/settings/EmailSettingsTab";
 import { PipelineSettingsTab } from "@/components/settings/PipelineSettingsTab";
 import { OpsSettingsTab } from "@/components/settings/OpsSettingsTab";
+import { WorkerSettingsTab } from "@/components/settings/WorkerSettingsTab";
 
-type SettingsTab = "llm" | "email" | "pipeline" | "ops";
+type SettingsTab = "llm" | "email" | "pipeline" | "ops" | "worker";
 
 const NAV_ITEMS: { key: SettingsTab; label: string; icon: typeof Cpu }[] = [
   { key: "llm", label: "LLM 配置", icon: Cpu },
   { key: "email", label: "邮箱与报告", icon: Mail },
+  { key: "worker", label: "Worker / 调度", icon: Clock },
   { key: "pipeline", label: "Pipeline", icon: GitBranch },
   { key: "ops", label: "运维", icon: Settings },
 ];
@@ -60,6 +62,7 @@ export default function SettingsPage() {
           {activeTab === "email" && <EmailSettingsTab />}
           {activeTab === "pipeline" && <PipelineSettingsTab />}
           {activeTab === "ops" && <OpsSettingsTab />}
+          {activeTab === "worker" && <WorkerSettingsTab />}
         </div>
       </main>
     </div>
