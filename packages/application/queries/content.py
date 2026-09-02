@@ -15,3 +15,10 @@ def get_recommendations(top_k: int = 10) -> list:
     from packages.ai.recommendation_service import RecommendationService
 
     return RecommendationService().recommend(top_k=top_k)
+
+
+def suggest_keywords(description: str) -> list:
+    """AI 生成 arXiv 搜索关键词建议"""
+    from packages.ai.keyword_service import KeywordService
+
+    return KeywordService().suggest(description)

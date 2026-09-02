@@ -6,8 +6,6 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from packages.ai.graph_service import GraphService
-from packages.ai.rag_service import RAGService
 from packages.ai.tools.base import _require_paper
 from packages.ai.tools.types import ToolProgress, ToolResult
 from packages.application.queries import papers as papers_queries
@@ -113,12 +111,9 @@ def _ask_knowledge_base(
 
     try:
         yield ToolProgress(message=f"开始迭代 RAG 检索：{question[:50]}...")
-        resp = RAGService().ask_iterative(
-            question=question,
-            max_rounds=3,
-            initial_top_k=top_k,
-            on_progress=on_progress,
-        )
+        from packages.application.queries.ask import ask_knowledge_base as app_ask
+
+        resp = app_ask(question=question, top_k=top_k, max_rounds=3, on_progress=on_progress)
         # 逐条发送进度
         for msg in progress_msgs:
             yield ToolProgress(message=msg)
@@ -155,7 +150,9 @@ def _get_citation_tree(paper_id: str, depth: int = 2) -> ToolResult:
         return err
     try:
         # 用完整 UUID（paper.id），不用原始短前缀（citation_tree 内部用 paper.id 作 dict key）
-        result = GraphService().citation_tree(root_paper_id=paper.id, depth=depth)
+        from packages.application.queries.graph import get_citation_tree as app_citation_tree
+
+        result = app_citation_tree(paper_id=paper.id, depth=depth)
         node_count = len(result.get("nodes", []))
         edge_count = len(result.get("edges", []))
         return ToolResult(
@@ -170,7 +167,9 @@ def _get_citation_tree(paper_id: str, depth: int = 2) -> ToolResult:
 
 def _get_timeline(keyword: str, limit: int = 100) -> ToolResult:
     try:
-        result = GraphService().timeline(keyword=keyword, limit=limit)
+        from packages.application.queries.graph import get_timeline as app_timeline
+
+        result = app_timeline(keyword=keyword, limit=limit)
         tl = result.get("timeline", [])
         years = sorted({p.get("year") for p in tl if p.get("year")})
         year_range = (
@@ -188,10 +187,10 @@ def _get_timeline(keyword: str, limit: int = 100) -> ToolResult:
 
 def _suggest_keywords(description: str) -> ToolResult:
     """AI 生成 arXiv 搜索关键词建议"""
-    from packages.ai.keyword_service import KeywordService
+    from packages.application.queries.content import suggest_keywords as app_suggest
 
     try:
-        suggestions = KeywordService().suggest(description.strip())
+        suggestions = app_suggest(description.strip())
     except Exception as exc:
         logger.exception("Keyword suggestion failed: %s", exc)
         return ToolResult(success=False, summary=f"关键词建议生成失败: {exc!s}")
