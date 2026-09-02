@@ -22,3 +22,10 @@ def suggest_keywords(description: str) -> list:
     from packages.ai.keyword_service import KeywordService
 
     return KeywordService().suggest(description)
+
+
+def writing_process(action: str, text: str) -> dict:
+    """学术写作助手处理（WritingService；action 为合法 WritingAction 值）"""
+    from packages.ai.writing_service import WritingService
+
+    return WritingService().process(action, text)

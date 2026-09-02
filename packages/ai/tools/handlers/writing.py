@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def _writing_assist(action: str, text: str) -> ToolResult:
     """学术写作助手"""
-    from packages.ai.writing_service import TEMPLATE_MAP, WritingAction, WritingService
+    from packages.ai.writing_service import TEMPLATE_MAP, WritingAction
 
     try:
         wa = WritingAction(action)
@@ -21,8 +21,10 @@ def _writing_assist(action: str, text: str) -> ToolResult:
     template = TEMPLATE_MAP.get(wa)
     label = template.label if template else action
 
+    from packages.application.queries.content import writing_process
+
     try:
-        result = WritingService().process(action, text)
+        result = writing_process(action, text)
     except Exception as exc:
         logger.exception("Writing assist failed: %s", exc)
         return ToolResult(success=False, summary=f"写作助手执行失败: {exc!s}")

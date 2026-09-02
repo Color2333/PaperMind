@@ -85,7 +85,7 @@
   产出：9 个工具改调 application（新增 [queries/content.py](../../packages/application/queries/content.py)、[queries/tasks.py](../../packages/application/queries/tasks.py)（过渡）、[commands/pipelines.py](../../packages/application/commands/pipelines.py)、[commands/daily.py](../../packages/application/commands/daily.py)）；工具体抽为 `_tool_*` 可测试函数 + 薄 `@mcp.tool` 包装；MCP 字段契约（skim_summary/deep_dive 等）在协议层映射保持不变。
   结论：`mcp.py` 零 `apps.api.deps` 引用；6 个工具测试（读/同步命令/异步任务/失败路径），全量 119 passed。
 - [ ] **B6 agent tools 改调 application handlers**：`packages/ai/tools/registry.py` 保留参数与返回语义，handler 业务下沉（设计文档 §5.5）。
-  进度（2026-09-02 第一批）：read×3（skim/deep/embed → commands/pipelines）、batch×4（→ commands/batch.py，过渡语义不变）、search×3（search_papers/list_papers_by_filter/get_similar_papers → queries/papers.py）已改调 application，4 个 handler 测试；剩余：ask_knowledge_base、citation_tree、timeline、suggest_keywords 及 wiki_brief/figures/reasoning/writing/subscription/system/ingest 模块（第二批/第三批）。全量 123 passed。
+  进度（2026-09-02，第一~三批）：read×3、batch×4、search×7（search/detail/similar/filter/citation_tree/timeline/suggest_keywords）、analysis×2（reasoning/figures）、writing×1、system×1、topics×2（list/manage_subscription）、wiki_brief×3（wiki/daily_brief/research_gaps）共 23 个已改调 application（新增 queries：ask/graph/analysis/system/topics/content 扩展；commands：batch/brief/wiki）。仅余 `ingest.py`（361 行：双层并行 + 后台 PDF 池 + tracker 进度桥接）单独一批搬迁。全量 123 passed。
 - [ ] **B7 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
 - [ ] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一创建 Job，不再直接调用具体 Worker 或线程池（为 Stage C 铺路）。
 
@@ -189,3 +189,4 @@
 - 2026-09-02（第十六次）：完成 B1/B2/B3/B4——application 层骨架 + papers 读路径下沉（返回兼容 e2e）+ 研究状态读取面（随 D4/D5）；全量 113 passed。**Stage B 剩余：B5 MCP 工具改调、B6 agent 工具改调、B7 其余查询与命令面。**
 - 2026-09-02（第十七次）：完成 B5——MCP 9 工具改调 application（零 deps 引用，协议字段兼容），全量 119 passed。
 - 2026-09-02（第十八次）：B6 第一批——agent 工具 read/batch/search 三组共 10 个改调 application（commands/pipelines、commands/batch、queries/papers 扩展），全量 123 passed。
+- 2026-09-02（第十九次）：B6 第二、三批——ask/citation_tree/timeline/suggest_keywords + reasoning/figures/writing/system/topics/wiki_brief 共 13 个改调 application（新增 queries：ask/graph/analysis/system/topics；commands：brief/wiki）；仅余 ingest.py。全量 123 passed。
