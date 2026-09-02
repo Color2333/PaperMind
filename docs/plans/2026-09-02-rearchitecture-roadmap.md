@@ -21,7 +21,7 @@
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 六份设计 | 10 | 8 | 进行中 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
@@ -64,9 +64,9 @@
 - [x] **A9 设计⑤：UI Surface Contract**
   产出：[2026-09-02 设计⑤ UI Surface Contract](./2026-09-02-design-5-ui-surface-contract.md)。
   结论：现有 16 条 Web 路由全量标记（retain 11 / merge 2 / local-ui 1 / redirect 1，无 archive）；canonical presentation model 以 capability metadata output_schema 生成 TS 类型（Python 为源）；三个共享包边界 + loopback bridge 安全契约（nonce/CSRF/allowlist/内存 token）+ 五类 Local UI 界面 + Full Web 三 profile + 五面 surface contract 测试。§9 有 4 个决策点待确认。
-- [ ] **A10 设计⑥：HTTPS identity/token flow**
-  内容：GitHub Web 登录、CLI device authorization、MCP OAuth discovery、PaperMind token、本地模型凭据与 Local UI session 的边界。
-  出口条件：文档获确认，能直接指导 E3/E8–E10 与 G2。
+- [x] **A10 设计⑥：HTTPS identity/token flow**
+  产出：[2026-09-02 设计⑥ identity/token flow](./2026-09-02-design-6-identity-token-flow.md)。
+  结论：三信任域凭据模型（PaperMind/模型 provider/上游身份严格分离）；scope 二值升级四值（research:read/write、jobs:control、admin，capability metadata 为权威）；现有设备码流规范固化（限速/一次性/TTL）；GitHub Web 登录最小映射（Demo）；MCP OAuth protected resource discovery 迁移路径；Local UI session 边界。§10 有 4 个决策点待确认。
 
 ## Stage B — Phase 1：application command/query
 
@@ -177,3 +177,4 @@
 - 2026-09-02（第十二次）：完成 A7 设计③——原子 durable execution 协议（四表 schema、状态机、9 个 Task 原子边界、4 个 Workflow 模板、旧机制收敛映射）。
 - 2026-09-02（第十三次）：完成 A8 设计④——PM Terminal downstream 架构（fork 基线/patch policy/命令面/permission profiles/renderer/契约测试）。
 - 2026-09-02（第十四次）：完成 A9 设计⑤——UI Surface Contract（16 路由 inventory、presentation model、共享包、loopback bridge 契约）。
+- 2026-09-02（第十五次）：完成 A10 设计⑥——identity/token flow（三信任域、scope 四值化、设备码规范固化、GitHub 登录、MCP discovery）。**六份设计全部产出**；A2（资源基线）待服务器实测。
