@@ -21,7 +21,7 @@
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 六份设计 | 10 | 6 | 进行中 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 7 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
@@ -58,9 +58,9 @@
 - [x] **A7 设计③：原子 Durable Execution 协议与迁移说明**
   产出：[2026-09-02 设计③ 原子 Durable Execution 协议](./2026-09-02-design-3-durable-execution-protocol.md)。
   结论：jobs/tasks/task_attempts/artifacts 四张表 schema + Job/Task 状态机（lease/fencing/协作式取消）+ 第一批 9 个 Task 原子边界（幂等键/超时/重试）+ 4 个 Workflow 模板 + 五组件部署形态 + 旧机制（TaskTracker/batch_jobs/APScheduler/heartbeat/裸线程）逐项收敛映射 + C11 验收用例。§9 有 4 个决策点待确认。
-- [ ] **A8 设计④：PM Research Terminal downstream 架构**
-  内容：Pi 上游基线（pinned tag）、patch policy（有序 patch stack、product profile 先于 build/source pruning）、独立仓库 `PaperMind-Terminal` 维护准则、capability metadata、确定性命令、permission profiles、主题与领域 renderer、fallback 契约。
-  出口条件：文档获确认，能直接指导 E1/E2。
+- [x] **A8 设计④：PM Research Terminal downstream 架构**
+  产出：[2026-09-02 设计④ Terminal 架构](./2026-09-02-design-4-terminal-architecture.md)。
+  结论：PaperMind-Terminal 独立仓库 + pinned upstream + 有序 patch stack + profile→build→source 三段裁剪；@papermind/cli 包结构、确定性命令面 v1（映射设计②用例）、五类退出码与 --json 契约、三档 permission profiles、六类领域卡片、终端契约测试；现有 Python pm（设备码协议）作为过渡资产复用。§10 有 4 个决策点待确认。
 - [ ] **A9 设计⑤：UI Surface Contract**
   内容：现有 Web route/capability inventory（retain/merge/local-ui/archive）、canonical presentation model 第一版、共享 UI 包（`@papermind/client` / `presentation` / `ui-core`）边界、deep links、Local UI loopback bridge 契约、Full Web 可选部署 profile。
   输入：审计报告 §2.4（前端三套轮询端点）。
@@ -176,3 +176,4 @@
 - 2026-09-02（第十次）：核对后关闭 D6/D7（实体与规则已随 D1–D3 落地且有测试）——**Stage D（Phase 3）完成**：同一 Claim 可从 API 追溯到精确证据、生成活动与历史版本，无证据的模型输出不进入 confirmed。Phase 3 出口条件达成。
 - 2026-09-02（第十一次）：完成 A6 设计②——165 HTTP + 9 MCP + 26 agent 工具全量映射到用例目录与 B2–B7 迁移批次。
 - 2026-09-02（第十二次）：完成 A7 设计③——原子 durable execution 协议（四表 schema、状态机、9 个 Task 原子边界、4 个 Workflow 模板、旧机制收敛映射）。
+- 2026-09-02（第十三次）：完成 A8 设计④——PM Terminal downstream 架构（fork 基线/patch policy/命令面/permission profiles/renderer/契约测试）。
