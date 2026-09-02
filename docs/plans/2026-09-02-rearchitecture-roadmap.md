@@ -24,7 +24,7 @@
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 4 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
-| Stage D · Phase 3 Research State 垂直切片 | 7 | 5 | 进行中 |
+| Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
@@ -118,8 +118,10 @@
 - [x] **D5 Research Object 基础导出**：至少 JSON + Markdown，含校验值与 provenance 摘要。
   产出：[packages/application/queries/research_export.py](../../packages/application/queries/research_export.py)（question+claims+evidence+relations+source_versions+provenance，sha256 校验值覆盖载荷、确定性可重导）+ `GET /research/questions/{id}/export?format=json|markdown`。
   结论：同一数据两次导出 content_hash 一致（generated_at 不参与 hash），数据变化 hash 随之变化；Markdown 为同一载荷的人读渲染（renderer 不改语义）。2 个测试（确定性单测 + HTTP e2e），全量 112 passed。
-- [ ] **D6 领域事件**：append-only outbox/event log 记录 Claim 与 SourceVersion 的关键状态变化（设计文档 §4.7 事件表）。
-- [ ] **D7 confirmed 规则落地**：author/PaperMind/user 判断来源区分；无证据输出只能 draft/pending verification。
+- [x] **D6 领域事件**：append-only outbox/event log 记录 Claim 与 SourceVersion 的关键状态变化（设计文档 §4.7 事件表）。
+  结论：随 D1–D3 落地——`research_events` 与聚合变更同事务写入（outbox 规则），`list_unprocessed`/`mark_processed` 消费面就绪；§4.7 的 11 个事件已产出 10 个并有测试（claim_proposed/confirmed/revised/invalidated、relation_recorded、evidence_extracted、source_added、source_version_detected、research_run_completed、job_failed），`RetractionDetected` 随 P1 watch 接入。
+- [x] **D7 confirmed 规则落地**：author/PaperMind/user 判断来源区分；无证据输出只能 draft/pending verification。
+  结论：随 D1/D3 落地并有测试锁定——`claims.origin` 三分；无证据坐标不得 confirmed（`test_confirm_requires_evidence_and_user`）；papermind 不可自动 confirmed（`test_papermind_claim_defaults_and_cannot_self_confirm`）；author+支持性证据规则自动确认；引用不可核实的抽取结果保持 draft（`test_unverifiable_quote_stays_draft_without_evidence`）。
 
 ## Stage E — Phase 4：PM Research Terminal 与 MCP 一等化
 
@@ -172,3 +174,4 @@
 - 2026-09-02（第七次）：完成 D3——ClaimExtractionService 挂接 deep_dive，ResearchRun 生成待验证 Claim（provenance 完整、引用核实强制、幂等），全量 108 passed。
 - 2026-09-02（第八次）：完成 D4——application 层首个模块（四查询）+ 只读 /research/* 路由；同一 Claim 可从 API 追溯到精确证据与 diff，全量 110 passed。
 - 2026-09-02（第九次）：完成 D5——Research Object 基础导出（JSON+Markdown，确定性 sha256 校验值，provenance 摘要），全量 112 passed。
+- 2026-09-02（第十次）：核对后关闭 D6/D7（实体与规则已随 D1–D3 落地且有测试）——**Stage D（Phase 3）完成**：同一 Claim 可从 API 追溯到精确证据、生成活动与历史版本，无证据的模型输出不进入 confirmed。Phase 3 出口条件达成。
