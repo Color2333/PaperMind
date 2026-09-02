@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 1 | 进行中 |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 2 | 进行中 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -98,7 +98,10 @@
 
 阶段出口条件：API/Executor 任意重启后，任务状态可解释、可恢复且不会静默丢失；同一 Task 的重复 Attempt 不会重复提交领域结果；单篇失败无需重跑整个批次。
 
-- [ ] **C0 Go Core 与 Executor Protocol 骨架**：建立 Go module、配置/健康检查/版本化 HTTPS API、capability registry 和 Python executor client；协议覆盖 register、claim、heartbeat、complete、fail、cancel，所有消息带 schema/version 与 correlation id。先跑通 fake Executor，不迁移算法。
+- [x] **C0 Go Core 与 Executor Protocol 骨架**：建立 Go module、配置/健康检查/版本化 HTTPS API、capability registry 和 Python executor client；协议覆盖 register、claim、heartbeat、complete、fail、cancel，所有消息带 schema/version 与 correlation id。先跑通 fake Executor，不迁移算法。
+  产出：[core/](../../core/)（module `github.com/Color2333/PaperMind/core`，纯 stdlib 零依赖）——protocol.go（信封 v1 + 六动作消息类型）、registry.go（内存能力注册 + 任务队列 + lease 签发 + 最简 fencing）、server.go（7 端点）、main.go（:8081，CORE_ADDR 可覆盖）+ [core/README.md](../../core/README.md)。
+  Python 侧：[packages/core_client/client.py](../../packages/core_client/client.py)（六动作 + health，correlation_id 生成/回显校验，SchemaMismatchError 类型化）。
+  验证：Go 7 个测试全绿（fake Executor 完整闭环/fail 重入队+迟到 complete 409 拒绝/cancel/schema 拒绝/未注册拒绝）；Python 契约测试 5 个（hermetic MockTransport）；CI 增加 go-core job（vet+test）。全量 141 passed。
 - [x] **C1 batch consumer 移出 API 进程**：Python API lifespan 不再启动任务消费（审计 §1.5，现仅 API 进程消费 `batch_jobs`，worker 不参与）；新任务入口转向 Go Core。
   产出（2026-09-02）：`apps/api/main.py` lifespan 移除 `_batch_lifespan`（仅保留 MCP session manager）；`apps/worker/main.py` 启动/优雅关闭接管 `batch_consumer.start()/stop()`；`batch_consumer` 抽出可单步执行的 `poll_once()`。
   结论：Python 侧进程职责分离达成（API 请求处理 / worker 任务消费）。**顺带根修存量 bug**：claim 事务提交后 ORM 脱管过期，`_run_one_job` 访问 `job.paper_ids` 必抛 DetachedInstanceError 并被 loop 吞掉——批次任务此前一进入执行就卡 running；改为事务内取纯值。守卫测试（API 源码无 batch 引用 + worker 接管）+ 3 个消费行为测试。全量 136 passed。
@@ -204,4 +207,5 @@
 - 2026-09-02（第二十二次）：完成 B8——四批命令面迁移（papers/topics/ingest/pipelines/graph/content/jobs 共约 30 条写路径），长任务入口统一在 application command 提交（tracker 过渡）；修掉两个迁移引入 bug。**Stage B（Phase 1）完成**。全量 127 passed。
 - 2026-09-02（第二十三次）：处理 REVIEW 六项（wheel 打包/ingest 失败语义/query-command 边界+架构守卫/有界执行器/伪进度/index 字段），全量 132 passed。
 - 2026-09-02（第二十四次）：完成 C1（Python 侧）——batch consumer 移出 API 进程（worker 接管 + poll_once 单步化），根修 DetachedInstance 存量 bug；Go Core 入口切换待 C0。全量 136 passed。
+- 2026-09-02（第二十五次）：完成 C0——Go Core 骨架（core/ module：协议信封 v1 + 六动作 + 能力注册 + 内存队列/lease；7 个 Go 测试）+ Python executor client（5 个契约测试）+ CI go-core job。全量 141 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。
