@@ -4,19 +4,21 @@
 
 日期：2026-09-02
 
-适用范围：个人阿里云服务、公开 Demo、PM Research Terminal、远程 MCP 客户端
+适用范围：个人阿里云服务、可选完整 Web、公开 Demo、本地 PM UI、PM Research Terminal、远程 MCP 客户端
 
 ## 执行摘要
 
-PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”为主要形态，而应重构为一个**部署在个人服务器上的、provenance-first 的研究记忆与任务运行时**。论文是输入，Claim、Evidence、研究判断及其演化历史才是长期资产；浏览器、PM Research Terminal 和 MCP/AI Agent 是面向不同场景的客户端。
+PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”为主要形态，而应重构为一个**部署在个人服务器上的、provenance-first 的研究记忆与任务运行时**。论文是输入，Claim、Evidence、研究判断及其演化历史才是长期资产；可选完整 Web、本地 PM UI、PM Research Terminal 和 MCP/AI Agent 是面向不同场景的客户端。
 
 本轮不把 PaperMind 商业化，也不建设多租户 SaaS。实际运行边界是：一套经过认证的个人服务部署在现有阿里云和域名下，供本人从不同电脑远程使用；同一台服务器额外运行一个公开、极简的 Demo。Demo 允许访客先匿名浏览预计算样例，再通过 GitHub 登录获得临时、严格限额的体验空间，并用同一身份从 `pm` CLI 连接。Demo 必须拥有独立数据库、文件卷、配置和模型额度，不能接触个人研究数据。
 
-`pm` 采用基于 Pi SDK 的第一方专用发行版：无参数进入 PaperMind 研究 AI 终端，传统子命令保持确定性和可脚本化，`--json` 提供无损机器输出。Pi 提供终端、模型、session、compaction 和 extension harness；PaperMind 提供远程研究能力、权限、证据、任务与可信状态。终端拥有自己的主题和 Paper/Claim/Evidence/diff/job 专用渲染，但所有数据仍来自同一 Core API。
+`pm` 采用以 Pi 为上游、由 PaperMind 维护的 downstream terminal distribution：无参数进入 PaperMind 研究 AI 终端，传统子命令保持确定性和可脚本化，`--json` 提供无损机器输出。PaperMind 可以裁剪、改造和重新组合 Pi 的 agent core、TUI、模型、session 与 compaction，但研究数据、权限、证据、任务与可信状态始终属于 PaperMind Core。终端拥有自己的主题和 Paper/Claim/Evidence/diff/job 专用渲染。[24]
 
-重构的优先级是先建立稳定的 application command/query 和 durable job 边界，再让 Web、PM Research Terminal、MCP 复用它们；先拆进程、拆依赖并测量资源，再决定是否将轻量服务端控制面迁移到 Go。当前不进行 Python 全量重写。
+现有 Web 不整体删除，而是保留为可选的 Full Web 模块，并逐步适配新的 Research State。与此同时，`pm ui` 在本地启动一个随 CLI 分发的轻量浏览器 UI，通过 loopback bridge 和公网 HTTPS 连接远程 Core；它只保留 PDF/证据对照、Claim 工作台、Research Diff 和任务监控等适合图形界面的高价值交互，不携带本地业务后端或数据库。
 
-目标结果：**个人服务可长期稳定运行，公开 Demo 能在一分钟内展示 PaperMind 如何把论文转化为可验证、可演进的研究认知，本地电脑无需安装完整后端即可通过域名、CLI 或 MCP 使用它。**
+重构的优先级是先建立稳定的 application command/query、presentation model 和 durable job 边界，再让 Full Web、Local UI、PM Research Terminal、MCP 复用它们；先拆进程、拆依赖并测量资源，再决定是否将轻量服务端控制面迁移到 Go。当前不进行 Python 全量重写。
+
+目标结果：**个人服务可长期稳定运行，公开 Demo 能在一分钟内展示 PaperMind 如何把论文转化为可验证、可演进的研究认知；本地电脑无需安装完整后端，即可通过 `pm`、`pm ui` 或 MCP 使用同一远程研究状态。**
 
 ## 1. 背景与已确认边界
 
@@ -30,8 +32,10 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 - 需要一个公网 Demo 网页，但它只展示少量最有代表性的能力，并让访客实际体验远程 PM Research Terminal。
 - Demo 使用第三方身份登录；第一版选择 GitHub，微信作为后续可插拔 provider。
 - 当前工作的重点是重构业务和运行边界，不是继续扩充页面。
-- Web 应可选；无独立前端部署时，PM Research Terminal 和 MCP 仍能完整访问核心能力。
-- `pm` 是基于 Pi SDK 的第一方 Research AI Terminal，而不是在 Python CLI 外再启动一个临时聊天子进程。
+- 现有 Web 不整体删除；它作为可选 Full Web 模块继续存在，新 Research State 能力必须提供对应 Web 适配。
+- `pm ui` 是随 CLI 分发的本地轻量 UI，面向高效率证据阅读和 Claim 操作，不保存服务端数据库副本。
+- 无任何 Web 部署时，PM Research Terminal 和 MCP 仍能完整访问核心能力。
+- `pm` 是以 Pi 源码为上游、由 PaperMind 维护的第一方 Research AI Terminal distribution，而不是在 Python CLI 外再启动一个临时聊天子进程。
 - `pm` 同时保留交互 AI、确定性子命令和 `--json` 三种入口；AI 体验不能取代自动化接口。
 - PaperMind 凭据与模型 provider 凭据严格分离；个人交互推理默认在本地 Pi，服务端负责研究数据和 durable jobs。
 - PaperMind 终端拥有自己的主题、卡片和渐进式详情展示，使 Paper、Claim、Evidence、diff 与 job 在终端中可读、可定位、可操作。
@@ -44,8 +48,9 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 - 不把数据库文件同步到本地电脑，也不允许客户端直连数据库。
 - 不把物理 worker 的重启、扩缩容权限暴露给 Demo 访客。
 - 不在本轮全量重写约 2.9 万行 Python 业务代码。
-- 不以完整复刻现有所有页面作为 Demo 目标。
-- 不 fork Pi 或复制其通用 TUI、模型接入、session、compaction 和 agent loop；PaperMind 只维护必要的 SDK adapter、extension、主题与领域渲染。
+- 不以完整复刻现有所有页面作为 Demo 或 Local UI 目标。
+- 不因前端瘦身而直接删除仍有价值的现有页面；先完成 route/capability 盘点，再按部署 profile 保留或归档。
+- 不对 Pi 做无边界复制和随意改写；PaperMind 维护可追溯 downstream fork、上游版本基线和有限 patch stack，保留 MIT copyright/license notice。[24]
 - 不让 Pi 的默认 coding tools 自动获得 PaperMind 服务端权限，也不通过 `bash`、SSH 或 Docker 命令控制服务器 worker。
 
 ## 2. 当前实现审计
@@ -68,14 +73,15 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 ### 3.1 总体模型
 
 ```text
-                         公网 HTTPS
-                              │
-          ┌───────────────────┼───────────────────┐
-          │                   │                   │
-       浏览器          pm Research Terminal  Claude/Codex
-          │              Pi SDK + PM ext.       MCP client
-          └───────────────────┼───────────────────┘
-                              │
+                              公网 HTTPS
+                                   │
+        ┌──────────────────┬───────┼───────────────┬────────────────┐
+        │                  │       │               │                │
+  Full Web / Demo       pm ui      pm        Claude/Codex      other clients
+   optional remote   local bridge  terminal     MCP client       HTTPS API
+        │                  │       │               │                │
+        └──────────────────┴───────┼───────────────┴────────────────┘
+                                   │
                     PaperMind Core API
               command/query · auth · job control
                               │
@@ -108,25 +114,33 @@ ResearchQuestion
 
 > AI answer是一种视图，不是事实来源；可追溯的 Claim、Evidence 和 History 才是事实层。
 
-### 3.2 三种客户端
+### 3.2 四种一等客户端形态
 
-#### Web
+#### 可选 Full Web
 
-Web 用于 PDF 阅读、论文浏览、证据对照、批量选择和图谱等高信息密度任务。它不再拥有业务编排逻辑，也不应该是独立 Nginx 容器的必选部署单元。
+现有 React/Vite Web 不整体删除。它继续承载 PDF 阅读、完整论文管理、证据对照、批量选择、图谱、历史数据和需要大画布的高级功能，但从“PaperMind 必选入口”调整为“可选 Full Web 模块”。
 
-目标运行方式：
+目标部署 profile：
 
 ```bash
-papermind-server serve                 # 服务端：API + MCP + 内嵌静态 Web
-papermind-server serve --headless      # 服务端：仅 API + MCP
-pm ui                                  # 客户端：打开远程 Web
+papermind-server serve --web=full      # Core + MCP + 可选完整 Web
+papermind-server serve --web=demo      # 独立 Demo 实例的精简公开页面
+papermind-server serve --web=none      # Core + MCP，无服务端 Web
 ```
 
-`papermind-server` 仅表示服务端部署入口的目标语义，最终命令名可在实现设计中确定；它不属于分发给普通客户端的 `pm` 包。第一阶段可以继续使用现有 React/Vite 代码，但生产构建产物由 Core 或反向代理直接提供，删除常驻的独立前端容器。后续只在数据可视化明显优于文本时保留页面。
+`papermind-server` 仅表示服务端部署入口的目标语义，最终命令名可在实现设计中确定；它不属于分发给普通客户端的 `pm` 包。生产构建可以由 Core 或同一反向代理提供，不要求常驻的独立前端容器。
+
+Full Web 的保留原则：
+
+- 先建立现有 route/capability inventory，标记 `retain`、`merge`、`local-ui`、`archive`，禁止直接批量删除。
+- 新的 ResearchQuestion、Claim、Evidence、History、Diff 和 Job 必须提供 Web adapter；不能只在 CLI 中实现。
+- 现有页面逐步改为调用 application API，不继续维护浏览器专属业务编排。
+- Full Web 可以展示比 Local UI 更完整的管理和可视化能力，但不得形成另一套领域状态。
+- 未启用 Full Web 时，Core、Local UI、终端和 MCP 的功能与数据不能受到影响。
 
 #### PM Research Terminal
 
-`pm` 是基于 Pi SDK 的 PaperMind 专用发行版。它在同一个 Node.js/TypeScript 进程内组合命令解析、Pi agent session、PaperMind extension、主题和领域 renderer；不通过 Python 包导入服务端 AI、PDF 或数据库模块，也不通过子进程 RPC 作为长期架构。[6]
+`pm` 是以 Pi 源码为上游的 PaperMind 专用发行版。它保留 Pi 的包边界，在同一个 Node.js/TypeScript 进程内组合命令解析、agent session、PaperMind tools、主题和领域 renderer；PaperMind 可以裁剪 coding-oriented 产品功能并改造 TUI，但不通过 Python 包导入服务端 AI、PDF 或数据库模块，也不通过子进程 RPC 作为长期架构。[6][25]
 
 它同时提供三种互补模式：
 
@@ -173,7 +187,32 @@ pm queue pause
 pm queue resume
 ```
 
-第一版以版本化的 TypeScript/Node 包分发，例如 `@papermind/cli`。以后可以评估 standalone executable 或安装器，但不为追求单二进制而重新实现 Pi harness。服务端是否迁移 Go 与终端采用 Pi SDK 是两个独立决策。
+第一版同时支持版本化 TypeScript/Node 包（例如 `@papermind/cli`）和基于上游构建流程的 standalone executable。服务端是否迁移 Go 与终端采用 Pi downstream fork 是两个独立决策。
+
+##### Pi downstream fork policy
+
+推荐在独立仓库维护 `PaperMind-Terminal`，而不是把完整 Pi 源码复制进 PaperMind 服务端仓库：
+
+```text
+earendil-works/pi <upstream>
+        │ pinned release/tag
+        ▼
+PaperMind-Terminal <downstream fork>
+├── upstream-compatible core packages
+├── ordered PM patch stack
+├── PaperMind product profile
+├── PaperMind themes/renderers
+└── pm release pipeline
+```
+
+维护准则：
+
+- 保留完整 Git 历史、MIT copyright/license notice 和第三方 notices。[24]
+- 为每次 PM release 记录上游基线、patch 清单和未合并的安全修复。
+- 优先通过 product profile 和 build pruning 隐藏或移除功能，只有确认长期不需要时才 source pruning。
+- 优先修改 coding-agent 产品层和 TUI 层；除非扩展点无法满足需求，不改变底层模型协议、agent event schema 和 session format。
+- 对上游同步运行 agent loop、session、provider、TUI snapshot 和 PaperMind renderer 契约测试。
+- 二创终端可以独立演化，但不得成为 Research State、权限、job 或 provenance 的事实来源。
 
 ##### Pi extension 与 capability adapter
 
@@ -255,6 +294,54 @@ pm demo
 
 `pm demo` 使用登录用户的临时 Demo 空间依次执行：查看一个 ResearchQuestion、展开 Claim 与精确 Evidence、发起一次受限分析、观察 job 进度、查看研究状态 diff、导出 Research Pack。它既是产品演示，也是 CLI 的可执行教程。
 
+#### Local PM UI
+
+`pm ui` 不是简单打开服务器上的 Full Web，而是在本地启动随 `pm` 分发的轻量 UI 和短生命周期 loopback bridge，再用浏览器打开。它面向终端不适合承载、但又不值得部署完整 Web 的高信息密度任务。
+
+```bash
+pm ui                                      # 打开本地研究工作台
+pm ui --question <question-id>             # 进入指定 ResearchQuestion
+pm ui --claim <claim-id>                   # 展开 Claim 与 Evidence
+pm ui --job <job-id>                       # 查看实时任务状态
+pm ui --no-open                            # 只启动并打印本地地址
+```
+
+```text
+Browser
+  │ http://127.0.0.1:<ephemeral-port>
+  ▼
+pm loopback bridge
+  ├── serves bundled Local UI assets
+  ├── holds PaperMind token in process memory
+  ├── validates local session/origin/CSRF
+  └── proxies only allowlisted application calls
+            │ HTTPS
+            ▼
+       PaperMind Core
+```
+
+Local UI 不运行 PaperMind 业务后端，不保存数据库副本，不在浏览器 localStorage 中保存长期 bearer token。bridge 仅绑定 `127.0.0.1`/`::1` 的随机可用端口，校验 Host/Origin/CSRF，并使用一次性启动 nonce 建立本地 session；关闭 `pm ui` 后销毁内存凭据和本地 session。所有远程数据请求最终仍通过 HTTPS 到个人或 Demo Core。
+
+第一版 Local UI 只保留五类高价值界面：
+
+- PDF 与 Evidence 并排定位。
+- Claim 工作台：状态、来源、关系、确认与修订。
+- Research Diff：研究状态在时间轴上的变化。
+- Job Monitor：进度、日志、成本、失败和重试。
+- Research Pack：预览、选择与导出。
+
+不在 Local UI 首版复制完整设置后台、订阅配置、邮件管理、全部 ingestion 页面或通用写作平台。终端中的 `open`/`o` 动作应能深链到当前 Paper、Claim、Evidence 或 Job；Local UI 的操作结果也应立即反映到终端、Full Web 和 MCP 查询中。
+
+Local UI 与 Full Web 可以共享：
+
+```text
+@papermind/client          typed HTTPS client + auth types
+@papermind/presentation    canonical Paper/Claim/Evidence/Job view models
+@papermind/ui-core         accessible React primitives + domain components
+```
+
+两者拥有不同的信息架构和 route 集合，不共享页面级业务状态。共享包不能导入服务端 repository、Python handler 或 Pi 私有 session 类型。
+
 #### MCP
 
 MCP 是同一 application API 面向 AI Agent 的适配器，不另写业务逻辑：
@@ -271,6 +358,33 @@ MCP 当前规范允许使用 Streamable HTTP；公网端点应使用 HTTPS、认
 远程 MCP 必须实现标准授权发现。PaperMind MCP 是 OAuth protected resource，通过 well-known metadata 声明 authorization server，并校验 token audience、有效期与 scope。[11] GitHub 或微信只是 PaperMind 登录页背后的上游身份提供方；AI 客户端最终拿到的是 PaperMind token，而不是上游 provider token。
 
 PaperMind 内部 job 模型不能依赖某一版 MCP Tasks。2026-07 的 MCP Release Candidate 仍在调整 task lifecycle，因此 MCP Tasks 只能作为外层 adapter。[9]
+
+### 3.3 跨界面适配契约
+
+“所有新功能都要适配”指语义一致，而不是要求四个界面像素级同构。每项新增 capability 在进入实现前必须声明 surface contract：
+
+```json
+{
+  "capability": "get_claim_evidence",
+  "surfaces": {
+    "terminal": "claim_evidence_renderer",
+    "local_ui": "ClaimEvidencePanel",
+    "full_web": "ClaimEvidenceWorkspace",
+    "mcp": "resource",
+    "json": "ClaimEvidenceResult"
+  }
+}
+```
+
+| 界面 | 主要职责 | 适配要求 |
+| --- | --- | --- |
+| PM Research Terminal | 自然语言、确定性命令、批处理、快速查看 | 每个核心 capability 有 tool/command 与可读 fallback |
+| Local PM UI | 高效证据阅读、Claim 操作、diff 和 job | 只实现高价值图形交互，必须使用 canonical presentation model |
+| Full Web | 现有完整功能、历史兼容、高级管理与大画布 | 可选部署，但新 Research State 必须可读写和可追溯 |
+| MCP | 外部 Agent 的标准调用入口 | 提供结构化 resource/tool，不依赖任何 UI |
+| Demo profile | 一分钟价值展示和受限体验 | 从上述能力挑选垂直切片，不形成独立业务逻辑 |
+
+跨界面必须共享对象 ID、状态机、权限、幂等键和 provenance。允许界面隐藏不适合自己的操作，但不允许同一个 Claim 在不同界面拥有不同状态或解释。
 
 ## 4. 2026 重构准则与目标能力
 
@@ -339,7 +453,7 @@ Agent 能够发现变化、建议下一步并提交受控任务，但不能绕�
 - 每个任务具备 scope、资源预算、模型预算、并发和超时策略。
 - 自动 watch 可以产生候选 Claim 或待验证事项，不直接覆盖用户确认的研究判断。
 - 删除、发布、明显增加成本和改变 confirmed Claim 的动作必须经过对应权限或批准。
-- Web、PM Research Terminal、MCP 观察和控制的是同一个任务与研究状态。
+- Full Web、Local UI、PM Research Terminal、MCP 观察和控制的是同一个任务与研究状态。
 
 MCP 的协议核心可以无状态，PaperMind 应用本身必须持久化任务与研究状态；不能把 durability 寄托在客户端 session 上。[9]
 
@@ -378,12 +492,13 @@ JobFailed
 | --- | --- | --- |
 | P0 地基 | ResearchQuestion/Claim/Evidence/SourceVersion/Relation/History 数据契约 | 先设计、迁移一个垂直切片 |
 | P0 地基 | provenance、证据坐标、author/PM/user 判断区分 | 所有新 Research Run 强制遵守 |
-| P0 地基 | durable jobs、commands/queries、领域事件 | Web/PM Research Terminal/MCP 共用 |
+| P0 地基 | durable jobs、commands/queries、领域事件 | Full Web/Local UI/PM Research Terminal/MCP 共用 |
 | P0 地基 | Research Object 基础导出和 source versioning | 至少支持 JSON + Markdown |
-| P0 地基 | Pi SDK Research Terminal、确定性命令、`--json` 与 permission profiles | 作为第一方 CLI 唯一路线 |
+| P0 地基 | Pi downstream Research Terminal、确定性命令、`--json` 与 permission profiles | 作为第一方 CLI 唯一路线 |
+| P0 地基 | canonical presentation model 与 surface contract | 所有新 capability 在实现前声明适配面 |
 | P1 差异化 | watch/diff、冲突与条件建模、多模态证据、质量评估 | 进入个人服务与 Demo 主路径 |
 | P1 差异化 | Zotero 同步、Crossref 规范化、个人研究策略 | 在 P0 接口稳定后接入 |
-| P1 差异化 | Paper/Claim/Evidence/diff/job 专用 renderer 与 PaperMind themes | 进入终端与 Demo 主路径 |
+| P1 差异化 | Paper/Claim/Evidence/diff/job 专用 renderer、Local UI 与 PaperMind themes | 进入终端、本地工作台与 Demo 主路径 |
 | P2 扩展 | 自动假设与任意实验、多人实时协作、学术社交、完整写作平台 | 不进入本轮重构关键路径 |
 
 ### 4.9 产品路线约束
@@ -429,13 +544,13 @@ Commands
 └── ResumeQueue
 ```
 
-HTTP router、CLI command 与 MCP tool 只负责：
+HTTP router、deterministic CLI command、Pi tool、Local/Full Web action 与 MCP adapter 只负责：
 
 1. 解析输入和鉴权。
 2. 调用 application command/query。
-3. 将结果转换为对应协议。
+3. 将 canonical result 转换为对应协议或 presentation model。
 
-它们不得直接组合 repository、模型 SDK 和线程池。
+它们不得直接组合 repository、模型 SDK 和线程池。React components 和 Pi renderers 也不得自己重新推导 Claim 状态、证据关系或 job 生命周期。
 
 ### 5.2 任务系统
 
@@ -497,13 +612,13 @@ Scheduler 只负责按时入队；executor 只负责领取和执行；API 只负
 - 服务端权限、确认 challenge、审计、成本记录和 durable job 语义。
 - Research State、provenance 以及模型生成产物的验证规则。
 
-交给 Pi SDK/extension：
+交给 PaperMind 的 Pi downstream terminal：
 
 - 本地交互 agent loop、TUI、模型 provider、session、compaction 和 tool rendering。
 - slash commands、steering/follow-up、本地技能和终端主题。
 - 用户确认的展示与输入；服务端仍负责最终授权。
 
-迁移期间，现有 Python agent loop 可以继续服务 Web/Demo，直到对应 adapter 稳定。长期不再以 `packages/ai/tools/registry.py` 作为能力的唯一注册点，而由 application capability contract 分别生成或薄封装 HTTP、MCP、Pi 和 Web agent adapters。
+迁移期间，现有 Python agent loop 可以继续服务 Full Web/Demo，直到对应 adapter 稳定。长期不再以 `packages/ai/tools/registry.py` 作为能力的唯一注册点，而由 application capability contract 分别生成或薄封装 HTTP、MCP、Pi terminal、Local UI 和 Full Web adapters。
 
 ## 6. 数据与部署模式
 
@@ -512,9 +627,9 @@ Scheduler 只负责按时入队；executor 只负责领取和执行；API 只负
 个人服务是唯一真实研究数据源：
 
 - 通过现有域名和 HTTPS 访问；服务器不向客户端开放 SSH 控制路径。
-- 必须登录后访问 Web/API；CLI 与 MCP 使用独立、可撤销、可轮换的 PaperMind 凭据。
+- 必须登录后访问 Full Web/API；PM Research Terminal、Local UI 与 MCP 使用独立、可撤销、可轮换的 PaperMind 凭据。
 - PDF 和分析数据只保存在服务端。
-- 本地客户端不直连数据库。
+- PM Research Terminal 和 Local UI 不直连数据库；Local UI 的 loopback bridge 不构成第二个业务后端。
 - 备份覆盖数据库、PDF/对象文件和必要配置。
 
 SQLite 适合个人应用、本地应用数据和单文件格式。[10] 但只有在 Core 能统一或串行化关键写入后，SQLite 才是最清晰的默认方案。重构期间不顺便迁移生产数据库：先维持当前实际配置，等 job/写入边界稳定后再选择：
@@ -562,14 +677,14 @@ PaperMind 只向 GitHub 请求确认身份所需的最小权限，不请求 repo
 1. 服务端验证 GitHub 用户身份。
 2. 保存最小映射：`provider`、`provider_subject`、创建时间和 Demo TTL。
 3. 丢弃不再需要的 GitHub token，签发 PaperMind 自己的 session/access token。
-4. Web、PM Research Terminal 和 MCP 都以 PaperMind token 访问同一 Demo 身份。
+4. Full Web、Local UI、PM Research Terminal 和 MCP 都以 PaperMind token 访问同一 Demo 身份。
 5. TTL 到期后删除 Demo 任务、输入内容和临时结果；预置公共语料不受影响。
 
 微信网站扫码登录可作为第二 provider，但不作为第一版阻塞项。现有可访问的微信开放平台文档镜像说明，网站微信登录需要开放平台开发者账号、审核通过的网站应用、AppID/AppSecret 和 `snsapi_login` 授权流程；官方当前页面在本次调研中无法直接读取，因此该接入条件需要实施前在微信开放平台重新确认。[14]
 
-## 7. Demo 页面：从网页自然进入 PM Research Terminal
+## 7. Demo 页面：从网页自然进入 PM Research Terminal 与 Local UI
 
-Demo 的目标不是证明 PaperMind 功能很多，而是让访客先在 30–60 秒内理解价值，再用 2–3 分钟从 CLI 完成同一研究流程：
+Demo 的目标不是证明 PaperMind 功能很多，而是让访客先在 30–60 秒内理解价值，再用 2–3 分钟从 PM Research Terminal 或 Local UI 完成同一研究流程：
 
 > PaperMind 能把论文转化为可验证、可演进的研究认知，并让人和 AI 通过同一套接口继续工作。
 
@@ -588,10 +703,10 @@ Demo 的目标不是证明 PaperMind 功能很多，而是让访客先在 30–6
    - 至少展示一篇新论文如何支持、限制或改变既有 Claim。
    - 默认优先返回预计算结果，避免访客消耗个人模型额度。
 
-3. **把同一身份带进 CLI**
-   - 登录完成页展示两条可复制命令：`pm login --endpoint ...` 与 `pm demo`。
-   - 页面同步显示 CLI 将要完成的五步，并解释每一步对应的 PaperMind 能力。
-   - CLI 返回的 Claim、Evidence、diff 和 job 与网页使用同一个临时 Demo 身份。
+3. **把同一身份带进 `pm`**
+   - 登录完成页展示 `pm login --endpoint ...`、`pm demo` 与 `pm ui --question ...`。
+   - 页面同步显示终端将要完成的五步，并解释每一步对应的 PaperMind 能力。
+   - PM Research Terminal 和 Local UI 返回的 Claim、Evidence、diff 和 job 与网页使用同一个临时 Demo 身份。
    - `pm demo` 最终导出一个受限、可携带的 Research Pack。
    - 最终提示如何连接远程 MCP，但不要求用户配置 SSH 或本地 server。
 
@@ -638,7 +753,7 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 - 保持 HTTP 返回兼容，先做内部重定向，不大规模改前端。
 - repository 和 provider 只在 application/service 内使用。
 
-**出口条件：**Web、MCP 对同一能力调用同一个 application handler。
+**出口条件：**Full Web、Local UI、PM Research Terminal 和 MCP 对同一能力调用同一个 application handler；存在第一版 canonical presentation model。
 
 ### Phase 2：统一 durable jobs
 
@@ -661,7 +776,9 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 ### Phase 4：PM Research Terminal 与 MCP 一等化
 
-- 建立 TypeScript/Node 的 `@papermind/cli`，在同进程嵌入 Pi SDK，并加载 PaperMind extension、system prompt、主题和 renderer。
+- 建立独立 `PaperMind-Terminal` downstream fork，固定 Pi 上游基线、保留许可证并维护有序 patch stack。
+- 先通过 PaperMind product profile 关闭 coding-oriented 功能，再做 build pruning；不在第一步大面积删除底层源码。
+- 建立 TypeScript/Node 的 `@papermind/cli` 和 standalone `pm`，在同进程运行裁剪后的 Pi agent core/TUI，并加载 PaperMind system prompt、主题和 renderer。
 - 提供 `pm` 交互终端、`pm -p` 一次性调用、确定性子命令和 `--json` 输出。
 - 提供远程登录、endpoint 配置和核心查询/任务命令；PaperMind token 与本地模型 provider token 分离。
 - CLI 与 MCP 的唯一 PaperMind 连接方式是公网 HTTPS；不提供 SSH、tunnel 或本地 MCP transport 产品路径。
@@ -675,18 +792,27 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 **出口条件：**不打开 Web，也能在 `pm` AI 终端和确定性命令中完成搜索、查看 Claim/Evidence、比较研究状态、触发处理、查看进度、取消任务和导出；同一结构化结果在主题 TUI、plain/Markdown 与 JSON 模式下语义一致。
 
-### Phase 5：前端瘦身与 Demo
+### Phase 5：Local UI 与可选 Full Web 适配
 
-- 删除与产品目标无关的入口和重复状态管理。
-- 让 Web 只调用 application API。
-- 生产构建改为内嵌或由同一反向代理提供，不再要求独立前端容器。
+- 建立现有 Web route/capability inventory，逐项标记 retain、merge、local-ui 或 archive；不进行整体删除。
+- 提取 `@papermind/client`、`@papermind/presentation` 和 `@papermind/ui-core`，让 Local UI 与 Full Web 复用类型、view model 和领域组件。
+- 实现 `pm ui` 的 loopback bridge、随机端口、本地 session、origin/CSRF 校验和 HTTPS allowlist proxy。
+- Local UI 首版实现 PDF/Evidence、Claim Workspace、Research Diff、Job Monitor 和 Research Pack。
+- Full Web 适配 ResearchQuestion、Claim、Evidence、History、Diff 和 Job，并删除页面内重复的业务编排。
+- Full Web 构建产物可由 Core 或同一反向代理提供，但 `--web=none` 时服务端不携带或启动 Web。
+- 为每个新 capability 建立 Terminal、Local UI、Full Web、MCP 和 JSON surface contract 测试。
+
+**出口条件：**`pm ui` 无本地业务后端或数据库即可操作远程 Research State；Full Web 可选启停；同一 Claim 在所有界面中状态、权限和 provenance 一致。
+
+### Phase 6：公开 Demo
+
 - 建立独立 Demo 数据与部署实例。
 - 接入 GitHub 登录、临时 Demo 身份、TTL 清理与组合限额。
-- 实现“匿名看 Claim 与证据 → 登录观察研究状态变化 → CLI 复现并导出”的三段式演示。
+- 实现“匿名看 Claim 与证据 → 登录观察研究状态变化 → PM Research Terminal/Local UI 复现并导出”的三段式演示。
 
 **出口条件：**个人站与 Demo 数据完全隔离；Demo 在模型不可用时仍能展示完整预计算流程。
 
-### Phase 6：语言与存储决策门
+### Phase 7：语言与存储决策门
 
 - 对照 Phase 0 重新测量资源和启动性能。
 - 判断剩余成本来自 Python control plane、重依赖、数据库还是具体任务。
@@ -700,14 +826,15 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 - API 进程不执行长任务。
 - 所有长任务具有持久化状态、可取消、可重试。
-- Web、PM Research Terminal、MCP 不重复实现业务流程。
+- Full Web、Local UI、PM Research Terminal、MCP 不重复实现业务流程。
 - 核心查询不会导入 PDF、NumPy、scikit-learn 等重依赖。
 - SQLite profile 不启动 PostgreSQL；PostgreSQL profile 不携带无效 SQLite 假设。
-- 前端不是必需部署单元。
+- Full Web 不是必需部署单元，但可通过部署 profile 完整保留。
+- 所有新 capability 都声明并验证 Terminal、Local UI、Full Web、MCP 与 JSON 的 surface contract。
 
 ### PM Research Terminal
 
-- `pm` 无参数进入基于 Pi SDK 的 PaperMind AI 终端，`pm -p` 支持一次性 AI 调用。
+- `pm` 无参数进入基于 Pi downstream fork 的 PaperMind AI 终端，`pm -p` 支持一次性 AI 调用。
 - 每个核心能力同时具备可脚本化子命令、稳定退出码和 `--json` 输出。
 - Pi extension 只通过 HTTPS application API 使用 PaperMind，不导入服务端 Python 或直连数据库。
 - PaperMind token 与模型 provider token 分开保存、分开发现和分开撤销。
@@ -715,6 +842,22 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 - Paper、Claim、Evidence、Research Diff、Job 和 Research Pack 有专用 renderer；dark/light 主题可切换。
 - 同一 tool result 在 TTY、窄终端、pipe、Markdown/plain text 和 JSON 下保留相同核心语义。
 - 主题关闭、模型不可用或交互 TUI 不可用时，确定性 CLI 仍可完整工作。
+
+### Local PM UI
+
+- `pm ui` 只绑定 loopback 随机端口，不监听公网网卡。
+- browser 不持久化长期 PaperMind bearer token；bridge 退出后本地 session 失效。
+- Local UI 不包含数据库、领域 handler、LLM pipeline 或 durable worker。
+- PDF/Evidence、Claim、Research Diff、Job 和 Research Pack 能通过深链在终端与 Local UI 之间切换。
+- 在 Full Web 未部署时，Local UI 仍可通过 HTTPS 完成全部目标流程。
+- Local UI 与 Full Web 共用 typed client、canonical presentation model 和领域组件，但不复制页面级状态机。
+
+### 可选 Full Web
+
+- 现有页面经过 inventory 后逐项 retain、merge、local-ui 或 archive，不以批量删除作为瘦身方式。
+- `--web=full` 能访问保留后的完整 Web；`--web=none` 不影响 Core、MCP、`pm` 和 `pm ui`。
+- 新 Research State 能力在 Full Web 中可查看、可定位 evidence、可执行授权范围内的修改。
+- Full Web 不维护独有的 Claim、Evidence、Job 或权限语义。
 
 ### 研究状态
 
@@ -727,8 +870,8 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 ### 个人使用
 
-- 新电脑只安装轻量 `@papermind/cli` 或配置 MCP endpoint 即可使用。
-- PM Research Terminal 和 MCP 只需 HTTPS endpoint，不需要服务器 SSH 权限。
+- 新电脑只安装轻量 `@papermind/cli`/`pm` binary 或配置 MCP endpoint 即可使用。
+- PM Research Terminal、Local UI 和 MCP 只需 HTTPS endpoint，不需要服务器 SSH 权限。
 - 服务端数据库是唯一事实来源。
 - HTTPS 登录、凭据撤销、备份恢复均有可重复步骤。
 - 能远程查看 worker 健康、任务进度和失败原因。
@@ -737,7 +880,7 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 - 未登录即可在一分钟内看懂预计算演示；登录后才能执行动态调用。
 - GitHub 登录后能够获得有 TTL 和硬限额的临时 Demo 身份。
-- `pm login` 和 `pm demo` 能通过 HTTPS 复现网页中的 Claim、Evidence、diff、job 和导出流程。
+- `pm login`、`pm demo` 和 `pm ui --question ...` 能通过 HTTPS 复现网页中的 Claim、Evidence、diff、job 和导出流程。
 - 页面围绕 Research Pulse、Ask PaperMind、Paper Sensemaking 和 CLI onboarding 组织，不扩展成完整后台。
 - Demo 无法读取或修改个人实例数据。
 - LLM 不可用或额度耗尽时，预计算结果仍可访问。
@@ -751,11 +894,15 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 - **身份提供方锁定：**PaperMind session 与 provider token 分离，以统一 identity adapter 支持 GitHub 首发、微信后续。
 - **CLI token 泄漏：**使用短期、限 scope 的 PaperMind token，支持撤销；不在终端历史、URL 或日志中输出 token。
 - **CLI/MCP 演化出第二套 API：**以 application handlers 为唯一能力目录，自动生成或薄封装 adapters。
-- **Pi 依赖版本漂移：**通过薄 SDK adapter、版本锁定和终端契约测试隔离上游变化；不 fork Pi。
+- **Pi downstream 与上游长期分叉：**独立 fork 固定 upstream tag，维护小而有序的 patch stack；定期同步安全与 provider 修复，不把 PM 领域逻辑写进 Pi core。
+- **过早 source pruning 导致无法同步：**先用 product profile 和 build pruning 删除用户可见复杂度，只有稳定后才物理删除底层代码。
 - **终端 renderer 吞入业务逻辑：**renderer 只接受 canonical structured result，不能查询数据库、改变状态或重新解释 Claim。
 - **Node 安装成为额外门槛：**首版使用版本化 npm 包和清晰安装器；以后只优化分发形态，不重写 Pi harness。
 - **AI 模式破坏脚本兼容：**无参数才进入 TUI；传统子命令、stdout/stderr、退出码和 `--json` 保持确定性。
-- **过早 Go 化：**以 Phase 6 决策门阻止无测量依据的重写。
+- **Full Web 与 Local UI 分叉：**共享 typed client、presentation model、领域组件和 surface contract 测试；允许信息架构不同，不允许领域语义不同。
+- **保留现有 Web 使瘦身失效：**Full Web 使用可选 build/deployment profile；retain 不等于默认加载，archive 不等于立即删除源码。
+- **Local UI loopback 被滥用：**只绑定 loopback 随机端口，使用启动 nonce、短期 cookie、Host/Origin/CSRF 校验和 allowlist proxy；token 不进入 URL 或 localStorage。
+- **过早 Go 化：**以 Phase 7 决策门阻止无测量依据的重写。
 - **公开域名攻击面：**个人服务和 Demo 都经 HTTPS；Demo 限流，个人服务强认证；禁止 token 出现在 URL 和日志中。
 - **协议变化：**内部 job schema 保持自主，MCP Tasks 仅在 adapter 层转换。
 - **领域模型一次做太大：**先迁移一个 ResearchQuestion 垂直切片；Claim ontology、置信度和关系类型只保留完成 Demo 所需的最小集合。
@@ -765,15 +912,16 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 ## 11. 推荐实施顺序
 
-下一步不是先写终端或重画 Demo，而是完成五份短设计：
+下一步不是先写终端或重画 Demo，而是完成六份短设计：
 
 1. **Research State 最小数据契约。**定义 ResearchQuestion、Claim、Evidence、SourceVersion、Relation、Judgment、History 与 ResearchRun，以及 draft/confirmed/invalidated 转换规则。
 2. **Application command/query 清单与当前调用映射。**把 151 个 HTTP handlers、MCP tools 和 agent tools 映射到有限的用例集合。
 3. **统一 Job 状态机与迁移说明。**确定 `TaskTracker`、`BatchJob`、APScheduler 和 worker heartbeat 如何收敛。
-4. **PM Research Terminal 架构。**定义 Pi SDK adapter、capability metadata、确定性命令、permission profiles、主题、领域 renderer 与 fallback 契约。
-5. **HTTPS identity/token flow。**定义 GitHub Web 登录、CLI device authorization、MCP OAuth discovery、PaperMind token 与本地模型凭据的边界。
+4. **PM Research Terminal downstream 架构。**定义 Pi 上游基线、patch policy、product profile、source/build pruning、capability metadata、确定性命令、permission profiles、主题与领域 renderer。
+5. **UI Surface Contract。**完成现有 Web inventory，定义 Local UI loopback bridge、canonical presentation model、共享 UI packages、deep links 与 Full Web 可选部署 profile。
+6. **HTTPS identity/token flow。**定义 GitHub Web 登录、CLI device authorization、MCP OAuth discovery、PaperMind token、本地模型凭据与 Local UI session 的边界。
 
-这五份设计获确认后，从一个只读垂直切片开始迁移：
+这六份设计获确认后，从一个只读垂直切片开始迁移：
 
 ```text
 SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence
@@ -781,6 +929,7 @@ SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence
     → typed HTTPS client
     → deterministic CLI command
     → Pi tool + PaperMind renderer
+    → Local UI + Full Web adapters
     → MCP adapter
 ```
 
@@ -833,3 +982,7 @@ SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence
 [22] [`packages/ai/tools/registry.py`](../../packages/ai/tools/registry.py) — 当前 PaperMind tool registry、schema 与 handler dispatch
 
 [23] [Pi Themes](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/themes.md) — 自定义 TUI theme、加载位置、选择与热更新机制
+
+[24] [Pi MIT License](https://github.com/earendil-works/pi/blob/main/LICENSE) — downstream 修改、分发与 copyright/license notice 要求
+
+[25] [Pi Repository and Packages](https://github.com/earendil-works/pi) — agent core、AI/provider、TUI、coding agent 与 standalone build 的上游包边界
