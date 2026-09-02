@@ -165,52 +165,25 @@ def list_actions(
     offset: int = Query(default=0, ge=0),
 ) -> dict:
     """列出论文入库行动记录"""
-    from packages.storage.repositories import ActionRepository
+    from packages.application.queries.actions import list_actions as app_list_actions
 
     with session_scope() as session:
-        repo = ActionRepository(session)
-        actions, total = repo.list_actions(
-            action_type=action_type,
-            topic_id=topic_id,
-            limit=limit,
-            offset=offset,
+        return app_list_actions(
+            session, action_type=action_type, topic_id=topic_id, limit=limit, offset=offset
         )
-        return {
-            "items": [
-                {
-                    "id": a.id,
-                    "action_type": a.action_type,
-                    "title": a.title,
-                    "query": a.query,
-                    "topic_id": a.topic_id,
-                    "paper_count": a.paper_count,
-                    "created_at": a.created_at.isoformat() if a.created_at else None,
-                }
-                for a in actions
-            ],
-            "total": total,
-        }
 
 
 @router.get("/actions/{action_id}")
 def get_action_detail(action_id: str) -> dict:
     """获取行动详情"""
-    from packages.storage.repositories import ActionRepository
+    from packages.application.queries.actions import get_action as app_get_action
+    from packages.domain.exceptions import NotFoundError
 
     with session_scope() as session:
-        repo = ActionRepository(session)
-        action = repo.get_action(action_id)
-        if not action:
-            raise HTTPException(status_code=404, detail="行动记录不存在")
-        return {
-            "id": action.id,
-            "action_type": action.action_type,
-            "title": action.title,
-            "query": action.query,
-            "topic_id": action.topic_id,
-            "paper_count": action.paper_count,
-            "created_at": action.created_at.isoformat() if action.created_at else None,
-        }
+        try:
+            return app_get_action(session, action_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail="行动记录不存在") from exc
 
 
 @router.get("/actions/{action_id}/papers")
@@ -219,26 +192,10 @@ def get_action_papers(
     limit: int = Query(default=200, ge=1, le=500),
 ) -> dict:
     """获取某次行动关联的论文列表"""
-    from packages.storage.repositories import ActionRepository
+    from packages.application.queries.actions import get_action_papers as app_get_action_papers
 
     with session_scope() as session:
-        repo = ActionRepository(session)
-        papers = repo.get_papers_by_action(action_id, limit=limit)
-        return {
-            "action_id": action_id,
-            "items": [
-                {
-                    "id": p.id,
-                    "title": p.title,
-                    "arxiv_id": p.arxiv_id,
-                    "publication_date": p.publication_date.isoformat()
-                    if p.publication_date
-                    else None,
-                    "read_status": p.read_status,
-                }
-                for p in papers
-            ],
-        }
+        return app_get_action_papers(session, action_id, limit=limit)
 
 
 # ---------- 每日报告任务 ----------

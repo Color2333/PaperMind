@@ -4,11 +4,14 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from apps.api.deps import brief_service, cache, graph_service, iso_dt
+from apps.api.deps import brief_service, cache
+from packages.application.commands.generated import save_generated_content
+from packages.application.queries import content as content_queries
+from packages.application.queries import graph as graph_queries
+from packages.domain.exceptions import NotFoundError
 from packages.domain.schemas import DailyBriefRequest
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
-from packages.storage.repositories import GeneratedContentRepository
 
 router = APIRouter()
 
@@ -18,17 +21,16 @@ router = APIRouter()
 
 @router.get("/wiki/paper/{paper_id}")
 def wiki_paper(paper_id: str) -> dict:
-    result = graph_service.paper_wiki(paper_id=paper_id)
+    result = graph_queries.get_paper_wiki(paper_id=paper_id)
     with session_scope() as session:
-        repo = GeneratedContentRepository(session)
-        gc = repo.create(
+        result["content_id"] = save_generated_content(
+            session,
             content_type="paper_wiki",
             title=f"Paper Wiki: {result.get('title', paper_id)}",
             markdown=result.get("markdown", ""),
             paper_id=paper_id,
             metadata_json={k: v for k, v in result.items() if k != "markdown"},
         )
-        result["content_id"] = gc.id
     return result
 
 
@@ -37,17 +39,16 @@ def wiki_topic(
     keyword: str,
     limit: int = Query(default=120, ge=1, le=500),
 ) -> dict:
-    result = graph_service.topic_wiki(keyword=keyword, limit=limit)
+    result = graph_queries.get_topic_wiki(keyword=keyword, limit=limit)
     with session_scope() as session:
-        repo = GeneratedContentRepository(session)
-        gc = repo.create(
+        result["content_id"] = save_generated_content(
+            session,
             content_type="topic_wiki",
             title=f"Topic Wiki: {keyword}",
             markdown=result.get("markdown", ""),
             keyword=keyword,
             metadata_json={k: v for k, v in result.items() if k != "markdown"},
         )
-        result["content_id"] = gc.id
     return result
 
 
@@ -67,21 +68,23 @@ def _run_topic_wiki_task(
         if progress_callback:
             progress_callback(msg, int(pct * 100), 100)
 
-    result = graph_service.topic_wiki(
+    from packages.application.commands.generated import save_generated_content
+    from packages.application.queries.graph import get_topic_wiki
+
+    result = get_topic_wiki(
         keyword=keyword,
         limit=limit,
         progress_callback=_adapted_progress,
     )
     with session_scope() as session:
-        repo = GeneratedContentRepository(session)
-        gc = repo.create(
+        result["content_id"] = save_generated_content(
+            session,
             content_type="topic_wiki",
             title=f"Topic Wiki: {keyword}",
             markdown=result.get("markdown", ""),
             keyword=keyword,
             metadata_json={k: v for k, v in result.items() if k != "markdown"},
         )
-        result["content_id"] = gc.id
     return result
 
 
@@ -111,45 +114,23 @@ def generated_list(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     with session_scope() as session:
-        repo = GeneratedContentRepository(session)
-        items = repo.list_by_type(type, limit=limit)
-        return {
-            "items": [
-                {
-                    "id": gc.id,
-                    "content_type": gc.content_type,
-                    "title": gc.title,
-                    "keyword": gc.keyword,
-                    "paper_id": gc.paper_id,
-                    "created_at": iso_dt(gc.created_at),
-                }
-                for gc in items
-            ]
-        }
+        return content_queries.list_generated_contents(session, content_type=type, limit=limit)
 
 
 @router.get("/generated/{content_id}")
 def generated_detail(content_id: str) -> dict:
     with session_scope() as session:
-        repo = GeneratedContentRepository(session)
         try:
-            gc = repo.get_by_id(content_id)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Content not found") from None
-        return {
-            "id": gc.id,
-            "content_type": gc.content_type,
-            "title": gc.title,
-            "keyword": gc.keyword,
-            "paper_id": gc.paper_id,
-            "markdown": gc.markdown,
-            "metadata_json": gc.metadata_json,
-            "created_at": iso_dt(gc.created_at),
-        }
+            return content_queries.get_generated_content(session, content_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Content not found") from exc
 
 
 @router.delete("/generated/{content_id}")
 def generated_delete(content_id: str) -> dict:
+    # 写路径（B8 统一命令面）；暂保留仓储直调，仅恢复局部导入
+    from packages.storage.repositories import GeneratedContentRepository
+
     with session_scope() as session:
         repo = GeneratedContentRepository(session)
         try:
@@ -210,27 +191,20 @@ def hot_keywords(
     days: int = Query(default=7, ge=1, le=30),
     top_k: int = Query(default=15, ge=1, le=50),
 ) -> dict:
-    from packages.ai.recommendation_service import TrendService
-
-    items = TrendService().detect_hot_keywords(days=days, top_k=top_k)
-    return {"items": items}
+    return content_queries.get_trends_hot(days=days, top_k=top_k)
 
 
 @router.get("/trends/emerging")
 def emerging_trends(days: int = Query(default=14, ge=7, le=60)) -> dict:
-    from packages.ai.recommendation_service import TrendService
-
-    return TrendService().detect_trends(days=days)
+    return content_queries.get_trends_emerging(days=days)
 
 
 @router.get("/today")
 def today_summary() -> dict:
-    """今日研究速览（60s 缓存，内容变化慢）"""
+    """今日研究速览（60s 缓存，内容变化慢；缓存在传输层，业务在 application）"""
     cached = cache.get("today_summary")
     if cached is not None:
         return cached
-    from packages.ai.recommendation_service import TrendService
-
-    result = TrendService().get_today_summary()
+    result = content_queries.get_today_summary()
     cache.set("today_summary", result, ttl=60)
     return result

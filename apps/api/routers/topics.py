@@ -13,10 +13,6 @@ from packages.domain.schemas import ReferenceImportReq, SuggestKeywordsReq, Topi
 from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository, TopicRepository
-from packages.storage.repositories.stats import (
-    get_paper_distribution_stats,
-    get_topic_stats,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -70,68 +66,10 @@ def _topic_dict(t, session=None) -> dict:
 
 @router.get("/topics")
 def list_topics(enabled_only: bool = False, failed: bool = False) -> dict:
-    from sqlalchemy import func, select
-
-    from packages.storage.models import CollectionAction, PaperTopic
+    from packages.application.queries.topics import list_topics_with_stats
 
     with session_scope() as session:
-        topics = TopicRepository(session).list_topics(enabled_only=enabled_only)
-        # failed=true：只返回最近抓取出错的 topic（供可观测性面板）
-        if failed:
-            topics = [t for t in topics if t.last_error]
-        if not topics:
-            return {"items": []}
-        topic_ids = [t.id for t in topics]
-
-        # N+1 修复：2 次批量聚合代替每主题 2 次查询（2N+1 → 3）
-        # 1. 批量论文计数（GROUP BY topic_id）
-        count_rows = session.execute(
-            select(PaperTopic.topic_id, func.count())
-            .where(PaperTopic.topic_id.in_(topic_ids))
-            .group_by(PaperTopic.topic_id)
-        ).all()
-        paper_counts = {row[0]: row[1] for row in count_rows}
-
-        # 2. 批量最近一次行动（用窗口函数或每组取首条；SQLite/PG 通用：按 topic 分组取 created_at 最大）
-        #    一次查询拿所有相关 topic 的最新 action
-        latest_actions: dict = {}
-        action_rows = (
-            session.execute(
-                select(CollectionAction)
-                .where(CollectionAction.topic_id.in_(topic_ids))
-                .order_by(CollectionAction.topic_id, CollectionAction.created_at.desc())
-            )
-            .scalars()
-            .all()
-        )
-        for a in action_rows:
-            if a.topic_id not in latest_actions:  # 已按 topic + created_at desc 排序，首个即最新
-                latest_actions[a.topic_id] = a
-
-        items = []
-        for t in topics:
-            d = {
-                "id": str(t.id),
-                "name": t.name,
-                "query": t.query,
-                "enabled": t.enabled,
-                "created_at": t.created_at.isoformat() if t.created_at else None,
-                "paper_count": paper_counts.get(t.id, 0),
-                # last_run_at/last_error 读 TopicSubscription 真实抓取状态（PR1），
-                # 此前被 CollectionAction.created_at 覆盖，抓取失败被掩盖
-                "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
-                "last_error": t.last_error,
-                "last_action_at": None,
-                "last_run_count": None,
-            }
-            last_action = latest_actions.get(t.id)
-            if last_action:
-                d["last_action_at"] = (
-                    last_action.created_at.isoformat() if last_action.created_at else None
-                )
-                d["last_run_count"] = last_action.paper_count
-            items.append(d)
-        return {"items": items}
+        return list_topics_with_stats(session, enabled_only=enabled_only, failed=failed)
 
 
 @router.post("/topics")
@@ -153,12 +91,12 @@ def upsert_topic(req: TopicCreate) -> dict:
 
 @router.post("/topics/suggest-keywords")
 def suggest_keywords(req: SuggestKeywordsReq) -> dict:
-    from packages.ai.keyword_service import KeywordService
+    from packages.application.queries.content import suggest_keywords as app_suggest
 
     description = req.description
     if not description.strip():
         raise HTTPException(400, "description is required")
-    suggestions = KeywordService().suggest(description.strip())
+    suggestions = app_suggest(description.strip())
     return {"suggestions": suggestions}
 
 
@@ -230,20 +168,19 @@ def manual_fetch_topic(topic_id: str) -> dict:
 
 @router.get("/topics/{topic_id}/fetch-status")
 def fetch_topic_status(topic_id: str) -> dict:
-    """查询手动抓取的执行状态 — 通过全局 tracker 查询"""
+    """查询手动抓取的执行状态 — 通过全局 tracker 查询（过渡；C10 并入 GetJob）"""
+    from packages.application.queries.tasks import find_fetch_task_by_topic
+    from packages.application.queries.topics import get_topic_info
+
     # 兼容旧的轮询逻辑：从 tracker 中找匹配的 fetch 任务
-    active = global_tracker.get_active()
-    for t in active:
-        if t["task_type"] == "fetch" and topic_id[:8] in t.get("task_id", ""):
-            if t["finished"]:
-                return {"status": "completed" if t["success"] else "failed", **t}
-            return {"status": "running", **t}
+    matched = find_fetch_task_by_topic(topic_id)
+    if matched:
+        if matched["finished"]:
+            return {"status": "completed" if matched["success"] else "failed", **matched}
+        return {"status": "running", **matched}
     # 没找到活跃任务，看 DB 里的主题信息
     with session_scope() as session:
-        from packages.storage.models import TopicSubscription
-
-        topic = session.get(TopicSubscription, topic_id)
-        topic_info = _topic_dict(topic, session) if topic else {}
+        topic_info = get_topic_info(session, topic_id)
     # 没找到任务时返回空字典
     return {"topic": topic_info}
 
@@ -321,9 +258,9 @@ def ingest_references(body: ReferenceImportReq) -> dict:
 @router.get("/ingest/references/status/{task_id}")
 def ingest_references_status(task_id: str) -> dict:
     """查询参考文献导入任务进度"""
-    from packages.domain.task_tracker import global_tracker
+    from packages.application.queries.tasks import get_task_info
 
-    task = global_tracker.get_task(task_id)
+    task = get_task_info(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
     return task
@@ -336,6 +273,7 @@ def ingest_references_status(task_id: str) -> dict:
 def topic_stats() -> dict:
     """主题维度统计（30s 缓存）"""
     from apps.api.deps import cache
+    from packages.application.queries.topics import get_topic_stats
 
     cached = cache.get("topic_stats")
     if cached is not None:
@@ -350,11 +288,12 @@ def topic_stats() -> dict:
 def paper_distribution() -> dict:
     """论文分布统计：年份分布 + 来源分布（30s 缓存）"""
     from apps.api.deps import cache
+    from packages.application.queries.topics import get_paper_distribution
 
     cached = cache.get("paper_distribution")
     if cached is not None:
         return cached
     with session_scope() as session:
-        result = get_paper_distribution_stats(session)
+        result = get_paper_distribution(session)
     cache.set("paper_distribution", result, ttl=30)
     return result

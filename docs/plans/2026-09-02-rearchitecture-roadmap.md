@@ -22,7 +22,7 @@
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
-| Stage B · Phase 1 application command/query | 8 | 6 | 进行中 |
+| Stage B · Phase 1 application command/query | 8 | 7 | 进行中 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
@@ -87,7 +87,9 @@
 - [x] **B6 agent tools 改调 application handlers**：`packages/ai/tools/registry.py` 保留参数与返回语义，handler 业务下沉（设计文档 §5.5）。
   产出（2026-09-02，共三批 + 收尾）：24 个 agent 工具全部改调 application——read×3（commands/pipelines）、batch×4（commands/batch，过渡）、search 族×11（queries/papers/ask/graph/content 扩展）、analysis×2（queries/analysis）、writing×1、system×1、topics×2（queries/topics）、wiki/brief/gaps×3（commands/brief/wiki、queries/graph）、ingest×2（commands/ingest：导入业务 + 双层并行 + 后台 PDF 池 + tracker 内聚，handler 只做进度→ToolProgress 桥接）。
   结论：registry 保留 schema/confirm/短前缀解析语义；`_get_paper_detail` 为纯投影（无服务引用）保持原状。**测试顺带修掉存量 bug**：search_arxiv 对 PaperCreate 误用 ORM 列名 `metadata_json`（有结果即 AttributeError）。全量 125 passed。
-- [ ] **B7 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
+- [x] **B7 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
+  产出（2026-09-02，三批）：content 8 条（wiki×2/generated×2/trends×2/today；写 generated 走 commands/generated）；topics 6 条（列表含批量聚合/stats/distribution/suggest-keywords/fetch-status/references status）；jobs actions×3（queries/actions.py）；pipelines runs + tasks×4（queries/tasks.py 过渡观测）；graph 14 个 GET 全部经 queries/graph.py（facade lru_cache 持有；TTL 缓存与 run_in_threadpool 留在传输层）。
+  结论：canonical result 平铺 plain dict，HTTP 404/detail 形状逐处兼容；e2e 覆盖 topics/stats/actions/runs/tasks/trends/graph 空库路径。全量 126 passed。
 - [ ] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一创建 Job，不再直接调用具体 Worker 或线程池（为 Stage C 铺路）。
 
 ## Stage C — Phase 2：原子 durable execution
@@ -192,3 +194,4 @@
 - 2026-09-02（第十八次）：B6 第一批——agent 工具 read/batch/search 三组共 10 个改调 application（commands/pipelines、commands/batch、queries/papers 扩展），全量 123 passed。
 - 2026-09-02（第十九次）：B6 第二、三批——ask/citation_tree/timeline/suggest_keywords + reasoning/figures/writing/system/topics/wiki_brief 共 13 个改调 application（新增 queries：ask/graph/analysis/system/topics；commands：brief/wiki）；仅余 ingest.py。全量 123 passed。
 - 2026-09-02（第二十次）：B6 完成——ingest 工具业务下沉到 commands/ingest（handler 只桥接进度），并修复存量 bug（search_arxiv 误用 metadata_json）；**24 个 agent 工具全部经 application 层**。全量 125 passed。
+- 2026-09-02（第二十一次）：完成 B7——content/topics/jobs/pipelines/graph 共约 31 条 HTTP 查询全部下沉 application（queries：content 扩展/actions 新建/topics 扩展/tasks 扩展/graph 查询族）；HTTP 形状逐处兼容。全量 126 passed。

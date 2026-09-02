@@ -183,7 +183,7 @@ def _build_app() -> FastAPI:
     """真实 routers 组装的最小 app（不含 main.py 的 lifespan/MCP/认证）"""
     from fastapi.responses import JSONResponse
 
-    from apps.api.routers import content, papers, pipelines, research, topics
+    from apps.api.routers import content, graph, jobs, papers, pipelines, research, topics
     from packages.domain.exceptions import AppError
 
     app = FastAPI()
@@ -197,6 +197,8 @@ def _build_app() -> FastAPI:
     app.include_router(pipelines.router)
     app.include_router(research.router)
     app.include_router(content.router)
+    app.include_router(jobs.router)
+    app.include_router(graph.router)
     return app
 
 
@@ -571,3 +573,45 @@ def test_papers_read_endpoints_use_application_layer(e2e_env, monkeypatch):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["channel_stats"]["arxiv"]["total"] == 0
+
+
+def test_b7_query_endpoints(e2e_env):
+    """B7：topics/stats/distribution、actions、pipelines runs、tasks、trends、graph 全部经 application 层"""
+    client = e2e_env.client
+    _ingest_two_papers(client)
+
+    # topics 读路径
+    resp = client.get("/topics")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == []
+    assert client.get("/topics/stats").status_code == 200
+    assert client.get("/topics/distribution").status_code == 200
+
+    # actions（ingest 已产生行动记录）
+    resp = client.get("/actions")
+    assert resp.status_code == 200, resp.text
+    actions = resp.json()
+    assert actions["total"] == 1
+    action_id = actions["items"][0]["id"]
+    detail = client.get(f"/actions/{action_id}")
+    assert detail.status_code == 200 and detail.json()["id"] == action_id
+    papers = client.get(f"/actions/{action_id}/papers")
+    assert papers.status_code == 200 and len(papers.json()["items"]) == 2
+    assert client.get("/actions/no-such-action").status_code == 404
+
+    # pipelines runs + tasks（过渡观测）
+    runs = client.get("/pipelines/runs")
+    assert runs.status_code == 200 and runs.json()["items"]
+    active = client.get("/tasks/active")
+    assert active.status_code == 200 and "tasks" in active.json()
+
+    # trends / today（LLM fake 生效）
+    assert client.get("/trends/hot", params={"days": 7, "top_k": 5}).status_code == 200
+    assert client.get("/trends/emerging", params={"days": 14}).status_code == 200
+    assert client.get("/today").status_code == 200
+
+    # graph GET 查询族（空库 → 空结构不报错）
+    assert client.get("/graph/overview").status_code == 200
+    resp = client.get("/graph/timeline", params={"keyword": "diarization", "limit": 10})
+    assert resp.status_code == 200, resp.text
+    assert client.get("/graph/cocitation-clusters", params={"min_cocite": 2}).status_code == 200

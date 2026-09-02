@@ -7,12 +7,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 
-from apps.api.deps import get_paper_title, iso_dt, pipelines, rag_service
+from apps.api.deps import get_paper_title, pipelines, rag_service
 from packages.domain.exceptions import NotFoundError
 from packages.domain.schemas import AskRequest, AskResponse
 from packages.domain.task_tracker import global_tracker
-from packages.storage.db import session_scope
-from packages.storage.repositories import PipelineRunRepository
 
 logger = logging.getLogger(__name__)
 
@@ -83,23 +81,9 @@ def run_embed(paper_id: UUID) -> dict:
 def list_pipeline_runs(
     limit: int = Query(default=30, ge=1, le=200),
 ) -> dict:
-    with session_scope() as session:
-        runs = PipelineRunRepository(session).list_latest(limit=limit)
-        return {
-            "items": [
-                {
-                    "id": r.id,
-                    "pipeline_name": r.pipeline_name,
-                    "paper_id": r.paper_id,
-                    "status": r.status.value,
-                    "decision_note": r.decision_note,
-                    "elapsed_ms": r.elapsed_ms,
-                    "error_message": r.error_message,
-                    "created_at": iso_dt(r.created_at),
-                }
-                for r in runs
-            ]
-        }
+    from packages.application.queries.tasks import list_pipeline_runs as app_list_runs
+
+    return app_list_runs(limit=limit)
 
 
 # ---------- RAG ----------
@@ -131,9 +115,10 @@ def ask_iterative(
 
 @router.get("/tasks/active")
 def get_active_tasks() -> dict:
-    """获取全局进行中的任务列表（跨页面可见）"""
+    """获取全局进行中的任务列表（跨页面可见；过渡观测，C10 并入 Jobs）"""
+    from packages.application.queries.tasks import list_active_tasks
 
-    return {"tasks": global_tracker.get_active()}
+    return {"tasks": list_active_tasks()}
 
 
 @router.post("/tasks/track")
@@ -167,8 +152,10 @@ def track_task(body: dict) -> dict:
 
 @router.get("/tasks/{task_id}")
 def get_task_status(task_id: str) -> dict:
-    """查询任务进度"""
-    status = global_tracker.get_task(task_id)
+    """查询任务进度（过渡观测，C10 并入 Jobs）"""
+    from packages.application.queries.tasks import get_task_info
+
+    status = get_task_info(task_id)
     if not status:
         raise NotFoundError(f"Task {task_id} not found")
     return status
@@ -176,11 +163,13 @@ def get_task_status(task_id: str) -> dict:
 
 @router.get("/tasks/{task_id}/result")
 def get_task_result(task_id: str) -> dict:
-    """获取已完成任务的结果"""
-    status = global_tracker.get_task(task_id)
+    """获取已完成任务的结果（过渡观测，C10 并入 Jobs）"""
+    from packages.application.queries.tasks import get_task_info
+    from packages.application.queries.tasks import get_task_result as app_result
+
+    status = get_task_info(task_id)
     if not status:
         raise NotFoundError(f"Task {task_id} not found")
     if not status.get("finished"):
         raise HTTPException(400, "Task not finished yet")
-    result = global_tracker.get_result(task_id)
-    return result or {}
+    return app_result(task_id) or {}
