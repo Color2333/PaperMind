@@ -18,6 +18,7 @@ dependencies = [
   "python-jose[cryptography]>=3.3.0",
   "passlib[bcrypt]>=1.7.4",
   "sqlalchemy>=2.0.43",
+  "typer>=0.12",
   "uvicorn>=0.35.0",
 ]
 
@@ -48,10 +49,14 @@ graph = [
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[project.scripts]
+pm = "apps.cli.main:app"
+
 [tool.setuptools]
 packages = [
   "apps",
   "apps.api",
+  "apps.cli",
   "apps.worker",
   "packages",
   "packages.ai",

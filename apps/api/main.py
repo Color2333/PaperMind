@@ -15,7 +15,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 from apps.api.middleware.demo_mode import DemoModeMiddleware
-from packages.auth import decode_access_token
+from apps.api.token_auth import lookup_api_token, required_scope_for_method
+from packages.auth import API_TOKEN_PREFIX, decode_access_token
 from packages.config import get_settings
 from packages.domain.exceptions import AppError
 from packages.logging_setup import setup_logging
@@ -51,13 +52,21 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """认证中间件 - 保护所有 API（白名单除外）"""
+    """认证中间件 - 保护所有 API（白名单除外）
+
+    支持两种凭证：
+    - JWT（网页会话，/auth/login 签发，7 天有效）：完整权限
+    - API 令牌（pmt_ 前缀，DB 校验，read/write scope）：按方法强制 scope
+      GET/HEAD → read，其余方法 → write
+    """
 
     # 白名单路径（无需认证）
     WHITELIST = {
         "/health",
         "/auth/login",
         "/auth/status",
+        "/auth/device/start",
+        "/auth/device/poll",
         "/mcp",
     }
 
@@ -88,13 +97,40 @@ class AuthMiddleware(BaseHTTPMiddleware):
             token = request.query_params.get("token")
 
         if not token:
+            api_logger.warning("[%s] 401 缺少凭证 %s", request.url.path, request.client)
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Not authenticated"},
             )
 
+        # API 令牌：pmt_ 前缀，查 DB 校验 + scope 强制
+        if token.startswith(API_TOKEN_PREFIX):
+            info = lookup_api_token(token)
+            if info is None:
+                api_logger.warning("401 无效 API 令牌 %s", request.url.path)
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid or expired token"},
+                )
+            required = required_scope_for_method(request.method)
+            if required not in info.scopes:
+                api_logger.warning(
+                    "403 API 令牌 %s 缺少 %s scope %s", info.prefix, required, request.url.path
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": f"令牌缺少 {required} 权限"},
+                )
+            request.state.auth_method = "api_token"
+            request.state.auth_scopes = info.scopes
+            request.state.token_id = info.token_id
+            request.state.token_name = info.name
+            request.state.token_prefix = info.prefix
+            return await call_next(request)
+
         payload = decode_access_token(token)
         if not payload:
+            api_logger.warning("401 无效 JWT %s", request.url.path)
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or expired token"},
@@ -102,6 +138,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # 将用户信息存入 request.state
         request.state.user = payload
+        request.state.auth_method = "jwt"
         return await call_next(request)
 
 
