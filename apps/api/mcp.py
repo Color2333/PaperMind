@@ -5,7 +5,8 @@ Streamable HTTP transport（MCP 2025-06-18 规范）。鉴权两级：
 2. 静态 MCP_AUTH_TOKEN（hermes 常驻应急用）
 两者都未配置时不启用鉴权（仅开发用）。
 
-暴露论文查询 / 每日简报 / 论文推荐 / 触发处理任务四类工具，复用现有 service 单例。
+暴露论文查询 / 每日简报 / 论文推荐 / 触发处理任务四类工具；工具只做协议转换，
+业务全部经 packages/application 层（B5，设计②），不引用 apps.api.deps 服务单例。
 
 @author Color2333
 """
@@ -14,9 +15,12 @@ from __future__ import annotations
 
 import hmac
 import os
+from uuid import UUID
 
 from fastmcp import FastMCP
 from fastmcp.server.auth.auth import AccessToken, TokenVerifier
+
+from packages.domain.exceptions import NotFoundError
 
 # 静态令牌（hermes 常驻用，免续期）。未配置时仅依赖 DB 令牌；都没有则不鉴权（仅开发用）。
 _MCP_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
@@ -67,7 +71,7 @@ else:
     mcp = FastMCP("papermind-mcp")
 
 
-# ---------- 工具实现（复用项目 service/repo，不重写业务逻辑）----------
+# ---------- 工具实现（只做协议转换；业务在 packages/application 层）----------
 
 
 def _to_text(content: str | dict) -> str:
@@ -79,44 +83,21 @@ def _to_text(content: str | dict) -> str:
     return json.dumps(content, ensure_ascii=False, default=str)
 
 
-@mcp.tool
-def search_papers(query: str = "", limit: int = 10, topic_id: str = "") -> dict:
-    """在 PaperMind 论文库中检索论文。
-
-    Args:
-        query: 自由文本检索词（匹配标题/摘要/arxiv_id），空则按时间倒序。
-        limit: 最多返回条数，默认 10，上限 50。
-        topic_id: 可选，按主题过滤。
-    """
-    from apps.api.deps import paper_list_response
+def _tool_search_papers(query: str = "", limit: int = 10, topic_id: str = "") -> dict:
+    from packages.application.queries.papers import list_papers
     from packages.storage.db import session_scope
-    from packages.storage.repositories import PaperRepository
 
     limit = max(1, min(limit, 50))
     with session_scope() as session:
-        repo = PaperRepository(session)
-        papers, total = repo.list_paginated(
-            page=1, page_size=limit, search=query or None, topic_id=topic_id or None
+        # list_papers 返回 canonical result（items+total+分页元信息），MCP 消费其超集
+        return list_papers(
+            session, page=1, page_size=limit, search=query or None, topic_id=topic_id or None
         )
-        resp = paper_list_response(papers, repo)
-    resp["total"] = total
-    return resp
 
 
-@mcp.tool
-def get_paper(paper_id: str) -> dict:
-    """获取单篇论文详情（含 skim 摘要/精读内容/主题/标签）。
-
-    Args:
-        paper_id: 论文 UUID。
-    """
-    from uuid import UUID
-
-    from sqlalchemy import select
-
+def _tool_get_paper(paper_id: str) -> dict:
+    from packages.application.queries.papers import get_paper
     from packages.storage.db import session_scope
-    from packages.storage.models import AnalysisReport
-    from packages.storage.repositories import PaperRepository
 
     try:
         pid = UUID(paper_id)
@@ -124,77 +105,54 @@ def get_paper(paper_id: str) -> dict:
         return {"error": f"无效的 paper_id: {e}"}
 
     with session_scope() as session:
-        repo = PaperRepository(session)
         try:
-            p = repo.get_by_id(pid)
-        except ValueError:
+            detail = get_paper(session, pid)
+        except NotFoundError:
             return {"error": "论文不存在"}
-        report = session.execute(
-            select(AnalysisReport).where(AnalysisReport.paper_id == pid)
-        ).scalar_one_or_none()
-        topics = repo.get_topic_names_for_papers([str(pid)]).get(str(pid), [])
-        tags = repo.get_tags_for_papers([str(pid)]).get(str(pid), [])
-        return {
-            "id": str(p.id),
-            "title": p.title,
-            "arxiv_id": p.arxiv_id,
-            "abstract": p.abstract,
-            "read_status": p.read_status.value,
-            "publication_date": str(p.publication_date) if p.publication_date else None,
-            "topics": topics,
-            "tags": tags,
-            "title_zh": (p.metadata_json or {}).get("title_zh", ""),
-            "abstract_zh": (p.metadata_json or {}).get("abstract_zh", ""),
-            "skim_summary": report.summary_md if report else None,
-            "skim_score": report.skim_score if report else None,
-            "deep_dive": report.deep_dive_md if report else None,
-        }
+    # MCP 契约保持原字段名（skim_summary/skim_score/deep_dive）
+    skim = detail.get("skim_report") or {}
+    deep = detail.get("deep_report") or {}
+    return {
+        "id": detail["id"],
+        "title": detail["title"],
+        "arxiv_id": detail["arxiv_id"],
+        "abstract": detail["abstract"],
+        "read_status": detail["read_status"],
+        "publication_date": detail["publication_date"],
+        "topics": detail["topics"],
+        "tags": detail["tags"],
+        "title_zh": detail["title_zh"],
+        "abstract_zh": detail["abstract_zh"],
+        "skim_summary": skim.get("summary_md"),
+        "skim_score": skim.get("skim_score"),
+        "deep_dive": deep.get("deep_dive_md"),
+    }
 
 
-@mcp.tool
-def get_daily_brief(limit: int = 30) -> str:
-    """生成并返回今日研究简报（纯文本摘要版，含高分论文/推荐/趋势）。
-
-    Args:
-        limit: 简报论文数量，默认 30。
-    """
-    from apps.api.deps import brief_service
-
-    html = brief_service.build_html(limit=limit)
-    # 从 HTML 提取纯文本摘要（去标签），hermes 用文本更友好
+def _tool_get_daily_brief(limit: int = 30) -> str:
     import re
 
+    from packages.application.queries.content import get_daily_brief_html
+
+    html = get_daily_brief_html(limit=limit)
+    # 从 HTML 提取纯文本摘要（去标签），hermes 用文本更友好
     text = re.sub(r"<[^>]+>", " ", html)
     text = re.sub(r"\s+", " ", text).strip()
     # 截断避免过长（MCP tool 输出有上限）
     return text[:8000] if len(text) > 8000 else text
 
 
-@mcp.tool
-def recommend_papers(top_k: int = 10) -> dict:
-    """基于已读论文 embedding 的个性化推荐。
-
-    Args:
-        top_k: 返回数量，默认 10，上限 30。
-    """
-    from packages.ai.recommendation_service import RecommendationService
+def _tool_recommend_papers(top_k: int = 10) -> dict:
+    from packages.application.queries.content import get_recommendations
 
     top_k = max(1, min(top_k, 30))
-    recs = RecommendationService().recommend(top_k=top_k)
+    recs = get_recommendations(top_k=top_k)
     return {"count": len(recs), "items": recs}
 
 
-@mcp.tool
-def find_similar(paper_id: str, top_k: int = 5) -> dict:
-    """查找与指定论文相似的其他论文（基于 embedding 余弦相似度）。
-
-    Args:
-        paper_id: 种子论文 UUID。
-        top_k: 返回数量，默认 5，上限 20。
-    """
-    from uuid import UUID
-
-    from apps.api.deps import rag_service
+def _tool_find_similar(paper_id: str, top_k: int = 5) -> dict:
+    from packages.application.queries.papers import get_similar_papers
+    from packages.storage.db import session_scope
 
     try:
         pid = UUID(paper_id)
@@ -202,33 +160,23 @@ def find_similar(paper_id: str, top_k: int = 5) -> dict:
         return {"error": f"无效的 paper_id: {e}"}
 
     top_k = max(1, min(top_k, 20))
-    similar_ids = rag_service.similar_papers(pid, top_k=top_k)
-    if not similar_ids:
-        return {"count": 0, "items": [], "note": "无相似论文或种子论文无 embedding"}
-
-    from packages.storage.db import session_scope
-    from packages.storage.repositories import PaperRepository
-
     with session_scope() as session:
-        repo = PaperRepository(session)
-        papers = repo.list_by_ids([str(i) for i in similar_ids])
-        return {
-            "count": len(papers),
-            "seed_paper_id": paper_id,
-            "items": [{"id": str(p.id), "title": p.title, "arxiv_id": p.arxiv_id} for p in papers],
-        }
+        try:
+            result = get_similar_papers(session, pid, top_k=top_k)
+        except NotFoundError:
+            return {"error": "论文不存在"}
+    items = result["items"]
+    if not items:
+        return {"count": 0, "items": [], "note": "无相似论文或种子论文无 embedding"}
+    return {
+        "count": len(items),
+        "seed_paper_id": paper_id,
+        "items": [{"id": i["id"], "title": i["title"], "arxiv_id": i["arxiv_id"]} for i in items],
+    }
 
 
-@mcp.tool
-def trigger_skim(paper_id: str) -> dict:
-    """触发单篇论文粗读（skim），返回 skim 结果（一句话/创新点/分数）。
-
-    Args:
-        paper_id: 论文 UUID。
-    """
-    from uuid import UUID
-
-    from apps.api.deps import pipelines
+def _tool_trigger_skim(paper_id: str) -> dict:
+    from packages.application.commands.pipelines import run_skim
 
     try:
         pid = UUID(paper_id)
@@ -236,7 +184,7 @@ def trigger_skim(paper_id: str) -> dict:
         return {"error": f"无效的 paper_id: {e}"}
 
     try:
-        result = pipelines.skim(pid)
+        result = run_skim(pid)
         return {
             "paper_id": paper_id,
             "success": True,
@@ -247,8 +195,108 @@ def trigger_skim(paper_id: str) -> dict:
             "abstract_zh": result.abstract_zh,
             "relevance_score": result.relevance_score,
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return {"paper_id": paper_id, "success": False, "error": str(e)}
+
+
+def _tool_trigger_embed(paper_id: str) -> dict:
+    from packages.application.commands.pipelines import run_embed
+
+    try:
+        pid = UUID(paper_id)
+    except ValueError as e:
+        return {"error": f"无效的 paper_id: {e}"}
+
+    try:
+        run_embed(pid)
+        return {"paper_id": paper_id, "success": True, "note": "嵌入完成"}
+    except Exception as e:  # noqa: BLE001
+        return {"paper_id": paper_id, "success": False, "error": str(e)}
+
+
+def _tool_trigger_daily_job() -> dict:
+    from packages.application.commands.daily import start_daily_ingest
+
+    return start_daily_ingest()
+
+
+def _tool_get_task_status(task_id: str) -> dict:
+    from packages.application.queries.tasks import get_task_status as app_get_task_status
+
+    info = app_get_task_status(task_id)
+    if info is None:
+        return {"error": "任务不存在或已过期"}
+    task = info["task"]
+    return {
+        "task_id": task["task_id"],
+        "status": task["status"],
+        "progress": task["progress"],
+        "message": task["message"],
+        "result": info["result"],
+    }
+
+
+@mcp.tool
+def search_papers(query: str = "", limit: int = 10, topic_id: str = "") -> dict:
+    """在 PaperMind 论文库中检索论文。
+
+    Args:
+        query: 自由文本检索词（匹配标题/摘要/arxiv_id），空则按时间倒序。
+        limit: 最多返回条数，默认 10，上限 50。
+        topic_id: 可选，按主题过滤。
+    """
+    return _tool_search_papers(query=query, limit=limit, topic_id=topic_id)
+
+
+@mcp.tool
+def get_paper(paper_id: str) -> dict:
+    """获取单篇论文详情（含 skim 摘要/精读内容/主题/标签）。
+
+    Args:
+        paper_id: 论文 UUID。
+    """
+    return _tool_get_paper(paper_id)
+
+
+@mcp.tool
+def get_daily_brief(limit: int = 30) -> str:
+    """生成并返回今日研究简报（纯文本摘要版，含高分论文/推荐/趋势）。
+
+    Args:
+        limit: 简报论文数量，默认 30。
+    """
+    return _tool_get_daily_brief(limit=limit)
+
+
+@mcp.tool
+def recommend_papers(top_k: int = 10) -> dict:
+    """基于已读论文 embedding 的个性化推荐。
+
+    Args:
+        top_k: 返回数量，默认 10，上限 30。
+    """
+    return _tool_recommend_papers(top_k=top_k)
+
+
+@mcp.tool
+def find_similar(paper_id: str, top_k: int = 5) -> dict:
+    """查找与指定论文相似的其他论文（基于 embedding 余弦相似度）。
+
+    Args:
+        paper_id: 种子论文 UUID。
+        top_k: 返回数量，默认 5，上限 20。
+    """
+    return _tool_find_similar(paper_id=paper_id, top_k=top_k)
+
+
+@mcp.tool
+def trigger_skim(paper_id: str) -> dict:
+    """触发单篇论文粗读（skim），返回 skim 结果（一句话/创新点/分数）。
+
+    Args:
+        paper_id: 论文 UUID。
+    """
+    return _tool_trigger_skim(paper_id)
 
 
 @mcp.tool
@@ -258,20 +306,7 @@ def trigger_embed(paper_id: str) -> dict:
     Args:
         paper_id: 论文 UUID。
     """
-    from uuid import UUID
-
-    from apps.api.deps import pipelines
-
-    try:
-        pid = UUID(paper_id)
-    except ValueError as e:
-        return {"error": f"无效的 paper_id: {e}"}
-
-    try:
-        pipelines.embed_paper(pid)
-        return {"paper_id": paper_id, "success": True, "note": "嵌入完成"}
-    except Exception as e:
-        return {"paper_id": paper_id, "success": False, "error": str(e)}
+    return _tool_trigger_embed(paper_id)
 
 
 @mcp.tool
@@ -280,22 +315,7 @@ def trigger_daily_job() -> dict:
 
     返回的 task_id 可用 get_task_status 工具轮询状态。
     """
-    from packages.ai.daily_runner import run_daily_brief, run_daily_ingest
-    from packages.domain.task_tracker import global_tracker
-
-    def _run_daily(progress_callback=None):
-        ingest = run_daily_ingest()
-        brief = run_daily_brief()
-        return {"ingest": ingest, "brief": brief}
-
-    task_id = global_tracker.submit(
-        task_type="mcp_daily",
-        title="MCP 触发的每日抓取+简报",
-        fn=_run_daily,
-        total=2,
-        category="mcp",
-    )
-    return {"task_id": task_id, "status": "started", "message": "用 get_task_status 查进度"}
+    return _tool_trigger_daily_job()
 
 
 @mcp.tool
@@ -305,19 +325,7 @@ def get_task_status(task_id: str) -> dict:
     Args:
         task_id: 任务 ID。
     """
-    from packages.domain.task_tracker import global_tracker
-
-    info = global_tracker.get_task(task_id)
-    if not info:
-        return {"error": "任务不存在或已过期"}
-    result = global_tracker.get_result(task_id)
-    return {
-        "task_id": task_id,
-        "status": info.status if hasattr(info, "status") else str(info.get("status")),
-        "progress": info.progress if hasattr(info, "progress") else info.get("progress"),
-        "message": info.message if hasattr(info, "message") else info.get("message"),
-        "result": result,
-    }
+    return _tool_get_task_status(task_id)
 
 
 def get_mcp_asgi_app():
