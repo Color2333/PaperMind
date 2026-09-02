@@ -21,7 +21,7 @@
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 六份设计 | 10 | 2 | 进行中 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 3 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 0 | 未开始 |
@@ -49,9 +49,9 @@
 - [ ] **A4 Research State 人工校验样本**
   产出：一个预置研究问题 + 少量论文的 Claim/Evidence/SourceVersion 小样本（人工校验过）。
   出口条件：样本可被 Phase 3（D2）迁移直接消费。
-- [ ] **A5 设计①：Research State 最小数据契约**
-  内容：ResearchQuestion/Claim/Evidence/SourceVersion/Relation/Judgment/History/ResearchRun 的字段、ID、draft/confirmed/invalidated 转换规则。
-  出口条件：文档获确认，能直接指导 D1 建模。
+- [x] **A5 设计①：Research State 最小数据契约**
+  产出：[2026-09-02 设计① Research State 最小数据契约](./2026-09-02-design-1-research-state-data-contract.md)。
+  结论：7 实体字段级契约 + Claim 状态机（无证据坐标不得 confirmed；papermind 最高 pending_verification）+ 事件表兼任 History/outbox + PROV 字段级映射 + 与现有 schema 的不回填共存策略；§11 有 5 个决策点待用户确认，确认后即可进入 D1。
 - [ ] **A6 设计②：Application command/query 清单与调用映射**
   内容：把 151 个 HTTP handlers、MCP tools、agent tools 映射到有限的用例集合（设计文档 §5.1 命令/查询表）。
   出口条件：每个现有入口都有映射目标；无覆盖的用例显式列入"暂不迁移"。
@@ -156,3 +156,4 @@
 - 2026-09-02：建立路线图；完成 A1 审计。
 - 2026-09-02（第二次）：同步设计基线第二版——Pi 从 SDK adapter 改为 downstream fork 策略（A8/E1）、新增 Local PM UI（A9/F3/F4）、Full Web 从瘦身删除改为可选模块（F1/F5/F6）、设计五份变六份（A5–A10）、Phase 0–6 变 0–7（Stage A–H）、Phase 1 出口新增 canonical presentation model（B2）。
 - 2026-09-02（第三次）：完成 A3——主用户流程端到端回归测试（tests/test_e2e_main_flow.py，LLM/arXiv/vision 全 fake + tmp SQLite）与 CI 测试 workflow（tests.yml）。
+- 2026-09-02（第四次）：完成 A5 设计①（Research State 最小数据契约：7 实体、状态机、事件/outbox、PROV 映射、共存策略），§11 决策点待确认。
