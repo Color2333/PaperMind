@@ -139,18 +139,35 @@ def _safe_create_index(conn, idx_name: str, table: str, column: str) -> None:
         conn.rollback()
 
 
+def _run_alembic_upgrade() -> None:
+    """PG：启动时执行 alembic upgrade head，让 auto_deploy 合并即上线新表。
+
+    失败不阻断启动（schema 可能已是最新的情况），仅记日志。
+    """
+    try:
+        from pathlib import Path
+
+        from alembic import command
+        from alembic.config import Config
+
+        repo_root = Path(__file__).resolve().parents[2]
+        cfg = Config(str(repo_root / "alembic.ini"))
+        cfg.set_main_option("script_location", str(repo_root / "infra" / "migrations"))
+        command.upgrade(cfg, "head")
+        logger.info("alembic upgrade head 完成（PG）")
+    except Exception:
+        logger.exception("alembic upgrade head 失败（启动继续，schema 可能需要手动迁移）")
+
+
 def run_migrations() -> None:
     """启动时执行轻量级数据库迁移
 
-    注意：Alembic（infra/migrations）是 schema 迁移的权威路径，新库应通过
-    `alembic upgrade head` 建表。本函数仅作运行时增量兜底，处理历史遗留库的
-    列/索引补齐，不替代 alembic 工作流。新表应通过 alembic 迁移添加。
-
-    PostgreSQL 等远程库由 alembic 管理schema，此处跳过 DDL 兜底
-    （其内部含 sqlite_master、DATETIME DEFAULT、JSON 等 SQLite 专属写法）。
+    注意：Alembic（infra/migrations）是 schema 迁移的权威路径。PG 启动时自动
+    `alembic upgrade head`（幂等）；SQLite 走运行时增量兜底，处理历史遗留库的
+    列/索引补齐，不替代 alembic 工作流。
     """
     if not _is_sqlite:
-        logger.info("非 SQLite 库，跳过 run_migrations 兜底（由 alembic 管理 schema）")
+        _run_alembic_upgrade()
         return
     with engine.connect() as conn:
         _safe_add_column(

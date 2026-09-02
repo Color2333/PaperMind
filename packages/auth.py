@@ -1,10 +1,12 @@
 """
-认证工具模块 - JWT 生成/验证，密码验证
+认证工具模块 - JWT 生成/验证，密码验证，API 令牌生成/哈希
 @author Color2333
 """
 
 import hmac
+import secrets
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from typing import Any
 
 from jose import JWTError, jwt
@@ -16,6 +18,51 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24 * 7  # 7天有效期
+
+# ---------- API 令牌（CLI / MCP / 外部 harness 用） ----------
+
+API_TOKEN_PREFIX = "pmt_"
+# 设备码授权流程参数
+DEVICE_CODE_EXPIRE_SECONDS = 15 * 60
+DEVICE_POLL_INTERVAL_SECONDS = 5
+# user_code 去混淆字母表（无 0/O/1/I）
+_USER_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+
+
+def hash_token(raw_token: str) -> str:
+    """令牌 SHA-256 哈希（DB 只存哈希，不存明文）"""
+    return sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def generate_api_token() -> tuple[str, str, str]:
+    """生成 API 令牌。
+
+    Returns:
+        (raw, prefix, token_hash) —— raw 仅在创建时返回一次；
+        prefix 用于列表展示；token_hash 入库。
+    """
+    raw = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    return raw, raw[:12], hash_token(raw)
+
+
+def generate_user_code() -> str:
+    """生成设备授权 user_code，格式 XXXX-XXXX"""
+    body = "".join(secrets.choice(_USER_CODE_ALPHABET) for _ in range(8))
+    return f"{body[:4]}-{body[4:]}"
+
+
+def generate_device_code() -> tuple[str, str]:
+    """生成设备码。
+
+    Returns:
+        (raw, device_code_hash) —— raw 给 CLI 轮询用，哈希入库。
+    """
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_token(raw)
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

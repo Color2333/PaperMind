@@ -28,6 +28,7 @@ const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const Settings = lazy(() => import("@/pages/Settings"));
+const DeviceAuthorize = lazy(() => import("@/pages/DeviceAuthorize"));
 
 import LoginPage from "@/pages/Login";
 import { isAuthenticated as checkAuth, clearAuth } from "@/services/api";
@@ -84,8 +85,8 @@ export default function App() {
     setIsAuthed(false);
   }, []);
 
-  // 未认证时显示登录页
-  if (!isAuthed) {
+  // 未认证时显示登录页（/device 设备授权页自行内嵌登录，放行深链）
+  if (!isAuthed && !window.location.pathname.startsWith("/device")) {
     return (
       <ErrorBoundary>
         <LoginPage onLoginSuccess={handleLoginSuccess} />
@@ -101,6 +102,8 @@ export default function App() {
       <ToastContainer />
       <PrefetchChunks />
       <Routes>
+        {/* 设备码授权页：独立布局（pm login 打开的 verification_url） */}
+        <Route path="/device" element={<Suspense fallback={<PageFallback />}><DeviceAuthorize /></Suspense>} />
         <Route element={<Layout />}>
           <Route path="/" element={<AgentPage />} />
           <Route path="/collect" element={<Suspense fallback={<PageFallback />}><Collect /></Suspense>} />

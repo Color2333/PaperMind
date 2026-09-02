@@ -1,6 +1,10 @@
-"""PaperMind MCP server —— 挂载到现有 FastAPI，供 hermes agent 接入。
+"""PaperMind MCP server —— 挂载到现有 FastAPI，供 hermes agent / pm CLI 接入。
 
-Streamable HTTP transport（MCP 2025-06-18 规范），Bearer 静态 token 鉴权。
+Streamable HTTP transport（MCP 2025-06-18 规范）。鉴权两级：
+1. DB API 令牌（pmt_ 前缀，pm login / 网页签发，带 scope）
+2. 静态 MCP_AUTH_TOKEN（hermes 常驻应急用）
+两者都未配置时不启用鉴权（仅开发用）。
+
 暴露论文查询 / 每日简报 / 论文推荐 / 触发处理任务四类工具，复用现有 service 单例。
 
 @author Color2333
@@ -8,29 +12,58 @@ Streamable HTTP transport（MCP 2025-06-18 规范），Bearer 静态 token 鉴�
 
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastmcp import FastMCP
+from fastmcp.server.auth.auth import AccessToken, TokenVerifier
 
-# 独立静态 token（hermes 常驻用，免续期）。未配置时 MCP 端点不启用鉴权（仅开发用）。
+# 静态令牌（hermes 常驻用，免续期）。未配置时仅依赖 DB 令牌；都没有则不鉴权（仅开发用）。
 _MCP_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
 
-if _MCP_TOKEN:
-    from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 
-    _verifier = StaticTokenVerifier(
-        tokens={
-            _MCP_TOKEN: {
-                "client_id": "hermes-agent",
-                "sub": "hermes",
-                "scopes": ["read", "write"],
-            }
-        },
-        required_scopes=["read"],
-    )
+class _DbFallbackVerifier(TokenVerifier):
+    """先查 DB API 令牌（pm login / 网页签发，哈希存储 + scope），失败回落静态令牌。"""
+
+    def __init__(self, static_token: str, **kwargs):
+        super().__init__(**kwargs)
+        self._static_token = static_token
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        from starlette.concurrency import run_in_threadpool
+
+        from apps.api.token_auth import lookup_api_token
+
+        info = await run_in_threadpool(lookup_api_token, token)
+        if info is not None:
+            access = AccessToken(
+                token=token,
+                client_id=info.name,
+                scopes=info.scopes,
+                claims={"sub": info.name, "auth_method": "api_token", "scopes": info.scopes},
+            )
+        elif self._static_token and hmac.compare_digest(token, self._static_token):
+            access = AccessToken(
+                token=token,
+                client_id="hermes-agent",
+                scopes=["read", "write"],
+                claims={"sub": "hermes", "auth_method": "static", "scopes": ["read", "write"]},
+            )
+        else:
+            return None
+        # required_scopes 子集校验（与 StaticTokenVerifier 行为一致）
+        if self.required_scopes and not set(self.required_scopes) <= set(access.scopes or []):
+            return None
+        return access
+
+
+from packages.config import get_settings  # noqa: E402
+
+if _MCP_TOKEN or get_settings().auth_password:
+    _verifier = _DbFallbackVerifier(static_token=_MCP_TOKEN, required_scopes=["read"])
     mcp = FastMCP("papermind-mcp", auth=_verifier)
 else:
-    # 未配 token：开发模式不鉴权（生产必须配 MCP_AUTH_TOKEN）
+    # 未配任何凭证：开发模式不鉴权（生产必须配 MCP_AUTH_TOKEN 或使用 DB 令牌）
     mcp = FastMCP("papermind-mcp")
 
 

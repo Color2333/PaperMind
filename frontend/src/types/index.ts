@@ -1058,6 +1058,61 @@ export interface AuthStatusResponse {
   auth_enabled: boolean;
 }
 
+export interface MeResponse {
+  auth_method: "jwt" | "api_token" | "disabled";
+  sub?: string | null;
+  scopes?: string[];
+  token_name?: string | null;
+  token_prefix?: string | null;
+}
+
+export interface ApiTokenItem {
+  id: string;
+  name: string;
+  token_prefix: string;
+  scopes: string[];
+  created_by: string;
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+}
+
+export interface ApiTokenCreated {
+  id: string;
+  name: string;
+  token: string; // 明文仅创建时返回一次
+  token_prefix: string;
+  scopes: string[];
+  expires_at: string | null;
+}
+
+export interface ApiTokenCreateRequest {
+  name: string;
+  scopes?: string[];
+  expires_in_days?: number | null;
+}
+
+export interface DeviceStartResponse {
+  device_code: string;
+  user_code: string;
+  verification_url: string;
+  expires_in: number;
+  interval: number;
+}
+
+export interface DevicePollResponse {
+  status: "pending" | "approved" | "denied" | "expired" | "delivered";
+  access_token?: string | null;
+  token_name?: string | null;
+}
+
+export interface DeviceRequestInfo {
+  user_code: string;
+  client_name: string;
+  status: string;
+  expires_in: number;
+}
+
 export type SSEEventType =
   | "conversation_init"
   | "text_delta"

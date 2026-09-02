@@ -671,3 +671,53 @@ class BatchJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ========== 认证：API 令牌 / 设备码授权 ==========
+
+
+class ApiToken(Base):
+    """API 令牌（CLI / MCP / 外部 harness 用）。DB 只存 SHA-256 哈希，明文仅创建时返回一次。"""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    token_prefix: Mapped[str] = mapped_column(String(16), nullable=False)  # 列表展示用
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    scopes: Mapped[list] = mapped_column(
+        JSONB_or_JSON(), nullable=False, default=lambda: ["read", "write"]
+    )
+    created_by: Mapped[str] = mapped_column(String(16), nullable=False, default="web")  # web|device
+    device_request_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def is_active(self) -> bool:
+        """是否可用（未吊销且未过期）。读回的 datetime 为 naive UTC，统一归一化后比较。"""
+        now = _utcnow().replace(tzinfo=None)
+        if self.revoked_at is not None:
+            return False
+        return not (self.expires_at is not None and self.expires_at.replace(tzinfo=None) < now)
+
+
+class DeviceAuthRequest(Base):
+    """设备码授权请求（CLI pm login 流程），状态机 pending → approved/denied/expired"""
+
+    __tablename__ = "device_auth_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    device_code_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    user_code: Mapped[str] = mapped_column(String(9), nullable=False, unique=True, index=True)
+    client_name: Mapped[str] = mapped_column(String(128), nullable=False, default="pm-cli")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    api_token_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("api_tokens.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

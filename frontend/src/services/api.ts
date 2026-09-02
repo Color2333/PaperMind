@@ -58,6 +58,13 @@ import type {
   ActiveTaskInfo,
   LoginResponse,
   AuthStatusResponse,
+  MeResponse,
+  ApiTokenItem,
+  ApiTokenCreated,
+  ApiTokenCreateRequest,
+  DeviceStartResponse,
+  DevicePollResponse,
+  DeviceRequestInfo,
   MultiSourceSearchResult,
   ChannelSuggestion,
   Tag,
@@ -714,4 +721,21 @@ export const tasksApi = {
 export const authApi = {
   login: (password: string) => post<LoginResponse>("/auth/login", { password }),
   status: () => get<AuthStatusResponse>("/auth/status"),
+  me: () => get<MeResponse>("/auth/me"),
+};
+
+/* ========== API 令牌（CLI / MCP 接入） ========== */
+export const tokenApi = {
+  list: () => get<ApiTokenItem[]>("/auth/tokens"),
+  create: (body: ApiTokenCreateRequest) => post<ApiTokenCreated>("/auth/tokens", body),
+  revoke: (id: string) => del<{ status: string }>(`/auth/tokens/${id}`),
+};
+
+/* ========== 设备码授权（pm login 时网页端批准用） ========== */
+export const deviceAuthApi = {
+  info: (userCode: string) => get<DeviceRequestInfo>(`/auth/device/${encodeURIComponent(userCode)}`),
+  authorize: (userCode: string) =>
+    post<{ status: string }>(`/auth/device/${encodeURIComponent(userCode)}/authorize`),
+  deny: (userCode: string) =>
+    post<{ status: string }>(`/auth/device/${encodeURIComponent(userCode)}/deny`),
 };

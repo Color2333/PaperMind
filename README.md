@@ -175,6 +175,14 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 - 🎫 **JWT Token** —— 7 天有效期，自动续期
 - 🛡️ **全站保护** —— 所有 API 都需要认证
 
+### 🔑 API 令牌与 pm CLI
+
+让 pm CLI、Claude Code / ZCode 等 AI harness 安全访问你的 PaperMind：
+
+- 📱 **设备码授权登录** —— `pm login` 打开浏览器确认设备码，自动签发长期令牌（类似 `gh auth login`）
+- 🛡️ **细粒度权限** —— read / write scope 按 HTTP 方法强制，网页端随时创建/吊销
+- 🩺 **pm doctor** —— 一条命令体检连通性与认证状态
+
 ### ⚙️ LLM 模型管理
 
 灵活控制成本，按场景分配模型：
@@ -193,7 +201,66 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 
 ---
 
+## 🖥️ pm CLI 与 API 令牌
+
+### 安装（你的电脑上，无需 Python）
+
+```bash
+# macOS / Linux：一键安装（自动识别平台，从 GitHub Releases 下载）
+curl -fsSL https://raw.githubusercontent.com/Color2333/PaperMind/main/scripts/install-pm.sh | bash
+
+# Windows（PowerShell）：
+irm https://raw.githubusercontent.com/Color2333/PaperMind/main/scripts/install-pm.ps1 | iex
+```
+
+或到 [Releases](https://github.com/Color2333/PaperMind/releases) 手动下载对应平台二进制
+（`pm-darwin-arm64` / `pm-darwin-x86_64` / `pm-linux-x86_64` / `pm-windows-x86_64.exe`），
+放到 PATH 目录并 `chmod +x`。
+
+> macOS 首次运行如被 Gatekeeper 拦截：`xattr -d com.apple.quarantine pm`
+
+开发者也可以从源码安装：`pipx install /path/to/PaperMind`，或本地构建单文件二进制
+`bash scripts/build-pm-cli.sh`（输出 `dist/pm`）。
+
+### 登录
+
+```bash
+# 设备码授权（推荐）：浏览器确认设备码后自动完成
+pm login --server https://pm.your-domain.com
+
+# 兜底：网页「设置 → API 令牌」创建后粘贴（SSH 等无浏览器环境）
+pm login --token pmt_xxx
+
+pm whoami    # 查看身份与权限
+pm doctor    # 连通性体检
+pm logout    # 吊销令牌并清除本地配置
+```
+
+配置存于 `~/.config/papermind/config.toml`（权限 0600），也可用环境变量 `PAPERMIND_SERVER_URL` / `PAPERMIND_TOKEN` 覆盖。
+
+### 权限模型
+
+| 凭证 | 来源 | 权限 |
+|------|------|------|
+| JWT（7 天） | 网页密码登录 | 全部，含令牌管理 |
+| API 令牌 `pmt_` | 网页创建 / 设备码签发 | scope 强制：GET → `read`，变更操作 → `write`；仅能吊销自己 |
+
+数据库只存令牌 SHA-256 哈希，明文仅创建时返回一次；令牌管理接口（创建/列表/吊销他人）仅限网页会话。
+
+### 接入 Claude Code / ZCode（MCP）
+
+服务端 `/mcp` 同时接受静态 `MCP_AUTH_TOKEN` 与数据库 API 令牌：
+
+```bash
+# 用 pm login 签发的令牌接入 Claude Code
+claude mcp add --transport http papermind https://pm.your-domain.com/mcp \
+  --header "Authorization: Bearer pmt_xxx"
+```
+
+---
+
 ## 🏗️ 架构总览
+
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
