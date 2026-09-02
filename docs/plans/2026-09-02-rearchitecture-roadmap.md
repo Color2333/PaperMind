@@ -22,7 +22,7 @@
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
-| Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
+| Stage B · Phase 1 application command/query | 8 | 4 | 进行中 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
@@ -72,10 +72,15 @@
 
 阶段出口条件：Full Web、Local UI、PM Research Terminal 和 MCP 对同一能力调用同一个 application handler；存在第一版 canonical presentation model。
 
-- [ ] **B1 application 层骨架**：建立 commands/queries 目录结构、handler 协议与依赖注入约定；repository/provider 只允许在 application 层内使用。
-- [ ] **B2 canonical presentation model 第一版**：定义 Paper/Claim/Evidence/Job/Task/Attempt/Artifact/diff 的 view model 契约；application handler 产出 canonical result，HTTP 返回用其包裹并保持兼容。TS 侧共享类型在 F2 正式提取，但契约先在服务端定死。
-- [ ] **B3 只读切片①：SearchPapers + GetPaper**：对应 HTTP 路由改为调用 application handler，返回保持兼容，前端不动。
-- [ ] **B4 只读切片②：GetResearchQuestion/ListClaims/GetClaimEvidence**：同上，覆盖研究状态读取面。
+- [x] **B1 application 层骨架**：建立 commands/queries 目录结构、handler 协议与依赖注入约定；repository/provider 只允许在 application 层内使用。
+  结论：`packages/application/`（queries：research_state/research_export/papers；commands 占位待 B7）；层约定写入包 docstring——query 接收 session 返回 canonical dict，上层禁止直接 import 服务单例，对外兼容优先。
+- [x] **B2 canonical presentation model 第一版**：定义 Paper/Claim/Evidence/Job/Task/Attempt/Artifact/diff 的 view model 契约；application handler 产出 canonical result，HTTP 返回用其包裹并保持兼容。TS 侧共享类型在 F2 正式提取，但契约先在服务端定死。
+  结论：canonical result = application queries 的 plain dict（D4/D5/B2 已是唯一事实源）；TS 类型生成规则已在设计⑤ §2 固化（capability metadata output_schema 构建期导出），F2 执行提取。
+- [x] **B3 只读切片①：SearchPapers + GetPaper**：对应 HTTP 路由改为调用 application handler，返回保持兼容，前端不动。
+  产出：[packages/application/queries/papers.py](../../packages/application/queries/papers.py)（list_papers/get_paper/search_multi/get_similar_papers，含序列化下沉）+ papers.py 四路由改薄封装（404 detail 形状保持兼容）。
+  结论：e2e 断言四端点返回兼容（latest/detail/404/similar/search-multi fake 渠道），全量 113 passed。
+- [x] **B4 只读切片②：GetResearchQuestion/ListClaims/GetClaimEvidence**：同上，覆盖研究状态读取面。
+  结论：已随 D4/D5 完成——/research/* 五个只读路由全部经 application.queries（research_state/research_export），e2e 覆盖四端点 + 导出。
 - [ ] **B5 MCP 工具改调 application handlers**：`apps/api/mcp.py` 工具不再直接引用 deps/service（审计 §1.6）。
 - [ ] **B6 agent tools 改调 application handlers**：`packages/ai/tools/registry.py` 保留参数与返回语义，handler 业务下沉（设计文档 §5.5）。
 - [ ] **B7 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
@@ -178,3 +183,4 @@
 - 2026-09-02（第十三次）：完成 A8 设计④——PM Terminal downstream 架构（fork 基线/patch policy/命令面/permission profiles/renderer/契约测试）。
 - 2026-09-02（第十四次）：完成 A9 设计⑤——UI Surface Contract（16 路由 inventory、presentation model、共享包、loopback bridge 契约）。
 - 2026-09-02（第十五次）：完成 A10 设计⑥——identity/token flow（三信任域、scope 四值化、设备码规范固化、GitHub 登录、MCP discovery）。**六份设计全部产出**；A2（资源基线）待服务器实测。
+- 2026-09-02（第十六次）：完成 B1/B2/B3/B4——application 层骨架 + papers 读路径下沉（返回兼容 e2e）+ 研究状态读取面（随 D4/D5）；全量 113 passed。**Stage B 剩余：B5 MCP 工具改调、B6 agent 工具改调、B7 其余查询与命令面。**

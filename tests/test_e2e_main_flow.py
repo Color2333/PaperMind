@@ -516,3 +516,58 @@ def test_research_export_endpoints(e2e_env):
         ).status_code
         == 422
     )
+
+
+def test_papers_read_endpoints_use_application_layer(e2e_env, monkeypatch):
+    """B2：papers 读路径改调 application.queries——返回形状逐字段兼容"""
+    client = e2e_env.client
+    papers = _ingest_two_papers(client)
+    pid = papers[0]["id"]
+
+    # latest
+    resp = client.get("/papers/latest", params={"page_size": 10})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 2 and body["page"] == 1
+    item = next(i for i in body["items"] if i["id"] == pid)
+    assert item["title"] == PAPER_TITLES[1]
+    assert item["read_status"] == "unread" and item["topics"] == [] and item["tags"] == []
+
+    # detail
+    resp = client.get(f"/papers/{pid}")
+    assert resp.status_code == 200, resp.text
+    detail = resp.json()
+    assert detail["id"] == pid and detail["has_embedding"] is False
+    assert detail["skim_report"] is None and detail["deep_report"] is None
+
+    # 404 形状兼容（detail 字段）
+    resp = client.get("/papers/00000000-0000-0000-0000-000000000000")
+    assert resp.status_code == 404 and "detail" in resp.json()
+
+    # similar（无 embedding → 空）
+    resp = client.get(f"/papers/{pid}/similar")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == []
+
+    # search-multi：fake 渠道，不触网
+    from packages.integrations import registry as channel_registry_module
+
+    class _FakeChannel:
+        def fetch(self, query, max_results):
+            return []
+
+    monkeypatch.setattr(
+        channel_registry_module.ChannelRegistry,
+        "register_default_channels",
+        classmethod(lambda cls: None),
+    )
+    monkeypatch.setattr(
+        channel_registry_module.ChannelRegistry,
+        "get",
+        classmethod(lambda cls, name, **kwargs: _FakeChannel()),
+    )
+    resp = client.post(
+        "/papers/search-multi", params={"query": "diarization", "channels": ["arxiv"]}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["channel_stats"]["arxiv"]["total"] == 0
