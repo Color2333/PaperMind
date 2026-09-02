@@ -24,7 +24,7 @@
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 4 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
-| Stage D · Phase 3 Research State 垂直切片 | 7 | 4 | 进行中 |
+| Stage D · Phase 3 Research State 垂直切片 | 7 | 5 | 进行中 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
@@ -115,7 +115,9 @@
 - [x] **D4 查询实现**：GetResearchQuestion、ListClaims、GetClaimEvidence、DiffResearchState。
   产出：[packages/application/queries/research_state.py](../../packages/application/queries/research_state.py)（application 层第一个模块，canonical result 为 plain dict）+ 只读路由 [apps/api/routers/research.py](../../apps/api/routers/research.py)（/research/questions/*、/research/claims/*/evidence，已挂 main.py）。
   结论：diff 以 research_events 为唯一事实源，映射 added/confirmed/revised/invalidated/strengthened/weakened/conflict/superseded/retraction；HTTP 只做协议转换。1 个 diff 单测 + 1 个 e2e（四端点全链路），全量 110 passed。
-- [ ] **D5 Research Object 基础导出**：至少 JSON + Markdown，含校验值与 provenance 摘要。
+- [x] **D5 Research Object 基础导出**：至少 JSON + Markdown，含校验值与 provenance 摘要。
+  产出：[packages/application/queries/research_export.py](../../packages/application/queries/research_export.py)（question+claims+evidence+relations+source_versions+provenance，sha256 校验值覆盖载荷、确定性可重导）+ `GET /research/questions/{id}/export?format=json|markdown`。
+  结论：同一数据两次导出 content_hash 一致（generated_at 不参与 hash），数据变化 hash 随之变化；Markdown 为同一载荷的人读渲染（renderer 不改语义）。2 个测试（确定性单测 + HTTP e2e），全量 112 passed。
 - [ ] **D6 领域事件**：append-only outbox/event log 记录 Claim 与 SourceVersion 的关键状态变化（设计文档 §4.7 事件表）。
 - [ ] **D7 confirmed 规则落地**：author/PaperMind/user 判断来源区分；无证据输出只能 draft/pending verification。
 
@@ -169,3 +171,4 @@
 - 2026-09-02（第六次）：完成 A4 + D2——ingest 同事务建 v1 SourceVersion（9 个入库路径全覆盖）、A4 样本种子（author 即证 + papermind draft 待人工抽检），全量 104 passed。
 - 2026-09-02（第七次）：完成 D3——ClaimExtractionService 挂接 deep_dive，ResearchRun 生成待验证 Claim（provenance 完整、引用核实强制、幂等），全量 108 passed。
 - 2026-09-02（第八次）：完成 D4——application 层首个模块（四查询）+ 只读 /research/* 路由；同一 Claim 可从 API 追溯到精确证据与 diff，全量 110 passed。
+- 2026-09-02（第九次）：完成 D5——Research Object 基础导出（JSON+Markdown，确定性 sha256 校验值，provenance 摘要），全量 112 passed。

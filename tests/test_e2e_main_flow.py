@@ -472,3 +472,47 @@ def test_research_state_query_endpoints(e2e_env):
     # 不存在 → 404（AppError 处理器）
     resp = client.get("/research/questions/doesnotexist")
     assert resp.status_code == 404
+
+
+def test_research_export_endpoints(e2e_env):
+    """D5：Research Object 导出——JSON/Markdown、确定性 content_hash"""
+    client = e2e_env.client
+    _ingest_two_papers(client)
+    with session_scope() as session:
+        stats = seed_sample(session, arxiv_ids=["2608.10001", "2608.10002"])
+        question_id = stats["question_id"]
+
+    # JSON 导出
+    resp = client.get(f"/research/questions/{question_id}/export")
+    assert resp.status_code == 200, resp.text
+    ro = resp.json()
+    assert ro["content_hash"].startswith("sha256:")
+    obj = ro["research_object"]
+    assert obj["ro_type"] == "papermind-research-object"
+    assert len(obj["claims"]) == 3
+    assert len(obj["evidence"]) == 2
+    assert len(obj["relations"]) == 2
+    assert len(obj["source_versions"]) == 2
+    assert obj["source_versions"][0]["content_hash"]
+    assert obj["provenance"]["research_runs"], "seed 的 papermind 综合判断应带 Run"
+
+    # 确定性：同一数据两次导出 content_hash 一致（generated_at 不参与 hash）
+    ro_again = client.get(f"/research/questions/{question_id}/export").json()
+    assert ro_again["content_hash"] == ro["content_hash"]
+
+    # Markdown 导出
+    resp = client.get(f"/research/questions/{question_id}/export", params={"format": "markdown"})
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("text/markdown")
+    markdown = resp.text
+    assert "papermind-research-object" not in markdown  # renderer 输出人读内容
+    assert obj["claims"][0]["statement"] in markdown
+    assert ro["content_hash"] in markdown
+    assert "Provenance" in markdown
+    # 非法 format → 422
+    assert (
+        client.get(
+            f"/research/questions/{question_id}/export", params={"format": "pdf"}
+        ).status_code
+        == 422
+    )

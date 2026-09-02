@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 
-from packages.application.queries import research_state
+from packages.application.queries import research_export, research_state
 from packages.domain.enums import ClaimStatus
 from packages.storage.db import session_scope
 
@@ -55,3 +56,18 @@ def diff_question(
         since = datetime.now(UTC) - timedelta(hours=since_hours)
     with session_scope() as session:
         return research_state.diff_research_state(session, question_id, since=since)
+
+
+@router.get("/research/questions/{question_id}/export", response_model=None)
+def export_question(
+    question_id: str,
+    format: str = Query(default="json", pattern="^(json|markdown)$"),
+) -> Any:
+    with session_scope() as session:
+        ro = research_export.export_research_object(session, question_id)
+    if format == "markdown":
+        return Response(
+            content=research_export.render_markdown(ro),
+            media_type="text/markdown; charset=utf-8",
+        )
+    return ro

@@ -42,8 +42,8 @@ from packages.storage.repositories import (
 )
 
 
-def _mk_paper(session, arxiv_id: str = "2608.0001") -> str:
-    paper = Paper(title="Test paper", arxiv_id=arxiv_id, abstract="abstract text")
+def _mk_paper(session, arxiv_id: str = "2608.0001", abstract: str = "abstract text") -> str:
+    paper = Paper(title="Test paper", arxiv_id=arxiv_id, abstract=abstract)
     session.add(paper)
     session.flush()
     return paper.id
@@ -498,3 +498,52 @@ def test_diff_research_state_maps_kinds(isolated_db):
         # user 创建 → added + confirmed；contradicts 关系 → conflict
         assert {"added", "confirmed", "conflict"} <= kinds
         assert all(item["event"] in {e.value for e in EventType} for item in result["items"])
+
+
+# ---------- D5：Research Object 导出 ----------
+
+
+def test_export_research_object_is_deterministic_and_complete(isolated_db):
+    from packages.application.queries.research_export import (
+        export_research_object,
+        render_markdown,
+    )
+
+    with session_scope() as session:
+        paper_ids = [
+            _mk_paper(session, arxiv_id=f"2608.500{i}", abstract=f"Claim {i} holds strongly. More.")
+            for i in (1, 2)
+        ]
+        del paper_ids
+        stats = seed_sample(session, arxiv_ids=["2608.5001", "2608.5002"])
+        question_id = stats["question_id"]
+
+        ro1 = export_research_object(session, question_id)
+        ro2 = export_research_object(session, question_id)
+        assert ro1["content_hash"] == ro2["content_hash"]
+        assert ro1["content_hash"].startswith("sha256:")
+        obj = ro1["research_object"]
+        assert obj["ro_type"] == "papermind-research-object"
+        assert len(obj["claims"]) == 3
+        assert len(obj["evidence"]) == 2
+        assert len(obj["source_versions"]) == 2
+        assert obj["provenance"]["research_runs"]
+
+        # 数据变化 → hash 变化
+        claim_repo = ClaimRepository(session)
+        meta = (
+            session.execute(select(Claim).where(Claim.origin == ClaimOrigin.papermind))
+            .scalars()
+            .one()
+        )
+        claim_repo.invalidate(meta.id, reason="测试失效")
+        ro3 = export_research_object(session, question_id)
+        assert ro3["content_hash"] != ro1["content_hash"]
+        assert any(c["status"] == "invalidated" for c in ro3["research_object"]["claims"])
+
+        markdown = render_markdown(ro3)
+        assert ro3["content_hash"] in markdown
+        assert "Provenance" in markdown
+        # author 判断有证据行；papermind 综合判断保持 draft 无证据
+        assert "[supports/text_passage]" in markdown
+        assert "无（draft，等待补充坐标）" in markdown
