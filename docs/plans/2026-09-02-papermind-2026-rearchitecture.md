@@ -16,7 +16,7 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 
 现有 Web 不整体删除，而是保留为可选的 Full Web 模块，并逐步适配新的 Research State。与此同时，`pm ui` 在本地启动一个随 CLI 分发的轻量浏览器 UI，通过 loopback bridge 和公网 HTTPS 连接远程 Core；它只保留 PDF/证据对照、Claim 工作台、Research Diff 和任务监控等适合图形界面的高价值交互，不携带本地业务后端或数据库。
 
-重构的优先级是先建立稳定的 application command/query、presentation model 和 durable job 边界，再让 Full Web、Local UI、PM Research Terminal、MCP 复用它们；先拆进程、拆依赖并测量资源，再决定是否将轻量服务端控制面迁移到 Go。当前不进行 Python 全量重写。
+重构的优先级是先建立稳定的 application command/query、presentation model 和原子化 durable execution 边界，再让 Full Web、Local UI、PM Research Terminal、MCP 复用它们。长流程不再由某个 Worker 一次性包办，而被表达为 `Job → Task → Attempt → Artifact/Event`：Job 表达用户意图，Task 是可独立领取、重试、取消和审计的工作原子，Attempt 记录每次真实执行。Worker 本身退化为可替换的无状态 Executor。先拆职责、拆依赖并测量资源，再决定是否将轻量服务端控制面迁移到 Go；当前不进行 Python 全量重写。
 
 目标结果：**个人服务可长期稳定运行，公开 Demo 能在一分钟内展示 PaperMind 如何把论文转化为可验证、可演进的研究认知；本地电脑无需安装完整后端，即可通过 `pm`、`pm ui` 或 MCP 使用同一远程研究状态。**
 
@@ -39,6 +39,8 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 - `pm` 同时保留交互 AI、确定性子命令和 `--json` 三种入口；AI 体验不能取代自动化接口。
 - PaperMind 凭据与模型 provider 凭据严格分离；个人交互推理默认在本地 Pi，服务端负责研究数据和 durable jobs。
 - PaperMind 终端拥有自己的主题、卡片和渐进式详情展示，使 Paper、Claim、Evidence、diff 与 job 在终端中可读、可定位、可操作。
+- 所有长流程采用 `ResearchRun → Job → Task → Attempt → Artifact/Event` 分层；原子化对象是 Work Unit，不是 Worker 容器或 Python 函数。
+- Scheduler 只创建 Job，Workflow Planner 展开 Task，Dispatcher 分派，Executor 每次执行一个 Task Attempt，Reconciler 负责 lease 过期与恢复。
 
 ### 1.2 明确不做
 
@@ -52,6 +54,8 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 - 不因前端瘦身而直接删除仍有价值的现有页面；先完成 route/capability 盘点，再按部署 profile 保留或归档。
 - 不对 Pi 做无边界复制和随意改写；PaperMind 维护可追溯 downstream fork、上游版本基线和有限 patch stack，保留 MIT copyright/license notice。[24]
 - 不让 Pi 的默认 coding tools 自动获得 PaperMind 服务端权限，也不通过 `bash`、SSH 或 Docker 命令控制服务器 worker。
+- 不按每个 Task 建一个微服务或常驻 Worker；部署隔离只在资源、安全或依赖确有差异时引入。
+- 不承诺跨数据库、模型 provider、邮件和外部下载的全局 exactly-once；采用至少一次执行、幂等副作用和完整 Attempt 记录。
 
 ## 2. 当前实现审计
 
@@ -64,6 +68,7 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 - API lifespan 内启动 batch consumer，因此请求入口同时承担任务消费职责。[3]
 - `apps/api/deps.py` 在模块加载时构造 Pipeline、RAG、Brief 和 Graph service 单例。[4]
 - 前端承担大量轮询和任务状态拼装，任务状态又分散在进程内 tracker、`batch_jobs` 表和 worker 心跳文件中。
+- 现有 Worker 内的 APScheduler 会直接执行 topic ingest、daily brief、graph maintenance 和 idle processing，而 `batch_jobs` 又只由 API 进程消费；当前不存在统一的执行原语。[3][19]
 - MCP 已能查询论文并触发部分任务，但作为 FastAPI 子应用挂载，工具定义直接引用 API deps 和具体 service。[5]
 
 因此，当前的首要问题是**职责、依赖与状态边界**，而不是 Python 语法或 FastAPI 框架本身。
@@ -87,11 +92,13 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
                               │
              ┌────────────────┼────────────────┐
              │                │                │
-          Database        Object/PDF        Job Queue
-             │                                 │
+          Database        Object/PDF     Durable Job Store
+             │                              Task Queue
              └────────────────┬────────────────┘
                               │
-                     Python Executors
+             Planner · Dispatcher · Reconciler
+                              │
+                    Stateless Executors
                  PDF · LLM · embedding · graph
 ```
 
@@ -449,7 +456,7 @@ pm claims history <claim-id>
 
 Agent 能够发现变化、建议下一步并提交受控任务，但不能绕过 application commands、权限和审计：
 
-- 所有长任务进入 durable job queue，并支持进度、取消、重试、恢复和幂等。
+- 所有长任务进入 durable execution system，由持久 Job 展开为原子 Task，并支持进度、取消、重试、恢复和幂等。
 - 每个任务具备 scope、资源预算、模型预算、并发和超时策略。
 - 自动 watch 可以产生候选 Claim 或待验证事项，不直接覆盖用户确认的研究判断。
 - 删除、发布、明显增加成本和改变 confirmed Claim 的动作必须经过对应权限或批准。
@@ -492,7 +499,7 @@ JobFailed
 | --- | --- | --- |
 | P0 地基 | ResearchQuestion/Claim/Evidence/SourceVersion/Relation/History 数据契约 | 先设计、迁移一个垂直切片 |
 | P0 地基 | provenance、证据坐标、author/PM/user 判断区分 | 所有新 Research Run 强制遵守 |
-| P0 地基 | durable jobs、commands/queries、领域事件 | Full Web/Local UI/PM Research Terminal/MCP 共用 |
+| P0 地基 | 原子 durable execution、commands/queries、领域事件 | Job/Task/Attempt/Artifact 统一，所有客户端共用 |
 | P0 地基 | Research Object 基础导出和 source versioning | 至少支持 JSON + Markdown |
 | P0 地基 | Pi downstream Research Terminal、确定性命令、`--json` 与 permission profiles | 作为第一方 CLI 唯一路线 |
 | P0 地基 | canonical presentation model 与 surface contract | 所有新 capability 在实现前声明适配面 |
@@ -552,42 +559,127 @@ HTTP router、deterministic CLI command、Pi tool、Local/Full Web action 与 MC
 
 它们不得直接组合 repository、模型 SDK 和线程池。React components 和 Pi renderers 也不得自己重新推导 Claim 状态、证据关系或 job 生命周期。
 
-### 5.2 任务系统
+### 5.2 原子化 Durable Execution
 
-所有超过短请求时限的工作都进入 durable job queue：
+原子化的对象是 **Work Unit**，不是 Worker 进程，也不是任意一个 Python 函数。PaperMind 使用五层概念表达研究与执行：
 
 ```text
-submitted → queued → running → succeeded
-                             ├→ failed
-                             └→ cancelled
+ResearchRun                         领域层：一次可追溯的研究活动
+└── Job                             应用层：一个用户意图或计划流程
+    ├── Task                        执行层：可独立调度和重放的工作原子
+    │   ├── Attempt 1               运行层：一次领取、执行和失败记录
+    │   └── Attempt 2
+    ├── Task
+    └── Artifact / Domain Event     结果层：可引用产物或持久领域变化
 ```
 
-任务记录至少包含：
+- `ResearchRun` 说明为何执行、使用哪些论文、模型、策略和输入，并连接 Claim/Evidence provenance。
+- `Job` 表达 `StartSkim`、`DeepReadPaper`、`RunTopicResearch` 或 `BuildDailyBrief` 等用户意图，聚合整体状态和预算。
+- `Task` 是调度、lease、取消、超时、重试和资源分派的最小持久单元。
+- `Attempt` 记录某个 Executor 对 Task 的一次真实执行，包括时间、环境、错误、成本和 lease。
+- `Artifact/Event` 是 Task 的输出引用；大结果进入 object storage，领域变化通过 application command 和 transactional outbox 提交。
 
-- `job_id`、任务类型、参数摘要和幂等键。
-- 创建、领取、开始、结束时间。
-- 当前阶段、完成量、总量和用户可读消息。
-- attempt、最大重试次数和最后错误。
-- worker lease、心跳和超时时间。
-- 结果引用和日志引用。
+#### Task 原子边界
 
-Scheduler 只负责按时入队；executor 只负责领取和执行；API 只负责提交、查询和控制。API 重启不得导致任务消失或被自动判定完成。
+一个 Task 必须同时满足：
 
-### 5.3 Worker 控制语义
+- **单一有意义副作用：**一次只负责一种主要持久结果，例如登记一个 SourceVersion、解析一份 PDF、生成一次 embedding 或发送一封 brief。
+- **独立可执行：**输入由不可变值或稳定 ID/reference 描述，不依赖某个进程的内存、当前目录或隐式调用栈。
+- **独立可恢复：**可以被单独领取、超时、取消、重试和转入 dead-letter，不必重跑整个 Job。
+- **重放安全：**具有稳定 idempotency key；重复 Attempt 不会制造重复 Paper、Claim、邮件或账单记录。
+- **资源有界：**声明 timeout、最大重试、CPU/内存/GPU、网络、provider 和 concurrency class。
+- **结果可观察：**输出 Artifact、领域事件或结构化错误；日志、成本、进度与 provenance 能定位到 Task 和 Attempt。
+- **版本明确：**记录 capability name、handler version、input schema version 与 policy/model version，使历史任务可解释。
 
-个人用户控制自己的队列与任务：
+“原子”不等于“越小越好”。普通 helper、数据库查询或纯内存转换不单独建 Task。只有当一步工作值得被独立重试、隔离资源、观察进度或保留 provenance 时，才越过异步边界。
+
+#### 执行语义
+
+跨数据库、模型 provider、邮件和下载服务无法可靠承诺全局 exactly-once。PaperMind 的标准语义是：
+
+> **至少一次执行 + lease fencing + 幂等副作用 + 持久 Attempt + transactional outbox。**
+
+领取 Task 时生成 `lease_token/fencing_token`；只有当前 lease 的持有者能提交最终状态。lease 过期后 Reconciler 可以重新入队，迟到的旧 Attempt 不能覆盖新结果。数据库写入和 outbox event 在同一事务中提交；外部副作用使用 provider idempotency key、内容寻址结果或本地 effect ledger 去重。无法安全重放的 Task 必须标为 `manual_recovery`，不能自动重试。
+
+Task 至少记录：
+
+- `task_id`、`job_id`、capability、handler/schema version 和依赖关系。
+- 输入引用、输出引用、幂等键、scope 与权限主体。
+- priority、resource class、timeout、retry policy 和预算。
+- `queued/leased/running/succeeded/failed/cancelled/dead_letter/manual_recovery` 状态。
+- 当前 lease/fencing token、领取和到期时间。
+- 每个 Attempt 的 Executor、开始/结束时间、错误分类、日志和成本引用。
+
+#### Workflow 与 fan-out
+
+第一阶段采用**代码定义、状态持久化的 Workflow 模板**，不建设通用可视化 DAG 平台。Planner 根据已完成 Task 和持久结果生成下一批 Task，支持顺序依赖、条件分支和按 Paper fan-out：
+
+```text
+RunTopicResearch
+├── ResolveSubscription
+├── FetchFeed(topic, cursor)
+├── UpsertPaper × N
+├── DownloadSourceVersion × N
+├── ExtractDocument × N
+├── SkimPaper × N
+├── EmbedPaper × N
+├── ProposeClaims × N
+└── BuildBrief
+```
+
+单篇失败不会抹掉其他 Paper 的成功结果；父 Job 根据 workflow policy 决定继续、降级、部分成功或失败。只有在代码定义模板无法表达真实需求后，才评估持久化动态 DAG。
+
+Job 的状态由子 Task 收敛而来，而不是由 Worker 任意写入：
+
+```text
+submitted → planning → queued → running → succeeded
+                                  ├──────→ partially_succeeded
+                                  ├──────→ failed
+                                  └→ cancelling → cancelled
+```
+
+取消采用协作式语义：尚未领取的 Task 立即取消，运行中的 Attempt 收到 cancellation request 并在安全检查点退出；超过 grace period 后释放 lease，由 Reconciler 根据 Task 的副作用策略决定重试、失败或 manual recovery。已经提交且不可逆的 Artifact/Event 不回滚，而由补偿 Task 或新的领域事件修正。
+
+#### 运行组件边界
+
+```text
+Scheduler          只按时间或事件创建 Job，不执行研究逻辑
+Workflow Planner   将 Job 展开为当前可运行的 Task
+Dispatcher         按依赖、优先级、资源和并发策略分派 Task
+Executor           每次只执行一个 Task Attempt，并续约 lease
+Reconciler         回收过期 lease、处理重试、死信与父 Job 收敛
+```
+
+API 只负责提交、查询和控制；它不消费 Task，也不启动线程池执行长工作。Executor 是无状态、可替换的运行载体，可以先是同一个 Python 进程池，未来再按 PDF、LLM、embedding、graph 或 GPU 资源类别拆部署。API 或 Executor 重启不得导致任务消失、重复提交领域结果或被静默判定完成。
+
+### 5.3 Job、Task 与 Executor 控制语义
+
+个人用户控制自己的研究意图和执行单元：
 
 - `pause/resume queue`
 - `cancel/retry job`
-- 查看进度、日志、成本和错误
+- `cancel/retry task`
+- 查看 Job graph、Task/Attempt 进度、日志、成本、产物和错误
 
-服务运维控制实际进程：
+建议的确定性命令面：
 
-- `drain worker`
-- `restart worker`
-- 查看 lease、心跳和资源占用
+```bash
+pm jobs show <job-id>
+pm jobs graph <job-id>
+pm jobs cancel <job-id>
+pm tasks retry <task-id>
+pm tasks logs <task-id> --follow
+pm executors list
+pm executors drain <executor-id>
+```
 
-在个人部署中两者可以由同一个账号执行，但 API 和权限语义仍应分开，避免未来把进程级操作误暴露给 Demo。
+服务运维控制 Executor pool 和实际进程：
+
+- `drain executor`：停止领取新 Task，允许当前 Attempt 收敛或在超时后释放 lease。
+- `restart executor`：部署层操作，不改变 Job/Task 的事实状态。
+- 查看 Executor capability、版本、lease、心跳、资源占用和失败率。
+
+Worker 不再是产品层的稳定身份或任务事实来源；它只是 Executor 的部署载体。在个人部署中，研究控制与运维控制可以由同一个账号执行，但 API、scope 和审计语义仍需分开，避免将进程级操作暴露给 Demo。
 
 ### 5.4 Python 与其他语言
 
@@ -755,14 +847,18 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 **出口条件：**Full Web、Local UI、PM Research Terminal 和 MCP 对同一能力调用同一个 application handler；存在第一版 canonical presentation model。
 
-### Phase 2：统一 durable jobs
+### Phase 2：原子化 durable execution
 
 - 将 API lifespan 内的 batch consumer 移出请求进程。
 - 将进程内 `TaskTracker` 的关键状态持久化。
-- Scheduler 改为只入队。
-- 完成 cancel、retry、pause、resume、lease 和恢复语义。
+- 建立 `Job → Task → Attempt → Artifact/Event` schema，并明确与 `ResearchRun` 的 provenance 关系。
+- 为 Skim、DeepRead、Embedding、Topic Research 和 Daily Brief 定义第一批代码化 Workflow 模板及 Task 原子边界。
+- Scheduler 改为只创建 Job；实现 Planner、Dispatcher、通用 Python Executor 和 Reconciler 的最小闭环。
+- 实现 lease/fencing、timeout、cancel、retry、pause/resume、dead-letter 和 manual recovery 语义。
+- 为数据库写入使用 transactional outbox，为外部副作用建立 idempotency/effect ledger。
+- 将前端、CLI 与 MCP 的任务查询统一到 Job graph、Task 和 Attempt 资源接口。
 
-**出口条件：**API/worker 任意重启后，任务状态可解释、可恢复且不会静默丢失。
+**出口条件：**API/Executor 任意重启后，任务状态可解释、可恢复且不会静默丢失；同一 Task 的重复 Attempt 不会重复提交领域结果；单篇失败无需重跑整个批次。
 
 ### Phase 3：迁移 Research State 垂直切片
 
@@ -826,6 +922,10 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 - API 进程不执行长任务。
 - 所有长任务具有持久化状态、可取消、可重试。
+- ResearchRun、Job、Task、Attempt 与 Artifact/Event 各有独立 ID 和清晰关联，不能用单个 `job.status` 隐藏内部执行状态。
+- Scheduler 不直接执行业务；Executor 每次只运行一个 Task Attempt；过期 lease 由 Reconciler 恢复。
+- Task handler 不依赖进程内隐式状态，重复 Attempt 不会重复写入 Paper、Claim、Evidence 或外部副作用。
+- 批量 Job 支持 per-Paper fan-out；单个 Task 失败不会抹掉其他成功结果，也不要求整批重跑。
 - Full Web、Local UI、PM Research Terminal、MCP 不重复实现业务流程。
 - 核心查询不会导入 PDF、NumPy、scikit-learn 等重依赖。
 - SQLite profile 不启动 PostgreSQL；PostgreSQL profile 不携带无效 SQLite 假设。
@@ -874,7 +974,7 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 - PM Research Terminal、Local UI 和 MCP 只需 HTTPS endpoint，不需要服务器 SSH 权限。
 - 服务端数据库是唯一事实来源。
 - HTTPS 登录、凭据撤销、备份恢复均有可重复步骤。
-- 能远程查看 worker 健康、任务进度和失败原因。
+- 能远程查看 Executor pool 健康、Job graph、Task/Attempt 进度和失败原因。
 
 ### Demo
 
@@ -905,6 +1005,11 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 - **过早 Go 化：**以 Phase 7 决策门阻止无测量依据的重写。
 - **公开域名攻击面：**个人服务和 Demo 都经 HTTPS；Demo 限流，个人服务强认证；禁止 token 出现在 URL 和日志中。
 - **协议变化：**内部 job schema 保持自主，MCP Tasks 仅在 adapter 层转换。
+- **Task 拆分过细：**只把值得独立重试、隔离资源、观察或追溯的步骤设为 Task；纯函数和短数据库操作留在 handler 内。
+- **误解 exactly-once：**外部副作用采用至少一次执行与幂等去重；无法安全重放的步骤进入 manual recovery，不自动重试。
+- **lease 竞争与迟到写入：**使用 fencing token 拒绝过期 Attempt 提交，Reconciler 只依据持久状态恢复。
+- **Workflow 引擎范围失控：**首版只支持代码定义模板、顺序依赖、条件分支和 fan-out，不建设通用 DAG 编辑器。
+- **按能力拆服务过早：**先用 resource class 在同一 Executor runtime 内隔离调度，有资源或依赖证据后再拆进程/镜像。
 - **领域模型一次做太大：**先迁移一个 ResearchQuestion 垂直切片；Claim ontology、置信度和关系类型只保留完成 Demo 所需的最小集合。
 - **把模型推断伪装成事实：**强制保存 judgment origin、evidence status 与 source version；confirmed 状态需要明确规则。
 - **Provenance 成为沉重标准工程：**内部先实现必要字段和稳定 ID，保持与 W3C PROV/RO-Crate 的映射能力，不在首版引入完整语义网栈。
@@ -916,7 +1021,7 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 1. **Research State 最小数据契约。**定义 ResearchQuestion、Claim、Evidence、SourceVersion、Relation、Judgment、History 与 ResearchRun，以及 draft/confirmed/invalidated 转换规则。
 2. **Application command/query 清单与当前调用映射。**把 151 个 HTTP handlers、MCP tools 和 agent tools 映射到有限的用例集合。
-3. **统一 Job 状态机与迁移说明。**确定 `TaskTracker`、`BatchJob`、APScheduler 和 worker heartbeat 如何收敛。
+3. **原子 Durable Execution 协议与迁移说明。**定义 ResearchRun/Job/Task/Attempt/Artifact、Task 原子边界、Workflow 模板、lease/fencing、幂等/outbox、Reconciler 和 Executor capability；确定 `TaskTracker`、`BatchJob`、APScheduler、后台线程与 worker heartbeat 如何收敛。
 4. **PM Research Terminal downstream 架构。**定义 Pi 上游基线、patch policy、product profile、source/build pruning、capability metadata、确定性命令、permission profiles、主题与领域 renderer。
 5. **UI Surface Contract。**完成现有 Web inventory，定义 Local UI loopback bridge、canonical presentation model、共享 UI packages、deep links 与 Full Web 可选部署 profile。
 6. **HTTPS identity/token flow。**定义 GitHub Web 登录、CLI device authorization、MCP OAuth discovery、PaperMind token、本地模型凭据与 Local UI session 的边界。

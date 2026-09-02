@@ -6,7 +6,7 @@
 
 分支：`refactor/papermind-2026`
 
-依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md)（下称"设计文档"，2026-09-02 第二版：Pi downstream fork + Local PM UI + Full Web 可选化）
+依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md)（下称"设计文档"，2026-09-02 第三版：Pi downstream fork + Local PM UI + Full Web 可选化 + 原子 Durable Execution）
 
 ## 工作规则
 
@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 1 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
-| Stage C · Phase 2 durable jobs | 5 | 0 | 未开始 |
+| Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 0 | 未开始 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -56,10 +56,10 @@
 - [ ] **A6 设计②：Application command/query 清单与调用映射**
   内容：把 151 个 HTTP handlers、MCP tools、agent tools 映射到有限的用例集合（设计文档 §5.1 命令/查询表）。
   出口条件：每个现有入口都有映射目标；无覆盖的用例显式列入"暂不迁移"。
-- [ ] **A7 设计③：统一 Job 状态机与迁移说明**
-  内容：`TaskTracker`、`BatchJob`、APScheduler、worker heartbeat 如何收敛到 durable job；lease、cancel/retry/pause/resume、恢复语义。
+- [ ] **A7 设计③：原子 Durable Execution 协议与迁移说明**
+  内容：定义 ResearchRun/Job/Task/Attempt/Artifact、Task 原子边界、代码化 Workflow、lease/fencing、幂等/outbox、Reconciler 和 Executor capability；说明 `TaskTracker`、`BatchJob`、APScheduler、后台线程与 worker heartbeat 如何收敛。
   输入：审计报告 §2/§3/§6。
-  出口条件：文档获确认，能直接指导 C1–C5。
+  出口条件：文档获确认，能直接指导 C1–C11。
 - [ ] **A8 设计④：PM Research Terminal downstream 架构**
   内容：Pi 上游基线（pinned tag）、patch policy（有序 patch stack、product profile 先于 build/source pruning）、独立仓库 `PaperMind-Terminal` 维护准则、capability metadata、确定性命令、permission profiles、主题与领域 renderer、fallback 契约。
   出口条件：文档获确认，能直接指导 E1/E2。
@@ -76,23 +76,29 @@
 阶段出口条件：Full Web、Local UI、PM Research Terminal 和 MCP 对同一能力调用同一个 application handler；存在第一版 canonical presentation model。
 
 - [ ] **B1 application 层骨架**：建立 commands/queries 目录结构、handler 协议与依赖注入约定；repository/provider 只允许在 application 层内使用。
-- [ ] **B2 canonical presentation model 第一版**：定义 Paper/Claim/Evidence/Job/diff 的 view model 契约；application handler 产出 canonical result，HTTP 返回用其包裹并保持兼容。TS 侧共享类型在 F2 正式提取，但契约先在服务端定死。
+- [ ] **B2 canonical presentation model 第一版**：定义 Paper/Claim/Evidence/Job/Task/Attempt/Artifact/diff 的 view model 契约；application handler 产出 canonical result，HTTP 返回用其包裹并保持兼容。TS 侧共享类型在 F2 正式提取，但契约先在服务端定死。
 - [ ] **B3 只读切片①：SearchPapers + GetPaper**：对应 HTTP 路由改为调用 application handler，返回保持兼容，前端不动。
 - [ ] **B4 只读切片②：GetResearchQuestion/ListClaims/GetClaimEvidence**：同上，覆盖研究状态读取面。
 - [ ] **B5 MCP 工具改调 application handlers**：`apps/api/mcp.py` 工具不再直接引用 deps/service（审计 §1.6）。
 - [ ] **B6 agent tools 改调 application handlers**：`packages/ai/tools/registry.py` 保留参数与返回语义，handler 业务下沉（设计文档 §5.5）。
 - [ ] **B7 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
-- [ ] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一提交 job（为 Stage C 铺路）。
+- [ ] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一创建 Job，不再直接调用具体 Worker 或线程池（为 Stage C 铺路）。
 
-## Stage C — Phase 2：durable jobs
+## Stage C — Phase 2：原子 durable execution
 
-阶段出口条件：API/worker 任意重启后，任务状态可解释、可恢复且不会静默丢失。
+阶段出口条件：API/Executor 任意重启后，任务状态可解释、可恢复且不会静默丢失；同一 Task 的重复 Attempt 不会重复提交领域结果；单篇失败无需重跑整个批次。
 
 - [ ] **C1 batch consumer 移出 API 进程**：API lifespan 不再启动任务消费（审计 §1.5，现仅 API 进程消费 `batch_jobs`，worker 不参与）。
-- [ ] **C2 job 状态持久化**：统一 job store 落库，取代内存 `TaskTracker`（10 分钟 TTL、重启即丢）与心跳文件的权威地位；前端三套轮询端点（`/tasks/active`、`/tasks/{id}`、`/ingest/references/status`）收敛到统一 job 查询。
-- [ ] **C3 scheduler 只入队**：APScheduler 触发后只提交 job，由 executor 领取执行；不再进程内直跑。
-- [ ] **C4 控制语义**：实现 cancel/retry/pause/resume REST 端点 + lease/心跳续约/超时（当前无任何 cancel 端点，取消仅翻转标志不中断线程——审计 §6）。
-- [ ] **C5 崩溃恢复**：替换 `recover_stale_running` 的"running 一律置 failed"破坏性恢复，改为 lease 过期后可重入；同一 paper 不再被多路径并发处理（幂等键）。
+- [ ] **C2 原子执行 schema**：落库 `jobs`、`tasks`、`task_attempts` 和 artifact/event references；ResearchRun 关联 Job，Job 聚合 Task，Task 保留 capability/schema/handler version、依赖、资源类别、预算与幂等键。
+- [ ] **C3 统一旧状态**：用新 job store 取代内存 `TaskTracker`（10 分钟 TTL、重启即丢）、旧 `batch_jobs` 状态与心跳文件的权威地位；前端三套轮询端点收敛到 Job graph、Task 与 Attempt 查询。
+- [ ] **C4 第一批原子 Task 清单**：为 Skim、DeepRead、Embedding、Topic Research 和 Daily Brief 标出单一有意义副作用、输入输出、timeout、retry、resource class 与无法自动重试的边界；禁止把普通 helper 机械拆成 Task。
+- [ ] **C5 代码化 Workflow 模板**：实现顺序依赖、条件分支和 per-Paper fan-out；父 Job 支持 succeeded、partially_succeeded、failed、cancelled，并能解释每个子 Task 的贡献。
+- [ ] **C6 scheduler/planner/dispatcher 分工**：APScheduler 只创建 Job，Planner 展开 ready Task，Dispatcher 按依赖、priority、resource class 和 concurrency policy 分派，不再进程内直跑研究逻辑。
+- [ ] **C7 通用 Executor 协议**：Python Executor 每次只执行一个 Task Attempt，注册 capability/version/resource class，支持 drain；Worker 进程和心跳不再是产品层任务事实来源。
+- [ ] **C8 lease、fencing 与 Reconciler**：领取和续约 lease 时签发 fencing token；迟到 Attempt 不能覆盖新结果；Reconciler 回收过期 lease 并执行 backoff、dead-letter 或 manual recovery。
+- [ ] **C9 幂等与副作用账本**：数据库结果与 outbox 同事务提交；Paper/Claim/Evidence 写入使用稳定幂等键；邮件、provider call 等外部效果使用 provider key 或 effect ledger 去重。
+- [ ] **C10 控制与观察面**：实现 cancel/retry/pause/resume、Job graph、Task/Attempt 日志/成本/错误接口；CLI、MCP、Local UI 与 Full Web 共用同一资源语义。
+- [ ] **C11 渐进迁移与恢复测试**：先迁移 `batch_jobs` 三类任务，再迁移 scheduler jobs 和 idle processor；用 API/Executor 强杀、lease 过期、重复领取、部分失败和迟到写入测试替代 `recover_stale_running` 的破坏性恢复。
 
 ## Stage D — Phase 3：Research State 垂直切片
 
