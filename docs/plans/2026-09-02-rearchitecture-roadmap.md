@@ -6,7 +6,7 @@
 
 分支：`refactor/papermind-2026`
 
-依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md)（下称"设计文档"）
+依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md)（下称"设计文档"，2026-09-02 第二版：Pi downstream fork + Local PM UI + Full Web 可选化）
 
 ## 工作规则
 
@@ -14,25 +14,27 @@
 2. 目标粒度以"一个工作日内可完成、有客观出口条件"为准；超出的目标继续拆。
 3. 保持外部行为兼容（HTTP 返回、CLI 退出码），内部重定向到新边界；不同时重做 UI 和领域模型。
 4. 重构期间冻结新增页面（设计文档 Phase 0 约束），除非直接服务于重构或 Demo。
-5. 每个目标完成后在本文档勾选状态并写一行结论；发现新事实时更新拆解，不靠口头记忆。
+5. Full Web 瘦身以 route/capability inventory 的 retain/merge/local-ui/archive 标记为准，禁止直接批量删除。
+6. 每个目标完成后在本文档勾选状态并写一行结论；发现新事实时更新拆解，不靠口头记忆。
 
 ## 进度总览
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 五份设计 | 9 | 1 | 进行中 |
-| Stage B · Phase 1 application command/query | 7 | 0 | 未开始 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 1 | 进行中 |
+| Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 durable jobs | 5 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 0 | 未开始 |
-| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 9 | 0 | 未开始 |
-| Stage F · Phase 5 前端瘦身 + Demo | 6 | 0 | 未开始 |
-| Stage G · Phase 6 语言/存储决策门 | 2 | 0 | 未开始 |
+| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
+| Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
+| Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
+| Stage H · Phase 7 语言/存储决策门 | 2 | 0 | 未开始 |
 
-主线顺序：A → B → C → D → E → F → G（对应设计文档 Phase 0–6）。其中设计文档 §11 的**第一个只读垂直切片**（SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence，贯穿 application handlers → typed HTTPS client → CLI → Pi renderer → MCP adapter）横跨 B2/B3 与 E3/E4/E5，是 Stage B→E 的主线验收样例；五份设计（A5–A9）获确认后即从它开始。
+主线顺序：A → B → C → D → E → F → G → H（对应设计文档 Phase 0–7）。其中设计文档 §11 的**第一个只读垂直切片**（SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence，贯穿 application handlers → typed HTTPS client → deterministic CLI → Pi tool + renderer → Local UI/Full Web adapters → MCP adapter）横跨 B3/B4、E4–E6、F4/F5 与 E8，是 Stage B→F 的主线验收样例；六份设计（A5–A10）获确认后即从它开始。
 
-## Stage A — Phase 0 基线与五份设计
+## Stage A — Phase 0 基线与六份设计
 
-阶段出口条件：设计文档 Phase 0 出口条件全部满足，且五份设计获确认。
+阶段出口条件：设计文档 Phase 0 出口条件全部满足，且六份设计获确认。
 
 - [x] **A1 长任务入口、状态存储、线程池审计**
   产出：[2026-09-02 Phase 0 现状审计](./2026-09-02-phase0-baseline-audit.md)。
@@ -58,24 +60,29 @@
   内容：`TaskTracker`、`BatchJob`、APScheduler、worker heartbeat 如何收敛到 durable job；lease、cancel/retry/pause/resume、恢复语义。
   输入：审计报告 §2/§3/§6。
   出口条件：文档获确认，能直接指导 C1–C5。
-- [ ] **A8 设计④：PM Research Terminal 架构**
-  内容：Pi SDK adapter、capability metadata、确定性命令、permission profiles、主题、领域 renderer 与 fallback 契约。
-  出口条件：文档获确认，能直接指导 E1–E6。
-- [ ] **A9 设计⑤：HTTPS identity/token flow**
-  内容：GitHub Web 登录、CLI device authorization、MCP OAuth discovery、PaperMind token 与本地模型 provider 凭据的边界。
-  出口条件：文档获确认，能直接指导 E2/E7–E9 与 F5。
+- [ ] **A8 设计④：PM Research Terminal downstream 架构**
+  内容：Pi 上游基线（pinned tag）、patch policy（有序 patch stack、product profile 先于 build/source pruning）、独立仓库 `PaperMind-Terminal` 维护准则、capability metadata、确定性命令、permission profiles、主题与领域 renderer、fallback 契约。
+  出口条件：文档获确认，能直接指导 E1/E2。
+- [ ] **A9 设计⑤：UI Surface Contract**
+  内容：现有 Web route/capability inventory（retain/merge/local-ui/archive）、canonical presentation model 第一版、共享 UI 包（`@papermind/client` / `presentation` / `ui-core`）边界、deep links、Local UI loopback bridge 契约、Full Web 可选部署 profile。
+  输入：审计报告 §2.4（前端三套轮询端点）。
+  出口条件：文档获确认，inventory 一次产出、供 A9 与 F1 共同引用。
+- [ ] **A10 设计⑥：HTTPS identity/token flow**
+  内容：GitHub Web 登录、CLI device authorization、MCP OAuth discovery、PaperMind token、本地模型凭据与 Local UI session 的边界。
+  出口条件：文档获确认，能直接指导 E3/E8–E10 与 G2。
 
 ## Stage B — Phase 1：application command/query
 
-阶段出口条件：Web、MCP 对同一能力调用同一个 application handler。
+阶段出口条件：Full Web、Local UI、PM Research Terminal 和 MCP 对同一能力调用同一个 application handler；存在第一版 canonical presentation model。
 
 - [ ] **B1 application 层骨架**：建立 commands/queries 目录结构、handler 协议与依赖注入约定；repository/provider 只允许在 application 层内使用。
-- [ ] **B2 只读切片①：SearchPapers + GetPaper**：对应 HTTP 路由改为调用 application handler，返回保持兼容，前端不动。
-- [ ] **B3 只读切片②：GetResearchQuestion/ListClaims/GetClaimEvidence**：同上，覆盖研究状态读取面。
-- [ ] **B4 MCP 工具改调 application handlers**：`apps/api/mcp.py` 工具不再直接引用 deps/service（审计 §1.6）。
-- [ ] **B5 agent tools 改调 application handlers**：`packages/ai/tools/registry.py` 保留参数与返回语义，handler 业务下沉（设计文档 §5.5）。
-- [ ] **B6 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
-- [ ] **B7 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一提交 job（为 Stage C 铺路）。
+- [ ] **B2 canonical presentation model 第一版**：定义 Paper/Claim/Evidence/Job/diff 的 view model 契约；application handler 产出 canonical result，HTTP 返回用其包裹并保持兼容。TS 侧共享类型在 F2 正式提取，但契约先在服务端定死。
+- [ ] **B3 只读切片①：SearchPapers + GetPaper**：对应 HTTP 路由改为调用 application handler，返回保持兼容，前端不动。
+- [ ] **B4 只读切片②：GetResearchQuestion/ListClaims/GetClaimEvidence**：同上，覆盖研究状态读取面。
+- [ ] **B5 MCP 工具改调 application handlers**：`apps/api/mcp.py` 工具不再直接引用 deps/service（审计 §1.6）。
+- [ ] **B6 agent tools 改调 application handlers**：`packages/ai/tools/registry.py` 保留参数与返回语义，handler 业务下沉（设计文档 §5.5）。
+- [ ] **B7 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
+- [ ] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一提交 job（为 Stage C 铺路）。
 
 ## Stage C — Phase 2：durable jobs
 
@@ -103,32 +110,43 @@
 
 阶段出口条件：不打开 Web，也能在 `pm` 终端和确定性命令中完成搜索、查看 Claim/Evidence、比较研究状态、触发处理、查看进度、取消任务和导出。
 
-- [ ] **E1 `@papermind/cli` 骨架**：TypeScript/Node 包，同进程嵌入 Pi SDK，加载 PaperMind extension；`pm` 无参数进入交互终端，`pm -p` 一次性调用。
-- [ ] **E2 远程登录**：`pm login --endpoint`，PaperMind token 与本地模型 provider 凭据分开保存/撤销。
-- [ ] **E3 确定性子命令 + `--json`**：查询面优先（papers/questions/claims/evidence/diff/export），稳定退出码，无 ANSI 污染。
-- [ ] **E4 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.2）。
-- [ ] **E5 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
-- [ ] **E6 permission profiles**：默认 research profile；`--workspace`/`--coding` 显式开启；destructive 动作需服务端 policy + 终端确认双重把关。
-- [ ] **E7 MCP 远程化**：唯一 transport 为公网 HTTPS Streamable HTTP；OAuth protected resource metadata、token audience/scope 校验；resources 与 tools 划分。
-- [ ] **E8 MCP 凭据升级**：静态 token 改为可撤销、可轮换、分 scope 的凭据。
-- [ ] **E9 CLI device authorization**：PaperMind 自己签发一次性 device code，浏览器完成上游登录；CLI 只拿 PaperMind token，上游 provider token 不下发。
+- [ ] **E1 `PaperMind-Terminal` downstream fork 基线**：独立仓库、pinned 上游 tag、保留 MIT copyright/license notice 与第三方 notices、有序 patch stack（每次 release 记录上游基线与未合并安全修复）、product profile 关闭 coding-oriented 功能；build pruning 先行，稳定前不做 source pruning。
+- [ ] **E2 `@papermind/cli` 与 standalone `pm`**：同进程运行裁剪后的 Pi agent core/TUI，加载 PaperMind system prompt、主题与 renderer；`pm` / `pm -p` / 确定性子命令三模式骨架。
+- [ ] **E3 远程登录**：`pm login --endpoint`，PaperMind token 与本地模型 provider 凭据分开保存/撤销。
+- [ ] **E4 确定性子命令 + `--json`**：查询面优先（papers/questions/claims/evidence/diff/export），稳定退出码，无 ANSI 污染。
+- [ ] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
+- [ ] **E6 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
+- [ ] **E7 permission profiles**：默认 research profile；`--workspace`/`--coding` 显式开启；destructive 动作需服务端 policy + 终端确认双重把关。
+- [ ] **E8 MCP 远程化**：唯一 transport 为公网 HTTPS Streamable HTTP；OAuth protected resource metadata、token audience/scope 校验；resources 与 tools 划分。
+- [ ] **E9 MCP 凭据升级**：静态 token 改为可撤销、可轮换、分 scope 的凭据。
+- [ ] **E10 CLI device authorization**：PaperMind 自己签发一次性 device code，浏览器完成上游登录；CLI 只拿 PaperMind token，上游 provider token 不下发。
 
-## Stage F — Phase 5：前端瘦身与 Demo
+## Stage F — Phase 5：Local UI 与可选 Full Web 适配
+
+阶段出口条件：`pm ui` 无本地业务后端或数据库即可操作远程 Research State；Full Web 可选启停；同一 Claim 在所有界面中状态、权限和 provenance 一致。
+
+- [ ] **F1 现有 Web route/capability inventory**：逐项标记 retain/merge/local-ui/archive；一次产出，A9 设计⑤与 F5 共同引用；禁止直接批量删除。
+- [ ] **F2 共享包提取**：`@papermind/client`（typed HTTPS client + auth types）、`@papermind/presentation`（canonical view models）、`@papermind/ui-core`（React primitives + 领域组件）；不导入服务端 repository、Python handler 或 Pi 私有 session 类型。
+- [ ] **F3 `pm ui` loopback bridge**：随机端口绑定 `127.0.0.1`/`::1`、一次性启动 nonce 本地 session、Host/Origin/CSRF 校验、allowlist HTTPS proxy、token 仅存进程内存、退出即销毁。
+- [ ] **F4 Local UI 首版五类界面**：PDF/Evidence 并排定位、Claim 工作台、Research Diff、Job Monitor、Research Pack；终端 `open`/`o` 深链与 Local UI 互通。
+- [ ] **F5 Full Web 适配 Research State**：ResearchQuestion/Claim/Evidence/History/Diff/Job 可查看、可定位 evidence、可执行授权范围内的修改；删除页面内重复业务编排（按 F1 标记执行）。
+- [ ] **F6 Full Web 可选部署**：`--web=full|demo|none` 三 profile；`--web=none` 时不携带/启动 Web；构建产物由 Core 或同一反向代理提供，去常驻前端容器。
+- [ ] **F7 surface contract 测试**：每个新 capability 验证 Terminal/Local UI/Full Web/MCP/JSON 五面语义一致（对象 ID、状态机、权限、幂等键、provenance）。
+
+## Stage G — Phase 6：公开 Demo
 
 阶段出口条件：个人站与 Demo 数据完全隔离；Demo 在模型不可用时仍能展示完整预计算流程。
 
-- [ ] **F1 删除无关入口与重复状态管理**（含审计发现的前端可经 `POST /tasks/track` 在服务端内存"造任务"这类口子）。
-- [ ] **F2 Web 只调 application API**。
-- [ ] **F3 生产构建内嵌或反代提供**：删除独立前端容器（compose 中的 nginx 服务）。
-- [ ] **F4 Demo 独立实例**：独立数据库、文件卷、配置与模型额度；取代 2026-05-08 旧 Demo 方案。
-- [ ] **F5 GitHub 登录 + 临时身份**：最小身份映射、TTL 清理、用户/IP/全局三维限额。
-- [ ] **F6 三段式演示旅程**：匿名看 Claim/Evidence → 登录看研究状态变化 → `pm login` + `pm demo` 复现并导出 Research Pack。
+- [ ] **G1 Demo 独立实例**：独立数据库、文件卷、配置与模型额度；取代 2026-05-08 旧 Demo 方案。隔离是实例级的，`--web=demo` 只是页面 profile，不承担隔离职责。
+- [ ] **G2 GitHub 登录 + 临时身份**：最小身份映射、TTL 清理、用户/IP/全局三维限额。
+- [ ] **G3 三段式演示旅程**：匿名看 Claim/Evidence → 登录看研究状态变化 → `pm login`/`pm demo`/`pm ui --question ...` 复现并导出 Research Pack。
 
-## Stage G — Phase 6：语言与存储决策门
+## Stage H — Phase 7：语言与存储决策门
 
-- [ ] **G1 重测资源基线**：对照 A2 记录，定位剩余成本来源（Python control plane / 重依赖 / 数据库 / 具体任务）。
-- [ ] **G2 决策记录**：是否迁移 Go control plane；个人服务用 SQLite 还是 PostgreSQL。出口条件：任何迁移都有测量证据和独立回滚路径，否则维持现状。
+- [ ] **H1 重测资源基线**：对照 A2 记录，定位剩余成本来源（Python control plane / 重依赖 / 数据库 / 具体任务）。
+- [ ] **H2 决策记录**：是否迁移 Go control plane；个人服务用 SQLite 还是 PostgreSQL。出口条件：任何迁移都有测量证据和独立回滚路径，否则维持现状。
 
 ## 变更记录
 
 - 2026-09-02：建立路线图；完成 A1 审计。
+- 2026-09-02（第二次）：同步设计基线第二版——Pi 从 SDK adapter 改为 downstream fork 策略（A8/E1）、新增 Local PM UI（A9/F3/F4）、Full Web 从瘦身删除改为可选模块（F1/F5/F6）、设计五份变六份（A5–A10）、Phase 0–6 变 0–7（Stage A–H）、Phase 1 出口新增 canonical presentation model（B2）。
