@@ -21,7 +21,7 @@
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 六份设计 | 10 | 5 | 进行中 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 6 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
@@ -55,10 +55,9 @@
 - [x] **A6 设计②：Application command/query 清单与调用映射**
   产出：[2026-09-02 设计② Application 用例映射](./2026-09-02-design-2-application-use-case-map.md)。
   结论：165 HTTP + 9 MCP + 26 agent 工具全部映射到用例目录（Queries 24 / Commands 31 / 保持现状 4 组 / 废弃候选 1），并给出 B2–B7 批次出口；research/* 已随 D4/D5 落地为目录首批实体。§8 有 4 个决策点待确认。
-- [ ] **A7 设计③：原子 Durable Execution 协议与迁移说明**
-  内容：定义 ResearchRun/Job/Task/Attempt/Artifact、Task 原子边界、代码化 Workflow、lease/fencing、幂等/outbox、Reconciler 和 Executor capability；说明 `TaskTracker`、`BatchJob`、APScheduler、后台线程与 worker heartbeat 如何收敛。
-  输入：审计报告 §2/§3/§6。
-  出口条件：文档获确认，能直接指导 C1–C11。
+- [x] **A7 设计③：原子 Durable Execution 协议与迁移说明**
+  产出：[2026-09-02 设计③ 原子 Durable Execution 协议](./2026-09-02-design-3-durable-execution-protocol.md)。
+  结论：jobs/tasks/task_attempts/artifacts 四张表 schema + Job/Task 状态机（lease/fencing/协作式取消）+ 第一批 9 个 Task 原子边界（幂等键/超时/重试）+ 4 个 Workflow 模板 + 五组件部署形态 + 旧机制（TaskTracker/batch_jobs/APScheduler/heartbeat/裸线程）逐项收敛映射 + C11 验收用例。§9 有 4 个决策点待确认。
 - [ ] **A8 设计④：PM Research Terminal downstream 架构**
   内容：Pi 上游基线（pinned tag）、patch policy（有序 patch stack、product profile 先于 build/source pruning）、独立仓库 `PaperMind-Terminal` 维护准则、capability metadata、确定性命令、permission profiles、主题与领域 renderer、fallback 契约。
   出口条件：文档获确认，能直接指导 E1/E2。
@@ -176,3 +175,4 @@
 - 2026-09-02（第九次）：完成 D5——Research Object 基础导出（JSON+Markdown，确定性 sha256 校验值，provenance 摘要），全量 112 passed。
 - 2026-09-02（第十次）：核对后关闭 D6/D7（实体与规则已随 D1–D3 落地且有测试）——**Stage D（Phase 3）完成**：同一 Claim 可从 API 追溯到精确证据、生成活动与历史版本，无证据的模型输出不进入 confirmed。Phase 3 出口条件达成。
 - 2026-09-02（第十一次）：完成 A6 设计②——165 HTTP + 9 MCP + 26 agent 工具全量映射到用例目录与 B2–B7 迁移批次。
+- 2026-09-02（第十二次）：完成 A7 设计③——原子 durable execution 协议（四表 schema、状态机、9 个 Task 原子边界、4 个 Workflow 模板、旧机制收敛映射）。
