@@ -27,6 +27,7 @@ dev = [
   "pytest>=8.4.1",
   "ruff>=0.12.12",
   "pre-commit>=4.0.0",
+  "pyinstaller>=6.0",
 ]
 llm = [
   "openai>=1.102.0",

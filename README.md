@@ -203,12 +203,24 @@ PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索
 
 ## 🖥️ pm CLI 与 API 令牌
 
-### 安装（你的电脑上）
+### 安装（你的电脑上，无需 Python）
 
 ```bash
-pipx install /path/to/PaperMind
-# 或 uv tool install -e /path/to/PaperMind
+# macOS / Linux：一键安装（自动识别平台，从 GitHub Releases 下载）
+curl -fsSL https://raw.githubusercontent.com/Color2333/PaperMind/main/scripts/install-pm.sh | bash
+
+# Windows（PowerShell）：
+irm https://raw.githubusercontent.com/Color2333/PaperMind/main/scripts/install-pm.ps1 | iex
 ```
+
+或到 [Releases](https://github.com/Color2333/PaperMind/releases) 手动下载对应平台二进制
+（`pm-darwin-arm64` / `pm-darwin-x86_64` / `pm-linux-x86_64` / `pm-windows-x86_64.exe`），
+放到 PATH 目录并 `chmod +x`。
+
+> macOS 首次运行如被 Gatekeeper 拦截：`xattr -d com.apple.quarantine pm`
+
+开发者也可以从源码安装：`pipx install /path/to/PaperMind`，或本地构建单文件二进制
+`bash scripts/build-pm-cli.sh`（输出 `dist/pm`）。
 
 ### 登录
 
