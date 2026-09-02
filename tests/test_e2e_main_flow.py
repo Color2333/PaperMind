@@ -33,6 +33,7 @@ from sqlalchemy.orm import sessionmaker
 import packages.ai.pipelines.paper_pipelines as paper_pipelines_module
 import packages.storage.db as db_module
 import packages.storage.models  # noqa: F401  # 注册全部表到 Base.metadata
+from packages.ai.seed_research import seed_sample
 from packages.ai.vision_reader import VisionPdfReader
 from packages.config import get_settings
 from packages.domain.enums import (
@@ -152,8 +153,8 @@ def _fake_fetch_latest(
             arxiv_id=f"2608.1000{i}",
             title=PAPER_TITLES[i],
             abstract=(
-                "We study streaming speaker diarization with transformer architectures. "
-                f"Paper variant {i} reports relative DER reductions on LibriSpeech."
+                f"Paper variant {i} proposes a novel streaming diarization approach {i}. "
+                "It reports relative DER reductions on LibriSpeech with transformer models."
             ),
             publication_date=date(2026, 8, 30),
             metadata={},
@@ -180,12 +181,21 @@ def _make_fake_download_pdf(tmp_dir: Path):
 
 def _build_app() -> FastAPI:
     """真实 routers 组装的最小 app（不含 main.py 的 lifespan/MCP/认证）"""
-    from apps.api.routers import content, papers, pipelines, topics
+    from fastapi.responses import JSONResponse
+
+    from apps.api.routers import content, papers, pipelines, research, topics
+    from packages.domain.exceptions import AppError
 
     app = FastAPI()
+
+    @app.exception_handler(AppError)
+    async def _app_error_handler(_request, exc: AppError):
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
     app.include_router(papers.router)
     app.include_router(topics.router)
     app.include_router(pipelines.router)
+    app.include_router(research.router)
     app.include_router(content.router)
     return app
 
@@ -412,3 +422,53 @@ def test_rag_ask_without_context_returns_fallback(e2e_env):
     body = resp.json()
     assert "没有足够上下文" in body["answer"]
     assert body["cited_paper_ids"] == []
+
+
+def test_research_state_query_endpoints(e2e_env):
+    """D4：question 聚合 / claims 列表 / 证据追溯 / diff 四个只读端点"""
+    client = e2e_env.client
+    _ingest_two_papers(client)
+    with session_scope() as session:
+        stats = seed_sample(session, arxiv_ids=["2608.10001", "2608.10002"])
+        question_id = stats["question_id"]
+
+    # 聚合视图
+    resp = client.get(f"/research/questions/{question_id}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["title"].startswith("视听说话人分离")
+    assert body["claim_counts"]["by_status"] == {"confirmed": 2, "draft": 1}
+
+    # claims 列表 + 证据计数
+    resp = client.get(f"/research/questions/{question_id}/claims")
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert len(items) == 3
+    author_items = [i for i in items if i["origin"] == "author"]
+    assert len(author_items) == 2
+    assert all(i["status"] == "confirmed" and i["evidence_count"] == 1 for i in author_items)
+
+    # 证据追溯：claim → evidence → source_version → paper
+    claim_id = author_items[0]["id"]
+    resp = client.get(f"/research/claims/{claim_id}/evidence")
+    assert resp.status_code == 200, resp.text
+    detail = resp.json()
+    assert detail["claim"]["id"] == claim_id
+    evidence = detail["evidence"][0]
+    assert evidence["locator"] == {"section": "abstract"}
+    assert evidence["source_version"]["version_label"] == 1
+    assert evidence["source_version"]["paper"]["arxiv_id"] in {"2608.10001", "2608.10002"}
+
+    # diff：added/confirmed/strengthened 至少齐备
+    resp = client.get(f"/research/questions/{question_id}/diff")
+    assert resp.status_code == 200, resp.text
+    diff_kinds = {item["diff_kind"] for item in resp.json()["items"]}
+    assert {"added", "confirmed", "strengthened"} <= diff_kinds
+
+    # 时间过滤：最近 1 小时应包含全部事件
+    resp = client.get(f"/research/questions/{question_id}/diff", params={"since_hours": 1})
+    assert resp.json()["items"]
+
+    # 不存在 → 404（AppError 处理器）
+    resp = client.get("/research/questions/doesnotexist")
+    assert resp.status_code == 404

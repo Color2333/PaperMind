@@ -24,7 +24,7 @@
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 4 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
-| Stage D · Phase 3 Research State 垂直切片 | 7 | 3 | 进行中 |
+| Stage D · Phase 3 Research State 垂直切片 | 7 | 4 | 进行中 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
@@ -112,7 +112,9 @@
 - [x] **D3 ResearchRun 生成待验证 Claim**：强制证据坐标与完整 provenance（source version、任务、时间、模型、策略版本）。
   产出：[packages/ai/claim_extractor.py](../../packages/ai/claim_extractor.py)（`extract_in_session` 可嵌调用方事务 / `extract_for_paper` 独立事务）+ `build_claim_extraction_prompt` + deep_dive 管线挂接（同事务原子提交，抽取失败不影响精读结果）。
   结论：Run 记录 model/policy/cost_refs（指向 PromptTrace）；引用无法在源文本核实的判断保持 draft（不伪造坐标），可核实的经证据规则推进 pending_verification；幂等键 = 同版本+同引用+同坐标。4 个单元测试 + e2e 断言，全量 108 passed。
-- [ ] **D4 查询实现**：GetResearchQuestion、ListClaims、GetClaimEvidence、DiffResearchState。
+- [x] **D4 查询实现**：GetResearchQuestion、ListClaims、GetClaimEvidence、DiffResearchState。
+  产出：[packages/application/queries/research_state.py](../../packages/application/queries/research_state.py)（application 层第一个模块，canonical result 为 plain dict）+ 只读路由 [apps/api/routers/research.py](../../apps/api/routers/research.py)（/research/questions/*、/research/claims/*/evidence，已挂 main.py）。
+  结论：diff 以 research_events 为唯一事实源，映射 added/confirmed/revised/invalidated/strengthened/weakened/conflict/superseded/retraction；HTTP 只做协议转换。1 个 diff 单测 + 1 个 e2e（四端点全链路），全量 110 passed。
 - [ ] **D5 Research Object 基础导出**：至少 JSON + Markdown，含校验值与 provenance 摘要。
 - [ ] **D6 领域事件**：append-only outbox/event log 记录 Claim 与 SourceVersion 的关键状态变化（设计文档 §4.7 事件表）。
 - [ ] **D7 confirmed 规则落地**：author/PaperMind/user 判断来源区分；无证据输出只能 draft/pending verification。
@@ -166,3 +168,4 @@
 - 2026-09-02（第五次）：用户确认设计①全部决策点；完成 D1——数据契约落地为 models/枚举/UUIDv7/migration/仓储，16 个契约测试 + 全量 101 passed。
 - 2026-09-02（第六次）：完成 A4 + D2——ingest 同事务建 v1 SourceVersion（9 个入库路径全覆盖）、A4 样本种子（author 即证 + papermind draft 待人工抽检），全量 104 passed。
 - 2026-09-02（第七次）：完成 D3——ClaimExtractionService 挂接 deep_dive，ResearchRun 生成待验证 Claim（provenance 完整、引用核实强制、幂等），全量 108 passed。
+- 2026-09-02（第八次）：完成 D4——application 层首个模块（四查询）+ 只读 /research/* 路由；同一 Claim 可从 API 追溯到精确证据与 diff，全量 110 passed。

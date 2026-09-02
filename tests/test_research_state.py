@@ -474,3 +474,27 @@ def test_seed_sample_dry_run_writes_nothing(isolated_db):
         assert plan["versions_to_create"] == 1
         assert session.execute(select(func.count()).select_from(Claim)).scalar() == 0
         assert session.execute(select(func.count()).select_from(Paper)).scalar() == 1
+
+
+# ---------- D4：diff 查询映射 ----------
+
+
+def test_diff_research_state_maps_kinds(isolated_db):
+    from packages.application.queries.research_state import diff_research_state
+
+    with session_scope() as session:
+        q = ResearchQuestionRepository(session).create(title="Q", question="问题？")
+        repo = ClaimRepository(session)
+        a = repo.create(statement="结论 A", origin=ClaimOrigin.user, research_question_id=q.id)
+        b = repo.create(statement="结论 B", origin=ClaimOrigin.user, research_question_id=q.id)
+        ClaimRelationRepository(session).record(
+            subject_claim_id=b.id,
+            object_claim_id=a.id,
+            predicate=RelationPredicate.contradicts,
+            origin=RelationOrigin.user,
+        )
+        result = diff_research_state(session, q.id)
+        kinds = {item["diff_kind"] for item in result["items"]}
+        # user 创建 → added + confirmed；contradicts 关系 → conflict
+        assert {"added", "confirmed", "conflict"} <= kinds
+        assert all(item["event"] in {e.value for e in EventType} for item in result["items"])

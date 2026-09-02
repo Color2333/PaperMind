@@ -227,6 +227,7 @@ from apps.api.routers import (  # noqa: E402
     llm_configs,
     papers,
     pipelines,
+    research,
     sensemaking,
     system,
     tags,
@@ -247,6 +248,7 @@ app.include_router(graph.router)
 app.include_router(agent.router)
 app.include_router(content.router)
 app.include_router(pipelines.router)
+app.include_router(research.router)
 app.include_router(settings_router.router)
 app.include_router(writing.router)
 app.include_router(jobs.router)
