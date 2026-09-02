@@ -22,7 +22,7 @@
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
-| Stage B · Phase 1 application command/query | 8 | 5 | 进行中 |
+| Stage B · Phase 1 application command/query | 8 | 6 | 进行中 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
@@ -84,8 +84,9 @@
 - [x] **B5 MCP 工具改调 application handlers**：`apps/api/mcp.py` 工具不再直接引用 deps/service（审计 §1.6）。
   产出：9 个工具改调 application（新增 [queries/content.py](../../packages/application/queries/content.py)、[queries/tasks.py](../../packages/application/queries/tasks.py)（过渡）、[commands/pipelines.py](../../packages/application/commands/pipelines.py)、[commands/daily.py](../../packages/application/commands/daily.py)）；工具体抽为 `_tool_*` 可测试函数 + 薄 `@mcp.tool` 包装；MCP 字段契约（skim_summary/deep_dive 等）在协议层映射保持不变。
   结论：`mcp.py` 零 `apps.api.deps` 引用；6 个工具测试（读/同步命令/异步任务/失败路径），全量 119 passed。
-- [ ] **B6 agent tools 改调 application handlers**：`packages/ai/tools/registry.py` 保留参数与返回语义，handler 业务下沉（设计文档 §5.5）。
-  进度（2026-09-02，第一~三批）：read×3、batch×4、search×7（search/detail/similar/filter/citation_tree/timeline/suggest_keywords）、analysis×2（reasoning/figures）、writing×1、system×1、topics×2（list/manage_subscription）、wiki_brief×3（wiki/daily_brief/research_gaps）共 23 个已改调 application（新增 queries：ask/graph/analysis/system/topics/content 扩展；commands：batch/brief/wiki）。仅余 `ingest.py`（361 行：双层并行 + 后台 PDF 池 + tracker 进度桥接）单独一批搬迁。全量 123 passed。
+- [x] **B6 agent tools 改调 application handlers**：`packages/ai/tools/registry.py` 保留参数与返回语义，handler 业务下沉（设计文档 §5.5）。
+  产出（2026-09-02，共三批 + 收尾）：24 个 agent 工具全部改调 application——read×3（commands/pipelines）、batch×4（commands/batch，过渡）、search 族×11（queries/papers/ask/graph/content 扩展）、analysis×2（queries/analysis）、writing×1、system×1、topics×2（queries/topics）、wiki/brief/gaps×3（commands/brief/wiki、queries/graph）、ingest×2（commands/ingest：导入业务 + 双层并行 + 后台 PDF 池 + tracker 内聚，handler 只做进度→ToolProgress 桥接）。
+  结论：registry 保留 schema/confirm/短前缀解析语义；`_get_paper_detail` 为纯投影（无服务引用）保持原状。**测试顺带修掉存量 bug**：search_arxiv 对 PaperCreate 误用 ORM 列名 `metadata_json`（有结果即 AttributeError）。全量 125 passed。
 - [ ] **B7 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
 - [ ] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一创建 Job，不再直接调用具体 Worker 或线程池（为 Stage C 铺路）。
 
@@ -190,3 +191,4 @@
 - 2026-09-02（第十七次）：完成 B5——MCP 9 工具改调 application（零 deps 引用，协议字段兼容），全量 119 passed。
 - 2026-09-02（第十八次）：B6 第一批——agent 工具 read/batch/search 三组共 10 个改调 application（commands/pipelines、commands/batch、queries/papers 扩展），全量 123 passed。
 - 2026-09-02（第十九次）：B6 第二、三批——ask/citation_tree/timeline/suggest_keywords + reasoning/figures/writing/system/topics/wiki_brief 共 13 个改调 application（新增 queries：ask/graph/analysis/system/topics；commands：brief/wiki）；仅余 ingest.py。全量 123 passed。
+- 2026-09-02（第二十次）：B6 完成——ingest 工具业务下沉到 commands/ingest（handler 只桥接进度），并修复存量 bug（search_arxiv 误用 metadata_json）；**24 个 agent 工具全部经 application 层**。全量 125 passed。
