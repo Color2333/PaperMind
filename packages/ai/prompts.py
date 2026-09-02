@@ -669,3 +669,18 @@ SYSTEM_PROMPT = """\
 9. **空结果处理**：搜索无结果时主动建议换关键词或从 arXiv 下载。
 10. **简洁回答**：不要长篇解释工具用途，直接执行任务。
 """
+
+
+def build_claim_extraction_prompt(title: str, content: str) -> str:
+    """D3：从论文正文/摘要提取可验证研究判断（要求精确引用 + 定位坐标）"""
+    return (
+        "你是严谨的研究助理。从下面的论文内容中提取可验证的研究判断（claim）。\n"
+        "要求：\n"
+        "1. 每条判断附一个精确引用 quote：必须逐字取自下面的论文内容，不超过 200 字符；\n"
+        "2. 每条判断附定位 locator：page/section/figure/table 至少一项；\n"
+        "3. 只提取原文实际声称的结论，不要推断或引申；最多 6 条；\n"
+        "4. certainty 取 established/conditional/conflicted/insufficient_evidence/unknown 之一。\n\n"
+        f"论文标题：{title}\n\n论文内容：\n{content[:6000]}\n\n"
+        '只输出 JSON：{"claims": [{"statement": "...", "statement_zh": "...", '
+        '"quote": "...", "locator": {"section": "..."}, "certainty": "conditional"}]}'
+    )

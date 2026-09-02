@@ -35,13 +35,21 @@ import packages.storage.db as db_module
 import packages.storage.models  # noqa: F401  # 注册全部表到 Base.metadata
 from packages.ai.vision_reader import VisionPdfReader
 from packages.config import get_settings
-from packages.domain.enums import EventAggregate, EventType, ReadStatus
+from packages.domain.enums import (
+    ClaimOrigin,
+    ClaimStatus,
+    EventAggregate,
+    EventType,
+    ReadStatus,
+)
 from packages.domain.schemas import PaperCreate
 from packages.integrations.arxiv_client import ArxivClient
 from packages.integrations.llm_client import LLMClient, LLMResult
 from packages.storage.db import Base, session_scope
 from packages.storage.models import (
     AnalysisReport,
+    Claim,
+    Evidence,
     Paper,
     PipelineRun,
     PromptTrace,
@@ -72,6 +80,21 @@ FAKE_RAG_ANSWER = (
     "根据知识库：[fake-rag-answer] 该流式 transformer 方法在 LibriSpeech 上取得 12% 相对 DER 改善。"
 )
 
+# D3：deep read 触发的 claim_extraction stage 返回带精确引用的判断
+FAKE_CLAIMS = {
+    "claims": [
+        {
+            "statement": (
+                "The paper proposes streaming transformer diarization with multi-channel fusion."
+            ),
+            "statement_zh": "该论文提出带多通道融合的流式 transformer 说话人分离方法。",
+            "quote": "Streaming transformer diarization. Method and experiments.",
+            "locator": {"section": "1"},
+            "certainty": "conditional",
+        }
+    ]
+}
+
 PAPER_TITLES = {
     1: "Fake paper one: transformer-based streaming speaker diarization",
     2: "Fake paper two: multi-channel end-to-end diarization survey",
@@ -86,7 +109,11 @@ def _fake_summarize_text(
     max_tokens: int | None = None,
 ) -> LLMResult:
     """按 stage 返回确定性 JSON，真实 complete_json 的解析路径照常执行"""
-    payload = {"skim": FAKE_SKIM, "deep": FAKE_DEEP}.get(stage, {"answer": FAKE_RAG_ANSWER})
+    payload = {
+        "skim": FAKE_SKIM,
+        "deep": FAKE_DEEP,
+        "claim_extraction": FAKE_CLAIMS,
+    }.get(stage, {"answer": FAKE_RAG_ANSWER})
     content = json.dumps(payload, ensure_ascii=False)
     return LLMResult(
         content=content,
@@ -326,6 +353,23 @@ def test_main_research_flow_import_skim_deep_ask_brief(e2e_env):
     with session_scope() as session:
         paper = session.execute(select(Paper).where(Paper.id == paper_id)).scalar_one()
         assert paper.read_status == ReadStatus.deep_read
+
+    # ---- D3：deep read 的 ResearchRun 生成待验证 Claim（引用可核实 → 带证据）----
+    with session_scope() as session:
+        extracted = (
+            session.execute(select(Claim).where(Claim.origin == ClaimOrigin.papermind))
+            .scalars()
+            .all()
+        )
+        assert len(extracted) == 1
+        assert extracted[0].status is ClaimStatus.pending_verification
+        assert extracted[0].run_id
+        claim_evidence = list(
+            session.execute(select(Evidence).where(Evidence.claim_id == extracted[0].id)).scalars()
+        )
+        assert len(claim_evidence) == 1
+        assert claim_evidence[0].quote == FAKE_CLAIMS["claims"][0]["quote"]
+        assert claim_evidence[0].locator == {"section": "1"}
 
     # ---- embed ----
     resp = client.post(f"/pipelines/embed/{paper_id}")

@@ -24,7 +24,7 @@
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 4 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
-| Stage D · Phase 3 Research State 垂直切片 | 7 | 2 | 进行中 |
+| Stage D · Phase 3 Research State 垂直切片 | 7 | 3 | 进行中 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
@@ -109,7 +109,9 @@
 - [x] **D2 样本迁移**：迁移 A4 的预置研究问题与少量论文，不批量回填历史数据。
   产出：`PaperRepository.upsert_paper` 新建分支同事务建 v1 SourceVersion（幂等，9 个入库路径全覆盖）+ seed 脚本（存量切片论文回补 v1，author 引用即证 + papermind draft 占位）。
   结论：ingest → SourceVersion/事件 同事务由 e2e 测试断言；种子幂等由 3 个契约测试覆盖；全量 104 passed。
-- [ ] **D3 ResearchRun 生成待验证 Claim**：强制证据坐标与完整 provenance（source version、任务、时间、模型、策略版本）。
+- [x] **D3 ResearchRun 生成待验证 Claim**：强制证据坐标与完整 provenance（source version、任务、时间、模型、策略版本）。
+  产出：[packages/ai/claim_extractor.py](../../packages/ai/claim_extractor.py)（`extract_in_session` 可嵌调用方事务 / `extract_for_paper` 独立事务）+ `build_claim_extraction_prompt` + deep_dive 管线挂接（同事务原子提交，抽取失败不影响精读结果）。
+  结论：Run 记录 model/policy/cost_refs（指向 PromptTrace）；引用无法在源文本核实的判断保持 draft（不伪造坐标），可核实的经证据规则推进 pending_verification；幂等键 = 同版本+同引用+同坐标。4 个单元测试 + e2e 断言，全量 108 passed。
 - [ ] **D4 查询实现**：GetResearchQuestion、ListClaims、GetClaimEvidence、DiffResearchState。
 - [ ] **D5 Research Object 基础导出**：至少 JSON + Markdown，含校验值与 provenance 摘要。
 - [ ] **D6 领域事件**：append-only outbox/event log 记录 Claim 与 SourceVersion 的关键状态变化（设计文档 §4.7 事件表）。
@@ -163,3 +165,4 @@
 - 2026-09-02（第四次）：完成 A5 设计①（Research State 最小数据契约：7 实体、状态机、事件/outbox、PROV 映射、共存策略），§11 决策点待确认。
 - 2026-09-02（第五次）：用户确认设计①全部决策点；完成 D1——数据契约落地为 models/枚举/UUIDv7/migration/仓储，16 个契约测试 + 全量 101 passed。
 - 2026-09-02（第六次）：完成 A4 + D2——ingest 同事务建 v1 SourceVersion（9 个入库路径全覆盖）、A4 样本种子（author 即证 + papermind draft 待人工抽检），全量 104 passed。
+- 2026-09-02（第七次）：完成 D3——ClaimExtractionService 挂接 deep_dive，ResearchRun 生成待验证 Claim（provenance 完整、引用核实强制、幂等），全量 108 passed。

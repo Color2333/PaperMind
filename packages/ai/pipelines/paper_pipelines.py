@@ -520,6 +520,16 @@ class PaperPipelines:
                     output_cost_usd=result.output_cost_usd,
                     total_cost_usd=result.total_cost_usd,
                 )
+                # D3：deep read 的 ResearchRun 顺带生成待验证 Claim（同事务原子提交；
+                # 抽取失败只记日志，不影响精读结果本身）
+                try:
+                    from packages.ai.claim_extractor import ClaimExtractionService
+
+                    ClaimExtractionService().extract_in_session(
+                        session, paper_id, source_text=combined
+                    )
+                except Exception as exc:
+                    logger.warning("claim extraction failed for %s: %s", paper_id, exc)
                 elapsed = int((time.perf_counter() - started) * 1000)
                 run_repo.finish(run.id, elapsed_ms=elapsed)
                 return deep
