@@ -1,0 +1,29 @@
+# 全量 pytest 回归（含端到端主流程，见 tests/test_e2e_main_flow.py）
+# A3 出口条件：主用户流程可在本地/CI 重复运行并通过
+
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,llm,pdf]"
+
+      - name: Run pytest
+        run: pytest --tb=short

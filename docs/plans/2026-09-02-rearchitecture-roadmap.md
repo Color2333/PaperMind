@@ -21,7 +21,7 @@
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 六份设计 | 10 | 1 | 进行中 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 2 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 0 | 未开始 |
@@ -43,10 +43,9 @@
   产出：测量脚本 + `docs/plans/` 基线记录。
   内容：API/worker/PostgreSQL/前端容器的空闲与峰值 RSS、镜像大小、冷启动时间；需在服务器上实测。
   出口条件：每个容器均有数值记录（Phase 0 出口条件第 1 项）。
-- [ ] **A3 核心流程回归测试**
-  产出：pytest 级端到端回归（导入论文 → skim/deep read → ask → brief 主链路）。
-  输入：审计报告 §7 的缺口清单（现有 85 个测试均不覆盖主流程）。
-  出口条件：主用户流程可在本地/CI 重复运行并通过；后续每个 Stage 的改动以它兜底。
+- [x] **A3 核心流程回归测试**
+  产出：[tests/test_e2e_main_flow.py](../../tests/test_e2e_main_flow.py)（3 个测试：arXiv 导入与去重 / 导入→下载PDF→skim→deep→embed→ask→brief 全链路 / 空库 RAG 兜底）+ [.github/workflows/tests.yml](../../.github/workflows/tests.yml)（PR/push 自动跑 pytest）。
+  结论：主链路在 HTTP→service→repository 层面可重复运行；LLM/arXiv/vision 以类级 fake 隔离，每测试独立 tmp SQLite(WAL)，全套 85 passed。
 - [ ] **A4 Research State 人工校验样本**
   产出：一个预置研究问题 + 少量论文的 Claim/Evidence/SourceVersion 小样本（人工校验过）。
   出口条件：样本可被 Phase 3（D2）迁移直接消费。
@@ -156,3 +155,4 @@
 
 - 2026-09-02：建立路线图；完成 A1 审计。
 - 2026-09-02（第二次）：同步设计基线第二版——Pi 从 SDK adapter 改为 downstream fork 策略（A8/E1）、新增 Local PM UI（A9/F3/F4）、Full Web 从瘦身删除改为可选模块（F1/F5/F6）、设计五份变六份（A5–A10）、Phase 0–6 变 0–7（Stage A–H）、Phase 1 出口新增 canonical presentation model（B2）。
+- 2026-09-02（第三次）：完成 A3——主用户流程端到端回归测试（tests/test_e2e_main_flow.py，LLM/arXiv/vision 全 fake + tmp SQLite）与 CI 测试 workflow（tests.yml）。
