@@ -3,16 +3,11 @@
 """
 
 import logging
-from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 
-from apps.api.deps import pipelines
-from packages.domain.exceptions import NotFoundError
 from packages.domain.schemas import ReferenceImportReq, SuggestKeywordsReq, TopicCreate, TopicUpdate
-from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
-from packages.storage.repositories import PaperRepository, TopicRepository
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +69,11 @@ def list_topics(enabled_only: bool = False, failed: bool = False) -> dict:
 
 @router.post("/topics")
 def upsert_topic(req: TopicCreate) -> dict:
+    from packages.application.commands.topics import upsert_topic as app_upsert_topic
+
     with session_scope() as session:
-        topic = TopicRepository(session).upsert_topic(
+        return app_upsert_topic(
+            session,
             name=req.name,
             query=req.query,
             enabled=req.enabled,
@@ -86,12 +84,11 @@ def upsert_topic(req: TopicCreate) -> dict:
             enable_date_filter=req.enable_date_filter,
             date_filter_days=req.date_filter_days,
         )
-        return _topic_dict(topic, session)
 
 
 @router.post("/topics/suggest-keywords")
 def suggest_keywords(req: SuggestKeywordsReq) -> dict:
-    from packages.application.queries.content import suggest_keywords as app_suggest
+    from packages.application.commands.content import suggest_keywords as app_suggest
 
     description = req.description
     if not description.strip():
@@ -102,68 +99,37 @@ def suggest_keywords(req: SuggestKeywordsReq) -> dict:
 
 @router.patch("/topics/{topic_id}")
 def update_topic(topic_id: str, req: TopicUpdate) -> dict:
+    from packages.application.commands.topics import update_topic as app_update_topic
+
     with session_scope() as session:
-        try:
-            topic = TopicRepository(session).update_topic(
-                topic_id,
-                query=req.query,
-                enabled=req.enabled,
-                max_results_per_run=req.max_results_per_run,
-                retry_limit=req.retry_limit,
-                schedule_frequency=req.schedule_frequency,
-                schedule_time_utc=req.schedule_time_utc,
-                enable_date_filter=req.enable_date_filter,
-                date_filter_days=req.date_filter_days,
-            )
-        except ValueError as exc:
-            raise NotFoundError(str(exc)) from exc
-        return _topic_dict(topic, session)
+        return app_update_topic(
+            session,
+            topic_id,
+            query=req.query,
+            enabled=req.enabled,
+            max_results_per_run=req.max_results_per_run,
+            retry_limit=req.retry_limit,
+            schedule_frequency=req.schedule_frequency,
+            schedule_time_utc=req.schedule_time_utc,
+            enable_date_filter=req.enable_date_filter,
+            date_filter_days=req.date_filter_days,
+        )
 
 
 @router.delete("/topics/{topic_id}")
 def delete_topic(topic_id: str) -> dict:
+    from packages.application.commands.topics import delete_topic as app_delete_topic
+
     with session_scope() as session:
-        TopicRepository(session).delete_topic(topic_id)
-        return {"deleted": topic_id}
+        return app_delete_topic(session, topic_id)
 
 
 @router.post("/topics/{topic_id}/fetch")
 def manual_fetch_topic(topic_id: str) -> dict:
     """手动触发单个订阅的论文抓取（后台执行，立即返回）"""
-    from packages.ai.daily_runner import run_topic_ingest
-    from packages.storage.models import TopicSubscription
+    from packages.application.commands.topics import start_topic_fetch
 
-    with session_scope() as session:
-        topic = session.get(TopicSubscription, topic_id)
-        if not topic:
-            raise NotFoundError("订阅不存在")
-        topic_name = topic.name
-
-    def _fetch_fn(progress_callback=None):
-        # 分阶段报告进度：抓取 (0-50%) -> 处理 (50-100%)
-        def _stage_callback(msg, cur, tot):
-            # 将内部进度映射到 0-50% 范围
-            progress_callback(f"抓取：{msg}", int(cur / tot * 50), 100)
-
-        result = run_topic_ingest(topic_id, progress_callback=_stage_callback)
-
-        if progress_callback:
-            progress_callback("处理完成", 100, 100)
-        return result
-
-    task_id = global_tracker.submit(
-        task_type="fetch",
-        title=f"抓取：{topic_name[:30]}",
-        fn=_fetch_fn,
-        category="collection",
-    )
-    return {
-        "status": "started",
-        "task_id": task_id,
-        "topic_id": topic_id,
-        "topic_name": topic_name,
-        "message": f"「{topic_name}」抓取已在后台启动",
-    }
+    return start_topic_fetch(topic_id)
 
 
 @router.get("/topics/{topic_id}/fetch-status")
@@ -203,6 +169,11 @@ def ingest_arxiv(
         description="只检索最近 N 天提交的论文，默认 0 = 不限日期（历史关键词搜索）；订阅可传 7/30",
     ),
 ) -> dict:
+    from packages.application.commands.ingest import (
+        describe_ingested_papers,
+        import_from_arxiv_query,
+    )
+
     logger.info(
         "ArXiv ingest: query=%r max_results=%d sort=%s days_back=%d",
         query,
@@ -210,49 +181,28 @@ def ingest_arxiv(
         sort_by,
         days_back,
     )
-    count, inserted_ids, _ = pipelines.ingest_arxiv(
+    count, inserted_ids, _ = import_from_arxiv_query(
         query=query,
         max_results=max_results,
         topic_id=topic_id,
         sort_by=sort_by,
         days_back=days_back,
     )
-    # 查询插入论文的基本信息
-    papers_info: list[dict] = []
-    if inserted_ids:
-        with session_scope() as session:
-            repo = PaperRepository(session)
-            for pid in inserted_ids[:50]:
-                try:
-                    p = repo.get_by_id(UUID(pid))
-                    papers_info.append(
-                        {
-                            "id": p.id,
-                            "title": p.title,
-                            "arxiv_id": p.arxiv_id,
-                            "publication_date": p.publication_date.isoformat()
-                            if p.publication_date
-                            else None,
-                        }
-                    )
-                except Exception:
-                    pass
+    papers_info = describe_ingested_papers(inserted_ids) if inserted_ids else []
     return {"ingested": count, "papers": papers_info}
 
 
 @router.post("/ingest/references")
 def ingest_references(body: ReferenceImportReq) -> dict:
     """一键导入参考文献 — 返回 task_id 用于轮询进度"""
-    from packages.ai.pipelines import ReferenceImporter
+    from packages.application.commands.topics import start_reference_import
 
-    importer = ReferenceImporter()
-    task_id = importer.start_import(
+    return start_reference_import(
         source_paper_id=body.source_paper_id,
         source_paper_title=body.source_paper_title,
         entries=[dict(e) for e in body.entries],
         topic_ids=body.topic_ids,
     )
-    return {"task_id": task_id, "total": len(body.entries)}
 
 
 @router.get("/ingest/references/status/{task_id}")

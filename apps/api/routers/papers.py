@@ -13,7 +13,6 @@ from apps.api.deps import cache
 from packages.application.queries import papers as papers_queries
 from packages.domain.exceptions import NotFoundError
 from packages.domain.schemas import AIExplainReq
-from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
 from packages.storage.repositories.stats import get_folder_stats
@@ -167,37 +166,35 @@ def paper_detail(paper_id: UUID) -> dict:
 @router.patch("/papers/{paper_id}/favorite")
 def toggle_favorite(paper_id: UUID) -> dict:
     """切换论文收藏状态"""
+    from packages.application.commands.papers import toggle_paper_flag
+    from packages.domain.exceptions import NotFoundError
+
     with session_scope() as session:
-        repo = PaperRepository(session)
         try:
-            p = repo.get_by_id(paper_id)
-        except ValueError as exc:
+            result = toggle_paper_flag(session, paper_id=paper_id, field="favorited")
+        except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        current = getattr(p, "favorited", False)
-        p.favorited = not current
-        session.commit()
-        cache.invalidate("folder_stats")
-        return {"id": str(p.id), "favorited": p.favorited}
+    cache.invalidate("folder_stats")
+    return result
 
 
 @router.patch("/papers/{paper_id}/reject")
 def toggle_reject(paper_id: UUID) -> dict:
     """切换论文"不感兴趣"状态（推荐系统负反馈）"""
     from packages.ai.recommendation_service import invalidate_recommendations
+    from packages.application.commands.papers import toggle_paper_flag
+    from packages.domain.exceptions import NotFoundError
 
     with session_scope() as session:
-        repo = PaperRepository(session)
         try:
-            p = repo.get_by_id(paper_id)
-        except ValueError as exc:
+            result = toggle_paper_flag(session, paper_id=paper_id, field="rejected")
+        except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        p.rejected = not getattr(p, "rejected", False)
-        session.commit()
-        # 失效 folder_stats（左侧文件夹计数）+ 推荐缓存（被拒论文立即从推荐列表移除，
-        # 否则 recommend:{top_k} / today_summary 最长 5min 仍含该论文）
-        cache.invalidate("folder_stats")
-        invalidate_recommendations()
-        return {"id": str(p.id), "rejected": p.rejected}
+    # 失效 folder_stats（左侧文件夹计数）+ 推荐缓存（被拒论文立即从推荐列表移除，
+    # 否则 recommend:{top_k} / today_summary 最长 5min 仍含该论文）
+    cache.invalidate("folder_stats")
+    invalidate_recommendations()
+    return result
 
 
 # ---------- PDF 服务 ----------
@@ -206,24 +203,17 @@ def toggle_reject(paper_id: UUID) -> dict:
 @router.post("/papers/{paper_id}/download-pdf")
 def download_paper_pdf(paper_id: UUID) -> dict:
     """从 arXiv 下载论文 PDF"""
-    from packages.integrations.arxiv_client import ArxivClient
+    from packages.application.commands.papers import download_source
+    from packages.domain.exceptions import NotFoundError, ValidationError
 
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        try:
-            paper = repo.get_by_id(paper_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if paper.pdf_path and Path(paper.pdf_path).exists():
-            return {"status": "exists", "pdf_path": paper.pdf_path}
-        if not paper.arxiv_id or paper.arxiv_id.startswith("ss-"):
-            raise HTTPException(status_code=400, detail="该论文没有有效的 arXiv ID，无法下载 PDF")
-        try:
-            pdf_path = ArxivClient().download_pdf(paper.arxiv_id)
-            repo.set_pdf_path(paper_id, pdf_path)
-            return {"status": "downloaded", "pdf_path": pdf_path}
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"PDF 下载失败: {exc}") from exc
+    try:
+        return download_source(paper_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF 下载失败: {exc}") from exc
 
 
 @router.get("/papers/{paper_id}/pdf")
@@ -382,63 +372,15 @@ def analyze_paper_figures(
     max_figures: int = Query(default=10, ge=1, le=30),
 ) -> dict:
     """提取并解读论文中的图表（异步任务）"""
+    from packages.application.commands.papers import start_figure_analysis
+    from packages.domain.exceptions import NotFoundError, ValidationError
 
-    # 先验证论文和 PDF
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        try:
-            paper = repo.get_by_id(paper_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if not paper.pdf_path:
-            raise HTTPException(status_code=400, detail="论文没有 PDF 文件")
-        pdf_path = paper.pdf_path
-        paper_title = paper.title[:50]
-
-    # 提交后台任务
-    def _analyze_fn(progress_callback=None):
-        from packages.ai.figure_service import FigureService
-
-        if progress_callback:
-            progress_callback("正在提取图表...", 10, 100)
-        svc = FigureService()
-        results = svc.analyze_paper_figures(paper_id, pdf_path, max_figures)
-
-        total_figures = len(results)
-        if progress_callback and total_figures > 0:
-            progress_callback(f"正在生成解读 ({total_figures} 个图表)...", 50, 100)
-
-        # 分析完成后，从 DB 获取带 id 的完整结果
-        from packages.ai.figure_service import FigureService as FS2
-
-        items = FS2.get_paper_analyses(paper_id)
-        for i, item in enumerate(items):
-            if item.get("has_image"):
-                item["image_url"] = f"/papers/{paper_id}/figures/{item['id']}/image"
-            else:
-                item["image_url"] = None
-            if progress_callback:
-                progress_callback(
-                    f"解读中 ({i + 1}/{total_figures})...",
-                    50 + int((i + 1) / total_figures * 45),
-                    100,
-                )
-
-        if progress_callback:
-            progress_callback("图表分析完成", 95, 100)
-        return {"paper_id": str(paper_id), "count": len(items), "items": items}
-
-    task_id = global_tracker.submit(
-        task_type="figure_analysis",
-        title=f"📊 图表分析：{paper_title}",
-        fn=_analyze_fn,
-        total=max_figures,
-    )
-    return {
-        "task_id": task_id,
-        "status": "started",
-        "message": "图表分析已启动，正在处理...",
-    }
+    try:
+        return start_figure_analysis(paper_id, max_figures=max_figures)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/papers/{paper_id}/similar")
@@ -473,15 +415,13 @@ def paper_duplicates(
 @router.post("/papers/{paper_id}/reasoning")
 def paper_reasoning(paper_id: UUID) -> dict:
     """推理链深度分析"""
-    from packages.ai.reasoning_service import ReasoningService
+    from packages.application.commands.analysis import paper_reasoning_report
+    from packages.domain.exceptions import NotFoundError
 
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        try:
-            repo.get_by_id(paper_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return ReasoningService().analyze(paper_id)
+    try:
+        return paper_reasoning_report(paper_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # ========== IEEE 渠道专用路由（MVP 阶段新增）==========
@@ -516,18 +456,13 @@ def ingest_ieee_papers(
     """
     import logging
 
-    from packages.ai.pipelines import PaperPipelines
-    from packages.domain.enums import ActionType
+    from packages.application.commands.ingest import import_ieee
 
     logger = logging.getLogger(__name__)
-    pipelines = PaperPipelines()
 
     try:
-        total, inserted_ids, new_count = pipelines.ingest_ieee(
-            query=query,
-            max_results=max_results,
-            topic_id=topic_id,
-            action_type=ActionType.manual_collect,
+        total, inserted_ids, new_count = import_ieee(
+            query=query, max_results=max_results, topic_id=topic_id
         )
 
         return {

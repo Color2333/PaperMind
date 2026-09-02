@@ -25,3 +25,17 @@ def save_generated_content(
         metadata_json=metadata_json,
     )
     return gc.id
+
+
+def delete_generated_content(session, content_id: str) -> dict:
+    """删除生成产物；不存在抛 NotFoundError"""
+    from packages.domain.exceptions import NotFoundError
+    from packages.storage.repositories import GeneratedContentRepository
+
+    repo = GeneratedContentRepository(session)
+    try:
+        repo.get_by_id(content_id)
+    except ValueError as exc:
+        raise NotFoundError("Content not found") from exc
+    repo.delete(content_id)
+    return {"deleted": content_id}

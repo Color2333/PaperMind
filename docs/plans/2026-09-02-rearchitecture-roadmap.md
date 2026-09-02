@@ -6,7 +6,7 @@
 
 分支：`refactor/papermind-2026`
 
-依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md)（下称"设计文档"，2026-09-02 第三版：Pi downstream fork + Local PM UI + Full Web 可选化 + 原子 Durable Execution）
+依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md)（下称"设计文档"，2026-09-02 第四版：Go Core + Python Executors + Pi downstream fork + Local PM UI + Full Web 可选化 + 原子 Durable Execution）
 
 ## 工作规则
 
@@ -22,13 +22,13 @@
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
-| Stage B · Phase 1 application command/query | 8 | 7 | 进行中 |
-| Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
+| Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
-| Stage H · Phase 7 语言/存储决策门 | 2 | 0 | 未开始 |
+| Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
 
 主线顺序：A → B → C → D → E → F → G → H（对应设计文档 Phase 0–7）。其中设计文档 §11 的**第一个只读垂直切片**（SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence，贯穿 application handlers → typed HTTPS client → deterministic CLI → Pi tool + renderer → Local UI/Full Web adapters → MCP adapter）横跨 B3/B4、E4–E6、F4/F5 与 E8，是 Stage B→F 的主线验收样例；六份设计（A5–A10）获确认后即从它开始。
 
@@ -90,21 +90,24 @@
 - [x] **B7 其余查询全量迁移**：按 A6 映射清单逐个推进，每批一个提交。
   产出（2026-09-02，三批）：content 8 条（wiki×2/generated×2/trends×2/today；写 generated 走 commands/generated）；topics 6 条（列表含批量聚合/stats/distribution/suggest-keywords/fetch-status/references status）；jobs actions×3（queries/actions.py）；pipelines runs + tasks×4（queries/tasks.py 过渡观测）；graph 14 个 GET 全部经 queries/graph.py（facade lru_cache 持有；TTL 缓存与 run_in_threadpool 留在传输层）。
   结论：canonical result 平铺 plain dict，HTTP 404/detail 形状逐处兼容；e2e 覆盖 topics/stats/actions/runs/tasks/trends/graph 空库路径。全量 126 passed。
-- [ ] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一创建 Job，不再直接调用具体 Worker 或线程池（为 Stage C 铺路）。
+- [x] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一创建 Job，不再直接调用具体 Worker 或线程池（为 Stage C 铺路）。
+  产出（2026-09-02，四批）：papers 写×6（flag/download-pdf/figures-analyze/reasoning/ieee → commands/papers + ingest + queries/analysis）；topics 写×6（CRUD/fetch/references → commands/topics）；ingest/arxiv（→ commands/ingest.import_from_arxiv_query + describe_ingested_papers）；pipelines Start*×3（commands/pipelines.start_*）；graph 同步×5（commands/graph）；content×3（wiki task → commands/wiki.start_topic_wiki_with_save、brief/daily → commands/brief.start_daily_brief_task、generated delete）；jobs POST×5（commands/daily：daily_job/weekly_maintenance/batch_unread/daily_report×2——BackgroundTasks 原语在该层消失，命令自管后台线程）。
+  结论：长任务入口统一在 application command 内提交（tracker 为过渡载体，Stage C 将其替换为 durable Job——每命令一处替换点）；执行中修掉两个迁移引入的 bug（action_type=None 覆盖默认、brief 任务错用 agent 形状丢 content_id）。e2e 覆盖 flag/引用同步/generate-only。全量 127 passed。**遗留后期批次**：tags×8、cs_feeds×6、settings/llm_configs×18、sensemaking/translate/writing（设计② "B7 后期" 档）。
 
-## Stage C — Phase 2：原子 durable execution
+## Stage C — Phase 2：Go Core + 原子 durable execution
 
 阶段出口条件：API/Executor 任意重启后，任务状态可解释、可恢复且不会静默丢失；同一 Task 的重复 Attempt 不会重复提交领域结果；单篇失败无需重跑整个批次。
 
-- [ ] **C1 batch consumer 移出 API 进程**：API lifespan 不再启动任务消费（审计 §1.5，现仅 API 进程消费 `batch_jobs`，worker 不参与）。
+- [ ] **C0 Go Core 与 Executor Protocol 骨架**：建立 Go module、配置/健康检查/版本化 HTTPS API、capability registry 和 Python executor client；协议覆盖 register、claim、heartbeat、complete、fail、cancel，所有消息带 schema/version 与 correlation id。先跑通 fake Executor，不迁移算法。
+- [ ] **C1 batch consumer 移出 API 进程**：Python API lifespan 不再启动任务消费（审计 §1.5，现仅 API 进程消费 `batch_jobs`，worker 不参与）；新任务入口转向 Go Core。
 - [ ] **C2 原子执行 schema**：落库 `jobs`、`tasks`、`task_attempts` 和 artifact/event references；ResearchRun 关联 Job，Job 聚合 Task，Task 保留 capability/schema/handler version、依赖、资源类别、预算与幂等键。
 - [ ] **C3 统一旧状态**：用新 job store 取代内存 `TaskTracker`（10 分钟 TTL、重启即丢）、旧 `batch_jobs` 状态与心跳文件的权威地位；前端三套轮询端点收敛到 Job graph、Task 与 Attempt 查询。
 - [ ] **C4 第一批原子 Task 清单**：为 Skim、DeepRead、Embedding、Topic Research 和 Daily Brief 标出单一有意义副作用、输入输出、timeout、retry、resource class 与无法自动重试的边界；禁止把普通 helper 机械拆成 Task。
 - [ ] **C5 代码化 Workflow 模板**：实现顺序依赖、条件分支和 per-Paper fan-out；父 Job 支持 succeeded、partially_succeeded、failed、cancelled，并能解释每个子 Task 的贡献。
-- [ ] **C6 scheduler/planner/dispatcher 分工**：APScheduler 只创建 Job，Planner 展开 ready Task，Dispatcher 按依赖、priority、resource class 和 concurrency policy 分派，不再进程内直跑研究逻辑。
-- [ ] **C7 通用 Executor 协议**：Python Executor 每次只执行一个 Task Attempt，注册 capability/version/resource class，支持 drain；Worker 进程和心跳不再是产品层任务事实来源。
+- [ ] **C6 Go 调度控制面**：在 Go Core 中实现 Scheduler、Planner、Dispatcher 和 Reconciler；旧 APScheduler 仅在过渡期把到期事件提交为 Go Job，不再进程内直跑研究逻辑。
+- [ ] **C7 Python Executor 落地**：Python Executor 每次只执行一个 Task Attempt，通过 C0 协议注册 capability/version/resource class、领取和续约 lease、提交 result proposal/Artifact，支持协作取消与 drain；不直写 Job/Task/Attempt 或 Research State 表。
 - [ ] **C8 lease、fencing 与 Reconciler**：领取和续约 lease 时签发 fencing token；迟到 Attempt 不能覆盖新结果；Reconciler 回收过期 lease 并执行 backoff、dead-letter 或 manual recovery。
-- [ ] **C9 幂等与副作用账本**：数据库结果与 outbox 同事务提交；Paper/Claim/Evidence 写入使用稳定幂等键；邮件、provider call 等外部效果使用 provider key 或 effect ledger 去重。
+- [ ] **C9 Go 权威提交与副作用账本**：Go Core 校验 attempt、fencing token、result schema 和幂等键后，将 Paper/Claim/Evidence 变化与 outbox 在同一事务提交；Python 只提交 proposal。邮件、provider call 等外部效果使用 provider key 或 effect ledger 去重。
 - [ ] **C10 控制与观察面**：实现 cancel/retry/pause/resume、Job graph、Task/Attempt 日志/成本/错误接口；CLI、MCP、Local UI 与 Full Web 共用同一资源语义。
 - [ ] **C11 渐进迁移与恢复测试**：先迁移 `batch_jobs` 三类任务，再迁移 scheduler jobs 和 idle processor；用 API/Executor 强杀、lease 过期、重复领取、部分失败和迟到写入测试替代 `recover_stale_running` 的破坏性恢复。
 
@@ -167,10 +170,10 @@
 - [ ] **G2 GitHub 登录 + 临时身份**：最小身份映射、TTL 清理、用户/IP/全局三维限额。
 - [ ] **G3 三段式演示旅程**：匿名看 Claim/Evidence → 登录看研究状态变化 → `pm login`/`pm demo`/`pm ui --question ...` 复现并导出 Research Pack。
 
-## Stage H — Phase 7：语言与存储决策门
+## Stage H — Phase 7：资源与存储验证门
 
-- [ ] **H1 重测资源基线**：对照 A2 记录，定位剩余成本来源（Python control plane / 重依赖 / 数据库 / 具体任务）。
-- [ ] **H2 决策记录**：是否迁移 Go control plane；个人服务用 SQLite 还是 PostgreSQL。出口条件：任何迁移都有测量证据和独立回滚路径，否则维持现状。
+- [ ] **H1 重测资源基线**：对照 A2 记录，验证 Go Core/Python Executor 拆分后的空闲 RSS、冷启动、镜像大小、任务峰值与故障恢复表现。
+- [ ] **H2 存储与容量决策记录**：根据单写者约束、并发领取和恢复测试决定个人服务用 SQLite 还是 PostgreSQL，并确定 Executor 资源分组。出口条件：配置有测量证据和独立回滚路径。
 
 ## 变更记录
 
@@ -195,3 +198,5 @@
 - 2026-09-02（第十九次）：B6 第二、三批——ask/citation_tree/timeline/suggest_keywords + reasoning/figures/writing/system/topics/wiki_brief 共 13 个改调 application（新增 queries：ask/graph/analysis/system/topics；commands：brief/wiki）；仅余 ingest.py。全量 123 passed。
 - 2026-09-02（第二十次）：B6 完成——ingest 工具业务下沉到 commands/ingest（handler 只桥接进度），并修复存量 bug（search_arxiv 误用 metadata_json）；**24 个 agent 工具全部经 application 层**。全量 125 passed。
 - 2026-09-02（第二十一次）：完成 B7——content/topics/jobs/pipelines/graph 共约 31 条 HTTP 查询全部下沉 application（queries：content 扩展/actions 新建/topics 扩展/tasks 扩展/graph 查询族）；HTTP 形状逐处兼容。全量 126 passed。
+- 2026-09-02（第二十二次）：完成 B8——四批命令面迁移（papers/topics/ingest/pipelines/graph/content/jobs 共约 30 条写路径），长任务入口统一在 application command 提交（tracker 过渡）；修掉两个迁移引入 bug。**Stage B（Phase 1）完成**。全量 127 passed。
+- 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。

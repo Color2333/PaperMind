@@ -35,6 +35,8 @@ def search_arxiv(
     )
     return [
         {
+            # REVIEW P2：候选的序号字段是既有协议的一部分（旧 CLI/UI 按序号展示），保留
+            "index": i,
             "arxiv_id": p.arxiv_id,
             "title": p.title,
             "abstract": (p.abstract or "")[:300],
@@ -42,8 +44,78 @@ def search_arxiv(
             "categories": (p.metadata or {}).get("categories", []),
             "authors": (p.metadata or {}).get("authors", [])[:5],
         }
-        for p in papers
+        for i, p in enumerate(papers, 1)
     ]
+
+
+def import_from_arxiv_query(
+    *,
+    query: str,
+    max_results: int = 20,
+    topic_id: str | None = None,
+    action_type=None,
+    sort_by: str = "submittedDate",
+    days_back: int = 7,
+    progress: Callable[[str, int, int], None] | None = None,
+) -> tuple[int, list[str], int]:
+    """按关键词从 arXiv 搜索并入库（HTTP /ingest/arxiv 的同步命令）"""
+    from packages.ai.pipelines import PaperPipelines
+    from packages.domain.enums import ActionType
+
+    if action_type is None:
+        # 与 pipelines.ingest_arxiv 的默认一致；显式传 None 会覆盖默认并违反 NOT NULL
+        action_type = ActionType.manual_collect
+
+    return PaperPipelines().ingest_arxiv(
+        query=query,
+        max_results=max_results,
+        topic_id=topic_id,
+        action_type=action_type,
+        sort_by=sort_by,
+        days_back=days_back,
+        progress_callback=progress,
+    )
+
+
+def import_ieee(
+    *, query: str, max_results: int = 20, topic_id: str | None = None
+) -> tuple[int, list[str], int]:
+    """IEEE 渠道入库（需要 IEEE_API_KEY；未配置抛 RuntimeError）"""
+    from packages.ai.pipelines import PaperPipelines
+    from packages.domain.enums import ActionType
+
+    return PaperPipelines().ingest_ieee(
+        query=query,
+        max_results=max_results,
+        topic_id=topic_id,
+        action_type=ActionType.manual_collect,
+    )
+
+
+def describe_ingested_papers(inserted_ids: list[str], *, limit: int = 50) -> list[dict]:
+    """入库后返回论文基本信息（/ingest/arxiv 响应形状）"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import PaperRepository
+
+    papers_info: list[dict] = []
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        for pid in inserted_ids[:limit]:
+            try:
+                p = repo.get_by_id(UUID(pid))
+                papers_info.append(
+                    {
+                        "id": p.id,
+                        "title": p.title,
+                        "arxiv_id": p.arxiv_id,
+                        "publication_date": p.publication_date.isoformat()
+                        if p.publication_date
+                        else None,
+                    }
+                )
+            except Exception:
+                pass
+    return papers_info
 
 
 def _download_pdf_async(arxiv_client, arxiv_id: str, paper_id: str) -> None:
@@ -195,7 +267,9 @@ def import_selected_papers(
 
     if not inserted_ids:
         global_tracker.finish(task_id, success=False, error="未能入库任何论文")
+        # REVIEW P1-2：完全失败必须有稳定的失败语义（协议层据此返回 success=False）
         return {
+            "status": "failed",
             "total": 0,
             "embedded": 0,
             "skimmed": 0,
@@ -205,6 +279,11 @@ def import_selected_papers(
             "suggest_subscribe": False,
             "ingested": ingested_papers,
             "failed": failed_papers,
+            "note": (
+                f"{len(failed_papers)} 篇写库失败"
+                if failed_papers
+                else "选中的 ID 未从 arXiv 返回（元数据获取失败或 ID 无效）"
+            ),
         }
 
     total = len(inserted_ids)
@@ -262,6 +341,7 @@ def import_selected_papers(
     global_tracker.finish(task_id, success=True)
 
     return {
+        "status": "partial" if failed_papers else "succeeded",
         "total": total,
         "embedded": embed_ok,
         "skimmed": skim_ok,

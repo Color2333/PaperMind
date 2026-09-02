@@ -28,7 +28,7 @@ def _analyze_figures(paper_id: str, max_figures: int = 10) -> Iterator[ToolProgr
     pid = UUID(paper.id)  # 用完整 UUID，不用原始短前缀
 
     yield ToolProgress(message=f"正在提取「{(title or '')[:30]}」中的图表...", current=1, total=3)
-    from packages.application.queries.analysis import analyze_paper_figures
+    from packages.application.commands.analysis import analyze_paper_figures
 
     try:
         results = analyze_paper_figures(pid, pdf_path, max_figures=max_figures)

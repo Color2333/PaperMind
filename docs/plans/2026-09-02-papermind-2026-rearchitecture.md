@@ -16,7 +16,7 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 
 现有 Web 不整体删除，而是保留为可选的 Full Web 模块，并逐步适配新的 Research State。与此同时，`pm ui` 在本地启动一个随 CLI 分发的轻量浏览器 UI，通过 loopback bridge 和公网 HTTPS 连接远程 Core；它只保留 PDF/证据对照、Claim 工作台、Research Diff 和任务监控等适合图形界面的高价值交互，不携带本地业务后端或数据库。
 
-重构的优先级是先建立稳定的 application command/query、presentation model 和原子化 durable execution 边界，再让 Full Web、Local UI、PM Research Terminal、MCP 复用它们。长流程不再由某个 Worker 一次性包办，而被表达为 `Job → Task → Attempt → Artifact/Event`：Job 表达用户意图，Task 是可独立领取、重试、取消和审计的工作原子，Attempt 记录每次真实执行。Worker 本身退化为可替换的无状态 Executor。先拆职责、拆依赖并测量资源，再决定是否将轻量服务端控制面迁移到 Go；当前不进行 Python 全量重写。
+重构先从现有实现提炼稳定的 application command/query 与 presentation contract，随后直接以 **Go 建立新的权威控制核心**，再让 Full Web、Local UI、PM Research Terminal 和 MCP 复用它。长流程不再由某个 Worker 一次性包办，而被表达为 `Job → Task → Attempt → Artifact/Event`：Go Core 拥有研究状态、权限、任务状态机、调度、幂等和事件提交；Python 退化为可替换的无状态研究计算 Executor，只负责 PDF、LLM、embedding、OCR 与 graph 等依赖 Python 生态的工作。本轮不逐行重写全部 Python 算法，但 Go control plane 是重构前提，不再是末期可选项。
 
 目标结果：**个人服务可长期稳定运行，公开 Demo 能在一分钟内展示 PaperMind 如何把论文转化为可验证、可演进的研究认知；本地电脑无需安装完整后端，即可通过 `pm`、`pm ui` 或 MCP 使用同一远程研究状态。**
 
@@ -41,6 +41,8 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 - PaperMind 终端拥有自己的主题、卡片和渐进式详情展示，使 Paper、Claim、Evidence、diff 与 job 在终端中可读、可定位、可操作。
 - 所有长流程采用 `ResearchRun → Job → Task → Attempt → Artifact/Event` 分层；原子化对象是 Work Unit，不是 Worker 容器或 Python 函数。
 - Scheduler 只创建 Job，Workflow Planner 展开 Task，Dispatcher 分派，Executor 每次执行一个 Task Attempt，Reconciler 负责 lease 过期与恢复。
+- PaperMind Core 的权威控制面使用 Go 实现；Python 不再承载公网 API、任务事实状态、调度或核心领域写入。
+- Python 仅作为版本化 Executor，通过受控协议领取 Task、续约 lease、提交 Artifact/结果，不直连并修改 Core 领域表。
 
 ### 1.2 明确不做
 
@@ -87,7 +89,7 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
         │                  │       │               │                │
         └──────────────────┴───────┼───────────────┴────────────────┘
                                    │
-                    PaperMind Core API
+                   PaperMind Go Core API
               command/query · auth · job control
                               │
              ┌────────────────┼────────────────┐
@@ -96,7 +98,7 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
              │                              Task Queue
              └────────────────┬────────────────┘
                               │
-             Planner · Dispatcher · Reconciler
+          Go Planner · Dispatcher · Reconciler
                               │
                     Stateless Executors
                  PDF · LLM · embedding · graph
@@ -194,7 +196,7 @@ pm queue pause
 pm queue resume
 ```
 
-第一版同时支持版本化 TypeScript/Node 包（例如 `@papermind/cli`）和基于上游构建流程的 standalone executable。服务端是否迁移 Go 与终端采用 Pi downstream fork 是两个独立决策。
+第一版同时支持版本化 TypeScript/Node 包（例如 `@papermind/cli`）和基于上游构建流程的 standalone executable。服务端采用 Go Core 与终端采用 Pi downstream fork 是两个相互独立、均已确认的决策；两者只通过版本化 HTTPS capability contract 耦合。
 
 ##### Pi downstream fork policy
 
@@ -650,7 +652,7 @@ Executor           每次只执行一个 Task Attempt，并续约 lease
 Reconciler         回收过期 lease、处理重试、死信与父 Job 收敛
 ```
 
-API 只负责提交、查询和控制；它不消费 Task，也不启动线程池执行长工作。Executor 是无状态、可替换的运行载体，可以先是同一个 Python 进程池，未来再按 PDF、LLM、embedding、graph 或 GPU 资源类别拆部署。API 或 Executor 重启不得导致任务消失、重复提交领域结果或被静默判定完成。
+Go Core 只负责提交、查询、控制与原子状态提交；它不加载 AI/PDF 重依赖，也不在请求进程执行研究计算。Scheduler、Planner、Dispatcher 和 Reconciler 属于 Go Core；Executor 是无状态、可替换的运行载体，第一版为独立 Python 进程，未来可按 PDF、LLM、embedding、graph 或 GPU 资源类别拆部署。Executor 通过版本化 lease/result 协议领取 Task、续约并提交小结果或 Artifact 引用，不直接修改 Job/Task/Attempt 或 Research State 表。Core 或 Executor 重启不得导致任务消失、重复提交领域结果或被静默判定完成。
 
 ### 5.3 Job、Task 与 Executor 控制语义
 
@@ -681,18 +683,33 @@ pm executors drain <executor-id>
 
 Worker 不再是产品层的稳定身份或任务事实来源；它只是 Executor 的部署载体。在个人部署中，研究控制与运维控制可以由同一个账号执行，但 API、scope 和审计语义仍需分开，避免将进程级操作暴露给 Demo。
 
-### 5.4 Python 与其他语言
+### 5.4 Go Core 与 Python Executor
 
-当前决策是：**不进行全量语言重写。**
+当前已确认决策是：**Go control plane + Python research executors。** 这不是把约 2.9 万行 Python 逐行翻译成 Go，而是用进程和协议建立新的权威边界。
 
-第一阶段保留 Python 的领域逻辑、LLM、PDF、embedding 和 graph 实现，通过模块边界和延迟加载减轻 API。只有满足下列条件后才评估 Go Core：
+Go Core 拥有：
 
-- commands/queries 与 job 协议已经稳定。
-- 有基线数据证明 Python 控制面的空闲内存、启动时间或发布方式是主要瓶颈。
-- Go 迁移不要求重写 Python executor 内的研究业务。
-- 迁移可逐个替换 gateway、scheduler，而不是一次性切换；PM Research Terminal 继续通过协议与服务端语言解耦。
+- 公网 HTTPS API、身份、scope、policy、审计和 capability metadata。
+- Research State 的 command/query、状态机、事务、幂等与 outbox/event。
+- Job/Task/Attempt、Scheduler、Workflow Planner、Dispatcher、lease/fencing、Reconciler 和控制观察面。
+- 数据库 schema 的目标所有权以及面向所有客户端的 canonical result。
 
-目标可能是 Go control plane + Python executors，但它是测量后的结果，不是重构前提。
+Python Executor 保留：
+
+- PDF 解析、OCR、LLM、embedding、reranker、图分析及实验性 AI pipeline。
+- 对一个 Task Attempt 的纯计算或受约束外部 I/O，并产出结构化 result、日志和 Artifact。
+- capability/version/resource class 注册，以及 lease heartbeat 和协作式取消。
+
+跨语言边界采用版本化 Executor Protocol，不使用 Python import、FFI、SSH、共享内存或让两种语言任意写同一组表：
+
+1. Executor 从 Go Core 领取带 schema/version、预算、幂等键和 fencing token 的 Task lease。
+2. 输入通过不可变 payload 与 SourceVersion/Artifact 引用传递；大对象进入 object storage。
+3. Executor 续约 lease，上传 Artifact，并提交结构化 result proposal。
+4. Go Core 校验 attempt、fencing token、result schema 和幂等键，在单一事务中提交领域变化与 outbox event。
+
+迁移采用 strangler vertical slice，而不是双写：先跑通“创建 Research Run → Go 创建 Job/Task → Python 执行 skim → Go 提交 Artifact/Claim/Evidence/Event”，再逐 capability 把权威写入口从 Python API 转到 Go。过渡期 Python API 仅作为兼容适配器；一张表或一个 aggregate 在任一时刻只能有一个权威写入方。
+
+资源基线仍要测量，但其用途变为验证部署收益、容量和存储选择，而不是重新决定是否采用 Go Core。
 
 ### 5.5 现有 Agent Harness 的迁移归属
 
@@ -849,13 +866,14 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 ### Phase 2：原子化 durable execution
 
+- 建立 Go Core 工程骨架、版本化公共 API 与 Python Executor Protocol；先迁移一个可回滚的垂直切片。
 - 将 API lifespan 内的 batch consumer 移出请求进程。
 - 将进程内 `TaskTracker` 的关键状态持久化。
 - 建立 `Job → Task → Attempt → Artifact/Event` schema，并明确与 `ResearchRun` 的 provenance 关系。
 - 为 Skim、DeepRead、Embedding、Topic Research 和 Daily Brief 定义第一批代码化 Workflow 模板及 Task 原子边界。
-- Scheduler 改为只创建 Job；实现 Planner、Dispatcher、通用 Python Executor 和 Reconciler 的最小闭环。
+- 在 Go Core 中实现 Scheduler、Planner、Dispatcher 和 Reconciler；Python Executor 每次只执行一个 Task Attempt。
 - 实现 lease/fencing、timeout、cancel、retry、pause/resume、dead-letter 和 manual recovery 语义。
-- 为数据库写入使用 transactional outbox，为外部副作用建立 idempotency/effect ledger。
+- Python Executor 不直接写 Core 领域表；Go Core 校验 result proposal 后，以事务提交领域变化与 outbox，并为外部副作用建立 idempotency/effect ledger。
 - 将前端、CLI 与 MCP 的任务查询统一到 Job graph、Task 和 Attempt 资源接口。
 
 **出口条件：**API/Executor 任意重启后，任务状态可解释、可恢复且不会静默丢失；同一 Task 的重复 Attempt 不会重复提交领域结果；单篇失败无需重跑整个批次。
@@ -908,19 +926,21 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 **出口条件：**个人站与 Demo 数据完全隔离；Demo 在模型不可用时仍能展示完整预计算流程。
 
-### Phase 7：语言与存储决策门
+### Phase 7：资源与存储验证门
 
 - 对照 Phase 0 重新测量资源和启动性能。
-- 判断剩余成本来自 Python control plane、重依赖、数据库还是具体任务。
-- 决定是否迁移 Go Core，以及个人服务使用 SQLite 还是 PostgreSQL。
+- 验证 Go Core 与 Python Executor 分离后的空闲内存、冷启动、镜像大小和峰值资源是否达到部署目标。
+- 决定个人服务使用 SQLite 还是 PostgreSQL，并据真实并发与恢复测试调整 Executor 资源分组。
 
-**出口条件：**任何语言或数据库迁移都有测量证据和独立回滚路径。
+**出口条件：**Go Core 已是权威控制面；存储与资源配置有测量证据和独立回滚路径。
 
 ## 9. 验收标准
 
 ### 架构
 
 - API 进程不执行长任务。
+- 公网 API、Research State 和 durable execution 的权威实现位于 Go Core；Python 仅作为受控 Executor。
+- Python Executor 不直写 Core 领域表或任务状态，只提交带 fencing token 的 result proposal/Artifact。
 - 所有长任务具有持久化状态、可取消、可重试。
 - ResearchRun、Job、Task、Attempt 与 Artifact/Event 各有独立 ID 和清晰关联，不能用单个 `job.status` 隐藏内部执行状态。
 - Scheduler 不直接执行业务；Executor 每次只运行一个 Task Attempt；过期 lease 由 Reconciler 恢复。

@@ -1,4 +1,4 @@
-"""图谱只读查询（B6/B7，设计② GetGraph* 查询族）
+"""图谱只读查询（B6/B7，设计② GetGraph* 查询族；纯读快照）
 
 facade 单例经 lru_cache 持有（构造轻量但非零，摊平请求成本）；
 缓存与线程池调度属于传输层，留在 router。
@@ -22,20 +22,6 @@ def get_citation_tree(*, paper_id: str, depth: int = 2) -> dict:
 
 def get_timeline(*, keyword: str, limit: int = 100) -> dict:
     return _graph_service().timeline(keyword=keyword, limit=limit)
-
-
-def get_paper_wiki(*, paper_id: str) -> dict:
-    return _graph_service().paper_wiki(paper_id=paper_id)
-
-
-def get_topic_wiki(*, keyword: str, limit: int = 120, progress_callback=None) -> dict:
-    return _graph_service().topic_wiki(
-        keyword=keyword, limit=limit, progress_callback=progress_callback
-    )
-
-
-def detect_research_gaps(*, keyword: str, limit: int = 100) -> dict:
-    return _graph_service().detect_research_gaps(keyword=keyword, limit=limit)
 
 
 # ---------- B7：HTTP 图谱 GET 查询族 ----------

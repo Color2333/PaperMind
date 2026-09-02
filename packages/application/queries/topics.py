@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from packages.domain.exceptions import NotFoundError
-
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -33,38 +31,6 @@ def list_topics(session: Session, *, enabled_only: bool = False) -> list[dict[st
         }
         for t in topics
     ]
-
-
-def update_subscription(
-    session: Session,
-    *,
-    topic_name: str,
-    enabled: bool,
-    schedule_frequency: str | None = None,
-    schedule_time_beijing: int | None = None,
-) -> dict[str, Any]:
-    """启用/禁用订阅并调整调度；主题不存在抛 NotFoundError"""
-    from packages.storage.repositories import TopicRepository
-
-    topic = TopicRepository(session).get_by_name(topic_name.strip())
-    if not topic:
-        raise NotFoundError(f"主题「{topic_name}」不存在")
-    topic.enabled = enabled
-    if schedule_frequency and schedule_frequency in _FREQ_LABELS:
-        topic.schedule_frequency = schedule_frequency
-    if schedule_time_beijing is not None:
-        utc_hour = (schedule_time_beijing - 8) % 24
-        topic.schedule_time_utc = max(0, min(23, utc_hour))
-    return {
-        "topic": topic_name,
-        "enabled": enabled,
-        "schedule_frequency": schedule_frequency or "daily",
-        "schedule_time_beijing": (
-            schedule_time_beijing if schedule_time_beijing is not None else 5
-        ),
-        "schedule_frequency_effective": topic.schedule_frequency,
-        "bj_hour_effective": (topic.schedule_time_utc + 8) % 24,
-    }
 
 
 def _topic_dict(t, session: Session | None = None) -> dict[str, Any]:

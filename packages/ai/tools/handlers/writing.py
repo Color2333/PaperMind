@@ -21,7 +21,7 @@ def _writing_assist(action: str, text: str) -> ToolResult:
     template = TEMPLATE_MAP.get(wa)
     label = template.label if template else action
 
-    from packages.application.queries.content import writing_process
+    from packages.application.commands.content import writing_process
 
     try:
         result = writing_process(action, text)

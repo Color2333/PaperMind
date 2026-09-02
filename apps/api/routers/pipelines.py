@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 
-from apps.api.deps import get_paper_title, pipelines, rag_service
+from apps.api.deps import rag_service
 from packages.domain.exceptions import NotFoundError
 from packages.domain.schemas import AskRequest, AskResponse
 from packages.domain.task_tracker import global_tracker
@@ -23,58 +23,25 @@ router = APIRouter()
 @router.post("/pipelines/skim/{paper_id}")
 def run_skim(paper_id: UUID) -> dict:
     """粗读 — 后台任务化，立即返回 task_id（此前同步阻塞 5-30s 占请求线程）"""
-    title = get_paper_title(paper_id) or str(paper_id)[:8]
+    from packages.application.commands.pipelines import start_skim
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在粗读...", 30, 100)
-        skim = pipelines.skim(paper_id)
-        if progress_callback:
-            progress_callback("完成", 100, 100)
-        return skim.model_dump()
-
-    task_id = global_tracker.submit(
-        "skim", f"粗读：{title[:30]}", _fn, total=100, category="analysis"
-    )
-    return {"task_id": task_id, "status": "running"}
+    return start_skim(paper_id)
 
 
 @router.post("/pipelines/deep/{paper_id}")
 def run_deep(paper_id: UUID) -> dict:
     """精读 — 后台任务化，立即返回 task_id（此前同步阻塞 30s-2min 占请求线程）"""
-    title = get_paper_title(paper_id) or str(paper_id)[:8]
+    from packages.application.commands.pipelines import start_deep_read
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在精读...", 20, 100)
-        deep = pipelines.deep_dive(paper_id)
-        if progress_callback:
-            progress_callback("完成", 100, 100)
-        return deep.model_dump()
-
-    task_id = global_tracker.submit(
-        "deep_read", f"精读：{title[:30]}", _fn, total=100, category="analysis"
-    )
-    return {"task_id": task_id, "status": "running"}
+    return start_deep_read(paper_id)
 
 
 @router.post("/pipelines/embed/{paper_id}")
 def run_embed(paper_id: UUID) -> dict:
     """嵌入 — 后台任务化，立即返回 task_id（此前同步阻塞 0.5-3s 占请求线程）"""
-    title = get_paper_title(paper_id) or str(paper_id)[:8]
+    from packages.application.commands.pipelines import start_embed
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在计算向量嵌入...", 50, 100)
-        pipelines.embed_paper(paper_id)
-        if progress_callback:
-            progress_callback("完成", 100, 100)
-        return {"status": "embedded", "paper_id": str(paper_id)}
-
-    task_id = global_tracker.submit(
-        "embed", f"嵌入：{title[:30]}", _fn, total=100, category="analysis"
-    )
-    return {"task_id": task_id, "status": "running"}
+    return start_embed(paper_id)
 
 
 @router.get("/pipelines/runs")

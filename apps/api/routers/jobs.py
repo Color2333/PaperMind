@@ -3,15 +3,10 @@
 """
 
 import logging
-import uuid as _uuid
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from packages.ai.daily_runner import run_daily_brief, run_daily_ingest
-from packages.domain.enums import ReadStatus
-from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
-from packages.storage.repositories import PaperRepository
 
 logger = logging.getLogger(__name__)
 
@@ -20,138 +15,28 @@ router = APIRouter()
 
 @router.post("/jobs/daily/run-once")
 def run_daily_once() -> dict:
-    """每日任务（抓取+简报）- 后台执行"""
+    """每日任务（抓取+简报）- 后台执行（业务在 application/commands/daily.py）"""
+    from packages.application.commands.daily import start_daily_job
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在执行订阅收集...", 10, 100)
-        ingest = run_daily_ingest()
-        if progress_callback:
-            progress_callback("正在生成每日简报...", 70, 100)
-        brief = run_daily_brief()
-        return {"ingest": ingest, "brief": brief}
-
-    task_id = global_tracker.submit("daily_job", "📅 每日任务执行", _fn, category="report")
-    return {"task_id": task_id, "message": "每日任务已启动", "status": "running"}
+    return start_daily_job()
 
 
 @router.post("/jobs/graph/weekly-run-once")
 def run_weekly_graph_once() -> dict:
     """每周图维护任务 - 后台执行"""
+    from packages.application.commands.daily import start_weekly_graph_maintenance
 
-    def _fn(progress_callback=None):
-        from packages.ai.graph_service import GraphService
-        from packages.storage.db import session_scope
-        from packages.storage.repositories import TopicRepository
-
-        if progress_callback:
-            progress_callback("正在获取主题列表...", 10, 100)
-
-        with session_scope() as session:
-            topics = TopicRepository(session).list_topics(enabled_only=True)
-
-        total_topics = len(topics)
-        graph = GraphService()
-        topic_results = []
-
-        for i, t in enumerate(topics):
-            if progress_callback:
-                progress_callback(
-                    f"处理主题 {i + 1}/{total_topics}: {t.name[:20]}...",
-                    20 + int((i + 1) / total_topics * 40),
-                    100,
-                )
-            try:
-                topic_results.append(
-                    graph.sync_citations_for_topic(
-                        topic_id=t.id,
-                        paper_limit=20,
-                        edge_limit_per_paper=6,
-                    )
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to sync citations for topic %s",
-                    t.id,
-                )
-                continue
-
-        if progress_callback:
-            progress_callback("正在执行增量同步...", 70, 100)
-        incremental = graph.sync_incremental(paper_limit=50, edge_limit_per_paper=6)
-
-        if progress_callback:
-            progress_callback("图维护完成", 95, 100)
-        return {
-            "topic_sync": topic_results,
-            "incremental": incremental,
-        }
-
-    task_id = global_tracker.submit("weekly_maintenance", "🔄 每周图维护", _fn, category="sync")
-    return {"task_id": task_id, "message": "每周图维护已启动", "status": "running"}
+    return start_weekly_graph_maintenance()
 
 
 @router.post("/jobs/batch-process-unread")
 def batch_process_unread(
-    background_tasks: BackgroundTasks,
     max_papers: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     """批量处理未读论文（embed + skim 并行）- 后台执行"""
-    import uuid
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from packages.application.commands.daily import start_batch_process_unread
 
-    from packages.ai.daily_runner import PAPER_CONCURRENCY, _process_paper
-
-    # 先获取需要处理的论文数量
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        unread = repo.list_by_read_status(ReadStatus.unread, limit=max_papers)
-        target_ids = []
-        for p in unread:
-            needs_embed = p.embedding is None
-            needs_skim = p.read_status == ReadStatus.unread
-            if needs_embed or needs_skim:
-                target_ids.append(p.id)
-
-    total = len(target_ids)
-    if total == 0:
-        return {"processed": 0, "total_unread": 0, "message": "没有需要处理的未读论文"}
-
-    task_id = f"batch_unread_{uuid.uuid4().hex[:8]}"
-
-    def _run_batch():
-        processed = 0
-        failed = 0
-        try:
-            global_tracker.start(
-                task_id,
-                "batch_process",
-                f"📚 批量处理未读论文 ({total} 篇)",
-                total=total,
-                category="analysis",
-            )
-
-            with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
-                futs = {pool.submit(_process_paper, pid): pid for pid in target_ids}
-                for fut in as_completed(futs):
-                    try:
-                        fut.result()
-                        processed += 1
-                        global_tracker.update(
-                            task_id, processed, f"正在处理... ({processed}/{total})", total=total
-                        )
-                    except Exception as exc:
-                        failed += 1
-                        logger.warning("batch process %s failed: %s", str(futs[fut])[:8], exc)
-
-            global_tracker.finish(task_id, success=True)
-            logger.info(f"批量处理完成: {processed} 成功, {failed} 失败")
-        except Exception as e:
-            global_tracker.finish(task_id, success=False, error=str(e))
-            logger.error(f"批量处理失败: {e}", exc_info=True)
-
-    background_tasks.add_task(_run_batch)
-    return {"task_id": task_id, "message": f"批量处理已启动 ({total} 篇论文)", "status": "running"}
+    return start_batch_process_unread(max_papers=max_papers)
 
 
 # ---------- 行动记录 ----------
@@ -202,69 +87,21 @@ def get_action_papers(
 
 
 @router.post("/jobs/daily-report/run-once")
-async def run_daily_report_once(background_tasks: BackgroundTasks):
+async def run_daily_report_once():
     """完整工作流（精读 + 生成 + 发邮件）— 后台执行"""
-    import asyncio
+    from packages.application.commands.daily import start_daily_report_workflow
 
-    from packages.ai.auto_read_service import AutoReadService
-
-    def _run_workflow_bg():
-        task_id = f"daily_report_{_uuid.uuid4().hex[:8]}"
-        global_tracker.start(
-            task_id, "daily_report", "📊 每日报告工作流", total=100, category="report"
-        )
-
-        def _progress(msg: str, cur: int, tot: int):
-            global_tracker.update(task_id, cur, msg, total=100)
-
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(AutoReadService().run_daily_workflow(_progress))
-            if result.get("success"):
-                global_tracker.finish(task_id, success=True)
-            else:
-                global_tracker.finish(task_id, success=False, error=result.get("error", "未知错误"))
-        except Exception as e:
-            global_tracker.finish(task_id, success=False, error=str(e))
-            logger.error(f"每日报告工作流失败: {e}", exc_info=True)
-
-    background_tasks.add_task(_run_workflow_bg)
-    return {"message": "每日报告工作流已启动", "status": "running"}
+    return start_daily_report_workflow()
 
 
 @router.post("/jobs/daily-report/send-only")
 async def run_daily_report_send_only(
-    background_tasks: BackgroundTasks,
     recipient: str | None = Query(default=None, description="收件人邮箱（逗号分隔），不填则用配置"),
 ):
     """快速发送模式 — 跳过精读，直接生成简报并发邮件（优先使用缓存）"""
-    from packages.ai.auto_read_service import AutoReadService
+    from packages.application.commands.daily import start_daily_report_send_only
 
-    def _run_send_only_bg():
-        task_id = f"report_send_{_uuid.uuid4().hex[:8]}"
-        global_tracker.start(
-            task_id, "report_send", "📧 快速发送简报", total=100, category="report"
-        )
-
-        def _progress(msg: str, cur: int, tot: int):
-            global_tracker.update(task_id, cur, msg, total=100)
-
-        try:
-            recipients = (
-                [e.strip() for e in recipient.split(",") if e.strip()] if recipient else None
-            )
-            result = AutoReadService().send_only(recipients, _progress)
-            if result.get("success"):
-                global_tracker.finish(task_id, success=True)
-            else:
-                global_tracker.finish(task_id, success=False, error=result.get("error", "未知错误"))
-        except Exception as e:
-            global_tracker.finish(task_id, success=False, error=str(e))
-            logger.error(f"快速发送失败: {e}", exc_info=True)
-
-    background_tasks.add_task(_run_send_only_bg)
-    return {"message": "快速发送已启动（跳过精读）", "status": "running"}
+    return start_daily_report_send_only(recipient=recipient)
 
 
 @router.post("/jobs/daily-report/generate-only")
@@ -272,7 +109,6 @@ def run_daily_report_generate_only(
     use_cache: bool = Query(default=False, description="是否使用缓存"),
 ):
     """仅生成简报 HTML — 不发邮件、不精读（同步返回）"""
-    from packages.ai.auto_read_service import AutoReadService
+    from packages.application.commands.daily import generate_daily_report_html
 
-    html = AutoReadService().step_generate_html(use_cache=use_cache)
-    return {"html": html, "used_cache": use_cache}
+    return generate_daily_report_html(use_cache=use_cache)

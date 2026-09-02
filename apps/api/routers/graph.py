@@ -7,11 +7,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 
-from apps.api.deps import cache, get_paper_title, graph_service
+from apps.api.deps import cache
 from packages.application.queries import graph as graph_queries
-from packages.domain.task_tracker import global_tracker
-from packages.storage.db import session_scope
-from packages.storage.repositories import TopicRepository
 
 router = APIRouter()
 
@@ -26,20 +23,11 @@ def sync_citations_incremental(
     edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
 ) -> dict:
     """增量同步引用（后台执行）"""
+    from packages.application.commands.graph import start_incremental_citation_sync
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步增量引用...", 20, 100)
-        result = graph_service.sync_incremental(
-            paper_limit=paper_limit,
-            edge_limit_per_paper=edge_limit_per_paper,
-        )
-        if progress_callback:
-            progress_callback("增量引用同步完成", 90, 100)
-        return result
-
-    task_id = global_tracker.submit("citation_sync", "📊 增量引用同步", _fn, category="sync")
-    return {"task_id": task_id, "message": "增量引用同步已启动", "status": "running"}
+    return start_incremental_citation_sync(
+        paper_limit=paper_limit, edge_limit_per_paper=edge_limit_per_paper
+    )
 
 
 @router.post("/citations/sync/topic/{topic_id}")
@@ -49,31 +37,11 @@ def sync_citations_for_topic(
     edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
 ) -> dict:
     """主题引用同步（后台执行）"""
-    topic_name = topic_id
-    try:
-        with session_scope() as session:
-            topic = TopicRepository(session).get_by_id(topic_id)
-            if topic:
-                topic_name = topic.name
-    except Exception:
-        pass
+    from packages.application.commands.graph import start_topic_citation_sync
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步主题引用...", 20, 100)
-        result = graph_service.sync_citations_for_topic(
-            topic_id=topic_id,
-            paper_limit=paper_limit,
-            edge_limit_per_paper=edge_limit_per_paper,
-        )
-        if progress_callback:
-            progress_callback("主题引用同步完成", 90, 100)
-        return result
-
-    task_id = global_tracker.submit(
-        "citation_sync", f"📊 主题引用同步：{topic_name}", _fn, category="sync"
+    return start_topic_citation_sync(
+        topic_id=topic_id, paper_limit=paper_limit, edge_limit_per_paper=edge_limit_per_paper
     )
-    return {"task_id": task_id, "message": f"主题引用同步已启动: {topic_name}", "status": "running"}
 
 
 @router.post("/citations/sync/{paper_id}")
@@ -82,20 +50,9 @@ def sync_citations(
     limit: int = Query(default=8, ge=1, le=50),
 ) -> dict:
     """单篇论文引用同步（后台执行）"""
-    paper_title = get_paper_title(UUID(paper_id)) or paper_id[:8]
+    from packages.application.commands.graph import start_paper_citation_sync
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步论文引用...", 20, 100)
-        result = graph_service.sync_citations_for_paper(paper_id=paper_id, limit=limit)
-        if progress_callback:
-            progress_callback("论文引用同步完成", 90, 100)
-        return result
-
-    task_id = global_tracker.submit(
-        "citation_sync", f"📄 引用同步：{paper_title[:30]}", _fn, category="sync"
-    )
-    return {"task_id": task_id, "message": "论文引用同步已启动", "status": "running"}
+    return start_paper_citation_sync(paper_id=paper_id, limit=limit)
 
 
 # ---------- 图谱 ----------
@@ -190,7 +147,9 @@ async def topic_citation_network(topic_id: str) -> dict:
 @router.post("/graph/citation-network/topic/{topic_id}/deep-trace")
 def topic_deep_trace(topic_id: str) -> dict:
     """对主题内论文执行深度溯源，拉取外部引用并进行共引分析（含外部 API 副作用，不缓存）"""
-    return graph_service.topic_deep_trace(topic_id=topic_id)
+    from packages.application.commands.graph import topic_deep_trace
+
+    return topic_deep_trace(topic_id=topic_id)
 
 
 @router.get("/graph/overview")
@@ -246,7 +205,9 @@ async def graph_cocitation_clusters(
 @router.post("/graph/auto-link")
 def graph_auto_link(paper_ids: list[str]) -> dict:
     """手动触发引用自动关联（含外部 API 副作用，不缓存）"""
-    return graph_service.auto_link_citations(paper_ids)
+    from packages.application.commands.graph import auto_link_citations
+
+    return auto_link_citations(paper_ids)
 
 
 @router.get("/graph/timeline")

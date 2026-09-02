@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
-import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from packages.ai.tools.types import ToolProgress, ToolResult
@@ -13,6 +13,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
+
+# REVIEW P2：有界执行器替代裸 daemon 线程（同批最多 1 个 agent 入库任务，
+# 防止并发放大写库与 PDF 下载）；C3 起由 durable Job 取代。
+_INGEST_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-ingest")
+# 单次 events.get 的等待上限；入库长流程靠 progress 事件持续喂入即不会触发
+EVENT_TIMEOUT_S = 300
 
 
 def _search_arxiv(
@@ -71,6 +77,8 @@ def _ingest_arxiv(
     yield ToolProgress(message="正在准备入库...", current=0, total=0)
 
     events: queue.Queue = queue.Queue()
+    # REVIEW P2：有界线程池（见模块头）替代裸 daemon 线程；入库一旦开始会完成到
+    # 幂等终态，客户端断连只是停止进度流，不会造成半写状态。
 
     def _progress(msg: str, cur: int, tot: int) -> None:
         events.put(("p", (msg, cur, tot)))
@@ -87,15 +95,36 @@ def _ingest_arxiv(
             logger.exception("ingest_arxiv failed: %s", exc)
             events.put(("error", exc))
 
-    threading.Thread(target=_run, daemon=True, name="agent-ingest").start()
+    future = _INGEST_POOL.submit(_run)
 
     while True:
-        kind, payload = events.get()
+        try:
+            kind, payload = events.get(timeout=EVENT_TIMEOUT_S)
+        except queue.Empty:
+            if future.done():
+                continue  # 结果恰好入队前超时——下一轮取到
+            # 长时间无进度且未完成：视为执行载体异常，终止等待（任务本身幂等可重入）
+            yield ToolResult(
+                success=False,
+                summary=f"入库超过 {EVENT_TIMEOUT_S}s 无进度，已停止等待（任务仍在后台收敛）",
+            )
+            return
         if kind == "p":
             msg, cur, tot = payload
             yield ToolProgress(message=msg, current=cur, total=tot)
         elif kind == "done":
             data = payload
+            if data.get("status") == "failed" or data["total"] == 0:
+                # REVIEW P1-2：完全失败不得报告为成功
+                if data["failed"]:
+                    summary = (
+                        f"入库 0 篇（{len(data['failed'])} 篇失败: "
+                        f"{data['failed'][0].get('error', '')[:80]}）"
+                    )
+                else:
+                    summary = "入库 0 篇：" + data.get("note", "选中的 ID 未从 arXiv 返回")
+                yield ToolResult(success=False, data=data, summary=summary)
+                return
             summary = (
                 f"入库 {data['total']} 篇 → 主题「{data['topic']}」，"
                 f"向量化 {data['embedded']}，粗读 {data['skimmed']}"

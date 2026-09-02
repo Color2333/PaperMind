@@ -132,7 +132,7 @@ def _tool_get_paper(paper_id: str) -> dict:
 def _tool_get_daily_brief(limit: int = 30) -> str:
     import re
 
-    from packages.application.queries.content import get_daily_brief_html
+    from packages.application.commands.content import get_daily_brief_html
 
     html = get_daily_brief_html(limit=limit)
     # 从 HTML 提取纯文本摘要（去标签），hermes 用文本更友好

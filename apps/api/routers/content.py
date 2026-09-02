@@ -4,13 +4,12 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from apps.api.deps import brief_service, cache
+from apps.api.deps import cache
 from packages.application.commands.generated import save_generated_content
 from packages.application.queries import content as content_queries
 from packages.application.queries import graph as graph_queries
 from packages.domain.exceptions import NotFoundError
 from packages.domain.schemas import DailyBriefRequest
-from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
 
 router = APIRouter()
@@ -55,54 +54,15 @@ def wiki_topic(
 # ---------- 异步任务 API ----------
 
 
-def _run_topic_wiki_task(
-    keyword: str,
-    limit: int,
-    progress_callback=None,
-) -> dict:
-    """后台执行 topic wiki 生成"""
-
-    # task_tracker 传入的 progress_callback 签名为 (msg, cur, tot)
-    # graph topic_wiki 内部已按 (msg, cur, tot) 调用，此处透传
-    def _adapted_progress(pct: float, msg: str):
-        if progress_callback:
-            progress_callback(msg, int(pct * 100), 100)
-
-    from packages.application.commands.generated import save_generated_content
-    from packages.application.queries.graph import get_topic_wiki
-
-    result = get_topic_wiki(
-        keyword=keyword,
-        limit=limit,
-        progress_callback=_adapted_progress,
-    )
-    with session_scope() as session:
-        result["content_id"] = save_generated_content(
-            session,
-            content_type="topic_wiki",
-            title=f"Topic Wiki: {keyword}",
-            markdown=result.get("markdown", ""),
-            keyword=keyword,
-            metadata_json={k: v for k, v in result.items() if k != "markdown"},
-        )
-    return result
-
-
 @router.post("/tasks/wiki/topic")
 def start_topic_wiki_task(
     keyword: str,
     limit: int = Query(default=120, ge=1, le=500),
 ) -> dict:
-    """提交后台 wiki 生成任务"""
-    task_id = global_tracker.submit(
-        task_type="topic_wiki",
-        title=f"Wiki: {keyword}",
-        fn=_run_topic_wiki_task,
-        keyword=keyword,
-        limit=limit,
-        category="generation",
-    )
-    return {"task_id": task_id, "status": "pending"}
+    """提交后台 wiki 生成任务（业务在 application/commands/wiki.py）"""
+    from packages.application.commands.wiki import start_topic_wiki_with_save
+
+    return start_topic_wiki_with_save(keyword=keyword, limit=limit)
 
 
 # ---------- 生成内容历史 ----------
@@ -128,17 +88,14 @@ def generated_detail(content_id: str) -> dict:
 
 @router.delete("/generated/{content_id}")
 def generated_delete(content_id: str) -> dict:
-    # 写路径（B8 统一命令面）；暂保留仓储直调，仅恢复局部导入
-    from packages.storage.repositories import GeneratedContentRepository
+    from packages.application.commands.generated import delete_generated_content
+    from packages.domain.exceptions import NotFoundError
 
     with session_scope() as session:
-        repo = GeneratedContentRepository(session)
         try:
-            repo.get_by_id(content_id)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Content not found") from None
-        repo.delete(content_id)
-    return {"deleted": content_id}
+            return delete_generated_content(session, content_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Content not found") from exc
 
 
 # ---------- 简报 ----------
@@ -146,41 +103,10 @@ def generated_delete(content_id: str) -> dict:
 
 @router.post("/brief/daily")
 def daily_brief(req: DailyBriefRequest) -> dict:
-    """生成每日简报（异步任务）"""
-    from packages.domain.task_tracker import global_tracker
+    """生成每日简报（异步任务；业务在 application/commands/brief.py）"""
+    from packages.application.commands.brief import start_daily_brief_task
 
-    # 如果没有指定收件人，从数据库读取配置
-    recipient = req.recipient
-    if not recipient:
-        from packages.storage.db import session_scope
-        from packages.storage.repositories import DailyReportConfigRepository
-
-        with session_scope() as session:
-            config = DailyReportConfigRepository(session).get_config()
-            if config.send_email_report and config.recipient_emails:
-                recipient = config.recipient_emails.split(",")[0]
-
-    def _generate_fn(progress_callback=None):
-        # publish() 内部已写入 generated_content 表，无需重复
-        if progress_callback:
-            progress_callback("正在生成每日简报...", 20, 100)
-        result = brief_service.publish(recipient=recipient)
-        if progress_callback:
-            progress_callback("简报生成完成", 95, 100)
-        return result
-
-    task_id = global_tracker.submit(
-        task_type="daily_brief",
-        title="📰 生成每日简报",
-        fn=_generate_fn,
-        total=100,
-        category="generation",
-    )
-    return {
-        "task_id": task_id,
-        "status": "started",
-        "message": "日报生成已启动，预计需要 1-3 分钟...",
-    }
+    return start_daily_brief_task(recipient=req.recipient)
 
 
 # ---------- 推荐 & 趋势 ----------

@@ -615,3 +615,27 @@ def test_b7_query_endpoints(e2e_env):
     resp = client.get("/graph/timeline", params={"keyword": "diarization", "limit": 10})
     assert resp.status_code == 200, resp.text
     assert client.get("/graph/cocitation-clusters", params={"min_cocite": 2}).status_code == 200
+
+
+def test_b8_command_endpoints(e2e_env):
+    """B8：写路径命令面——论文 flag 切换 / 引用同步任务提交 / daily-report generate-only"""
+    client = e2e_env.client
+    papers = _ingest_two_papers(client)
+    pid = papers[0]["id"]
+
+    # 论文 flag 切换（commands/papers.toggle_paper_flag）
+    resp = client.patch(f"/papers/{pid}/favorite")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"id": pid, "favorited": True}
+    assert client.patch(f"/papers/{pid}/favorite").json()["favorited"] is False
+    assert client.patch(f"/papers/{pid}/reject").json()["rejected"] is True
+
+    # 引用同步任务提交（commands/graph，tracker 过渡）
+    resp = client.post("/citations/sync/incremental")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["task_id"].startswith("citation_sync_")
+
+    # daily-report generate-only（同步命令，LLM fake 生效）
+    resp = client.post("/jobs/daily-report/generate-only", params={"use_cache": False})
+    assert resp.status_code == 200, resp.text
+    assert "html" in resp.json() and resp.json()["used_cache"] is False

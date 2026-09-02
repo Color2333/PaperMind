@@ -187,7 +187,7 @@ def _get_timeline(keyword: str, limit: int = 100) -> ToolResult:
 
 def _suggest_keywords(description: str) -> ToolResult:
     """AI 生成 arXiv 搜索关键词建议"""
-    from packages.application.queries.content import suggest_keywords as app_suggest
+    from packages.application.commands.content import suggest_keywords as app_suggest
 
     try:
         suggestions = app_suggest(description.strip())

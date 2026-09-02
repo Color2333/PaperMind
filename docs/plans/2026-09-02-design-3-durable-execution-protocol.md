@@ -4,9 +4,9 @@
 
 日期：2026-09-02
 
-依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md) §5.2/§5.3（第三版）；[Phase 0 现状审计](./2026-09-02-phase0-baseline-audit.md) §1–§3、§6；[设计① Research State 数据契约](./2026-09-02-design-1-research-state-data-contract.md)（ResearchRun 衔接）。
+依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md) §5.2–§5.4（第四版）；[Phase 0 现状审计](./2026-09-02-phase0-baseline-audit.md) §1–§3、§6；[设计① Research State 数据契约](./2026-09-02-design-1-research-state-data-contract.md)（ResearchRun 衔接）。
 
-范围：把设计文档 §5.2 的架构概念落成**可直接建表的 schema、可执行的状态机、可指派的组件职责**，并给出"现有四套任务机制如何收敛"的迁移映射。出口条件：能直接指导 C1–C11。
+范围：把设计文档 §5.2 的架构概念落成**可直接建表的 schema、可执行的状态机、可指派的组件职责和版本化 Go/Python 协议**，并给出"现有四套任务机制如何收敛"的迁移映射。出口条件：能直接指导 C0–C11。
 
 ## 1. 对象模型与表结构
 
@@ -75,7 +75,7 @@
 | metadata_json | JSON |
 | created_at | DateTime |
 
-**与 research_events 的分工**：Task 生命周期记在 tasks/attempts（执行审计）；Task 引起的**领域变化**经 application command 写入领域表并同事务发 `research_events`（outbox，设计①）。`JobFailed` 事件由 Reconciler 在 Job 终态时发出，`ResearchRunCompleted` 由 Run 收敛逻辑发出——事件词汇表不变。
+**与 research_events 的分工**：Task 生命周期记在 tasks/attempts（执行审计）；Python Executor 只提交带 fencing token 的 result proposal/Artifact，不直接写 Core 表。Go Core 校验后通过 application command 将领域变化与 `research_events` 在同一事务提交（outbox，设计①）。`JobFailed` 事件由 Go Reconciler 在 Job 终态时发出，`ResearchRunCompleted` 由 Run 收敛逻辑发出——事件词汇表不变。
 
 ## 2. 状态机
 
@@ -132,15 +132,17 @@ WORKFLOW_TEMPLATES = {
 
 | 组件 | 职责 | 部署形态（第一阶段） |
 | --- | --- | --- |
-| Scheduler | 按时间/事件创建 Job（APScheduler 保留，但 job 体只 `create_job`） | worker 进程内 |
-| Workflow Planner | 展开 ready Task | Executor 进程内函数 |
-| Dispatcher | 按 depends_on/priority/resource_class/concurrency 领取分派；签发 lease | worker 进程主循环 |
-| Executor | 每次一个 Task Attempt；续约 lease；写 Attempt | worker 进程线程池（每 resource_class 独立并发上限） |
-| Reconciler | 过期 lease 回收、backoff 重试、死信、Job 收敛、`JobFailed` 事件 | worker 进程定时循环（60s） |
+| Scheduler | 按时间/事件创建 Job；不执行研究逻辑 | Go Core |
+| Workflow Planner | 以纯函数增量展开 ready Task | Go Core |
+| Dispatcher | 按 depends_on/priority/resource_class/concurrency 签发 lease | Go Core |
+| Executor | 每次执行一个 Task Attempt；续约 lease；提交 result proposal/Artifact | 独立 Python 进程（按 resource_class 设并发上限） |
+| Reconciler | 过期 lease 回收、backoff 重试、死信、Job 收敛、`JobFailed` 事件 | Go Core 定时循环 |
 
-- **API 进程零消费**（C1）：`batch_consumer` 从 lifespan 移除；API 只 create_job / 查询 / 控制。
-- **Executor capability 注册**（C7）：`{executor_id, capabilities:[...], resource_limits, version, heartbeat_at}` 落 `executor_status` 表（取代 worker heartbeat 文件）；`drain` = 停止领取 + 等当前 Attempt 收敛。
-- **SQLite/PG 差异**：PG 用 `FOR UPDATE SKIP LOCKED` 领取（沿用 batch 仓储先例）；SQLite 无行锁语义 → 单 Dispatcher 串行领取（单 worker 进程本就串行），`skip_locked` 分支保持 PG 专用。
+- **Python API 进程零消费**（C1）：`batch_consumer` 从 lifespan 移除；所有新任务由 Go Core create_job / 查询 / 控制。
+- **Executor Protocol**（C0/C7）：版本化 HTTPS/JSON 端点至少覆盖 register、claim、heartbeat、complete、fail、cancel；每次 complete/fail 必须携带 attempt_id 与 fencing_token。Executor 只能读取自己 lease 对应的输入和 Artifact 上传能力。
+- **Executor capability 注册**（C7）：`{executor_id, capabilities:[...], resource_limits, version, heartbeat_at}` 落 `executor_status` 表（取代 worker heartbeat 文件）；`drain` = Core 停止给它签发新 lease，当前 Attempt 正常收敛。
+- **单一权威写入**：jobs/tasks/attempts、Research State 和 outbox 只由 Go Core 写；Python Executor 不共享 ORM，不直连这些表。迁移按 aggregate 切换所有权，禁止双写。
+- **SQLite/PG 差异**：领取发生在 Go Core 内部。PG 可用 `FOR UPDATE SKIP LOCKED`；SQLite profile 由单 Dispatcher 串行签发 lease，因此 Python Executor 数量不会转化为多个数据库写入者。
 
 ## 6. 旧机制收敛映射（C3/C11 的执行说明）
 
@@ -148,7 +150,7 @@ WORKFLOW_TEMPLATES = {
 | --- | --- | --- |
 | 内存 `TaskTracker`（600s TTL、重启即丢、裸线程/任务） | tasks/attempts 表 | `global_tracker.submit` 调用点改为 `create_job(kind=...)`；`/tasks/*` 端点过渡期改读 tasks（C3），随后并入 `/jobs`（C10） |
 | `batch_jobs` 表（3 kinds，仅 API 进程消费） | ProcessUnreadBatch workflow | C11 第一批：存量 pending batch_jobs 转为 tasks；batch consumer 删除（C1） |
-| APScheduler 4 个 job（进程内直跑） | Scheduler 只建 Job | `topic_dispatch_job` → 每个到期订阅 `create_job(RunTopicResearch)`；`brief_job` → `BuildDailyBrief`；`weekly_graph` → `RunCitationSync`；`cs_feed_dispatch` → `StartFeedFetch` |
+| APScheduler 4 个 job（进程内直跑） | Go Scheduler 只建 Job | 过渡期 APScheduler 只向 Go Core 提交：`topic_dispatch_job` → `RunTopicResearch`；`brief_job` → `BuildDailyBrief`；`weekly_graph` → `RunCitationSync`；`cs_feed_dispatch` → `StartFeedFetch`，随后由 Go Scheduler 接管时间规则 |
 | worker heartbeat 文件（1200s 过期约定） | executor_status 表 | C7；`/system/worker` 端点改读表 |
 | FastAPI BackgroundTasks / 模块级 ThreadPoolExecutor / 裸 daemon 线程 | 全部消失 | 调用点逐一改为命令（设计②映射表 B7 批次） |
 | IdleProcessor（worker 进程内） | 按需 Job（空闲时 create_job(ProcessUnreadBatch)） | C11 |
@@ -167,13 +169,18 @@ POST /jobs/{id}/cancel|retry    Job 级控制
 POST /tasks/{id}/retry          单 Task 重试（dead_letter/manual_recovery 出口）
 POST /queue/pause|resume        队列级（Dispatcher 停止/恢复领取）
 GET  /executors、POST /executors/{id}/drain   运维面（与用户控制同账号、分 scope）
+
+POST /internal/executors/register
+POST /internal/tasks/claim
+POST /internal/attempts/{id}/heartbeat
+POST /internal/attempts/{id}/complete|fail
 ```
 
-CLI（`pm jobs ...`）与 MCP 在 Phase 4 经同一 REST 面（设计②目录），不另写第二套 API。
+CLI（`pm jobs ...`）与 MCP 在 Phase 4 经同一公共 REST 面（设计②目录），不另写第二套 API。`/internal/*` 只服务 Executor，使用独立凭据、audience、scope 和网络策略，不暴露给 Demo 用户。
 
 ## 8. 测试策略（C11 的验收用例）
 
-1. **强杀恢复**：Executor 线程执行中 kill 模拟（不续约）→ Reconciler 回收 → Task 重入 → 幂等键防重复领域写入。
+1. **强杀恢复**：Python Executor 执行中 kill 模拟（不续约）→ Go Reconciler 回收 → Task 重入 → 幂等键防重复领域写入。
 2. **lease 过期 + 迟到写入**：过期后旧 Attempt 携旧 fencing_token 提交终态 → 被拒。
 3. **部分失败**：fan-out 5 篇 1 篇失败 → Job partially_succeeded，其余成功结果保留。
 4. **重复提交**：同 idempotency_key 两次 create_job → 同一 Job。
@@ -183,10 +190,11 @@ CLI（`pm jobs ...`）与 MCP 在 Phase 4 经同一 REST 面（设计②目录�
 ## 9. 待确认决策点
 
 1. **lease 默认租期 10 分钟 / 续约间隔 200s**：LLM 长调用（deep read 实测可达数分钟）是否需要 per-capability 租期表？提案：budget.timeout_s 覆盖默认值即可。
-2. **Executor 线程池并发**：第一阶段单 worker 进程 + 每 resource_class 并发上限（llm=2、embedding=2、network=4、default=2）——与现有限流桶对齐，确认？
+2. **Executor 并发**：第一阶段单 Python Executor 进程 + 每 resource_class 并发上限（llm=2、embedding=2、network=4、default=2）——与现有限流桶对齐，确认？
 3. **`pipeline_runs` 归档时机**：C 阶段末评估，还是直接保留长期？提案：C 阶段末。
 4. **Job 级成本预算硬闸**（budget.max_cost_usd）第一阶段是否启用？提案：字段先落、执行闸在质量检查（P1）接入。
 
 ## 变更记录
 
 - 2026-09-02：初版（A7）。
+- 2026-09-02：架构决策更新——运行组件改为 Go Core 持有 Scheduler/Planner/Dispatcher/Reconciler 与全部权威状态，Python 仅通过版本化 Executor Protocol 执行 Attempt 并提交 proposal/Artifact；新增 C0。

@@ -71,6 +71,87 @@ def test_search_arxiv_tool(ingest_env):
     assert result.data["candidates"][0]["arxiv_id"] == "2608.9001"
 
 
+def test_ingest_arxiv_ids_not_found_reports_failure(ingest_env, monkeypatch):
+    """REVIEW P1-2：选中的 ID 未从 arXiv 返回 → success=False + 可行动原因"""
+    monkeypatch.setattr(ArxivClient, "fetch_latest", lambda self, **kw: [])
+    monkeypatch.setattr(ArxivClient, "fetch_by_ids", lambda self, ids: [])
+
+    events = list(_ingest_arxiv("agent test topic", arxiv_ids=["2608.9999"]))
+    final = events[-1]
+    assert final.success is False, "完全失败不得报告为成功"
+    assert final.data["status"] == "failed"
+    assert "未从 arXiv 返回" in final.summary
+
+
+def test_ingest_arxiv_all_upsert_failure_reports_failure(ingest_env, monkeypatch):
+    """REVIEW P1-2：全部写库失败 → success=False，摘要带失败数量与原因"""
+    from packages.storage.repositories import PaperRepository
+
+    def _boom(self, data):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(PaperRepository, "upsert_paper", _boom)
+
+    events = list(_ingest_arxiv("agent test topic", arxiv_ids=["2608.9001"]))
+    final = events[-1]
+    assert final.success is False
+    assert final.data["status"] == "failed"
+    assert final.data["total"] == 0
+    assert len(final.data["failed"]) == 1
+    assert "1 篇失败" in final.summary
+    assert "db down" in final.summary
+
+
+def test_ingest_arxiv_partial_reports_partial(ingest_env, monkeypatch):
+    """REVIEW P1-2：部分成功 → success=True 且 data.status='partial'"""
+    from packages.storage.repositories import PaperRepository
+
+    orig_upsert = PaperRepository.upsert_paper
+
+    def _flaky(self, data):
+        if data.arxiv_id == "2608.9002":
+            raise RuntimeError("second paper fails")
+        return orig_upsert(self, data)
+
+    monkeypatch.setattr(PaperRepository, "upsert_paper", _flaky)
+    monkeypatch.setattr(
+        ArxivClient,
+        "fetch_latest",
+        lambda self, **kw: (
+            [
+                PaperCreate(
+                    source="arxiv",
+                    source_id="2608.9001",
+                    arxiv_id="2608.9001",
+                    title="Paper one",
+                    abstract="First.",
+                    publication_date=date(2026, 8, 30),
+                    metadata={},
+                ),
+                PaperCreate(
+                    source="arxiv",
+                    source_id="2608.9002",
+                    arxiv_id="2608.9002",
+                    title="Paper two",
+                    abstract="Second.",
+                    publication_date=date(2026, 8, 30),
+                    metadata={},
+                ),
+            ]
+            if kw.get("start", 0) == 0
+            else []
+        ),
+    )
+
+    events = list(_ingest_arxiv("agent test topic", arxiv_ids=["2608.9001", "2608.9002"]))
+    final = events[-1]
+    assert final.success is True
+    assert final.data["status"] == "partial"
+    assert final.data["total"] == 1
+    assert len(final.data["failed"]) == 1
+    assert "1 篇失败已跳过" in final.summary
+
+
 def test_ingest_arxiv_full_flow(ingest_env):
     events = list(_ingest_arxiv("agent test topic", arxiv_ids=["2608.9001"]))
     progresses = [e for e in events if isinstance(e, ToolProgress)]

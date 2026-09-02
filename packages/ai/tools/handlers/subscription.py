@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 
 from packages.ai.tools.types import ToolResult
-from packages.application.queries.topics import list_topics, update_subscription
+from packages.application.commands.topics import update_subscription
+from packages.application.queries.topics import list_topics
 from packages.domain.exceptions import NotFoundError
 from packages.storage.db import session_scope
 

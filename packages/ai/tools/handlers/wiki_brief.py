@@ -77,7 +77,7 @@ def _generate_wiki(type: str, keyword_or_id: str):
                 yield ToolResult(success=False, summary=f"论文 {keyword_or_id[:8]}... 不存在")
                 return
         yield ToolProgress(message="正在为论文生成 Wiki...", current=1, total=2)
-        from packages.application.queries.graph import get_paper_wiki
+        from packages.application.commands.graph import get_paper_wiki
 
         result = get_paper_wiki(paper_id=keyword_or_id)
         result["title"] = f"Wiki: {paper_title[:40]}"
@@ -93,13 +93,18 @@ def _generate_wiki(type: str, keyword_or_id: str):
 
 
 def _generate_daily_brief(recipient: str = ""):
-    """简报生成 - generator，yield 进度和最终结果（业务在 application/commands/brief.py）"""
-    yield ToolProgress(message="正在收集今日论文数据...", current=1, total=4)
+    """简报生成 - generator（业务在 application/commands/brief.py）
+
+    REVIEW P2：publish 是同步整体调用，无法报告真实中间阶段——
+    只发一条如实的开始事件，不发事后伪造的阶段进度。
+    """
+    yield ToolProgress(
+        message="正在生成每日简报（收集+生成+保存，可能需要 1-3 分钟）...", current=1, total=4
+    )
     from packages.application.commands.brief import publish_daily_brief
 
     result = publish_daily_brief(recipient=recipient)
 
-    yield ToolProgress(message="正在保存简报...", current=3, total=4)
     yield ToolResult(
         success=True,
         data=result,
@@ -109,7 +114,7 @@ def _generate_daily_brief(recipient: str = ""):
 
 def _identify_research_gaps(keyword: str, limit: int = 100) -> ToolResult:
     """识别研究空白"""
-    from packages.application.queries.graph import detect_research_gaps
+    from packages.application.commands.graph import detect_research_gaps
 
     try:
         result = detect_research_gaps(keyword=keyword, limit=limit)

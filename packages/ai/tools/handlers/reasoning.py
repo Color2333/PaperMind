@@ -24,7 +24,7 @@ def _reasoning_analysis(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     pid = UUID(paper.id)  # 用完整 UUID，不用原始短前缀
 
     yield ToolProgress(message=f"正在分析「{(title or '')[:30]}」的推理链...", current=1, total=2)
-    from packages.application.queries.analysis import run_reasoning_analysis
+    from packages.application.commands.analysis import run_reasoning_analysis
 
     try:
         result = run_reasoning_analysis(pid)
