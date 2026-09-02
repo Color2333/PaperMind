@@ -6,7 +6,6 @@ PaperMind API - FastAPI 入口
 import logging
 import time
 import uuid as _uuid
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -157,30 +156,15 @@ if settings.auth_password and settings.auth_secret_key in _WEAK_SECRET_KEYS:
         "请在 .env 中设置一个强随机密钥，例如: AUTH_SECRET_KEY=$(openssl rand -hex 32)"
     )
 
-# ---------- lifespan（batch consumer + MCP session manager）----------
+# ---------- lifespan（MCP session manager）----------
+# Stage C1：batch consumer 已移出 API 进程（进程职责分离——长任务消费归 worker，
+# API 只做请求处理；见 docs/plans/2026-09-02-design-3-durable-execution-protocol.md §6）。
 # MCP ASGI 子 app（fastmcp），挂到 /mcp 供 hermes 接入
-from fastmcp.utilities.lifespan import combine_lifespans  # noqa: E402
-
 from apps.api.mcp import get_mcp_asgi_app  # noqa: E402
-from packages.agent_core import batch_consumer as _batch  # noqa: E402
 
 _mcp_app = get_mcp_asgi_app()
 
-
-@asynccontextmanager
-async def _batch_lifespan(app: FastAPI):
-    """batch consumer 启动/关闭（替代 @app.on_event）。"""
-    _batch.start()
-    try:
-        yield
-    finally:
-        _batch.stop()
-
-
-# 合并 batch lifespan + MCP session manager lifespan（fastmcp 要求必须传 mcp_app.lifespan）
-app_lifespan = combine_lifespans(_batch_lifespan, _mcp_app.lifespan)
-
-app = FastAPI(title=settings.app_name, lifespan=app_lifespan)
+app = FastAPI(title=settings.app_name, lifespan=_mcp_app.lifespan)
 
 # 中间件注册顺序：Starlette 中间件为倒序执行（最后注册的最先执行）
 # 执行顺序: CORS -> GZip -> DemoMode -> Auth -> RequestLog -> 路由处理

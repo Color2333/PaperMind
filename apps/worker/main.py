@@ -17,6 +17,7 @@ from threading import Event
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from packages.agent_core import batch_consumer
 from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
 from packages.ai.daily_runner import (
     run_daily_brief,
@@ -321,6 +322,7 @@ def run_worker() -> None:
         logger.info("收到终止信号，正在关闭...")
         stop_event.set()
         stop_idle_processor()  # 停止闲时处理器
+        batch_consumer.stop()  # 停止 batch_jobs 消费（Stage C1：消费职责归 worker）
         scheduler.shutdown(wait=True)
         logger.info("Worker 已关闭")
 
@@ -333,6 +335,11 @@ def run_worker() -> None:
     # 启动闲时处理器
     logger.info("🤖 启动闲时自动处理器...")
     start_idle_processor()
+
+    # Stage C1：batch_jobs 队列消费移到 worker（此前由 API 进程 lifespan 内线程消费，
+    # 进程职责交错——API 重启会中断消费且请求入口承担任务执行）
+    logger.info("📦 启动 batch_jobs 消费者（skim/deep_read/embed）...")
+    batch_consumer.start()
 
     # 启动调度器
     logger.info("🚀 Worker 启动完成 - UTC 智能调度 + 闲时处理")

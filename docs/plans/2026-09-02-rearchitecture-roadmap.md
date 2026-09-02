@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 0 | 未开始 |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 1 | 进行中 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -99,7 +99,10 @@
 阶段出口条件：API/Executor 任意重启后，任务状态可解释、可恢复且不会静默丢失；同一 Task 的重复 Attempt 不会重复提交领域结果；单篇失败无需重跑整个批次。
 
 - [ ] **C0 Go Core 与 Executor Protocol 骨架**：建立 Go module、配置/健康检查/版本化 HTTPS API、capability registry 和 Python executor client；协议覆盖 register、claim、heartbeat、complete、fail、cancel，所有消息带 schema/version 与 correlation id。先跑通 fake Executor，不迁移算法。
-- [ ] **C1 batch consumer 移出 API 进程**：Python API lifespan 不再启动任务消费（审计 §1.5，现仅 API 进程消费 `batch_jobs`，worker 不参与）；新任务入口转向 Go Core。
+- [x] **C1 batch consumer 移出 API 进程**：Python API lifespan 不再启动任务消费（审计 §1.5，现仅 API 进程消费 `batch_jobs`，worker 不参与）；新任务入口转向 Go Core。
+  产出（2026-09-02）：`apps/api/main.py` lifespan 移除 `_batch_lifespan`（仅保留 MCP session manager）；`apps/worker/main.py` 启动/优雅关闭接管 `batch_consumer.start()/stop()`；`batch_consumer` 抽出可单步执行的 `poll_once()`。
+  结论：Python 侧进程职责分离达成（API 请求处理 / worker 任务消费）。**顺带根修存量 bug**：claim 事务提交后 ORM 脱管过期，`_run_one_job` 访问 `job.paper_ids` 必抛 DetachedInstanceError 并被 loop 吞掉——批次任务此前一进入执行就卡 running；改为事务内取纯值。守卫测试（API 源码无 batch 引用 + worker 接管）+ 3 个消费行为测试。全量 136 passed。
+  遗留：`新任务入口转向 Go Core` 半句依赖 C0——届时 batch 类入口从 tracker/batch_jobs 切到 Go Job 提交（C11 第一批）。
 - [ ] **C2 原子执行 schema**：落库 `jobs`、`tasks`、`task_attempts` 和 artifact/event references；ResearchRun 关联 Job，Job 聚合 Task，Task 保留 capability/schema/handler version、依赖、资源类别、预算与幂等键。
 - [ ] **C3 统一旧状态**：用新 job store 取代内存 `TaskTracker`（10 分钟 TTL、重启即丢）、旧 `batch_jobs` 状态与心跳文件的权威地位；前端三套轮询端点收敛到 Job graph、Task 与 Attempt 查询。
 - [ ] **C4 第一批原子 Task 清单**：为 Skim、DeepRead、Embedding、Topic Research 和 Daily Brief 标出单一有意义副作用、输入输出、timeout、retry、resource class 与无法自动重试的边界；禁止把普通 helper 机械拆成 Task。
@@ -199,4 +202,6 @@
 - 2026-09-02（第二十次）：B6 完成——ingest 工具业务下沉到 commands/ingest（handler 只桥接进度），并修复存量 bug（search_arxiv 误用 metadata_json）；**24 个 agent 工具全部经 application 层**。全量 125 passed。
 - 2026-09-02（第二十一次）：完成 B7——content/topics/jobs/pipelines/graph 共约 31 条 HTTP 查询全部下沉 application（queries：content 扩展/actions 新建/topics 扩展/tasks 扩展/graph 查询族）；HTTP 形状逐处兼容。全量 126 passed。
 - 2026-09-02（第二十二次）：完成 B8——四批命令面迁移（papers/topics/ingest/pipelines/graph/content/jobs 共约 30 条写路径），长任务入口统一在 application command 提交（tracker 过渡）；修掉两个迁移引入 bug。**Stage B（Phase 1）完成**。全量 127 passed。
+- 2026-09-02（第二十三次）：处理 REVIEW 六项（wheel 打包/ingest 失败语义/query-command 边界+架构守卫/有界执行器/伪进度/index 字段），全量 132 passed。
+- 2026-09-02（第二十四次）：完成 C1（Python 侧）——batch consumer 移出 API 进程（worker 接管 + poll_once 单步化），根修 DetachedInstance 存量 bug；Go Core 入口切换待 C0。全量 136 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。
