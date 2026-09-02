@@ -1,6 +1,6 @@
 # 设计①：Research State 最小数据契约
 
-状态：**待确认**（重构路线图 A5；六份设计之第一份）
+状态：**已确认**（2026-09-02 用户按提案采纳 §11 全部决策点；A5 完成，D1 已落地）
 
 日期：2026-09-02
 
@@ -274,7 +274,7 @@ research_events（append-only；记录上述全部聚合变更 = History + outbo
 - `DiffResearchState`：`research_events WHERE aggregate_id IN (question 的 claims) AND occurred_at BETWEEN ...`。
 - `ExportResearchObject`：question + claims + evidence + relations + source_versions + 事件快照 → JSON（含 content_hash）+ Markdown。
 
-## 11. 待确认决策点
+## 11. 决策点（2026-09-02 已确认：1–5 全部按提案采纳）
 
 1. **author-origin 自动 confirmed**：作者声称 + 坐标完整证据 → 规则自动确认。替代方案是全部经用户确认（更保守，但 Demo 三段式会少一个"系统自己把作者事实落地"的展示点）。
 2. **单 question 归属**：Claim 单值可空外键。多问题共享同一 Claim（多对多）是否可以推迟到 P1？

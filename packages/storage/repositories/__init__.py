@@ -27,6 +27,14 @@ from packages.storage.repositories.llm_config import LLMConfigRepository
 from packages.storage.repositories.paper import PaperRepository
 from packages.storage.repositories.pipeline import PipelineRunRepository
 from packages.storage.repositories.prompt_trace import PromptTraceRepository
+from packages.storage.repositories.research import (
+    ClaimRelationRepository,
+    ClaimRepository,
+    ResearchEventRepository,
+    ResearchQuestionRepository,
+    ResearchRunRepository,
+    SourceVersionRepository,
+)
 from packages.storage.repositories.tag import TagRepository
 from packages.storage.repositories.topic import TopicRepository
 
@@ -52,4 +60,10 @@ __all__ = [
     "BatchJobRepository",
     "ApiTokenRepository",
     "DeviceAuthRequestRepository",
+    "ResearchQuestionRepository",
+    "ResearchRunRepository",
+    "ClaimRepository",
+    "ClaimRelationRepository",
+    "SourceVersionRepository",
+    "ResearchEventRepository",
 ]
