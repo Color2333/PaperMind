@@ -21,7 +21,7 @@
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 六份设计 | 10 | 4 | 进行中 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 5 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
@@ -52,9 +52,9 @@
 - [x] **A5 设计①：Research State 最小数据契约**
   产出：[2026-09-02 设计① Research State 最小数据契约](./2026-09-02-design-1-research-state-data-contract.md)。
   结论：7 实体字段级契约 + Claim 状态机（无证据坐标不得 confirmed；papermind 最高 pending_verification）+ 事件表兼任 History/outbox + PROV 字段级映射 + 与现有 schema 的不回填共存策略；§11 五个决策点已按提案确认（2026-09-02）。
-- [ ] **A6 设计②：Application command/query 清单与调用映射**
-  内容：把 151 个 HTTP handlers、MCP tools、agent tools 映射到有限的用例集合（设计文档 §5.1 命令/查询表）。
-  出口条件：每个现有入口都有映射目标；无覆盖的用例显式列入"暂不迁移"。
+- [x] **A6 设计②：Application command/query 清单与调用映射**
+  产出：[2026-09-02 设计② Application 用例映射](./2026-09-02-design-2-application-use-case-map.md)。
+  结论：165 HTTP + 9 MCP + 26 agent 工具全部映射到用例目录（Queries 24 / Commands 31 / 保持现状 4 组 / 废弃候选 1），并给出 B2–B7 批次出口；research/* 已随 D4/D5 落地为目录首批实体。§8 有 4 个决策点待确认。
 - [ ] **A7 设计③：原子 Durable Execution 协议与迁移说明**
   内容：定义 ResearchRun/Job/Task/Attempt/Artifact、Task 原子边界、代码化 Workflow、lease/fencing、幂等/outbox、Reconciler 和 Executor capability；说明 `TaskTracker`、`BatchJob`、APScheduler、后台线程与 worker heartbeat 如何收敛。
   输入：审计报告 §2/§3/§6。
@@ -175,3 +175,4 @@
 - 2026-09-02（第八次）：完成 D4——application 层首个模块（四查询）+ 只读 /research/* 路由；同一 Claim 可从 API 追溯到精确证据与 diff，全量 110 passed。
 - 2026-09-02（第九次）：完成 D5——Research Object 基础导出（JSON+Markdown，确定性 sha256 校验值，provenance 摘要），全量 112 passed。
 - 2026-09-02（第十次）：核对后关闭 D6/D7（实体与规则已随 D1–D3 落地且有测试）——**Stage D（Phase 3）完成**：同一 Claim 可从 API 追溯到精确证据、生成活动与历史版本，无证据的模型输出不进入 confirmed。Phase 3 出口条件达成。
+- 2026-09-02（第十一次）：完成 A6 设计②——165 HTTP + 9 MCP + 26 agent 工具全量映射到用例目录与 B2–B7 迁移批次。
