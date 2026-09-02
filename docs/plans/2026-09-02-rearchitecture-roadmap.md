@@ -21,7 +21,7 @@
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 六份设计 | 10 | 7 | 进行中 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 8 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
@@ -61,10 +61,9 @@
 - [x] **A8 设计④：PM Research Terminal downstream 架构**
   产出：[2026-09-02 设计④ Terminal 架构](./2026-09-02-design-4-terminal-architecture.md)。
   结论：PaperMind-Terminal 独立仓库 + pinned upstream + 有序 patch stack + profile→build→source 三段裁剪；@papermind/cli 包结构、确定性命令面 v1（映射设计②用例）、五类退出码与 --json 契约、三档 permission profiles、六类领域卡片、终端契约测试；现有 Python pm（设备码协议）作为过渡资产复用。§10 有 4 个决策点待确认。
-- [ ] **A9 设计⑤：UI Surface Contract**
-  内容：现有 Web route/capability inventory（retain/merge/local-ui/archive）、canonical presentation model 第一版、共享 UI 包（`@papermind/client` / `presentation` / `ui-core`）边界、deep links、Local UI loopback bridge 契约、Full Web 可选部署 profile。
-  输入：审计报告 §2.4（前端三套轮询端点）。
-  出口条件：文档获确认，inventory 一次产出、供 A9 与 F1 共同引用。
+- [x] **A9 设计⑤：UI Surface Contract**
+  产出：[2026-09-02 设计⑤ UI Surface Contract](./2026-09-02-design-5-ui-surface-contract.md)。
+  结论：现有 16 条 Web 路由全量标记（retain 11 / merge 2 / local-ui 1 / redirect 1，无 archive）；canonical presentation model 以 capability metadata output_schema 生成 TS 类型（Python 为源）；三个共享包边界 + loopback bridge 安全契约（nonce/CSRF/allowlist/内存 token）+ 五类 Local UI 界面 + Full Web 三 profile + 五面 surface contract 测试。§9 有 4 个决策点待确认。
 - [ ] **A10 设计⑥：HTTPS identity/token flow**
   内容：GitHub Web 登录、CLI device authorization、MCP OAuth discovery、PaperMind token、本地模型凭据与 Local UI session 的边界。
   出口条件：文档获确认，能直接指导 E3/E8–E10 与 G2。
@@ -177,3 +176,4 @@
 - 2026-09-02（第十一次）：完成 A6 设计②——165 HTTP + 9 MCP + 26 agent 工具全量映射到用例目录与 B2–B7 迁移批次。
 - 2026-09-02（第十二次）：完成 A7 设计③——原子 durable execution 协议（四表 schema、状态机、9 个 Task 原子边界、4 个 Workflow 模板、旧机制收敛映射）。
 - 2026-09-02（第十三次）：完成 A8 设计④——PM Terminal downstream 架构（fork 基线/patch policy/命令面/permission profiles/renderer/契约测试）。
+- 2026-09-02（第十四次）：完成 A9 设计⑤——UI Surface Contract（16 路由 inventory、presentation model、共享包、loopback bridge 契约）。
