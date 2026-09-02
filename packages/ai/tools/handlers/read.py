@@ -6,9 +6,9 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from packages.ai.pipelines import PaperPipelines
 from packages.ai.tools.base import _require_paper
 from packages.ai.tools.types import ToolProgress, ToolResult
+from packages.application.commands.pipelines import run_deep_read, run_embed, run_skim
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,7 +30,7 @@ def _skim_paper(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     title = (paper.title or "")[:40]
     yield ToolProgress(message=f"正在粗读「{title}」...", current=1, total=2)
     try:
-        report = PaperPipelines().skim(pid)
+        report = run_skim(pid)
         one_liner = report.one_liner
         yield ToolResult(
             success=True,
@@ -54,7 +54,7 @@ def _deep_read_paper(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     title = (paper.title or "")[:40]
     yield ToolProgress(message=f"正在精读「{title}」，预计 30-60 秒...", current=1, total=3)
     try:
-        report = PaperPipelines().deep_dive(pid)
+        report = run_deep_read(pid)
         yield ToolResult(
             success=True,
             data=report.model_dump(),
@@ -86,7 +86,7 @@ def _embed_paper(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
         return
     yield ToolProgress(message="正在向量化...", current=1, total=2)
     try:
-        PaperPipelines().embed_paper(pid)
+        run_embed(pid)
         yield ToolResult(
             success=True,
             data={"paper_id": paper.id, "status": "embedded"},

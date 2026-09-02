@@ -54,6 +54,65 @@ def _serialize_papers(papers: list, repo: PaperRepository) -> dict:
     }
 
 
+def search_papers(session: Session, *, keyword: str, limit: int = 20) -> dict:
+    """关键词检索（全文候选，agent 工具 canonical 形状）"""
+    papers = PaperRepository(session).full_text_candidates(query=keyword, limit=limit)
+    items = [
+        {
+            "id": str(p.id),
+            "title": p.title,
+            "arxiv_id": p.arxiv_id,
+            "abstract": (p.abstract or "")[:500],
+            "publication_date": str(p.publication_date) if p.publication_date else None,
+            "read_status": p.read_status.value,
+            "categories": (p.metadata_json or {}).get("categories", []),
+        }
+        for p in papers
+    ]
+    return {"papers": items, "count": len(items)}
+
+
+def list_papers_by_filter(
+    session: Session,
+    *,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    date_field: str = "created_at",
+    status: str | None = None,
+    topic_id: str | None = None,
+    tag_ids: list[str] | None = None,
+    search: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    limit: int = 100,
+) -> dict:
+    """按日期/状态/主题/标签组合筛选（agent 工具 canonical 形状）"""
+    papers, total = PaperRepository(session).list_paginated(
+        page=1,
+        page_size=limit,
+        start_date=start_date,
+        end_date=end_date,
+        date_field=date_field,
+        status=status,
+        topic_id=topic_id,
+        tag_ids=tag_ids,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    items = [
+        {
+            "paper_id": str(p.id),
+            "title": p.title,
+            "created_at": p.created_at.isoformat(),
+            "publication_date": p.publication_date.isoformat() if p.publication_date else None,
+            "read_status": p.read_status.value,
+        }
+        for p in papers
+    ]
+    return {"items": items, "total": total}
+
+
 def list_papers(
     session: Session,
     *,

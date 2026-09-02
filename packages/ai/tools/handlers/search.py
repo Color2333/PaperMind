@@ -10,6 +10,7 @@ from packages.ai.graph_service import GraphService
 from packages.ai.rag_service import RAGService
 from packages.ai.tools.base import _require_paper
 from packages.ai.tools.types import ToolProgress, ToolResult
+from packages.application.queries import papers as papers_queries
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
 
@@ -22,23 +23,11 @@ logger = logging.getLogger(__name__)
 def _search_papers(keyword: str, limit: int = 20) -> ToolResult:
     try:
         with session_scope() as session:
-            papers = PaperRepository(session).full_text_candidates(query=keyword, limit=limit)
-            items = [
-                {
-                    "id": str(p.id),
-                    "title": p.title,
-                    "arxiv_id": p.arxiv_id,
-                    "abstract": (p.abstract or "")[:500],
-                    "publication_date": str(p.publication_date) if p.publication_date else None,
-                    "read_status": p.read_status.value,
-                    "categories": (p.metadata_json or {}).get("categories", []),
-                }
-                for p in papers
-            ]
+            data = papers_queries.search_papers(session, keyword=keyword, limit=limit)
         return ToolResult(
             success=True,
-            data={"papers": items, "count": len(items)},
-            summary=f"搜索到 {len(items)} 篇论文",
+            data=data,
+            summary=f"搜索到 {data['count']} 篇论文",
         )
     except Exception as exc:
         logger.exception("search_papers failed: %s", exc)
@@ -83,29 +72,16 @@ def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
             summary="该论文未向量化，请先调用 embed_paper",
         )
     try:
-        ids = RAGService().similar_papers(pid, top_k=top_k)
-        items = []
         with session_scope() as session:
-            repo = PaperRepository(session)
-            for sid in ids:
-                try:
-                    sp = repo.get_by_id(sid)
-                    items.append(
-                        {
-                            "id": str(sp.id),
-                            "title": sp.title,
-                            "arxiv_id": sp.arxiv_id,
-                            "read_status": sp.read_status.value,
-                        }
-                    )
-                except Exception:
-                    items.append({"id": str(sid), "title": "未知论文"})
+            result = papers_queries.get_similar_papers(session, pid, top_k=top_k)
+        items = result["items"]
+        ids = result["similar_ids"]
         titles = ", ".join(it["title"][:30] for it in items[:3])
         return ToolResult(
             success=True,
             data={
                 "paper_id": paper.id,
-                "similar_ids": [str(x) for x in ids],
+                "similar_ids": ids,
                 "items": items,
             },
             summary=f"找到 {len(ids)} 篇相似论文: {titles}{'...' if len(ids) > 3 else ''}",
@@ -246,9 +222,8 @@ def _list_papers_by_filter(
 ) -> ToolResult:
     try:
         with session_scope() as session:
-            papers, total = PaperRepository(session).list_paginated(
-                page=1,
-                page_size=limit,
+            data = papers_queries.list_papers_by_filter(
+                session,
                 start_date=start_date,
                 end_date=end_date,
                 date_field=date_field,
@@ -258,21 +233,12 @@ def _list_papers_by_filter(
                 search=search,
                 sort_by=sort_by,
                 sort_order=sort_order,
+                limit=limit,
             )
-        items = [
-            {
-                "paper_id": str(p.id),
-                "title": p.title,
-                "created_at": p.created_at.isoformat(),
-                "publication_date": p.publication_date.isoformat() if p.publication_date else None,
-                "read_status": p.read_status.value,
-            }
-            for p in papers
-        ]
         return ToolResult(
             success=True,
-            data={"items": items, "total": total},
-            summary=f"找到 {total} 篇（返回前 {len(items)} 篇）",
+            data=data,
+            summary=f"找到 {data['total']} 篇（返回前 {len(data['items'])} 篇）",
         )
     except Exception as exc:
         logger.exception("list_papers_by_filter failed: %s", exc)
