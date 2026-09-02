@@ -12,6 +12,7 @@ import time as _time
 import pytest
 from sqlalchemy import func, select
 
+from packages.ai.seed_research import seed_sample
 from packages.domain.enums import (
     ClaimOrigin,
     ClaimStatus,
@@ -19,6 +20,7 @@ from packages.domain.enums import (
     EventType,
     EvidenceKind,
     EvidenceStance,
+    ReadStatus,
     RelationOrigin,
     RelationPredicate,
     ResearchRunStatus,
@@ -26,11 +28,13 @@ from packages.domain.enums import (
 )
 from packages.domain.exceptions import ConflictError, NotFoundError, ValidationError
 from packages.domain.ids import new_id
+from packages.domain.schemas import PaperCreate
 from packages.storage.db import session_scope
 from packages.storage.models import Claim, Evidence, Paper
 from packages.storage.repositories import (
     ClaimRelationRepository,
     ClaimRepository,
+    PaperRepository,
     ResearchEventRepository,
     ResearchQuestionRepository,
     ResearchRunRepository,
@@ -393,3 +397,80 @@ def test_question_claims_aggregation(isolated_db):
             select(func.count()).select_from(Claim).where(Claim.research_question_id == q.id)
         ).scalar()
         assert total == 2
+
+
+# ---------- D2：ingest 建 v1 版本 + 样本种子 ----------
+
+
+def test_upsert_paper_creates_initial_source_version_idempotently(isolated_db):
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        data = PaperCreate(title="Seed paper", abstract="Some abstract.", arxiv_id="2608.9999")
+        p1 = repo.upsert_paper(data)
+        versions = SourceVersionRepository(session).list_for_paper(p1.id)
+        assert len(versions) == 1
+        assert versions[0].version_label == 1 and versions[0].is_current
+        # 重复 upsert（已存在分支）不追加版本、不重复发事件
+        p2 = repo.upsert_paper(data)
+        assert p2.id == p1.id
+        assert len(SourceVersionRepository(session).list_for_paper(p1.id)) == 1
+        events = ResearchEventRepository(session).list_by_aggregate(EventAggregate.source, p1.id)
+        assert [e.type for e in events].count(EventType.source_added) == 1
+
+
+def test_seed_sample_builds_slice_and_is_idempotent(isolated_db):
+    with session_scope() as session:
+        abstracts = [
+            "Streaming diarization cuts DER by 12% on LibriSpeech. Second sentence.",
+            "A survey of end-to-end diarization systems. Second sentence.",
+        ]
+        for i, abstract in enumerate(abstracts, start=1):
+            session.add(
+                Paper(
+                    title=f"Seed paper {i}",
+                    arxiv_id=f"2608.200{i}",
+                    abstract=abstract,
+                    read_status=ReadStatus.skimmed,
+                )
+            )
+        session.flush()
+
+        stats = seed_sample(session, arxiv_ids=["2608.2001", "2608.2002"])
+        assert stats["versions_created"] == 2
+        assert stats["author_claims_created"] == 2
+        assert stats["meta_claim_created"] == 1
+        assert stats["relations_created"] == 2
+        # author 判断按规则自动 confirmed；papermind 综合判断保持 draft
+        author_claims = (
+            session.execute(select(Claim).where(Claim.origin == ClaimOrigin.author)).scalars().all()
+        )
+        assert all(c.status is ClaimStatus.confirmed for c in author_claims)
+        meta = session.execute(
+            select(Claim).where(Claim.origin == ClaimOrigin.papermind)
+        ).scalar_one()
+        assert meta.status is ClaimStatus.draft
+
+        # 重复执行：幂等
+        stats2 = seed_sample(session, arxiv_ids=["2608.2001", "2608.2002"])
+        assert stats2["versions_created"] == 0
+        assert stats2["author_claims_created"] == 0
+        assert stats2["meta_claim_created"] == 0
+        assert stats2["relations_created"] == 0
+
+
+def test_seed_sample_dry_run_writes_nothing(isolated_db):
+    with session_scope() as session:
+        session.add(
+            Paper(
+                title="Seed paper",
+                arxiv_id="2608.3001",
+                abstract="A claim worth tracking. More text.",
+                read_status=ReadStatus.skimmed,
+            )
+        )
+        session.flush()
+        plan = seed_sample(session, arxiv_ids=["2608.3001"], dry_run=True)
+        assert plan["dry_run"] is True
+        assert plan["versions_to_create"] == 1
+        assert session.execute(select(func.count()).select_from(Claim)).scalar() == 0
+        assert session.execute(select(func.count()).select_from(Paper)).scalar() == 1

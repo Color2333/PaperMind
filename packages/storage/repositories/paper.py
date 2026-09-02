@@ -5,13 +5,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import defer
 
-from packages.domain.enums import ReadStatus
+from packages.domain.enums import ReadStatus, SourceDetectedBy
 from packages.domain.math_utils import cosine_distance as _cosine_distance
 from packages.storage.db import _is_sqlite
 from packages.storage.models import (
@@ -19,9 +21,11 @@ from packages.storage.models import (
     Paper,
     PaperTag,
     PaperTopic,
+    SourceVersion,
     Tag,
     TopicSubscription,
 )
+from packages.storage.repositories.research import SourceVersionRepository
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -71,7 +75,37 @@ class PaperRepository:
         )
         self.session.add(paper)
         self.session.flush()
+        self._ensure_initial_source_version(paper)
         return paper
+
+    def _ensure_initial_source_version(self, paper: Paper) -> None:
+        """入库即建 v1 SourceVersion（设计① §9：与 upsert 同一事务；已有版本则跳过）。
+
+        content_hash 取入库时实际持久化的身份内容（arxiv_id+title+abstract）；
+        PDF 级内容校验值由后续版本流程登记。存量论文不在此处回填，
+        垂直切片样本走 scripts/seed_research_sample.py。
+        """
+        has_version = (
+            self.session.execute(
+                select(func.count())
+                .select_from(SourceVersion)
+                .where(SourceVersion.paper_id == paper.id)
+            ).scalar()
+            or 0
+        )
+        if has_version:
+            return
+        identity = json.dumps(
+            {"abstract": paper.abstract, "arxiv_id": paper.arxiv_id, "title": paper.title},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        SourceVersionRepository(self.session).create_for_paper(
+            paper.id,
+            content_hash=hashlib.sha256(identity.encode("utf-8")).hexdigest(),
+            doi=paper.doi,
+            detected_by=SourceDetectedBy.ingest,
+        )
 
     def list_latest(self, limit: int = 20) -> list[Paper]:
         q: Select[tuple[Paper]] = select(Paper).order_by(Paper.created_at.desc()).limit(limit)

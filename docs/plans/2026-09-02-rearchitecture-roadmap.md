@@ -21,10 +21,10 @@
 
 | 阶段 | 目标数 | 已完成 | 状态 |
 | --- | --- | --- | --- |
-| Stage A · Phase 0 基线 + 六份设计 | 10 | 3 | 进行中 |
+| Stage A · Phase 0 基线 + 六份设计 | 10 | 4 | 进行中 |
 | Stage B · Phase 1 application command/query | 8 | 0 | 未开始 |
 | Stage C · Phase 2 原子 durable execution | 11 | 0 | 未开始 |
-| Stage D · Phase 3 Research State 垂直切片 | 7 | 1 | 进行中 |
+| Stage D · Phase 3 Research State 垂直切片 | 7 | 2 | 进行中 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
@@ -46,9 +46,9 @@
 - [x] **A3 核心流程回归测试**
   产出：[tests/test_e2e_main_flow.py](../../tests/test_e2e_main_flow.py)（3 个测试：arXiv 导入与去重 / 导入→下载PDF→skim→deep→embed→ask→brief 全链路 / 空库 RAG 兜底）+ [.github/workflows/tests.yml](../../.github/workflows/tests.yml)（PR/push 自动跑 pytest）。
   结论：主链路在 HTTP→service→repository 层面可重复运行；LLM/arXiv/vision 以类级 fake 隔离，每测试独立 tmp SQLite(WAL)，全套 85 passed。
-- [ ] **A4 Research State 人工校验样本**
-  产出：一个预置研究问题 + 少量论文的 Claim/Evidence/SourceVersion 小样本（人工校验过）。
-  出口条件：样本可被 Phase 3（D2）迁移直接消费。
+- [x] **A4 Research State 人工校验样本**
+  产出：[scripts/seed_research_sample.py](../../scripts/seed_research_sample.py)（包装 [packages/ai/seed_research.py](../../packages/ai/seed_research.py)）——预置问题"视听说话人分离"+ 每篇论文一条 author 引用即证判断（规则自动 confirmed）+ 一条 papermind 综合判断（保持 draft）+ supports 关系；幂等可重跑。
+  结论：author 部分按已确认规则即证即 confirmed；papermind 部分明确标记待人工校验——建议用户在 Demo 前抽查一次（`python scripts/seed_research_sample.py --dry-run`）。
 - [x] **A5 设计①：Research State 最小数据契约**
   产出：[2026-09-02 设计① Research State 最小数据契约](./2026-09-02-design-1-research-state-data-contract.md)。
   结论：7 实体字段级契约 + Claim 状态机（无证据坐标不得 confirmed；papermind 最高 pending_verification）+ 事件表兼任 History/outbox + PROV 字段级映射 + 与现有 schema 的不回填共存策略；§11 五个决策点已按提案确认（2026-09-02）。
@@ -106,7 +106,9 @@
 - [x] **D1 数据契约落地**：按 A5 设计建模 + migration。
   产出：7 张 ORM 表（UUIDv7 hex 主键）+ 13 个领域枚举 + `packages/domain/ids.py` + alembic migration `d1e5a9c3b7f2` + SQLite `create_all` 兜底 + [repositories/research.py](../../packages/storage/repositories/research.py)（状态机强制、evidence 幂等指纹、事件与业务变更同事务写入）。
   结论：16 个契约测试全绿（tests/test_research_state.py）；alembic 离线渲染与 SQLite 运行时建表已验证；全量 101 passed。
-- [ ] **D2 样本迁移**：迁移 A4 的预置研究问题与少量论文，不批量回填历史数据。
+- [x] **D2 样本迁移**：迁移 A4 的预置研究问题与少量论文，不批量回填历史数据。
+  产出：`PaperRepository.upsert_paper` 新建分支同事务建 v1 SourceVersion（幂等，9 个入库路径全覆盖）+ seed 脚本（存量切片论文回补 v1，author 引用即证 + papermind draft 占位）。
+  结论：ingest → SourceVersion/事件 同事务由 e2e 测试断言；种子幂等由 3 个契约测试覆盖；全量 104 passed。
 - [ ] **D3 ResearchRun 生成待验证 Claim**：强制证据坐标与完整 provenance（source version、任务、时间、模型、策略版本）。
 - [ ] **D4 查询实现**：GetResearchQuestion、ListClaims、GetClaimEvidence、DiffResearchState。
 - [ ] **D5 Research Object 基础导出**：至少 JSON + Markdown，含校验值与 provenance 摘要。
@@ -160,3 +162,4 @@
 - 2026-09-02（第三次）：完成 A3——主用户流程端到端回归测试（tests/test_e2e_main_flow.py，LLM/arXiv/vision 全 fake + tmp SQLite）与 CI 测试 workflow（tests.yml）。
 - 2026-09-02（第四次）：完成 A5 设计①（Research State 最小数据契约：7 实体、状态机、事件/outbox、PROV 映射、共存策略），§11 决策点待确认。
 - 2026-09-02（第五次）：用户确认设计①全部决策点；完成 D1——数据契约落地为 models/枚举/UUIDv7/migration/仓储，16 个契约测试 + 全量 101 passed。
+- 2026-09-02（第六次）：完成 A4 + D2——ingest 同事务建 v1 SourceVersion（9 个入库路径全覆盖）、A4 样本种子（author 即证 + papermind draft 待人工抽检），全量 104 passed。

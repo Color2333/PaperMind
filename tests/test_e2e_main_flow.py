@@ -35,12 +35,18 @@ import packages.storage.db as db_module
 import packages.storage.models  # noqa: F401  # 注册全部表到 Base.metadata
 from packages.ai.vision_reader import VisionPdfReader
 from packages.config import get_settings
-from packages.domain.enums import ReadStatus
+from packages.domain.enums import EventAggregate, EventType, ReadStatus
 from packages.domain.schemas import PaperCreate
 from packages.integrations.arxiv_client import ArxivClient
 from packages.integrations.llm_client import LLMClient, LLMResult
 from packages.storage.db import Base, session_scope
-from packages.storage.models import AnalysisReport, Paper, PipelineRun, PromptTrace
+from packages.storage.models import (
+    AnalysisReport,
+    Paper,
+    PipelineRun,
+    PromptTrace,
+)
+from packages.storage.repositories import ResearchEventRepository, SourceVersionRepository
 
 # ---------- 确定性 fake 输出 ----------
 
@@ -251,13 +257,25 @@ def test_ingest_arxiv_creates_papers_records_and_dedupes(e2e_env):
         )
         assert len(runs) == 1
         assert runs[0].error_message is None
+        # D2：入库同事务建 v1 SourceVersion + SourceAdded 事件
+        for row in rows:
+            versions = SourceVersionRepository(session).list_for_paper(row.id)
+            assert len(versions) == 1 and versions[0].is_current
+            added = ResearchEventRepository(session).list_by_aggregate(
+                EventAggregate.source, row.id
+            )
+            assert [e.type for e in added].count(EventType.source_added) == 1
 
     # 同批再导一次：upsert 去重，不产生新论文
     resp = client.post("/ingest/arxiv", params={"query": "speaker diarization", "max_results": 2})
     assert resp.status_code == 200
     assert resp.json()["ingested"] == 0
     with session_scope() as session:
-        assert len(list(session.execute(select(Paper)).scalars())) == 2
+        rows = list(session.execute(select(Paper)).scalars())
+        assert len(rows) == 2
+        # 去重导入不得追加版本
+        for row in rows:
+            assert len(SourceVersionRepository(session).list_for_paper(row.id)) == 1
 
 
 def test_main_research_flow_import_skim_deep_ask_brief(e2e_env):
