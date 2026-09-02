@@ -137,3 +137,37 @@ class EventType(StrEnum):
     retraction_detected = "RetractionDetected"
     research_run_completed = "ResearchRunCompleted"
     job_failed = "JobFailed"
+
+
+# ---------- 原子 durable execution（设计③ §1，Stage C）----------
+
+
+class JobStatus(StrEnum):
+    submitted = "submitted"
+    planning = "planning"
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    partially_succeeded = "partially_succeeded"
+    failed = "failed"
+    cancelling = "cancelling"
+    cancelled = "cancelled"
+
+
+class TaskStatus(StrEnum):
+    queued = "queued"
+    leased = "leased"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+    cancelled = "cancelled"
+    dead_letter = "dead_letter"
+    manual_recovery = "manual_recovery"
+
+
+class TaskAttemptStatus(StrEnum):
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+    timeout = "timeout"
+    cancelled = "cancelled"

@@ -30,6 +30,7 @@ from packages.domain.enums import (
     EventType,
     EvidenceKind,
     EvidenceStance,
+    JobStatus,
     PipelineStatus,
     QuestionStatus,
     ReadStatus,
@@ -38,6 +39,8 @@ from packages.domain.enums import (
     ResearchRunStatus,
     RunTrigger,
     SourceDetectedBy,
+    TaskAttemptStatus,
+    TaskStatus,
 )
 from packages.domain.ids import new_id
 from packages.storage.db import Base, JSONB_or_JSON, Vector_or_JSON
@@ -977,3 +980,121 @@ class ResearchEvent(Base):
         DateTime, default=_utcnow, nullable=False, index=True
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ---------- 原子 durable execution（设计③ §1，Stage C2）----------
+# jobs/tasks/task_attempts/artifacts；主键 UUIDv7 hex；Job 状态由子 Task 收敛（§2）。
+
+
+class Job(Base):
+    """应用层用户意图/计划流程（设计③ §1.1）"""
+
+    __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_kind_status", "kind", "status"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)  # 设计②命令目录名
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, name="job_status"),
+        nullable=False,
+        default=JobStatus.submitted,
+        index=True,
+    )
+    payload: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    budget: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    research_run_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("research_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    progress: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DurableTask(Base):
+    """可独立调度/重放的工作原子（设计③ §1.2）"""
+
+    __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_job_status", "job_id", "status"),
+        Index("ix_tasks_status_resource", "status", "resource_class"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    job_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    capability: Mapped[str] = mapped_column(String(64), nullable=False)
+    handler_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    input_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[TaskStatus] = mapped_column(
+        Enum(TaskStatus, name="task_status"), nullable=False, default=TaskStatus.queued, index=True
+    )
+    depends_on: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    input_ref: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    output_artifact_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("artifacts.id", ondelete="SET NULL", use_alter=True), nullable=True
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    resource_class: Mapped[str] = mapped_column(String(32), nullable=False, default="default")
+    timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class TaskAttempt(Base):
+    """Executor 对 Task 的一次真实执行（设计③ §1.3；fencing_token 单调递增）"""
+
+    __tablename__ = "task_attempts"
+    __table_args__ = (Index("ix_task_attempts_task", "task_id", "attempt_no"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    task_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    executor_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    fencing_token: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[TaskAttemptStatus] = mapped_column(
+        Enum(TaskAttemptStatus, name="task_attempt_status"),
+        nullable=False,
+        default=TaskAttemptStatus.running,
+    )
+    error_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    log_ref: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    cost_refs: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TaskArtifact(Base):
+    """Task 的可引用产物（设计③ §1.4；大结果进对象存储，此处存引用）"""
+
+    __tablename__ = "artifacts"
+    __table_args__ = (Index("ix_artifacts_task", "task_id", "kind"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    # FK 环（tasks.output_artifact_id ↔ artifacts.task_id）：use_alter 允许 create_all/迁移建表
+    task_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("tasks.id", ondelete="CASCADE", use_alter=True, name="fk_artifacts_task"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    uri: Mapped[str] = mapped_column(String(1024), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)

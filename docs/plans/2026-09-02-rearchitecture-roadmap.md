@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 2 | 进行中 |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 3 | 进行中 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -106,7 +106,9 @@
   产出（2026-09-02）：`apps/api/main.py` lifespan 移除 `_batch_lifespan`（仅保留 MCP session manager）；`apps/worker/main.py` 启动/优雅关闭接管 `batch_consumer.start()/stop()`；`batch_consumer` 抽出可单步执行的 `poll_once()`。
   结论：Python 侧进程职责分离达成（API 请求处理 / worker 任务消费）。**顺带根修存量 bug**：claim 事务提交后 ORM 脱管过期，`_run_one_job` 访问 `job.paper_ids` 必抛 DetachedInstanceError 并被 loop 吞掉——批次任务此前一进入执行就卡 running；改为事务内取纯值。守卫测试（API 源码无 batch 引用 + worker 接管）+ 3 个消费行为测试。全量 136 passed。
   遗留：`新任务入口转向 Go Core` 半句依赖 C0——届时 batch 类入口从 tracker/batch_jobs 切到 Go Job 提交（C11 第一批）。
-- [ ] **C2 原子执行 schema**：落库 `jobs`、`tasks`、`task_attempts` 和 artifact/event references；ResearchRun 关联 Job，Job 聚合 Task，Task 保留 capability/schema/handler version、依赖、资源类别、预算与幂等键。
+- [x] **C2 原子执行 schema**：落库 `jobs`、`tasks`、`task_attempts` 和 artifact/event references；ResearchRun 关联 Job，Job 聚合 Task，Task 保留 capability/schema/handler version、依赖、资源类别、预算与幂等键。
+  产出：4 张 ORM 表（UUIDv7；tasks↔artifacts FK 环用 use_alter）+ 3 组枚举（JobStatus 含 succeeded / TaskStatus 8 态 / AttemptStatus）+ alembic `e2f3a4b5c6d7` + SQLite create_all 兜底 + [repositories/durable.py](../../packages/storage/repositories/durable.py)（Job 幂等创建、claim 签发 lease+attempt+fencing、依赖满足检查、fail→重试/dead_letter、Artifact 关联、Job 状态由子 Task 收敛的 `recompute_job_status`）。
+  结论：9 个契约测试全绿（幂等/lease 互斥/fencing 拒绝/重试→dead_letter/partially_succeeded 收敛/依赖顺序/artifact/Run↔Job 关联/attempt 记录）；alembic 离线渲染通过。全量 150 passed。
 - [ ] **C3 统一旧状态**：用新 job store 取代内存 `TaskTracker`（10 分钟 TTL、重启即丢）、旧 `batch_jobs` 状态与心跳文件的权威地位；前端三套轮询端点收敛到 Job graph、Task 与 Attempt 查询。
 - [ ] **C4 第一批原子 Task 清单**：为 Skim、DeepRead、Embedding、Topic Research 和 Daily Brief 标出单一有意义副作用、输入输出、timeout、retry、resource class 与无法自动重试的边界；禁止把普通 helper 机械拆成 Task。
 - [ ] **C5 代码化 Workflow 模板**：实现顺序依赖、条件分支和 per-Paper fan-out；父 Job 支持 succeeded、partially_succeeded、failed、cancelled，并能解释每个子 Task 的贡献。
@@ -208,4 +210,5 @@
 - 2026-09-02（第二十三次）：处理 REVIEW 六项（wheel 打包/ingest 失败语义/query-command 边界+架构守卫/有界执行器/伪进度/index 字段），全量 132 passed。
 - 2026-09-02（第二十四次）：完成 C1（Python 侧）——batch consumer 移出 API 进程（worker 接管 + poll_once 单步化），根修 DetachedInstance 存量 bug；Go Core 入口切换待 C0。全量 136 passed。
 - 2026-09-02（第二十五次）：完成 C0——Go Core 骨架（core/ module：协议信封 v1 + 六动作 + 能力注册 + 内存队列/lease；7 个 Go 测试）+ Python executor client（5 个契约测试）+ CI go-core job。全量 141 passed。
+- 2026-09-02（第二十六次）：完成 C2——durable execution 四表 schema + durable 仓储（幂等/lease/fencing/收敛）+ 9 个契约测试。全量 150 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。

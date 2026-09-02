@@ -20,6 +20,11 @@ from packages.storage.repositories.citation import CitationRepository
 from packages.storage.repositories.cs_feed import CSFeedRepository
 from packages.storage.repositories.daily_report import DailyReportConfigRepository
 from packages.storage.repositories.device_auth import DeviceAuthRequestRepository
+from packages.storage.repositories.durable import (
+    ArtifactRepository,
+    JobRepository,
+    TaskRepository,
+)
 from packages.storage.repositories.email_config import EmailConfigRepository
 from packages.storage.repositories.generated_content import GeneratedContentRepository
 from packages.storage.repositories.ieee_quota import IeeeQuotaRepository
@@ -60,6 +65,9 @@ __all__ = [
     "BatchJobRepository",
     "ApiTokenRepository",
     "DeviceAuthRequestRepository",
+    "JobRepository",
+    "TaskRepository",
+    "ArtifactRepository",
     "ResearchQuestionRepository",
     "ResearchRunRepository",
     "ClaimRepository",
