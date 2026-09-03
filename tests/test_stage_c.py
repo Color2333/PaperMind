@@ -12,12 +12,19 @@ from pathlib import Path
 import pytest
 
 from packages.agent_core import batch_consumer
-from packages.ai.tools.types import ToolResult  # noqa: F401  # 占位对齐导入风格
+from packages.application.commands.jobs import cancel_job, pause_queue, resume_queue, retry_job
+from packages.application.commands.workflows import start_workflow_job
+from packages.domain.enums import JobStatus, TaskStatus
 from packages.domain.schemas import PaperCreate
 from packages.integrations.llm_client import LLMClient
 from packages.storage.db import session_scope
 from packages.storage.models import Paper
-from packages.storage.repositories import BatchJobRepository, PaperRepository
+from packages.storage.repositories import (
+    BatchJobRepository,
+    JobRepository,
+    PaperRepository,
+    TaskRepository,
+)
 
 API_MAIN = Path(__file__).resolve().parents[1] / "apps" / "api" / "main.py"
 WORKER_MAIN = Path(__file__).resolve().parents[1] / "apps" / "worker" / "main.py"
@@ -107,3 +114,94 @@ def test_poll_once_records_paper_failure(c1_env, monkeypatch):
 
 def test_poll_once_empty_queue_returns_false(c1_env):
     assert batch_consumer.poll_once() is False
+
+
+# ---------- C10：控制与观察面 ----------
+
+
+def test_cancel_job_cancels_queued_tasks(isolated_db):
+    with session_scope() as session:
+        job, tasks, _ = start_workflow_job(
+            session,
+            kind="ProcessUnreadBatch",
+            payload={"paper_ids": ["p1", "p2"], "kinds": ["embed_paper"]},
+        )
+        job_id = job.id
+        assert len(tasks) == 2
+
+    counts = cancel_job(job_id)
+    assert counts["cancelled"] == 2
+
+    with session_scope() as session:
+        assert JobRepository(session).get(job_id).status is JobStatus.cancelled
+        for t in TaskRepository(session).list_for_job(job_id):
+            assert t.status is TaskStatus.cancelled
+
+
+def test_retry_job_requeues_dead_letter(isolated_db):
+    with session_scope() as session:
+        job, tasks, _ = start_workflow_job(
+            session,
+            kind="ProcessUnreadBatch",
+            payload={"paper_ids": ["p1"], "kinds": ["embed_paper"]},
+        )
+        job_id = job.id
+        task_id = tasks[0].id
+
+    with session_scope() as session:
+        repo = TaskRepository(session)
+        claimed = repo.claim_task_by_id(task_id=task_id, executor_id="e1")
+        repo.fail_task(
+            task_id=claimed.id,
+            executor_id="e1",
+            lease_token=claimed.lease_token,
+            error_class="test",
+            message="fail for retry",
+            # max_attempts=3 默认，1 次不 dead_letter——先耗尽
+        )
+        # 逐次耗尽
+        for _ in range(2):
+            c = repo.claim_task(executor_id="e1", capabilities=["embed_paper"])
+            if c is None:
+                break
+            repo.fail_task(
+                task_id=c.id,
+                executor_id="e1",
+                lease_token=c.lease_token,
+                error_class="test",
+                message="fail",
+            )
+        assert repo.get(task_id).status is TaskStatus.dead_letter
+
+    retried = retry_job(job_id)
+    assert retried["retried"] == 1
+
+    with session_scope() as session:
+        assert TaskRepository(session).get(task_id).status is TaskStatus.queued
+
+
+def test_pause_resume_queue(isolated_db):
+    from packages.storage.repositories import durable as durable_repo
+
+    with session_scope() as session:
+        start_workflow_job(
+            session,
+            kind="ProcessUnreadBatch",
+            payload={"paper_ids": ["p1"], "kinds": ["embed_paper"]},
+        )
+
+    pause_queue()
+    assert durable_repo.is_queue_paused()
+    with session_scope() as session:
+        assert (
+            TaskRepository(session).claim_task(executor_id="e", capabilities=["embed_paper"])
+            is None
+        )
+
+    resume_queue()
+    assert not durable_repo.is_queue_paused()
+    with session_scope() as session:
+        assert (
+            TaskRepository(session).claim_task(executor_id="e", capabilities=["embed_paper"])
+            is not None
+        )

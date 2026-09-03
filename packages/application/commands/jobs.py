@@ -270,3 +270,49 @@ def submit_tracked_compat(
         TaskRepository(session).set_external_ref(task_id, tracker_task_id)
 
     return tracker_task_id
+
+
+def cancel_job(job_id: str) -> dict[str, int]:
+    """取消 Job：未领取 Task 直接取消，运行中的协作取消"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import TaskRepository
+
+    with session_scope() as session:
+        return TaskRepository(session).cancel_job(job_id)
+
+
+def retry_job(job_id: str) -> dict[str, Any]:
+    """重试 Job：dead_letter/failed Task 重回队列"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import TaskRepository
+
+    with session_scope() as session:
+        retried = TaskRepository(session).retry_job(job_id)
+        return {"job_id": job_id, "retried": retried}
+
+
+def retry_task(task_id: str) -> dict[str, Any]:
+    """单 Task 重试（dead_letter 出口）"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import TaskRepository
+
+    with session_scope() as session:
+        task = TaskRepository(session).retry_task(task_id)
+    return {
+        "task_id": task_id,
+        "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+    }
+
+
+def pause_queue() -> dict[str, Any]:
+    from packages.storage.repositories import durable as durable_repo
+
+    durable_repo.pause_queue()
+    return {"paused": True}
+
+
+def resume_queue() -> dict[str, Any]:
+    from packages.storage.repositories import durable as durable_repo
+
+    durable_repo.resume_queue()
+    return {"paused": False}

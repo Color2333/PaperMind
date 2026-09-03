@@ -140,3 +140,50 @@ def run_daily_report_generate_only(
     from packages.application.commands.daily import generate_daily_report_html
 
     return generate_daily_report_html(use_cache=use_cache)
+
+
+# ---------- 任务控制（C10）----------
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict:
+    """取消 Job：未领取 Task 直接取消，运行中的协作取消"""
+    from packages.application.commands.jobs import cancel_job as app_cancel_job
+
+    return app_cancel_job(job_id)
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_job(job_id: str) -> dict:
+    """重试 Job：dead_letter/failed Task 重回队列"""
+    from packages.application.commands.jobs import retry_job as app_retry_job
+
+    return app_retry_job(job_id)
+
+
+@router.post("/tasks/{task_id}/retry")
+def retry_single_task(task_id: str) -> dict:
+    """单 Task 重试（dead_letter 出口）"""
+    from packages.application.commands.jobs import retry_task as app_retry_task
+    from packages.domain.exceptions import ConflictError
+
+    try:
+        return app_retry_task(task_id)
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/queue/pause")
+def pause_queue() -> dict:
+    """暂停队列（本进程 claim 停止；跨进程 pause 由 Go Core 接管）"""
+    from packages.application.commands.jobs import pause_queue as app_pause_queue
+
+    return app_pause_queue()
+
+
+@router.post("/queue/resume")
+def resume_queue() -> dict:
+    """恢复队列"""
+    from packages.application.commands.jobs import resume_queue as app_resume_queue
+
+    return app_resume_queue()

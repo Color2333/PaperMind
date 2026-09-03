@@ -37,6 +37,9 @@ from packages.storage.models import (
 
 _LEASE_BASE_S = 600
 
+# 队列暂停（C10；进程内标志——跨进程 pause 由 Go Core 接管）
+queue_paused = False
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -244,6 +247,8 @@ class TaskRepository:
 
         PG 用 skip_locked 行锁；SQLite（无行锁语义）靠单 Dispatcher 串行。
         """
+        if queue_paused:
+            return None
         wanted = set(capabilities)
         q = (
             select(DurableTask)
@@ -428,6 +433,51 @@ class TaskRepository:
             JobRepository(self.session).recompute_job_status(task.job_id)
         return outcomes
 
+    def cancel_job(self, job_id: str) -> dict[str, int]:
+        """取消 Job：未领取 Task 直接取消，已领取标记协作取消（经 heartbeat 探测）"""
+        job = JobRepository(self.session).get(job_id)
+        job.status = JobStatus.cancelling
+        self.session.flush()
+        tasks = self.list_for_job(job_id)
+        counts = {"cancelled": 0, "cancel_requested": 0}
+        for t in tasks:
+            if t.status == TaskStatus.queued:
+                t.status = TaskStatus.cancelled
+                counts["cancelled"] += 1
+            elif t.status in (TaskStatus.leased, TaskStatus.running):
+                t.lease_expires_at = _utcnow()  # 触发过期→Reconciler 收敛
+                counts["cancel_requested"] += 1
+        self.session.flush()
+        JobRepository(self.session).recompute_job_status(job_id)
+        return counts
+
+    def retry_job(self, job_id: str) -> int:
+        """重试 Job：dead_letter/failed Task 重置回 queued（attempt 保留）"""
+        tasks = self.list_for_job(job_id)
+        retried = 0
+        for t in tasks:
+            if t.status in (TaskStatus.dead_letter, TaskStatus.failed):
+                t.status = TaskStatus.queued
+                t.lease_token = None
+                t.lease_expires_at = None
+                retried += 1
+        self.session.flush()
+        if retried:
+            JobRepository(self.session).recompute_job_status(job_id)
+        return retried
+
+    def retry_task(self, task_id: str) -> DurableTask:
+        """单 Task 重试（dead_letter 出口）"""
+        task = self.get(task_id)
+        if task.status != TaskStatus.dead_letter:
+            raise ConflictError(f"Task {task_id} 状态 {task.status} 不可重试")
+        task.status = TaskStatus.queued
+        task.lease_token = None
+        task.lease_expires_at = None
+        self.session.flush()
+        JobRepository(self.session).recompute_job_status(task.job_id)
+        return task
+
     def heartbeat_lease(self, *, task_id: str, lease_token: str) -> tuple[bool, bool]:
         """续约 lease；返回 (ok, cancel_requested)。取消协作语义的探测点。"""
         task = self.get(task_id)
@@ -476,3 +526,18 @@ class ArtifactRepository:
                 .order_by(TaskArtifact.id)
             ).scalars()
         )
+
+
+def pause_queue() -> None:
+    """暂停队列（进程内）：claim_task 返回 None 直到 resume"""
+    global queue_paused
+    queue_paused = True
+
+
+def resume_queue() -> None:
+    global queue_paused
+    queue_paused = False
+
+
+def is_queue_paused() -> bool:
+    return queue_paused
