@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from packages.application.commands.jobs import submit_tracked_compat
 from packages.domain.exceptions import NotFoundError, ValidationError
 
 if TYPE_CHECKING:
@@ -62,7 +63,6 @@ def download_source(paper_id: UUID | str) -> dict[str, Any]:
 
 def start_figure_analysis(paper_id: UUID | str, *, max_figures: int = 10) -> dict[str, Any]:
     """提交图表分析后台任务（precheck + tracker 提交；C3 后转 durable Job）"""
-    from packages.domain.task_tracker import global_tracker
     from packages.storage.db import session_scope
     from packages.storage.repositories import PaperRepository
 
@@ -106,7 +106,9 @@ def start_figure_analysis(paper_id: UUID | str, *, max_figures: int = 10) -> dic
             progress_callback("图表分析完成", 95, 100)
         return {"paper_id": str(pid), "count": len(items), "items": items}
 
-    task_id = global_tracker.submit(
+    task_id = submit_tracked_compat(
+        kind="StartFigureAnalysis",
+        capability="analyze_figures",
         task_type="figure_analysis",
         title=f"📊 图表分析：{paper_title}",
         fn=_analyze_fn,

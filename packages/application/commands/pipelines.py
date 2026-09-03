@@ -34,7 +34,7 @@ def run_embed(paper_id) -> None:
     PaperPipelines().embed_paper(paper_id)
 
 
-# ---------- Start* 任务命令（B8；tracker 过渡，C3 转 durable Job）----------
+# ---------- Start* 任务命令（C3：durable Job 提交；tracker 仅执行通道）----------
 
 
 def _paper_title(paper_id) -> str | None:
@@ -50,58 +50,46 @@ def _paper_title(paper_id) -> str | None:
 
 
 def start_skim(paper_id) -> dict:
-    """提交粗读后台任务，返回 {"task_id", "status"}"""
-    from packages.domain.task_tracker import global_tracker
+    """提交粗读后台任务，返回 {"task_id", "job_id", "status"}"""
+    from packages.application.commands.jobs import submit_durable_job
 
     title = _paper_title(paper_id) or str(paper_id)[:8]
-
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在粗读...", 30, 100)
-        skim = run_skim(paper_id)
-        if progress_callback:
-            progress_callback("完成", 100, 100)
-        return skim.model_dump()
-
-    task_id = global_tracker.submit(
-        "skim", f"粗读：{title[:30]}", _fn, total=100, category="analysis"
+    return submit_durable_job(
+        kind="StartSkim",
+        capability="skim_paper",
+        title=f"粗读：{title[:30]}",
+        fn=lambda progress_callback=None: run_skim(paper_id),
+        payload={"paper_id": str(paper_id)},
+        resource_class="llm",
+        timeout_s=900,
     )
-    return {"task_id": task_id, "status": "running"}
 
 
 def start_deep_read(paper_id) -> dict:
-    from packages.domain.task_tracker import global_tracker
+    from packages.application.commands.jobs import submit_durable_job
 
     title = _paper_title(paper_id) or str(paper_id)[:8]
-
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在精读...", 20, 100)
-        deep = run_deep_read(paper_id)
-        if progress_callback:
-            progress_callback("完成", 100, 100)
-        return deep.model_dump()
-
-    task_id = global_tracker.submit(
-        "deep_read", f"精读：{title[:30]}", _fn, total=100, category="analysis"
+    return submit_durable_job(
+        kind="StartDeepRead",
+        capability="deep_read_paper",
+        title=f"精读：{title[:30]}",
+        fn=lambda progress_callback=None: run_deep_read(paper_id),
+        payload={"paper_id": str(paper_id)},
+        resource_class="llm",
+        timeout_s=1800,
     )
-    return {"task_id": task_id, "status": "running"}
 
 
 def start_embed(paper_id) -> dict:
-    from packages.domain.task_tracker import global_tracker
+    from packages.application.commands.jobs import submit_durable_job
 
     title = _paper_title(paper_id) or str(paper_id)[:8]
-
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在计算向量嵌入...", 50, 100)
-        run_embed(paper_id)
-        if progress_callback:
-            progress_callback("完成", 100, 100)
-        return {"status": "embedded", "paper_id": str(paper_id)}
-
-    task_id = global_tracker.submit(
-        "embed", f"嵌入：{title[:30]}", _fn, total=100, category="analysis"
+    return submit_durable_job(
+        kind="StartEmbedding",
+        capability="embed_paper",
+        title=f"嵌入：{title[:30]}",
+        fn=lambda progress_callback=None: run_embed(paper_id),
+        payload={"paper_id": str(paper_id)},
+        resource_class="embedding",
+        timeout_s=300,
     )
-    return {"task_id": task_id, "status": "running"}

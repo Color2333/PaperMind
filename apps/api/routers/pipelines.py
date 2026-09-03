@@ -82,10 +82,19 @@ def ask_iterative(
 
 @router.get("/tasks/active")
 def get_active_tasks() -> dict:
-    """获取全局进行中的任务列表（跨页面可见；过渡观测，C10 并入 Jobs）"""
-    from packages.application.queries.tasks import list_active_tasks
+    """获取全局进行中的任务列表（tracker + durable 在途合并；C10 并入 Jobs）"""
+    from packages.application.queries.tasks import (
+        list_active_tasks,
+        list_durable_active_tasks,
+    )
+    from packages.storage.db import session_scope
 
-    return {"tasks": list_active_tasks()}
+    with session_scope() as session:
+        durable = list_durable_active_tasks(session)
+    merged = {t["task_id"]: t for t in list_active_tasks()}
+    for t in durable:
+        merged.setdefault(t["task_id"], t)
+    return {"tasks": list(merged.values())}
 
 
 @router.post("/tasks/track")
@@ -119,9 +128,14 @@ def track_task(body: dict) -> dict:
 
 @router.get("/tasks/{task_id}")
 def get_task_status(task_id: str) -> dict:
-    """查询任务进度（过渡观测，C10 并入 Jobs）"""
-    from packages.application.queries.tasks import get_task_info
+    """查询任务进度（durability 优先，tracker 兜底；C10 并入 Jobs）"""
+    from packages.application.queries.tasks import get_task_info, resolve_task_unified
+    from packages.storage.db import session_scope
 
+    with session_scope() as session:
+        durable = resolve_task_unified(session, task_id)
+    if durable is not None:
+        return durable
     status = get_task_info(task_id)
     if not status:
         raise NotFoundError(f"Task {task_id} not found")
@@ -130,10 +144,20 @@ def get_task_status(task_id: str) -> dict:
 
 @router.get("/tasks/{task_id}/result")
 def get_task_result(task_id: str) -> dict:
-    """获取已完成任务的结果（过渡观测，C10 并入 Jobs）"""
-    from packages.application.queries.tasks import get_task_info
-    from packages.application.queries.tasks import get_task_result as app_result
+    """获取已完成任务的结果（durability 优先，tracker 兜底）"""
+    from packages.application.queries.tasks import (
+        get_task_info,
+        get_task_result_by_ref,
+    )
+    from packages.application.queries.tasks import (
+        get_task_result as app_result,
+    )
+    from packages.storage.db import session_scope
 
+    with session_scope() as session:
+        durable_result = get_task_result_by_ref(session, task_id)
+    if durable_result is not None:
+        return durable_result
     status = get_task_info(task_id)
     if not status:
         raise NotFoundError(f"Task {task_id} not found")

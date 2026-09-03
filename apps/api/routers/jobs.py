@@ -13,6 +13,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/jobs")
+def list_durable_jobs(
+    status: str | None = Query(default=None),
+    kind: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict:
+    """durable Job 列表（C3 统一观察面）"""
+    from packages.application.queries.jobs import list_jobs as app_list_jobs
+
+    with session_scope() as session:
+        return app_list_jobs(session, status=status, kind=kind, limit=limit)
+
+
+@router.get("/jobs/{job_id}")
+def get_durable_job(job_id: str) -> dict:
+    """Job graph：Job + 子 Task（含 Attempt 概览）"""
+    from packages.application.queries.jobs import get_job_attempts, get_job_graph
+    from packages.domain.exceptions import NotFoundError
+
+    with session_scope() as session:
+        try:
+            graph = get_job_graph(session, job_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        graph["attempts"] = get_job_attempts(session, job_id)
+        return graph
+
+
 @router.post("/jobs/daily/run-once")
 def run_daily_once() -> dict:
     """每日任务（抓取+简报）- 后台执行（业务在 application/commands/daily.py）"""

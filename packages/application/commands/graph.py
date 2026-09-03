@@ -9,6 +9,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+from packages.application.commands.jobs import submit_tracked_compat
+
 
 @lru_cache(maxsize=1)
 def _graph_service():
@@ -21,7 +23,6 @@ def start_incremental_citation_sync(
     *, paper_limit: int = 40, edge_limit_per_paper: int = 6
 ) -> dict[str, Any]:
     from packages.application.queries.graph import _graph_service
-    from packages.domain.task_tracker import global_tracker
 
     def _fn(progress_callback=None):
         if progress_callback:
@@ -33,7 +34,14 @@ def start_incremental_citation_sync(
             progress_callback("增量引用同步完成", 90, 100)
         return result
 
-    task_id = global_tracker.submit("citation_sync", "📊 增量引用同步", _fn, category="sync")
+    task_id = submit_tracked_compat(
+        "citation_sync",
+        "📊 增量引用同步",
+        _fn,
+        category="sync",
+        kind="StartCitationSync",
+        capability="sync_citations_incremental",
+    )
     return {"task_id": task_id, "message": "增量引用同步已启动", "status": "running"}
 
 
@@ -41,7 +49,6 @@ def start_topic_citation_sync(
     *, topic_id: str, paper_limit: int = 30, edge_limit_per_paper: int = 6
 ) -> dict[str, Any]:
     from packages.application.queries.graph import _graph_service
-    from packages.domain.task_tracker import global_tracker
     from packages.storage.db import session_scope
     from packages.storage.repositories import TopicRepository
 
@@ -64,15 +71,19 @@ def start_topic_citation_sync(
             progress_callback("主题引用同步完成", 90, 100)
         return result
 
-    task_id = global_tracker.submit(
-        "citation_sync", f"📊 主题引用同步：{topic_name}", _fn, category="sync"
+    task_id = submit_tracked_compat(
+        "citation_sync",
+        f"📊 主题引用同步：{topic_name}",
+        _fn,
+        category="sync",
+        kind="StartCitationSync",
+        capability="sync_citations_topic",
     )
     return {"task_id": task_id, "message": f"主题引用同步已启动: {topic_name}", "status": "running"}
 
 
 def start_paper_citation_sync(*, paper_id: str, limit: int = 8) -> dict[str, Any]:
     from packages.application.queries.graph import _graph_service
-    from packages.domain.task_tracker import global_tracker
 
     def _fn(progress_callback=None):
         if progress_callback:
@@ -82,8 +93,11 @@ def start_paper_citation_sync(*, paper_id: str, limit: int = 8) -> dict[str, Any
             progress_callback("论文引用同步完成", 90, 100)
         return result
 
-    task_id = global_tracker.submit(
-        "citation_sync", f"📄 引用同步：{str(paper_id)[:30]}", _fn, category="sync"
+    task_id = submit_tracked_compat(
+        "citation_sync",
+        f"📄 引用同步：{str(paper_id, kind='StartCitationSync', capability='sync_citations_paper')[:30]}",
+        _fn,
+        category="sync",
     )
     return {"task_id": task_id, "message": "论文引用同步已启动", "status": "running"}
 

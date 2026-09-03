@@ -10,6 +10,8 @@ import logging
 import time
 from datetime import UTC, datetime
 
+from packages.application.commands.jobs import submit_tracked_compat
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,7 +64,6 @@ def publish_daily_brief(*, recipient: str = "", limit: int = 30) -> dict:
 
 def start_daily_brief_task(*, recipient: str | None = None) -> dict:
     """提交每日简报后台任务（recipient 缺省时读 DB 配置；tracker 过渡）"""
-    from packages.domain.task_tracker import global_tracker
     from packages.storage.db import session_scope
     from packages.storage.repositories import DailyReportConfigRepository
 
@@ -83,7 +84,9 @@ def start_daily_brief_task(*, recipient: str | None = None) -> dict:
             progress_callback("简报生成完成", 95, 100)
         return result
 
-    task_id = global_tracker.submit(
+    task_id = submit_tracked_compat(
+        kind="StartDailyBrief",
+        capability="build_daily_brief",
         task_type="daily_brief",
         title="📰 生成每日简报",
         fn=_fn,

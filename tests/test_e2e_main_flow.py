@@ -639,3 +639,53 @@ def test_b8_command_endpoints(e2e_env):
     resp = client.post("/jobs/daily-report/generate-only", params={"use_cache": False})
     assert resp.status_code == 200, resp.text
     assert "html" in resp.json() and resp.json()["used_cache"] is False
+
+
+def test_c3_unified_job_endpoints(e2e_env):
+    """C3：durable Job 统一观察面——/jobs 列表、/jobs/{id} graph、/tasks durability 优先"""
+    client = e2e_env.client
+    papers = _ingest_two_papers(client)
+    pid = papers[0]["id"]
+
+    # 提交 skim（现走 durable 桥接）
+    resp = client.post(f"/pipelines/skim/{pid}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    task_id, job_id = body["task_id"], body["job_id"]
+
+    # 等待完成（tracker 通道执行；durable 状态由桥接同步）
+    _wait_task(client, task_id)
+
+    # GET /jobs：skim 的 Job 应出现在列表且 succeeded
+    resp = client.get("/jobs", params={"kind": "StartSkim"})
+    assert resp.status_code == 200, resp.text
+    jobs = resp.json()["items"]
+    matched = [j for j in jobs if j["id"] == job_id]
+    assert matched and matched[0]["status"] == "succeeded"
+
+    # GET /jobs/{id}：graph 含子 Task
+    resp = client.get(f"/jobs/{job_id}")
+    assert resp.status_code == 200, resp.text
+    graph = resp.json()
+    assert graph["kind"] == "StartSkim"
+    assert len(graph["tasks"]) == 1
+    assert graph["tasks"][0]["capability"] == "skim_paper"
+    assert graph["tasks"][0]["status"] == "succeeded"
+    assert graph["tasks"][0]["external_ref"] == task_id
+
+    # /tasks/{tracker_id}：durability 优先——重启后 tracker 丢失也能查到
+    resp = client.get(f"/tasks/{task_id}")
+    assert resp.status_code == 200, resp.text
+    view = resp.json()
+    assert view["durable"] is True and view["finished"] is True and view["success"] is True
+
+    # /tasks/{id}/result：durability 侧结果
+    resp = client.get(f"/tasks/{task_id}/result")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["one_liner"] == FAKE_SKIM["one_liner"]
+
+    # /tasks/active 合并 durable 在途；tracker 旧语义含刚完成任务（600s TTL）
+    resp = client.get("/tasks/active")
+    assert resp.status_code == 200, resp.text
+    merged = {t["task_id"]: t for t in resp.json()["tasks"]}
+    assert merged[task_id]["status"] == "completed"

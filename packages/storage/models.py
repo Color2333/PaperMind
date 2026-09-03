@@ -1047,6 +1047,8 @@ class DurableTask(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 过渡期桥接：tracker task_id（C3）；C7 后为 Go Core task id
+    external_ref: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

@@ -10,12 +10,13 @@ import logging
 import threading
 import uuid as _uuid
 
+from packages.application.commands.jobs import submit_tracked_compat
+
 logger = logging.getLogger(__name__)
 
 
 def start_daily_ingest() -> dict:
     """提交每日抓取+简报任务（MCP 语义），立即返回 task_id"""
-    from packages.domain.task_tracker import global_tracker
 
     def _run_daily(progress_callback=None):
         from packages.ai.daily_runner import run_daily_brief, run_daily_ingest
@@ -24,12 +25,14 @@ def start_daily_ingest() -> dict:
         brief = run_daily_brief()
         return {"ingest": ingest, "brief": brief}
 
-    task_id = global_tracker.submit(
+    task_id = submit_tracked_compat(
         task_type="mcp_daily",
         title="MCP 触发的每日抓取+简报",
         fn=_run_daily,
         total=2,
         category="mcp",
+        kind="StartDailyIngest",
+        capability="run_daily_ingest",
     )
     return {"task_id": task_id, "status": "started", "message": "用 get_task_status 查进度"}
 
@@ -37,7 +40,6 @@ def start_daily_ingest() -> dict:
 def start_daily_job() -> dict:
     """每日任务（抓取+简报，带阶段进度；jobs 路由语义）"""
     from packages.ai.daily_runner import run_daily_brief, run_daily_ingest
-    from packages.domain.task_tracker import global_tracker
 
     def _fn(progress_callback=None):
         if progress_callback:
@@ -48,14 +50,20 @@ def start_daily_job() -> dict:
         brief = run_daily_brief()
         return {"ingest": ingest, "brief": brief}
 
-    task_id = global_tracker.submit("daily_job", "📅 每日任务执行", _fn, category="report")
+    task_id = submit_tracked_compat(
+        "daily_job",
+        "📅 每日任务执行",
+        _fn,
+        category="report",
+        kind="RunDailyJob",
+        capability="run_daily_job",
+    )
     return {"task_id": task_id, "message": "每日任务已启动", "status": "running"}
 
 
 def start_weekly_graph_maintenance() -> dict:
     """每周图维护（逐主题引用同步 + 增量同步）"""
     from packages.application.queries.graph import _graph_service
-    from packages.domain.task_tracker import global_tracker
     from packages.storage.db import session_scope
     from packages.storage.repositories import TopicRepository
 
@@ -100,7 +108,14 @@ def start_weekly_graph_maintenance() -> dict:
             "incremental": incremental,
         }
 
-    task_id = global_tracker.submit("weekly_maintenance", "🔄 每周图维护", _fn, category="sync")
+    task_id = submit_tracked_compat(
+        "weekly_maintenance",
+        "🔄 每周图维护",
+        _fn,
+        category="sync",
+        kind="RunCitationSync",
+        capability="run_weekly_maintenance",
+    )
     return {"task_id": task_id, "message": "每周图维护已启动", "status": "running"}
 
 

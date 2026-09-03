@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 3 | 进行中 |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 4 | 进行中 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -109,7 +109,11 @@
 - [x] **C2 原子执行 schema**：落库 `jobs`、`tasks`、`task_attempts` 和 artifact/event references；ResearchRun 关联 Job，Job 聚合 Task，Task 保留 capability/schema/handler version、依赖、资源类别、预算与幂等键。
   产出：4 张 ORM 表（UUIDv7；tasks↔artifacts FK 环用 use_alter）+ 3 组枚举（JobStatus 含 succeeded / TaskStatus 8 态 / AttemptStatus）+ alembic `e2f3a4b5c6d7` + SQLite create_all 兜底 + [repositories/durable.py](../../packages/storage/repositories/durable.py)（Job 幂等创建、claim 签发 lease+attempt+fencing、依赖满足检查、fail→重试/dead_letter、Artifact 关联、Job 状态由子 Task 收敛的 `recompute_job_status`）。
   结论：9 个契约测试全绿（幂等/lease 互斥/fencing 拒绝/重试→dead_letter/partially_succeeded 收敛/依赖顺序/artifact/Run↔Job 关联/attempt 记录）；alembic 离线渲染通过。全量 150 passed。
-- [ ] **C3 统一旧状态**：用新 job store 取代内存 `TaskTracker`（10 分钟 TTL、重启即丢）、旧 `batch_jobs` 状态与心跳文件的权威地位；前端三套轮询端点收敛到 Job graph、Task 与 Attempt 查询。
+- [x] **C3 统一旧状态**：用新 job store 取代内存 `TaskTracker`（10 分钟 TTL、重启即丢）、旧 `batch_jobs` 状态与心跳文件的权威地位；前端三套轮询端点收敛到 Job graph、Task 与 Attempt 查询。
+  产出：`tasks.external_ref` 列（migration `f3a4b5c6d7e8`）+ `commands/jobs.py` 的 `submit_durable_job`/`submit_tracked_compat`（durable Job+Task+Attempt 持久化桥接：进度双写/lease 续约/成功失败写回/result 存储）+ 12 个 tracker.submit 站点全部接桥（pipelines×3/graph×3/papers×1/wiki×2/brief×1/topics×1/daily×3 中的 submit 形态）。
+  统一观察面：`GET /jobs`、`GET /jobs/{id}`（Job graph + attempts）、`/tasks/active`（tracker+durable 合并）、`/tasks/{id}` 与 `/tasks/{id}/result` **durability 优先**（重启后 tracker 丢失仍可查询）。
+  结论：durable store 成为任务状态权威记录，tracker 降级为进程内执行通道；api-thread 领取用 `claim_task_by_id`（fn 与 Task 绑定，不做工作窃取）。过程中修掉 3 个迁移引入 bug（create_job status 参数、位置参数顺序、wiki fn_kwargs 冗余透传）。新增 3+1 个测试（桥接成功/失败流、兼容形状、统一端点 e2e）。全量 154 passed + Go 7 passed。
+  遗留：batch_jobs/心跳文件/线程型 daily-report 的权威切换随 C7（Executor）与 C11（渐进迁移）完成。
 - [ ] **C4 第一批原子 Task 清单**：为 Skim、DeepRead、Embedding、Topic Research 和 Daily Brief 标出单一有意义副作用、输入输出、timeout、retry、resource class 与无法自动重试的边界；禁止把普通 helper 机械拆成 Task。
 - [ ] **C5 代码化 Workflow 模板**：实现顺序依赖、条件分支和 per-Paper fan-out；父 Job 支持 succeeded、partially_succeeded、failed、cancelled，并能解释每个子 Task 的贡献。
 - [ ] **C6 Go 调度控制面**：在 Go Core 中实现 Scheduler、Planner、Dispatcher 和 Reconciler；旧 APScheduler 仅在过渡期把到期事件提交为 Go Job，不再进程内直跑研究逻辑。
@@ -211,4 +215,5 @@
 - 2026-09-02（第二十四次）：完成 C1（Python 侧）——batch consumer 移出 API 进程（worker 接管 + poll_once 单步化），根修 DetachedInstance 存量 bug；Go Core 入口切换待 C0。全量 136 passed。
 - 2026-09-02（第二十五次）：完成 C0——Go Core 骨架（core/ module：协议信封 v1 + 六动作 + 能力注册 + 内存队列/lease；7 个 Go 测试）+ Python executor client（5 个契约测试）+ CI go-core job。全量 141 passed。
 - 2026-09-02（第二十六次）：完成 C2——durable execution 四表 schema + durable 仓储（幂等/lease/fencing/收敛）+ 9 个契约测试。全量 150 passed。
+- 2026-09-03：完成 C3——12 个任务入口接 durable 桥接（权威切换到 job store），统一观察面端点（/jobs、/jobs/{id}、/tasks/* durability 优先）。全量 154 passed + Go 7 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。

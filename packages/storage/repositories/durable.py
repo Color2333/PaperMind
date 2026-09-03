@@ -108,6 +108,12 @@ class JobRepository:
         self.session.flush()
         return job
 
+    def update_progress(self, job_id: str, *, current: int, total: int, message: str = "") -> None:
+        """聚合进度（由子 Task 的执行进度写入，展示用；不改状态）"""
+        job = self.get(job_id)
+        job.progress = {"current": current, "total": total, "message": message}
+        self.session.flush()
+
     def recompute_job_status(self, job_id: str) -> Job:
         """Job 状态由子 Task 收敛（设计③ §2：不得由 Executor 手写终态）"""
         job = self.get(job_id)
@@ -167,6 +173,7 @@ class TaskRepository:
         max_attempts: int = 3,
         handler_version: int = 1,
         input_schema_version: int = 1,
+        external_ref: str | None = None,
     ) -> tuple[DurableTask, bool]:
         """向 Job 展开 Task；idempotency_key 命中返回既有 Task（created=False）"""
         if idempotency_key:
@@ -188,6 +195,7 @@ class TaskRepository:
             max_attempts=max_attempts,
             handler_version=handler_version,
             input_schema_version=input_schema_version,
+            external_ref=external_ref,
             status=TaskStatus.queued,
         )
         self.session.add(task)
@@ -208,6 +216,26 @@ class TaskRepository:
                 .order_by(DurableTask.seq, DurableTask.id)
             ).scalars()
         )
+
+    def get_by_external_ref(self, external_ref: str) -> DurableTask | None:
+        """按过渡期引用（tracker task_id / Go task id）解析 Task"""
+        return self.session.execute(
+            select(DurableTask).where(DurableTask.external_ref == external_ref)
+        ).scalar_one_or_none()
+
+    def touch_lease(self, task_id: str, lease_token: str) -> bool:
+        """续约 lease（progress 事件时调用，防长任务租期过期）；返回是否成功"""
+        task = self.get(task_id)
+        if task.lease_token != lease_token:
+            return False
+        task.lease_expires_at = _utcnow() + timedelta(seconds=task.timeout_s or _LEASE_BASE_S)
+        self.session.flush()
+        return True
+
+    def set_external_ref(self, task_id: str, external_ref: str) -> None:
+        task = self.get(task_id)
+        task.external_ref = external_ref
+        self.session.flush()
 
     def claim_task(
         self, *, executor_id: str, capabilities: list[str], resource_class: str | None = None
@@ -266,6 +294,30 @@ class TaskRepository:
             JobRepository(self.session).set_status(task.job_id, JobStatus.running)
             return task
         return None
+
+    def claim_task_by_id(self, *, task_id: str, executor_id: str) -> DurableTask:
+        """领取指定 Task（fn 与 Task 绑定的入口用此语义，不做工作窃取）。
+
+        仅 queued 可领取；签发 lease + attempt + fencing（复用 claim_task 的签发逻辑）。
+        """
+        task = self.get(task_id)
+        if task.status is not TaskStatus.queued:
+            raise ConflictError(f"Task {task_id} 状态 {task.status} 不可领取")
+        task.status = TaskStatus.leased
+        task.attempt_count += 1
+        task.lease_token = secrets.token_hex(16)
+        task.lease_expires_at = _utcnow() + timedelta(seconds=task.timeout_s or _LEASE_BASE_S)
+        attempt = TaskAttempt(
+            task_id=task.id,
+            attempt_no=task.attempt_count,
+            executor_id=executor_id,
+            fencing_token=task.attempt_count,
+            status=TaskAttemptStatus.running,
+        )
+        self.session.add(attempt)
+        self.session.flush()
+        JobRepository(self.session).set_status(task.job_id, JobStatus.running)
+        return task
 
     def _check_lease(self, task: DurableTask, executor_id: str, lease_token: str) -> None:
         """fencing 最简形态：lease 持有者必须匹配（C8 扩展租期过期回收）"""

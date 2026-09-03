@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from packages.application.commands.jobs import submit_tracked_compat
+
 
 def start_topic_wiki(*, keyword: str, limit: int = 120) -> str:
     """提交主题 Wiki 后台生成任务，返回 task_id（MCP 语义：不落库）"""
     from packages.application.commands.graph import get_topic_wiki
-    from packages.domain.task_tracker import global_tracker
 
-    return global_tracker.submit(
+    return submit_tracked_compat(
+        kind="StartWikiGeneration",
+        capability="generate_topic_wiki",
         task_type="topic_wiki",
         title=f"Wiki: {keyword}",
         fn=lambda progress_callback=None: get_topic_wiki(
@@ -21,7 +24,6 @@ def start_topic_wiki_with_save(*, keyword: str, limit: int = 120) -> dict:
     """提交主题 Wiki 任务并在完成后写入 generated_contents（HTTP 语义）"""
     from packages.application.commands.generated import save_generated_content
     from packages.application.commands.graph import get_topic_wiki
-    from packages.domain.task_tracker import global_tracker
 
     def _run(progress_callback=None):
         # task_tracker 传入的 progress_callback 签名为 (msg, cur, tot)；
@@ -44,12 +46,12 @@ def start_topic_wiki_with_save(*, keyword: str, limit: int = 120) -> dict:
             )
         return result
 
-    task_id = global_tracker.submit(
+    task_id = submit_tracked_compat(
+        kind="StartWikiGeneration",
+        capability="generate_topic_wiki",
         task_type="topic_wiki",
         title=f"Wiki: {keyword}",
         fn=_run,
-        keyword=keyword,
-        limit=limit,
         category="generation",
     )
     return {"task_id": task_id, "status": "pending"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from packages.application.commands.jobs import submit_tracked_compat
 from packages.domain.exceptions import NotFoundError
 
 _FREQ_LABELS = {
@@ -58,7 +59,6 @@ def delete_topic(session: Session, topic_id: str) -> dict[str, Any]:
 def start_topic_fetch(topic_id: str) -> dict[str, Any]:
     """手动触发单个订阅抓取（后台执行；C3 后转 durable Job）"""
     from packages.ai.daily_runner import run_topic_ingest
-    from packages.domain.task_tracker import global_tracker
     from packages.storage.db import session_scope
     from packages.storage.models import TopicSubscription
 
@@ -79,7 +79,9 @@ def start_topic_fetch(topic_id: str) -> dict[str, Any]:
             progress_callback("处理完成", 100, 100)
         return result
 
-    task_id = global_tracker.submit(
+    task_id = submit_tracked_compat(
+        kind="StartTopicResearch",
+        capability="fetch_topic",
         task_type="fetch",
         title=f"抓取：{topic_name[:30]}",
         fn=_fetch_fn,
