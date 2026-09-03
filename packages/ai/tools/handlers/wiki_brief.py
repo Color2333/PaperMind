@@ -16,7 +16,7 @@ def _generate_wiki(type: str, keyword_or_id: str):
     """Wiki 生成 - generator，yield 进度和最终结果"""
     import time
 
-    from packages.domain.task_tracker import global_tracker
+    from packages.application.queries.tasks import get_task_info, get_task_result
 
     if type == "topic":
         with session_scope() as session:
@@ -38,11 +38,11 @@ def _generate_wiki(type: str, keyword_or_id: str):
             total=10,
         )
 
-        # 轮询进度
+        # 轮询进度（durable store）
         last_msg = ""
         while True:
             time.sleep(3)
-            status = global_tracker.get_task(task_id)
+            status = get_task_info(task_id)
             if not status:
                 break
             if status.get("finished"):
@@ -54,13 +54,13 @@ def _generate_wiki(type: str, keyword_or_id: str):
                     return
                 break
             msg = status.get("message", "")
-            pct = status.get("progress_pct", 0)
+            pct = float(status.get("progress") or 0) * 100
             step = max(1, min(9, int(pct / 10)))
             if msg and msg != last_msg:
                 yield ToolProgress(message=msg, current=step, total=10)
                 last_msg = msg
 
-        result = global_tracker.get_result(task_id) or {}
+        result = get_task_result(task_id) or {}
         result["title"] = f"Wiki: {keyword_or_id}"
         yield ToolProgress(message="Wiki 生成完毕", current=10, total=10)
     elif type == "paper":

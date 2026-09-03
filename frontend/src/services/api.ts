@@ -454,6 +454,10 @@ export const translateApi = {
 export const pipelineApi = {
   // 后台任务化：返回 task_id，前端轮询 tasksApi.getStatus + getResult 取结果
   skim: (paperId: string) => post<{ task_id: string; status: string }>(`/pipelines/skim/${paperId}`),
+  skimBatch: (paperIds: string[]) =>
+    post<{ task_id: string; job_id: string; status: string }>("/pipelines/skim-batch", {
+      paper_ids: paperIds,
+    }),
   deep: (paperId: string) => post<{ task_id: string; status: string }>(`/pipelines/deep/${paperId}`),
   embed: (paperId: string) =>
     post<{ task_id: string; status: string }>(`/pipelines/embed/${paperId}`),
@@ -766,17 +770,7 @@ export const tasksApi = {
     get<{ tasks: TaskStatus[] }>(
       `/tasks?${taskType ? `task_type=${taskType}&` : ""}limit=${limit}`
     ),
-  track: (body: {
-    action: string;
-    task_id: string;
-    task_type?: string;
-    title?: string;
-    total?: number;
-    current?: number;
-    message?: string;
-    success?: boolean;
-    error?: string;
-  }) => post<{ ok: boolean }>("/tasks/track", body),
+
 };
 
 /* ========== 认证 ========== */

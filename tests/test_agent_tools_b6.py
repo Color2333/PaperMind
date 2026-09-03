@@ -100,8 +100,10 @@ def test_agent_batch_job_roundtrip(agent_env):
 
     status = _get_batch_job_status(job_id)
     assert status.success is True
-    assert status.data["status"] == "pending"
+    # C11 退出口：状态/进度投影自 durable ProcessUnreadBatch（queued + 1 task）
+    assert status.data["status"] in ("queued", "running", "succeeded")
     assert status.data["total"] == 1
+    assert "durable_job_id" in status.data
 
     # 空列表拒绝
     empty = _create_batch_job("skim", [])

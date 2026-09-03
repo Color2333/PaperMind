@@ -1,133 +1,152 @@
-"""C3：统一旧状态——durable Job 桥接与统一查询端点
+"""C3：统一旧状态（退出口语义）——submit_job 只入队、Executor 执行、观察面 durable-only
 
-覆盖：submit_durable_job/submit_tracked_compat 的 durable 持久化语义
-（Job/Task/Attempt 落库、成功/失败收敛、result 存储）、/tasks/{id} durability
-优先解析、/tasks/active 合并、GET /jobs 与 /jobs/{id} graph。
+覆盖：submit_job（queued 不执行）、InlineExecutor 执行与 result 存储、失败
+dead_letter 收敛、/tasks/{id} durable 解析（id 直查 + external_ref 历史）、
+/tasks/active durable-only、GET /jobs 与 /jobs/{id} graph。
 """
 
 from __future__ import annotations
 
-import threading
-import time
-
 from sqlalchemy import select
 
-from packages.application.commands.jobs import submit_durable_job, submit_tracked_compat
+from packages.application.commands.jobs import submit_job
 from packages.domain.enums import JobStatus, TaskStatus
 from packages.storage.db import session_scope
-from packages.storage.repositories import JobRepository
+from packages.storage.models import DurableTask, TaskAttempt
+from packages.storage.repositories import JobRepository, TaskRepository
+from tests.helpers.inline_executor import InlineExecutor
 
 
-def test_submit_durable_job_success_flow(isolated_db):
-    calls = []
-
-    def _fn(progress_callback=None):
-        calls.append(1)
-        if progress_callback:
-            progress_callback("处理中...", 50, 100)
-        return {"answer": "ok"}
-
-    result = submit_durable_job(
+def test_submit_job_only_queues(isolated_db):
+    """退出口核心契约：submit_job 不 claim 不执行——任务停在 queued"""
+    result = submit_job(
         kind="StartSkim",
         capability="skim_paper",
         title="测试任务",
-        fn=_fn,
-        payload={"paper_id": "p1"},
+        input_ref={"paper_id": "p1"},
     )
-    # 等待 tracker 后台线程完成
-    deadline = time.monotonic() + 30
-    job_status = job_progress = None
-    while time.monotonic() < deadline:
-        with session_scope() as session:
-            job = JobRepository(session).get(result["job_id"])
-            job_status = job.status
-            job_progress = dict(job.progress or {})
-            if job_status in (JobStatus.succeeded, JobStatus.failed):
-                break
-        threading.Event().wait(0.05)
-
-    assert calls, "fn 应被 tracker 通道执行"
-    assert job_status is JobStatus.succeeded
-    # 进度桥接的 current/total 是写入期快照——job 收敛后可能被覆盖，仅断言字段存在
-    assert isinstance(job_progress, dict)
+    assert result["status"] == "queued"
+    assert result["created"] is True
 
     with session_scope() as session:
-        from packages.storage.models import DurableTask, TaskAttempt
+        task = session.get(DurableTask, result["task_id"])
+        assert task.status is TaskStatus.queued
+        assert task.lease_token is None  # 未领取
+        job = JobRepository(session).get(result["job_id"])
+        assert job.status is JobStatus.queued
 
-        task = session.get(DurableTask, result["durable_task_id"])
+
+def test_inline_executor_completes_and_stores_result(isolated_db):
+    """InlineExecutor（测试执行器）执行 → succeeded + result_ref 存 Task"""
+    result = submit_job(
+        kind="TestJob",
+        capability="daily_brief_publish",
+        title="测试执行",
+        input_ref={"recipient": None},
+    )
+    processed = InlineExecutor(capabilities=["daily_brief_publish"]).run_until_idle()
+    assert processed == 1
+
+    with session_scope() as session:
+        task = session.get(DurableTask, result["task_id"])
         assert task.status is TaskStatus.succeeded
-        assert task.input_ref["result_ref"] == {"answer": "ok"}
-        assert task.external_ref == result["task_id"]
+        assert task.lease_token is None
         attempt = (
             session.execute(select(TaskAttempt).where(TaskAttempt.task_id == task.id))
             .scalars()
             .one()
         )
+        assert attempt.executor_id == "inline-exec"
         assert attempt.status.value == "succeeded"
+        job = JobRepository(session).get(result["job_id"])
+        assert job.status is JobStatus.succeeded
 
 
-def test_submit_durable_job_failure_flow(isolated_db):
-    def _boom(progress_callback=None):
-        raise RuntimeError("任务炸了")
-
-    result = submit_durable_job(
-        kind="StartSkim",
-        capability="skim_paper",
+def test_handler_failure_converges_to_dead_letter(isolated_db):
+    """handler 抛异常 → fail（max_attempts=1 → dead_letter）+ Job failed"""
+    result = submit_job(
+        kind="TestJob",
+        capability="translate_bilingual_pdf",  # 论文不存在 → 快速失败
         title="失败任务",
-        fn=_boom,
+        input_ref={"paper_id": "nonexistent", "target_lang": "zh", "mode": "fast"},
         max_attempts=1,
     )
-    deadline = time.monotonic() + 30
-    status = None
-    while time.monotonic() < deadline:
-        with session_scope() as session:
-            status = JobRepository(session).get(result["job_id"]).status
-            if status in (JobStatus.failed, JobStatus.succeeded):
-                break
-        threading.Event().wait(0.05)
+    InlineExecutor(capabilities=["translate_bilingual_pdf"]).run_until_idle()
 
-    assert status is JobStatus.failed
     with session_scope() as session:
-        from packages.storage.models import DurableTask
+        task = session.get(DurableTask, result["task_id"])
+        assert task.status is TaskStatus.dead_letter
+        assert task.last_error  # 错误信息被记录
+        job = JobRepository(session).get(result["job_id"])
+        assert job.status is JobStatus.failed
 
-        task = session.get(DurableTask, result["durable_task_id"])
-        assert task.status is TaskStatus.dead_letter  # max_attempts=1 → 不重试
-        assert "任务炸了" in (task.last_error or "")
 
-
-def test_submit_tracked_compat_returns_tracker_id(isolated_db):
-    def _fn(progress_callback=None):
-        return {"value": 42}
-
-    tracker_task_id = submit_tracked_compat(
-        "mcp_daily",
-        "兼容形状任务",
-        _fn,
-        capability="run_daily_ingest",
-        kind="StartDailyIngest",
-        total=2,
-        category="mcp",
+def test_observation_surface_durable_only(isolated_db):
+    """观察面只读 durable：active / unified 视图 / result"""
+    from packages.application.queries.tasks import (
+        get_task_info,
+        get_task_result,
+        list_active_tasks,
     )
-    assert isinstance(tracker_task_id, str) and tracker_task_id.startswith("mcp_daily_")
 
-    deadline = time.monotonic() + 30
-    job_status = None
-    while time.monotonic() < deadline:
-        with session_scope() as session:
-            from packages.storage.repositories import TaskRepository
+    result = submit_job(
+        kind="TestJob",
+        capability="daily_brief_publish",
+        title="观察面测试",
+        input_ref={"recipient": None},
+    )
+    task_id = result["task_id"]
 
-            task = TaskRepository(session).get_by_external_ref(tracker_task_id)
-            if task is not None:
-                job = JobRepository(session).get(task.job_id)
-                job_status = job.status
-                if job_status in (JobStatus.succeeded, JobStatus.failed):
-                    break
-        threading.Event().wait(0.05)
+    # queued → 在途可见
+    active = list_active_tasks()
+    assert any(t["task_id"] == task_id for t in active)
 
-    assert job_status is JobStatus.succeeded
-    # external_ref 已回填 tracker id（durability 优先解析的关键）
+    InlineExecutor(capabilities=["daily_brief_publish"]).run_until_idle()
+
+    # 完成 → unified 视图 + 结果
+    info = get_task_info(task_id)
+    assert info is not None
+    assert info["finished"] is True
+    assert info["success"] is True
+    assert info["task_id"] == task_id  # task_id 即 durable id（不再有 tracker 别名）
+    assert isinstance(get_task_result(task_id), dict)
+
+    # 在途列表清空
+    assert not any(t["task_id"] == task_id for t in list_active_tasks())
+
+
+def test_unified_view_resolves_legacy_external_ref(isolated_db):
+    """历史行经 external_ref 仍可解析（迁移兼容；新行 task_id 即 durable id）"""
+    result = submit_job(
+        kind="TestJob",
+        capability="daily_brief_publish",
+        title="外部引用测试",
+        input_ref={"recipient": None},
+    )
     with session_scope() as session:
-        from packages.storage.repositories import TaskRepository
+        TaskRepository(session).set_external_ref(result["task_id"], "legacy_tracker_123")
 
-        task = TaskRepository(session).get_by_external_ref(tracker_task_id)
-        assert task is not None
+    from packages.application.queries.tasks import get_task_info
+
+    assert get_task_info("legacy_tracker_123") is not None
+    assert get_task_info(result["task_id"]) is not None  # id 直查优先
+
+
+def test_job_graph_endpoint_shape(isolated_db):
+    """/jobs/{id} graph：Job + tasks + attempts 三层可观测"""
+    from packages.application.queries.jobs import get_job_attempts, get_job_graph
+
+    result = submit_job(
+        kind="TestJob",
+        capability="daily_brief_publish",
+        title="graph 测试",
+        input_ref={"recipient": None},
+    )
+    InlineExecutor(capabilities=["daily_brief_publish"]).run_until_idle()
+
+    with session_scope() as session:
+        graph = get_job_graph(session, result["job_id"])
+        attempts = get_job_attempts(session, result["job_id"])
+    assert graph["status"] == "succeeded"
+    assert graph["tasks"][0]["status"] == "succeeded"
+    assert attempts and attempts[0]["executor_id"] == "inline-exec"

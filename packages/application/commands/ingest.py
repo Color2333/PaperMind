@@ -11,7 +11,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
 from typing import TYPE_CHECKING
-from uuid import UUID, uuid4
+from uuid import UUID
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -168,7 +168,6 @@ def import_selected_papers(
 
     from packages.ai.pipelines import PaperPipelines
     from packages.domain.enums import ActionType
-    from packages.domain.task_tracker import global_tracker
     from packages.integrations.arxiv_client import ArxivClient
     from packages.storage.db import session_scope
     from packages.storage.repositories import (
@@ -180,7 +179,6 @@ def import_selected_papers(
 
     pipelines = PaperPipelines()
     topic_name = query.strip()
-    task_id = f"ingest_{uuid4().hex[:8]}"
     selected_set = set(arxiv_ids)
 
     # 查找或创建 Topic
@@ -200,7 +198,6 @@ def import_selected_papers(
     arxiv_client = ArxivClient()
     inserted_ids: list[str] = []
 
-    global_tracker.start(task_id, "ingest", f"入库论文: {topic_name[:30]}", total=len(selected_set))
     _report(f"正在下载 {len(selected_set)} 篇选中论文...", 0, len(selected_set))
 
     # 分批搜索获取论文元数据；缺失的按 ID 批量补拉（fetch_by_ids 走 id_list 参数）
@@ -249,7 +246,6 @@ def import_selected_papers(
                         }
                     )
                 msg = f"入库 {idx}/{len(selected_papers)}: {(paper.title or '')[:40]}"
-                global_tracker.update(task_id, current=idx, message=msg)
                 _report(msg, idx, len(selected_papers))
 
             if inserted_ids:
@@ -266,7 +262,6 @@ def import_selected_papers(
             raise
 
     if not inserted_ids:
-        global_tracker.finish(task_id, success=False, error="未能入库任何论文")
         # REVIEW P1-2：完全失败必须有稳定的失败语义（协议层据此返回 success=False）
         return {
             "status": "failed",
@@ -288,7 +283,6 @@ def import_selected_papers(
 
     total = len(inserted_ids)
     msg = f"入库 {total} 篇，开始向量化和粗读..."
-    global_tracker.update(task_id, current=0, total=total, message=msg)
     _report(msg, 0, total)
 
     # 向量化 + 粗读（论文间 3 并发；每篇内 embed ∥ skim 双并行 → 最多 6 并发）
@@ -335,10 +329,7 @@ def import_selected_papers(
             except Exception as exc:
                 logger.warning("paper %s failed: %s", pid_str[:8], exc)
             msg = f"完成 {done}/{total}: {title}"
-            global_tracker.update(task_id, current=done, message=msg)
             _report(msg, done, total)
-
-    global_tracker.finish(task_id, success=True)
 
     return {
         "status": "partial" if failed_papers else "succeeded",

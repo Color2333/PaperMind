@@ -254,6 +254,25 @@ class TaskRepository:
         self.session.flush()
         return True
 
+    def report_progress(
+        self, *, task_id: str, lease_token: str, current: int, total: int, message: str = ""
+    ) -> bool:
+        """Executor 进度上报（C3 退出门：经协议而非直写）：聚合进度 + 续约 lease。
+
+        进度是展示数据，fencing 只要求 lease 持有者合法（token 匹配 + 未过期）。
+        """
+        task = self.get(task_id)
+        if task.lease_token != lease_token:
+            return False
+        if task.lease_expires_at and task.lease_expires_at.replace(tzinfo=UTC) < _utcnow():
+            return False
+        JobRepository(self.session).update_progress(
+            task.job_id, current=current, total=total, message=message
+        )
+        task.lease_expires_at = _utcnow() + timedelta(seconds=task.timeout_s or _LEASE_BASE_S)
+        self.session.flush()
+        return True
+
     def set_external_ref(self, task_id: str, external_ref: str) -> None:
         task = self.get(task_id)
         task.external_ref = external_ref

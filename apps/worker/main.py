@@ -1,31 +1,29 @@
 """
-PaperMind Worker - 智能定时任务调度（UTC 时间 + 闲时处理）
-@author Color2333
-@author Color2333
+PaperMind Worker - 定时调度 + Executor 宿主（C3/C6/C11 退出口）
+
+职责边界（设计③「Scheduler 不直接执行业务」）：
+- APScheduler 只按时间提交 durable Job（submit_job），不运行研究逻辑；
+- 内置 Executor 宿主（ExecutorRunner）经 Go Core 领取并执行 Task——
+  与独立 executor 进程同一执行路径（CORE_ADDR 未配置时仅调度不执行）；
+- batch_jobs 消费者已退役（C11）：批处理入口全部走 durable
+  ProcessUnreadBatch / batch_process_unread 任务；
+- 心跳语义 = 调度存活 + 提交成功；业务结果由 durable Job/Task 状态承载。
 """
 
 from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import signal
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from packages.agent_core import batch_consumer
-from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
-from packages.ai.daily_runner import (
-    run_daily_brief,
-    run_topic_ingest,
-    run_weekly_graph_maintenance,
-)
 from packages.ai.idle_processor import (
-    set_dispatching,
     start_idle_processor,
     stop_idle_processor,
 )
@@ -102,10 +100,26 @@ def _retry_with_backoff(fn, *args, max_retries: int = 3, base_delay: float = 5.0
 
 settings = get_settings()
 stop_event = Event()
-_RETRY_MAX = settings.worker_retry_max
-_RETRY_DELAY = settings.worker_retry_base_delay
 
-cs_orchestrator = CSFeedOrchestrator()
+
+def _submit_durable(*, kind: str, capability: str, title: str, input_ref=None) -> str | None:
+    """调度触发点：提交 durable Job（不执行）；失败写心跳错误供 status 页呈现"""
+    from packages.application.commands.jobs import submit_job
+
+    try:
+        submitted = submit_job(
+            kind=kind,
+            capability=capability,
+            title=title,
+            input_ref=input_ref or {},
+            created_by="worker",
+        )
+        logger.info("已提交 %s（task=%s）", kind, submitted["task_id"][:8])
+        return submitted["task_id"]
+    except Exception as exc:
+        logger.exception("提交 %s 失败", kind)
+        _write_heartbeat(error=f"submit {kind} failed: {exc}")
+        return None
 
 
 def _should_run(freq: str, time_utc: int, hour: int, weekday: int) -> bool:
@@ -122,112 +136,94 @@ def _should_run(freq: str, time_utc: int, hour: int, weekday: int) -> bool:
 
 
 def topic_dispatch_job() -> None:
-    """每小时执行：检查哪些主题需要在当前小时触发"""
-    now = datetime.now(UTC)
-    hour = now.hour
-    weekday = now.weekday()  # 0=Monday
+    """每小时：按订阅计划提交主题抓取任务（业务在 Executor 侧执行）"""
 
-    with session_scope() as session:
-        topics = TopicRepository(session).list_topics(enabled_only=True)
-        candidates = []
-        for t in topics:
-            freq = getattr(t, "schedule_frequency", "daily")
-            time_utc = getattr(t, "schedule_time_utc", 21)
-            if _should_run(freq, time_utc, hour, weekday):
-                candidates.append({"id": t.id, "name": t.name})
-
-    if not candidates:
-        logger.info(
-            "topic_dispatch: UTC %02d, weekday %d — no topics scheduled",
-            hour,
-            weekday,
-        )
-        return
-
-    logger.info(
-        "topic_dispatch: triggering %d topic(s): %s",
-        len(candidates),
-        ", ".join(c["name"] for c in candidates),
+    # 计划判断逻辑（哪些主题本小时到期）作为 handler 一部分执行；
+    # 调度器只按小时提交 topic_dispatch 任务，由 handler 计算到期主题并逐个抓取
+    _submit_durable(
+        kind="TopicDispatch",
+        capability="topic_dispatch",
+        title="⏰ 主题调度抓取",
     )
-    # High 2d：置调度标志，idle_processor 检测到即视为繁忙，避免抢同一批论文重复处理
-    # High 2e：全部失败不写 heartbeat，让心跳自然过期 → healthcheck 反映故障
-    set_dispatching(True)
-    failures: list[str] = []
-    try:
-        for c in candidates:
-            try:
-                result = _retry_with_backoff(
-                    run_topic_ingest, c["id"], max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY
-                )
-                logger.info(
-                    "topic %s done: inserted=%s, processed=%s",
-                    c["name"],
-                    result.get("inserted", 0) if result else 0,
-                    result.get("processed", 0) if result else 0,
-                )
-                _update_topic_run_status(c["id"], error=None)
-            except Exception as e:
-                logger.exception("topic_dispatch failed for %s", c["name"])
-                _update_topic_run_status(c["id"], error=str(e))
-                failures.append(f"{c['name']}: {e}")
-    finally:
-        set_dispatching(False)
-    if not failures:
-        _write_heartbeat()
-    else:
-        # 全部失败时不写健康心跳，仅记录致命错误到日志（healthcheck 靠时效捕获）
-        logger.error("topic_dispatch 全部失败，跳过心跳写入：%s", failures)
+    _write_heartbeat()
 
 
 def brief_job() -> None:
-    """
-    每日简报任务 - UTC 时间优化版
-
-    时间表（UTC）：
-    - 02:00 → 主题抓取论文
-    - 02:00-04:00 → 并行处理论文（粗读 + 嵌入 + 精选精读）
-    - 04:00 → 生成简报（包含所有处理完的论文）
-    - 04:30 → 发送邮件（北京时间 12:30，午饭时间）
-    """
-    logger.info("📮 开始生成每日简报...")
-    try:
-        result = _retry_with_backoff(
-            run_daily_brief, max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY
-        )
-        logger.info(
-            "✅ 每日简报生成完成：saved=%s, email_sent=%s",
-            result.get("saved_path", "N/A") if result else "N/A",
-            result.get("email_sent", False) if result else False,
-        )
-    except Exception as e:
-        # High 2e：失败不写心跳，让健康检查靠时效捕获故障
-        logger.exception("Daily brief job failed after retries: %s", e)
-        return
+    """每日简报：提交 durable 任务（每日 cron；时间来自 DailyReportConfig）"""
+    _submit_durable(
+        kind="RunDailyBrief",
+        capability="daily_brief_publish",
+        title="📮 每日简报生成",
+    )
     _write_heartbeat()
 
 
 def weekly_graph_job() -> None:
-    logger.info("Starting weekly graph job")
-    try:
-        _retry_with_backoff(
-            run_weekly_graph_maintenance, max_retries=_RETRY_MAX, base_delay=_RETRY_DELAY
-        )
-    except Exception as e:
-        # High 2e：失败不写心跳
-        logger.exception("Weekly graph job failed after retries: %s", e)
-        return
+    """每周图谱维护：提交 durable 任务"""
+    _submit_durable(
+        kind="RunWeeklyGraph",
+        capability="weekly_graph_maintenance",
+        title="🔄 每周图谱维护",
+    )
     _write_heartbeat()
 
 
 def cs_feed_dispatch_job():
-    """每小时同步分类 + 执行订阅抓取（High 2e：失败不写心跳）"""
-    try:
-        cs_orchestrator.sync_categories()
-        cs_orchestrator.run()
-    except Exception as e:
-        logger.exception("cs_feed_dispatch failed: %s", e)
-        return
+    """每小时 CS 分类同步 + 订阅抓取：提交 durable 任务"""
+    _submit_durable(
+        kind="CSFeedDispatch",
+        capability="cs_feed_dispatch",
+        title="📚 CS 分类订阅调度",
+    )
     _write_heartbeat()
+
+
+# ---------- Executor 宿主（C7：与独立 executor 进程同一执行路径） ----------
+
+_executor_runner = None
+_executor_thread = None
+
+
+def _start_executor_host(core_addr: str) -> None:
+    """在 worker 进程内启动 ExecutorRunner（经 Go Core 领取执行）"""
+    global _executor_runner, _executor_thread
+
+    from packages.application.commands.task_registry import TASK_CAPABILITIES
+    from packages.core_client.client import CoreClient
+    from packages.executor_runtime.runner import (
+        ExecutorConfig,
+        ExecutorRunner,
+        handlers_from_registry,
+    )
+
+    capabilities = [name for name, spec in TASK_CAPABILITIES.items() if not spec.manual_recovery]
+    handlers = handlers_from_registry(capabilities)
+    client = CoreClient(
+        f"http://{core_addr}",
+        token=os.environ.get("CORE_TOKEN", ""),
+    )
+    _executor_runner = ExecutorRunner(
+        client=client,
+        config=ExecutorConfig(
+            executor_id=os.environ.get("WORKER_EXECUTOR_ID", f"worker-{os.getpid()}"),
+            capabilities=capabilities,
+            poll_interval_s=1.0,
+            heartbeat_interval_s=15.0,
+        ),
+        handlers=handlers,
+    )
+    _executor_thread = _executor_runner.run_in_thread()
+    logger.info("⚙️ Executor 宿主已启动：%d 项能力 → %s", len(capabilities), core_addr)
+
+
+def _stop_executor_host() -> None:
+    global _executor_runner, _executor_thread
+    if _executor_runner is None:
+        return
+    _executor_runner.drain()
+    if _executor_thread is not None:
+        _executor_thread.join(timeout=30)
+    logger.info("Executor 宿主已停止")
 
 
 def run_worker() -> None:
@@ -322,7 +318,7 @@ def run_worker() -> None:
         logger.info("收到终止信号，正在关闭...")
         stop_event.set()
         stop_idle_processor()  # 停止闲时处理器
-        batch_consumer.stop()  # 停止 batch_jobs 消费（Stage C1：消费职责归 worker）
+        _stop_executor_host()
         scheduler.shutdown(wait=True)
         logger.info("Worker 已关闭")
 
@@ -332,14 +328,20 @@ def run_worker() -> None:
     # 写入初始心跳
     _write_heartbeat()
 
-    # 启动闲时处理器
+    # 启动闲时处理器（空闲时提交 durable 批处理任务——不直接执行）
     logger.info("🤖 启动闲时自动处理器...")
     start_idle_processor()
 
-    # Stage C1：batch_jobs 队列消费移到 worker（此前由 API 进程 lifespan 内线程消费，
-    # 进程职责交错——API 重启会中断消费且请求入口承担任务执行）
-    logger.info("📦 启动 batch_jobs 消费者（skim/deep_read/embed）...")
-    batch_consumer.start()
+    # C11 退出口：batch_jobs 消费者已删除——批处理入口全部走 durable 任务，
+    # 由下方 Executor 宿主（或独立 executor 进程）执行。
+    # C7：worker 兼 Executor 宿主——与独立 executor 进程同一执行路径。
+    core_addr = os.environ.get("CORE_ADDR", "")
+    if core_addr:
+        _start_executor_host(core_addr)
+    else:
+        logger.warning(
+            "CORE_ADDR 未配置——worker 仅调度提交，不执行任务（执行由独立 executor 进程承担）"
+        )
 
     # 启动调度器
     logger.info("🚀 Worker 启动完成 - UTC 智能调度 + 闲时处理")

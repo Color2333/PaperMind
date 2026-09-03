@@ -451,18 +451,50 @@ class TestIdleCompensationTrigger:
     """
 
     def test_process_batch_returns_zero_when_no_unread(self, db_session, monkeypatch):
-        """无 unread 论文时 _process_batch 返回 0（主路径提前返回）"""
+        """无 unread 论文时 _submit_batch 返回 0（主路径提前返回；不提交任务）"""
         from packages.ai.idle_processor import IdleProcessor
+        from packages.storage.db import session_scope
 
         ip = IdleProcessor()
-        # 无论文时 _get_unread_papers 返回空 → _process_batch 直接 return 0
+        # 无论文时 _get_unread_papers 返回空 → _submit_batch 直接 return 0
         monkeypatch.setattr(ip, "_get_unread_papers", lambda limit=10: [])
-        # 不应触发补偿（补偿已移出 _process_batch）
+        # 不应触发补偿（补偿已移出 _run_loop）
         called = []
         monkeypatch.setattr(ip, "_compensate_stuck_skimmed", lambda: called.append(1) or 0)
-        result = ip._process_batch()
+        result = ip._submit_batch()
         assert result == 0
-        assert called == [], "_process_batch 不应再调用补偿（已移到 _run_loop）"
+        assert called == [], "_submit_batch 不应再调用补偿（已移到 _run_loop）"
+        # 且未产生任何 durable Job
+        from sqlalchemy import select
+
+        from packages.storage.models import DurableTask
+
+        with session_scope() as session:
+            assert session.execute(select(DurableTask)).scalars().all() == []
+
+    def test_submit_batch_submits_durable_job_when_unread(self, db_session, monkeypatch):
+        """有 unread 论文 → 提交 batch_process_unread durable 任务（不直接执行）"""
+        from sqlalchemy import select
+
+        from packages.ai.idle_processor import IdleProcessor
+        from packages.domain.enums import TaskStatus
+        from packages.storage.db import session_scope
+        from packages.storage.models import DurableTask
+
+        ip = IdleProcessor()
+        monkeypatch.setattr(ip, "_get_unread_papers", lambda limit=10: [("p1", "t1")])
+        result = ip._submit_batch()
+        assert result == 1
+        # 任务应为 queued（等待 Executor），而非进程内已执行
+        with session_scope() as session:
+            task = (
+                session.execute(
+                    select(DurableTask).where(DurableTask.capability == "batch_process_unread")
+                )
+                .scalars()
+                .one()
+            )
+            assert task.status is TaskStatus.queued
 
     def test_compensate_runs_independently_of_unread(self, db_session, monkeypatch):
         """补偿独立触发：无 unread 但有 stuck skimmed 时仍补偿精读"""

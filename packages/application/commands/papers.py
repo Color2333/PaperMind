@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from packages.application.commands.jobs import submit_tracked_compat
 from packages.domain.exceptions import NotFoundError, ValidationError
 
 if TYPE_CHECKING:
@@ -62,7 +61,9 @@ def download_source(paper_id: UUID | str) -> dict[str, Any]:
 
 
 def start_figure_analysis(paper_id: UUID | str, *, max_figures: int = 10) -> dict[str, Any]:
-    """提交图表分析后台任务（precheck + tracker 提交；C3 后转 durable Job）"""
+    """提交图表分析后台任务（durable Job，Executor 执行）"""
+    from packages.application.commands.jobs import submit_job
+    from packages.application.commands.task_registry import get_spec
     from packages.storage.db import session_scope
     from packages.storage.repositories import PaperRepository
 
@@ -74,46 +75,20 @@ def start_figure_analysis(paper_id: UUID | str, *, max_figures: int = 10) -> dic
             raise NotFoundError(str(exc)) from exc
         if not paper.pdf_path:
             raise ValidationError("论文没有 PDF 文件")
-        pdf_path = paper.pdf_path
         paper_title = paper.title[:50]
         pid = paper.id
 
-    def _analyze_fn(progress_callback=None):
-        from packages.ai.figure_service import FigureService
-
-        if progress_callback:
-            progress_callback("正在提取图表...", 10, 100)
-        results = FigureService().analyze_paper_figures(pid, pdf_path, max_figures)
-
-        total_figures = len(results)
-        if progress_callback and total_figures > 0:
-            progress_callback(f"正在生成解读 ({total_figures} 个图表)...", 50, 100)
-
-        items = FigureService.get_paper_analyses(pid)
-        for i, item in enumerate(items):
-            if item.get("has_image"):
-                item["image_url"] = f"/papers/{pid}/figures/{item['id']}/image"
-            else:
-                item["image_url"] = None
-            if progress_callback:
-                progress_callback(
-                    f"解读中 ({i + 1}/{total_figures})...",
-                    50 + int((i + 1) / total_figures * 45),
-                    100,
-                )
-
-        if progress_callback:
-            progress_callback("图表分析完成", 95, 100)
-        return {"paper_id": str(pid), "count": len(items), "items": items}
-
-    task_id = submit_tracked_compat(
+    spec = get_spec("analyze_figures")
+    submitted = submit_job(
         kind="StartFigureAnalysis",
         capability="analyze_figures",
-        task_type="figure_analysis",
         title=f"📊 图表分析：{paper_title}",
-        fn=_analyze_fn,
-        total=max_figures,
+        input_ref={"paper_id": str(pid), "max_figures": max_figures},
+        resource_class=spec.resource_class,
+        timeout_s=spec.timeout_s,
+        max_attempts=spec.max_attempts,
     )
+    task_id = submitted["task_id"]
     return {
         "task_id": task_id,
         "status": "started",

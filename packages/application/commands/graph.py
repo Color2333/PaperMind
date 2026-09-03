@@ -9,8 +9,6 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from packages.application.commands.jobs import submit_tracked_compat
-
 
 @lru_cache(maxsize=1)
 def _graph_service():
@@ -22,33 +20,30 @@ def _graph_service():
 def start_incremental_citation_sync(
     *, paper_limit: int = 40, edge_limit_per_paper: int = 6
 ) -> dict[str, Any]:
-    from packages.application.queries.graph import _graph_service
+    from packages.application.commands.jobs import submit_job
+    from packages.application.commands.task_registry import get_spec
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步增量引用...", 20, 100)
-        result = _graph_service().sync_incremental(
-            paper_limit=paper_limit, edge_limit_per_paper=edge_limit_per_paper
-        )
-        if progress_callback:
-            progress_callback("增量引用同步完成", 90, 100)
-        return result
-
-    task_id = submit_tracked_compat(
-        "citation_sync",
-        "📊 增量引用同步",
-        _fn,
-        category="sync",
+    spec = get_spec("sync_citations_incremental")
+    submitted = submit_job(
         kind="StartCitationSync",
         capability="sync_citations_incremental",
+        title="📊 增量引用同步",
+        input_ref={"paper_limit": paper_limit, "edge_limit_per_paper": edge_limit_per_paper},
+        resource_class=spec.resource_class,
+        timeout_s=spec.timeout_s,
+        max_attempts=spec.max_attempts,
     )
-    return {"task_id": task_id, "message": "增量引用同步已启动", "status": "running"}
+    return {
+        "task_id": submitted["task_id"],
+        "job_id": submitted["job_id"],
+        "message": "增量引用同步已启动",
+        "status": "running",
+    }
 
 
 def start_topic_citation_sync(
     *, topic_id: str, paper_limit: int = 30, edge_limit_per_paper: int = 6
 ) -> dict[str, Any]:
-    from packages.application.queries.graph import _graph_service
     from packages.storage.db import session_scope
     from packages.storage.repositories import TopicRepository
 
@@ -61,45 +56,61 @@ def start_topic_citation_sync(
     except Exception:
         pass
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步主题引用...", 20, 100)
-        result = _graph_service().sync_citations_for_topic(
-            topic_id=topic_id, paper_limit=paper_limit, edge_limit_per_paper=edge_limit_per_paper
-        )
-        if progress_callback:
-            progress_callback("主题引用同步完成", 90, 100)
-        return result
+    from packages.application.commands.jobs import submit_job
+    from packages.application.commands.task_registry import get_spec
 
-    task_id = submit_tracked_compat(
-        "citation_sync",
-        f"📊 主题引用同步：{topic_name}",
-        _fn,
-        category="sync",
+    spec = get_spec("sync_citations_topic")
+    submitted = submit_job(
         kind="StartCitationSync",
         capability="sync_citations_topic",
+        title=f"📊 主题引用同步：{topic_name}",
+        input_ref={
+            "topic_id": topic_id,
+            "paper_limit": paper_limit,
+            "edge_limit_per_paper": edge_limit_per_paper,
+        },
+        resource_class=spec.resource_class,
+        timeout_s=spec.timeout_s,
+        max_attempts=spec.max_attempts,
     )
-    return {"task_id": task_id, "message": f"主题引用同步已启动: {topic_name}", "status": "running"}
+    return {
+        "task_id": submitted["task_id"],
+        "job_id": submitted["job_id"],
+        "message": f"主题引用同步已启动: {topic_name}",
+        "status": "running",
+    }
 
 
 def start_paper_citation_sync(*, paper_id: str, limit: int = 8) -> dict[str, Any]:
-    from packages.application.queries.graph import _graph_service
+    from packages.application.commands.jobs import submit_job
+    from packages.application.commands.task_registry import get_spec
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import PaperRepository
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步论文引用...", 20, 100)
-        result = _graph_service().sync_citations_for_paper(paper_id=paper_id, limit=limit)
-        if progress_callback:
-            progress_callback("论文引用同步完成", 90, 100)
-        return result
+    paper_title = paper_id[:8]
+    try:
+        with session_scope() as session:
+            paper = PaperRepository(session).get_by_id(paper_id)
+            paper_title = (paper.title or paper_id[:8])[:30]
+    except Exception:
+        pass
 
-    task_id = submit_tracked_compat(
-        "citation_sync",
-        f"📄 引用同步：{str(paper_id, kind='StartCitationSync', capability='sync_citations_paper')[:30]}",
-        _fn,
-        category="sync",
+    spec = get_spec("sync_citations_paper")
+    submitted = submit_job(
+        kind="StartCitationSync",
+        capability="sync_citations_paper",
+        title=f"📄 引用同步：{paper_title}",
+        input_ref={"paper_id": paper_id, "limit": limit},
+        resource_class=spec.resource_class,
+        timeout_s=spec.timeout_s,
+        max_attempts=spec.max_attempts,
     )
-    return {"task_id": task_id, "message": "论文引用同步已启动", "status": "running"}
+    return {
+        "task_id": submitted["task_id"],
+        "job_id": submitted["job_id"],
+        "message": "论文引用同步已启动",
+        "status": "running",
+    }
 
 
 def auto_link_citations(paper_ids: list[str]) -> Any:

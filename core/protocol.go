@@ -91,6 +91,23 @@ type HeartbeatResponse struct {
 	LeaseExpiresAt  string `json:"lease_expires_at,omitempty"`
 }
 
+// ProgressRequest：Executor 进度上报（聚合进度 + 续约 lease）。
+type ProgressRequest struct {
+	Envelope
+	ExecutorID string `json:"executor_id"`
+	TaskID     string `json:"task_id"`
+	LeaseToken string `json:"lease_token"`
+	Current    int    `json:"current"`
+	Total      int    `json:"total"`
+	Message    string `json:"message"`
+}
+
+// ProgressResponse：进度回执。
+type ProgressResponse struct {
+	Envelope
+	OK bool `json:"ok"`
+}
+
 // CompleteRequest：Executor 提交结果 proposal（经 durable store fencing 校验）。
 type CompleteRequest struct {
 	Envelope

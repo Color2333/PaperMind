@@ -113,6 +113,29 @@ class CoreClient:
             {"executor_id": executor_id, "task_id": task_id, "lease_token": lease_token},
         )
 
+    def progress(
+        self,
+        executor_id: str,
+        task_id: str,
+        lease_token: str,
+        *,
+        current: int,
+        total: int,
+        message: str = "",
+    ) -> dict[str, Any]:
+        """进度上报（聚合进度 + 续约 lease；fencing 校验 lease 持有者）"""
+        return self._call(
+            f"/v1/tasks/{task_id}/progress",
+            {
+                "executor_id": executor_id,
+                "task_id": task_id,
+                "lease_token": lease_token,
+                "current": current,
+                "total": total,
+                "message": message,
+            },
+        )
+
     def complete(
         self,
         executor_id: str,

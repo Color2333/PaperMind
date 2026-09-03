@@ -11,8 +11,6 @@ from threading import Event, Thread
 
 from sqlalchemy import select
 
-from packages.ai.pipelines import PaperPipelines
-from packages.ai.rate_limiter import acquire_api, get_rate_limiter
 from packages.config import get_settings
 from packages.storage.db import session_scope
 from packages.storage.models import AnalysisReport, Paper
@@ -211,123 +209,50 @@ class IdleProcessor:
             ).all()
             return [(str(p.id), p.title) for p in papers]
 
-    def _process_batch(self) -> int:
-        """
-        处理一批论文（带任务追踪）
+    def _submit_batch(self) -> int:
+        """空闲时提交一批未读论文的 durable 批处理任务（C3 退出口：不直跑业务）。
 
-        Returns:
-            int: 处理的论文数量
+        执行由 Executor 经 Go Core 调度（capability=batch_process_unread）。
+        空闲 yield 语义退化为触发时间点检查——批次上限由 batch_size 约束，
+        不会无限占用 LLM 配额。
         """
-        from packages.domain.task_tracker import global_tracker
+        from packages.application.commands.jobs import submit_job
+        from packages.application.commands.task_registry import get_spec
 
         papers = self._get_unread_papers(limit=self.batch_size)
-
         if not papers:
             logger.info("没有需要处理的未读论文")
             return 0
 
-        # 启动任务追踪
-        task_id = f"idle_skim_{int(time.time())}"
-        global_tracker.start(
-            task_id=task_id,
-            task_type="idle_skim",
-            title=f"🤖 闲时粗读 ({len(papers)} 篇)",
-            total=len(papers),
+        spec = get_spec("batch_process_unread")
+        submitted = submit_job(
+            kind="IdleBatchProcess",
+            capability="batch_process_unread",
+            title=f"🤖 闲时批处理 ({len(papers)} 篇)",
+            input_ref={"max_papers": self.batch_size},
+            resource_class=spec.resource_class,
+            timeout_s=spec.timeout_s,
+            max_attempts=spec.max_attempts,
+            created_by="idle_processor",
         )
-
-        logger.info("📝 闲时处理开始：%d 篇论文 (并发度=3)", len(papers))
-
-        processed = 0
-        failed = 0
-        pipelines = PaperPipelines()
-        limiter = get_rate_limiter()
-
-        try:
-            for i, (paper_id, title) in enumerate(papers):
-                # 检查是否应该暂停
-                if not self.detector.is_idle():
-                    logger.warning("系统不再空闲，暂停处理")
-                    global_tracker.update(
-                        task_id=task_id,
-                        current=processed,
-                        message="系统繁忙，暂停处理",
-                    )
-                    break
-
-                # 更新进度
-                global_tracker.update(
-                    task_id=task_id,
-                    current=i + 1,
-                    message=f"处理：{title[:50]}...",
-                )
-
-                # 检查并发许可
-                if not limiter.start_task():
-                    logger.debug("并发数已达上限，等待...")
-                    time.sleep(2)
-                    continue
-
-                try:
-                    logger.info("处理：%s", title[:50])
-
-                    # 获取 API 许可
-                    if not acquire_api("embedding", timeout=30.0):
-                        logger.warning("Embedding API 限流，跳过")
-                        failed += 1
-                        continue
-
-                    # 嵌入
-                    try:
-                        pipelines.embed_paper(str(paper_id))
-                        logger.info("✅ 嵌入完成：%s", title[:40])
-                    except Exception as e:
-                        logger.warning("嵌入失败：%s - %s", title[:40], e)
-                        failed += 1
-                        continue
-
-                    # 获取 API 许可
-                    if not acquire_api("llm", timeout=30.0):
-                        logger.warning("LLM API 限流，跳过粗读")
-                        continue
-
-                    # 粗读
-                    try:
-                        result = pipelines.skim(str(paper_id))
-                        score = result.relevance_score if result else None
-                        logger.info("✅ 粗读完成：%s (分数=%.2f)", title[:40], score or 0)
-                    except Exception as e:
-                        logger.warning("粗读失败：%s - %s", title[:40], e)
-                        failed += 1
-                        continue
-
-                    processed += 1
-
-                    # 短暂休息，避免过于频繁
-                    time.sleep(1)
-
-                finally:
-                    limiter.end_task()
-
-            global_tracker.finish(task_id, success=True)
-            logger.info("📊 闲时处理完成：成功=%d, 失败=%d", processed, failed)
-
-        except Exception as exc:
-            global_tracker.finish(task_id, success=False, error=str(exc)[:200])
-            logger.error("❌ 闲时处理失败：%s", exc)
-
-        self._papers_processed += processed
+        self._papers_processed += len(papers)
         self.detector.mark_task_executed()
-
-        return processed
+        logger.info(
+            "🤖 闲时批处理已提交：%d 篇（task=%s）",
+            len(papers),
+            submitted["task_id"][:8],
+        )
+        return len(papers)
 
     def _compensate_stuck_skimmed(self) -> int:
         """补偿已 skim 但未精读的论文（Critical #6）。
 
         skim 完成后 read_status 变 skimmed，但 deep_dive_md 仍空的论文此前无人再
-        触发精读，永久卡在 skimmed。这里在 skim 批次跑完后单独补一批精读，配额严格
-        受限（deep_read_compensation，默认 2），避免闲时一次精读太多拖垮 LLM 速率。
+        触发精读，永久卡在 skimmed。闲时检测到即提交 deep_read durable 任务
+        （配额受限，默认 2；deep_read_compensation 可调）。
         """
-        # 闲时精读配额：保守默认 2，可通过 settings 调整
+        from packages.application.commands.jobs import submit_job
+
         quota = getattr(get_settings(), "deep_read_compensation", 2)
         if quota <= 0:
             return 0
@@ -336,36 +261,25 @@ class IdleProcessor:
         if not stuck:
             return 0
 
-        logger.info("🔧 闲时补偿精读：%d 篇卡在 skimmed 的论文", len(stuck))
-        limiter = get_rate_limiter()
-        pipelines = PaperPipelines()
-        compensated = 0
-
+        submitted = 0
         for paper_id, title in stuck:
-            # 繁忙时放弃剩余补偿，避免与用户请求争抢 LLM
             if not self.detector.is_idle():
                 logger.warning("系统不再空闲，中止 skimmed 补偿")
                 break
-            if not limiter.start_task():
-                logger.debug("并发数已达上限，中止 skimmed 补偿")
-                break
-            try:
-                # 精读走 LLM 限流；失败不抛出，下一篇继续
-                if not acquire_api("llm", timeout=30.0):
-                    logger.warning("LLM API 限流，跳过精读补偿：%s", title[:40])
-                    continue
-                try:
-                    pipelines.deep_dive(paper_id)
-                    compensated += 1
-                    logger.info("✅ 闲时补偿精读完成：%s", title[:40])
-                except Exception as e:
-                    logger.warning("闲时补偿精读失败：%s - %s", title[:40], e)
-            finally:
-                limiter.end_task()
-            time.sleep(1)
-
-        logger.info("📊 skimmed 补偿完成：精读=%d/%d", compensated, len(stuck))
-        return compensated
+            submit_job(
+                kind="IdleDeepRead",
+                capability="deep_read_paper",
+                title=f"🔧 闲时补偿精读：{title[:30]}",
+                input_ref={"paper_id": str(paper_id)},
+                resource_class="llm",
+                timeout_s=1800,
+                max_attempts=2,
+                created_by="idle_processor",
+            )
+            submitted += 1
+            time.sleep(0.5)
+        logger.info("🔧 skimmed 补偿已提交：精读=%d/%d", submitted, len(stuck))
+        return submitted
 
     def _run_loop(self):
         """主循环"""
@@ -377,11 +291,11 @@ class IdleProcessor:
                 if self.detector.is_idle():
                     if not self._is_processing:
                         self._is_processing = True
-                        self._process_batch()
+                        self._submit_batch()
                         # Critical #6 补偿：独立于 skim 批次触发。此前补偿挂在
-                        # _process_batch 末尾，但无 unread 论文时它提前 return 0，
-                        # 补偿永远不跑 → 1239 篇卡在 skimmed 未精读。改为在 _run_loop
-                        # 独立调用，无论有无 unread 都尝试补偿 stuck 论文。
+                        # 批处理末尾，但无 unread 论文时它提前 return 0，
+                        # 补偿永远不跑。改为在 _run_loop 独立调用，无论有无
+                        # unread 都尝试补偿 stuck 论文。
                         self._compensate_stuck_skimmed()
                         self._is_processing = False
                 else:

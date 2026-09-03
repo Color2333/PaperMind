@@ -150,10 +150,16 @@ def test_trigger_daily_job_and_status(mcp_env, monkeypatch):
 
     started = _tool_trigger_daily_job()
     task_id = started["task_id"]
-    assert started["status"] == "started"
+    # C3 退出口：start_daily_ingest 只提交 durable Job（queued），由 Executor 执行
+    assert started["status"] == "queued"
 
+    from tests.helpers.inline_executor import InlineExecutor
+
+    inline = InlineExecutor(capabilities=["daily_ingest_and_brief"])
     deadline = time.monotonic() + 30
+    status = {}
     while time.monotonic() < deadline:
+        inline.run_until_idle(timeout=1.0)
         status = _tool_get_task_status(task_id)
         assert "error" not in status
         if status["status"] == "completed":

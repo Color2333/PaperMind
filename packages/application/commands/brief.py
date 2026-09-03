@@ -10,7 +10,7 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from packages.application.commands.jobs import submit_tracked_compat
+from packages.application.commands.jobs import submit_job
 from packages.application.commands.task_registry import get_spec
 
 logger = logging.getLogger(__name__)
@@ -74,29 +74,17 @@ def start_daily_brief_task(*, recipient: str | None = None) -> dict:
             if config.send_email_report and config.recipient_emails:
                 recipient = config.recipient_emails.split(",")[0]
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在生成每日简报...", 20, 100)
-        # HTTP 语义 = DailyBriefService.publish（返回含 content_id，与原路由一致）
-        from packages.ai.brief_service import DailyBriefService
-
-        result = DailyBriefService().publish(recipient=recipient)
-        if progress_callback:
-            progress_callback("简报生成完成", 95, 100)
-        return result
-
-    spec = get_spec("build_daily_brief")
-    task_id = submit_tracked_compat(
+    spec = get_spec("daily_brief_publish")
+    submitted = submit_job(
         kind="StartDailyBrief",
-        capability="build_daily_brief",
-        task_type="daily_brief",
+        capability="daily_brief_publish",
         title="📰 生成每日简报",
-        fn=_fn,
-        total=100,
-        category="generation",
+        input_ref={"recipient": recipient},
+        resource_class=spec.resource_class,
         timeout_s=spec.timeout_s,
         max_attempts=spec.max_attempts,
     )
+    task_id = submitted["task_id"]
     return {
         "task_id": task_id,
         "status": "started",

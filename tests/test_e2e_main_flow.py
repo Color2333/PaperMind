@@ -251,10 +251,18 @@ def e2e_env(tmp_path, monkeypatch):
 
 
 def _wait_task(client: TestClient, task_id: str, timeout: float = 60.0) -> dict:
-    """轮询 /tasks/{id} 直到完成；失败时给出任务错误信息"""
+    """轮询 /tasks/{id} 直到完成；失败时给出任务错误信息
+
+    C3 退出口后任务由 Executor 执行——测试进程内用 InlineExecutor 驱动
+    durable store（与生产同一 handler/fencing 语义；不经 Go Core）。
+    """
+    from tests.helpers.inline_executor import InlineExecutor
+
+    inline = InlineExecutor()
     deadline = time.monotonic() + timeout
     last: dict | None = None
     while time.monotonic() < deadline:
+        inline.run_until_idle(timeout=1.0)
         resp = client.get(f"/tasks/{task_id}")
         assert resp.status_code == 200, resp.text
         last = resp.json()
@@ -630,10 +638,10 @@ def test_b8_command_endpoints(e2e_env):
     assert client.patch(f"/papers/{pid}/favorite").json()["favorited"] is False
     assert client.patch(f"/papers/{pid}/reject").json()["rejected"] is True
 
-    # 引用同步任务提交（commands/graph，tracker 过渡）
+    # 引用同步任务提交（commands/graph → durable Job；task_id 即 durable Task id）
     resp = client.post("/citations/sync/incremental")
     assert resp.status_code == 200, resp.text
-    assert resp.json()["task_id"].startswith("citation_sync_")
+    assert len(resp.json()["task_id"]) == 32  # durable Task id（UUIDv7 hex）
 
     # daily-report generate-only（同步命令，LLM fake 生效）
     resp = client.post("/jobs/daily-report/generate-only", params={"use_cache": False})
@@ -671,7 +679,8 @@ def test_c3_unified_job_endpoints(e2e_env):
     assert len(graph["tasks"]) == 1
     assert graph["tasks"][0]["capability"] == "skim_paper"
     assert graph["tasks"][0]["status"] == "succeeded"
-    assert graph["tasks"][0]["external_ref"] == task_id
+    # C3 退出口：新提交的 task_id 即 durable id，不再写 external_ref 过渡引用
+    assert graph["tasks"][0]["external_ref"] is None
 
     # /tasks/{tracker_id}：durability 优先——重启后 tracker 丢失也能查到
     resp = client.get(f"/tasks/{task_id}")
@@ -684,11 +693,11 @@ def test_c3_unified_job_endpoints(e2e_env):
     assert resp.status_code == 200, resp.text
     assert resp.json()["one_liner"] == FAKE_SKIM["one_liner"]
 
-    # /tasks/active 合并 durable 在途；tracker 旧语义含刚完成任务（600s TTL）
+    # /tasks/active：durable 在途语义——已完成任务不再出现在列表中
     resp = client.get("/tasks/active")
     assert resp.status_code == 200, resp.text
     merged = {t["task_id"]: t for t in resp.json()["tasks"]}
-    assert merged[task_id]["status"] == "completed"
+    assert task_id not in merged
 
 
 # ---------- F7：surface contract 测试 ----------
@@ -758,9 +767,13 @@ def test_f7_surface_contract_jobs(e2e_env):
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]
 
+    from tests.helpers.inline_executor import InlineExecutor
+
+    inline = InlineExecutor(capabilities=["skim_paper"])
     deadline = time.monotonic() + 30
     status = ""
     while time.monotonic() < deadline:
+        inline.run_until_idle(timeout=1.0)
         graph = client.get(f"/jobs/{job_id}").json()
         status = graph["status"]
         if status in ("succeeded", "failed", "cancelled"):

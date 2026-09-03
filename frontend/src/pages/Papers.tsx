@@ -443,48 +443,13 @@ export default function Papers() {
     }
     setBatchRunning(true);
     setBatchPct(0);
-    const tid = `batch_skim_${Date.now()}`;
-    tasksApi
-      .track({
-        action: "start",
-        task_id: tid,
-        task_type: "batch_skim",
-        title: `批量粗读 ${ids.length} 篇`,
-        total: ids.length,
-      })
-      .catch(() => {});
-    let done = 0,
-      failed = 0;
-    for (const id of ids) {
-      done++;
-      setBatchProgress(`粗读中 ${done}/${ids.length}`);
-      setBatchPct(Math.round((done / ids.length) * 100));
-      tasksApi
-        .track({
-          action: "update",
-          task_id: tid,
-          current: done,
-          message: `粗读中 ${done}/${ids.length}`,
-        })
-        .catch(() => {});
-      try {
-        await pipelineApi.skim(id);
-      } catch {
-        failed++;
-      }
+    try {
+      // 单一 durable 任务（Executor 执行），前端轮询进度
+      const { task_id } = await pipelineApi.skimBatch(ids);
+      await pollBatchTask(task_id, "粗读");
+    } catch {
+      toast("error", "批量粗读提交失败");
     }
-    tasksApi
-      .track({
-        action: "finish",
-        task_id: tid,
-        success: failed === 0,
-        error: failed > 0 ? `${failed} 篇失败` : undefined,
-      })
-      .catch(() => {});
-    setBatchProgress(failed > 0 ? `完成 ${done - failed} 篇，${failed} 篇失败` : `完成 ${done} 篇`);
-    setBatchPct(100);
-    if (failed > 0) toast("warning", `${failed} 篇粗读失败`);
-    else toast("success", `粗读完成 ${done} 篇`);
     setBatchRunning(false);
     await loadPapers();
   };
@@ -501,50 +466,63 @@ export default function Papers() {
     }
     setBatchRunning(true);
     setBatchPct(0);
-    const tid = `batch_embed_${Date.now()}`;
-    tasksApi
-      .track({
-        action: "start",
-        task_id: tid,
-        task_type: "batch_embed",
-        title: `批量嵌入 ${ids.length} 篇`,
-        total: ids.length,
-      })
-      .catch(() => {});
-    let done = 0,
-      failed = 0;
-    for (const id of ids) {
-      done++;
-      setBatchProgress(`嵌入中 ${done}/${ids.length}`);
-      setBatchPct(Math.round((done / ids.length) * 100));
-      tasksApi
-        .track({
-          action: "update",
-          task_id: tid,
-          current: done,
-          message: `嵌入中 ${done}/${ids.length}`,
-        })
-        .catch(() => {});
-      try {
-        await pipelineApi.embed(id);
-      } catch {
-        failed++;
+    try {
+      const taskIds = ids.map((id) => pipelineApi.embed(id).then((r) => r.task_id));
+      const tids = await Promise.all(taskIds);
+      // 逐篇任务各自推进；前端聚合为单一进度条
+      const pending = new Set(tids);
+      while (pending.size > 0) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const states = await Promise.all(
+          [...pending].map((tid) =>
+            tasksApi.getStatus(tid).then((s) => s.finished).catch(() => true)
+          )
+        );
+        states.forEach((finished, i) => {
+          if (finished) pending.delete(tids[i]);
+        });
+        const doneCount = tids.length - pending.size;
+        setBatchProgress(`嵌入中 ${doneCount}/${tids.length}`);
+        setBatchPct(Math.round((doneCount / tids.length) * 100));
       }
+      setBatchProgress(`完成 ${tids.length} 篇`);
+      setBatchPct(100);
+      toast("success", `嵌入完成 ${tids.length} 篇`);
+    } catch {
+      toast("error", "批量嵌入提交失败");
     }
-    tasksApi
-      .track({
-        action: "finish",
-        task_id: tid,
-        success: failed === 0,
-        error: failed > 0 ? `${failed} 篇失败` : undefined,
-      })
-      .catch(() => {});
-    setBatchProgress(failed > 0 ? `完成 ${done - failed} 篇，${failed} 篇失败` : `完成 ${done} 篇`);
-    setBatchPct(100);
-    if (failed > 0) toast("warning", `${failed} 篇嵌入失败`);
-    else toast("success", `嵌入完成 ${done} 篇`);
     setBatchRunning(false);
     await loadPapers();
+  };
+
+  const pollBatchTask = async (taskId: string, label: string) => {
+    // 轮询 durable 任务直到完成（进度从 job 聚合数据读取）
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1200));
+      let status;
+      try {
+        status = await tasksApi.getStatus(taskId);
+      } catch {
+        break;
+      }
+      const cur = Number(status.current ?? 0);
+      const tot = Number(status.total ?? 0);
+      if (tot > 0) {
+        setBatchProgress(status.message || `${label}中 ${cur}/${tot}`);
+        setBatchPct(Math.round((cur / tot) * 100));
+      }
+      if (status.finished) {
+        if (!status.success) {
+          toast("warning", `批量${label}部分失败`);
+          setBatchProgress(`批量${label}失败：${status.error ?? "未知错误"}`);
+        } else {
+          setBatchProgress(`批量${label}完成`);
+          setBatchPct(100);
+          toast("success", `批量${label}完成`);
+        }
+        break;
+      }
+    }
   };
 
   const handleFolderClick = useCallback((folderId: string) => {

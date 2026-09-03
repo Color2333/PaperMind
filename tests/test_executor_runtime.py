@@ -95,7 +95,7 @@ def _run_until(runner: ExecutorRunner, done: threading.Event, timeout: float = 1
 def test_registers_before_claiming():
     """P0：run_forever 先向 Core 注册能力声明，再进入领取循环"""
     fake = FakeCore([])
-    runner, _ = _make_runner(fake, {"fake_cap": lambda input, cancel_check: {}})
+    runner, _ = _make_runner(fake, {"fake_cap": lambda input, cancel_check, progress=None: {}})
 
     thread = runner.run_in_thread()
     time.sleep(0.3)
@@ -113,7 +113,7 @@ def test_full_cycle_claim_execute_complete():
     done = threading.Event()
     executed = []
 
-    def handler(input, cancel_check):
+    def handler(input, cancel_check, progress=None):
         executed.append(input)
         return {"out": "ok"}
 
@@ -132,7 +132,7 @@ def test_handler_exception_reports_fail():
     fake = FakeCore([_task("t2")])
     done = threading.Event()
 
-    def handler(input, cancel_check):
+    def handler(input, cancel_check, progress=None):
         raise RuntimeError("handler exploded")
 
     runner, _ = _make_runner(fake, {"fake_cap": handler})
@@ -150,7 +150,7 @@ def test_no_handler_capability_reports_fail():
     fake = FakeCore([_task("t3", capability="unknown_cap")])
     done = threading.Event()
 
-    runner, _ = _make_runner(fake, {"fake_cap": lambda input, cancel_check: {}})
+    runner, _ = _make_runner(fake, {"fake_cap": lambda input, cancel_check, progress=None: {}})
     _run_until(runner, done)
     time.sleep(0.1)
 
@@ -164,7 +164,7 @@ def test_cancel_requested_cooperative_exit_via_cancel_execution():
     done = threading.Event()
     cancel_seen = threading.Event()
 
-    def handler(input, cancel_check):
+    def handler(input, cancel_check, progress=None):
         deadline = time.monotonic() + 5
         while not cancel_check():
             if time.monotonic() > deadline:
@@ -189,7 +189,7 @@ def test_drain_stops_claiming():
     executed = threading.Event()
     release = threading.Event()
 
-    def handler(input, cancel_check):
+    def handler(input, cancel_check, progress=None):
         executed.set()
         release.wait(5)  # 阻塞当前 Attempt，主线程先 drain
         return {}

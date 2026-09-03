@@ -1020,16 +1020,18 @@ export interface TaskStatus {
   task_id: string;
   task_type: string;
   title: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   progress: number; // 0-1 小数
-  progress_pct?: number; // 0-100 百分比
+  current: number;
+  total: number;
   message: string;
   error: string | null;
   created_at: number;
-  finished: boolean; // 后端 to_dict 真实字段
+  finished: boolean;
   success: boolean;
   elapsed_seconds?: number;
   has_result: boolean;
+  job_id?: string | null;
 }
 
 export interface ActiveTaskInfo {

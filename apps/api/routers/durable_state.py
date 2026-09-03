@@ -152,6 +152,29 @@ def heartbeat(task_id: str, body: dict) -> dict:
     return {"ok": ok, "cancel_requested": cancel_requested}
 
 
+@router.post("/tasks/{task_id}/progress")
+def progress(task_id: str, body: dict) -> dict:
+    """Executor 进度上报（聚合进度 + 续约 lease；fencing 校验 lease 持有者）"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import TaskRepository
+
+    lease_token = str(body.get("lease_token") or "")
+    if not lease_token:
+        raise HTTPException(status_code=400, detail="lease_token required")
+    try:
+        with session_scope() as session:
+            ok = TaskRepository(session).report_progress(
+                task_id=task_id,
+                lease_token=lease_token,
+                current=int(body.get("current") or 0),
+                total=int(body.get("total") or 0),
+                message=str(body.get("message") or ""),
+            )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": ok}
+
+
 @router.post("/tasks/{task_id}/complete")
 def complete(task_id: str, body: dict) -> dict:
     return _fencing_op(task_id, body, "complete")

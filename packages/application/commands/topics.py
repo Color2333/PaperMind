@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from packages.application.commands.jobs import submit_tracked_compat
 from packages.domain.exceptions import NotFoundError
 
 _FREQ_LABELS = {
@@ -57,8 +56,9 @@ def delete_topic(session: Session, topic_id: str) -> dict[str, Any]:
 
 
 def start_topic_fetch(topic_id: str) -> dict[str, Any]:
-    """手动触发单个订阅抓取（后台执行；C3 后转 durable Job）"""
-    from packages.ai.daily_runner import run_topic_ingest
+    """手动触发单个订阅抓取（durable Job，Executor 执行）"""
+    from packages.application.commands.jobs import submit_job
+    from packages.application.commands.task_registry import get_spec
     from packages.storage.db import session_scope
     from packages.storage.models import TopicSubscription
 
@@ -68,25 +68,17 @@ def start_topic_fetch(topic_id: str) -> dict[str, Any]:
             raise NotFoundError("订阅不存在")
         topic_name = topic.name
 
-    def _fetch_fn(progress_callback=None):
-        # 分阶段报告进度：抓取 (0-50%) -> 处理 (50-100%)
-        def _stage_callback(msg, cur, tot):
-            progress_callback(f"抓取：{msg}", int(cur / tot * 50), 100)
-
-        result = run_topic_ingest(topic_id, progress_callback=_stage_callback)
-
-        if progress_callback:
-            progress_callback("处理完成", 100, 100)
-        return result
-
-    task_id = submit_tracked_compat(
+    spec = get_spec("fetch_topic_papers")
+    submitted = submit_job(
         kind="StartTopicResearch",
-        capability="fetch_topic",
-        task_type="fetch",
+        capability="fetch_topic_papers",
         title=f"抓取：{topic_name[:30]}",
-        fn=_fetch_fn,
-        category="collection",
+        input_ref={"topic_id": topic_id},
+        resource_class=spec.resource_class,
+        timeout_s=spec.timeout_s,
+        max_attempts=spec.max_attempts,
     )
+    task_id = submitted["task_id"]
     return {
         "status": "started",
         "task_id": task_id,
@@ -103,17 +95,26 @@ def start_reference_import(
     entries: list[dict],
     topic_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """一键导入参考文献（后台执行，返回 task_id + total）"""
-    from packages.ai.pipelines import ReferenceImporter
+    """一键导入参考文献（durable Job，Executor 执行；返回 task_id + total）"""
+    from packages.application.commands.jobs import submit_job
+    from packages.application.commands.task_registry import get_spec
 
-    importer = ReferenceImporter()
-    task_id = importer.start_import(
-        source_paper_id=source_paper_id,
-        source_paper_title=source_paper_title,
-        entries=entries,
-        topic_ids=topic_ids,
+    spec = get_spec("import_references")
+    submitted = submit_job(
+        kind="StartReferenceImport",
+        capability="import_references",
+        title=f"参考文献导入：{source_paper_title[:60]}",
+        input_ref={
+            "source_paper_id": source_paper_id,
+            "source_paper_title": source_paper_title,
+            "entries": entries,
+            "topic_ids": topic_ids or [],
+        },
+        resource_class=spec.resource_class,
+        timeout_s=spec.timeout_s,
+        max_attempts=spec.max_attempts,
     )
-    return {"task_id": task_id, "total": len(entries)}
+    return {"task_id": submitted["task_id"], "total": len(entries)}
 
 
 def update_subscription(

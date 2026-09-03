@@ -88,13 +88,13 @@ def _wrap_with_delay(handlers: dict, delay_s: float) -> dict:
     """
 
     def _wrap(fn):
-        def _call(input: dict, cancel_check) -> object:  # noqa: ANN001
+        def _call(input: dict, cancel_check, progress=None) -> object:  # noqa: ANN001
             deadline = time.monotonic() + delay_s
             while time.monotonic() < deadline:
                 if cancel_check():
                     raise TaskCancelledError("协作取消（handler-delay 安全点）")
                 time.sleep(0.2)
-            return fn(input=input, cancel_check=cancel_check)
+            return fn(input=input, cancel_check=cancel_check, progress=progress)
 
         return _call
 

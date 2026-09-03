@@ -15,7 +15,6 @@ from uuid import UUID, uuid4
 from packages.config import get_settings
 from packages.domain.enums import ActionType
 from packages.domain.schemas import PaperCreate
-from packages.domain.task_tracker import global_tracker
 from packages.integrations.arxiv_client import ArxivClient
 from packages.integrations.llm_client import LLMClient
 from packages.integrations.semantic_scholar_client import SemanticScholarClient
@@ -45,33 +44,6 @@ class ReferenceImporter:
         if not aid:
             return None
         return aid.split("v")[0] if "v" in aid else aid
-
-    def start_import(
-        self,
-        *,
-        source_paper_id: str,
-        source_paper_title: str,
-        entries: list[dict],
-        topic_ids: list[str] | None = None,
-    ) -> str:
-        """启动后台导入任务，返回 task_id"""
-
-        def _run_import_with_progress(progress_callback=None):
-            return self._run_import(
-                source_paper_id=source_paper_id,
-                source_paper_title=source_paper_title,
-                entries=entries,
-                topic_ids=topic_ids or [],
-                progress_callback=progress_callback,
-            )
-
-        return global_tracker.submit(
-            task_type="reference_import",
-            title=f"参考文献导入：{source_paper_title[:60]}",
-            fn=_run_import_with_progress,
-            total=len(entries),
-            category="collection",
-        )
 
     def _run_import(
         self,

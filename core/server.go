@@ -39,6 +39,7 @@ func NewServer(reg *ExecutorRegistry, state *StateClient) *Server {
 	s.mux.HandleFunc("POST /v1/executors/register", s.enveloped(s.handleRegister))
 	s.mux.HandleFunc("POST /v1/tasks/claim", s.enveloped(s.handleClaim))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/heartbeat", s.enveloped(s.handleHeartbeat))
+	s.mux.HandleFunc("POST /v1/tasks/{id}/progress", s.enveloped(s.handleProgress))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/complete", s.enveloped(s.handleComplete))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/fail", s.enveloped(s.handleFail))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel-execution", s.enveloped(s.handleCancelExecution))
@@ -187,6 +188,32 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, cid str
 		Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
 		OK:              true,
 		CancelRequested: out.CancelRequested,
+	})
+}
+
+func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req ProgressRequest
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_progress_request"})
+		return
+	}
+	var out struct {
+		OK bool `json:"ok"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/progress", map[string]any{
+		"lease_token": req.LeaseToken,
+		"current":     req.Current,
+		"total":       req.Total,
+		"message":     req.Message,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	s.Registry.Touch(req.ExecutorID)
+	writeJSON(w, http.StatusOK, cid, ProgressResponse{
+		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:       out.OK,
 	})
 }
 

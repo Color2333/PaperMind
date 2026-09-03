@@ -19,6 +19,7 @@ import importlib
 import logging
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -183,9 +184,12 @@ class ExecutorRunner:
                 target=self._heartbeat_loop, args=(task_id, lease_token, hb_stop), daemon=True
             )
             hb_thread.start()
+            progress = self._make_progress(task_id, lease_token)
             try:
                 input_ref = task.get("input") or {}
-                result = handler(input=input_ref, cancel_check=self.should_cancel)
+                result = handler(
+                    input=input_ref, cancel_check=self.should_cancel, progress=progress
+                )
             except TaskCancelledError:
                 logger.info("task %s 协作取消退出（安全点）", task_id)
                 self.client.cancel_execution(self.config.executor_id, task_id, lease_token)
@@ -243,6 +247,28 @@ class ExecutorRunner:
             last_exc,
         )
 
+    def _make_progress(self, task_id: str, lease_token: str):
+        """节流的进度上报回调（经 Go Core 协议；同时由 durable 侧续约 lease）"""
+        last = {"t": 0.0}
+
+        def _report(msg: str, current: int, total: int) -> None:
+            now = time.monotonic()
+            finished = total and current >= total
+            if not finished and now - last["t"] < 1.0:
+                return  # 节流：完成事件始终上报
+            last["t"] = now
+            with suppress(Exception):
+                self.client.progress(
+                    self.config.executor_id,
+                    task_id,
+                    lease_token,
+                    current=current,
+                    total=total,
+                    message=msg,
+                )
+
+        return _report
+
     def _heartbeat_loop(self, task_id: str, lease_token: str, stop: threading.Event) -> None:
         interval = max(self.config.heartbeat_interval_s, 1.0)
         while not stop.wait(interval):
@@ -274,7 +300,8 @@ def handlers_from_registry(
 ) -> dict[str, Callable[..., Any]]:
     """按 C4 注册表解析 handler，并注入绑定参数（如 ClaimExtractionService 实例）。
 
-    handler 调用约定：fn(input: dict, cancel_check: Callable[[], bool]) -> Any
+    handler 调用约定：fn(input: dict, cancel_check, progress) -> Any
+    （通用适配按 handler 签名传入可接受的 kwargs。）
     """
     from packages.application.commands.task_registry import TASK_CAPABILITIES
 
@@ -298,9 +325,16 @@ def _bind_method(fn: Callable[..., Any]) -> Callable[..., Any]:
         return fn
     import importlib as _importlib
 
-    mod = _importlib.import_module(fn.__module__)
-    owner = getattr(mod, qual.split(".")[0])
-    return getattr(owner(), fn.__name__)
+    try:
+        mod = _importlib.import_module(fn.__module__)
+        owner = getattr(mod, qual.split(".")[0])
+    except (AttributeError, ModuleNotFoundError):
+        return fn  # 测试 monkeypatch 的局部函数等无 owner 可绑
+    try:
+        instance = owner()  # 需要构造参数的（如带 session 的 Repository）不预绑定
+    except TypeError:
+        return fn
+    return getattr(instance, fn.__name__)
 
 
 def _adapt(fn: Callable[..., Any], **bindings: Any) -> Callable[..., Any]:
@@ -310,20 +344,30 @@ def _adapt(fn: Callable[..., Any], **bindings: Any) -> Callable[..., Any]:
     """
     fn = _bind_method(fn)
 
-    def _call_paper_pipeline(input: dict, cancel_check: Callable[[], bool]) -> Any:  # noqa: ARG001
+    def _call_paper_pipeline(input: dict, cancel_check: Callable[[], bool], progress) -> Any:  # noqa: ARG001
         paper_id = input["paper_id"]
         from uuid import UUID
 
         return fn(UUID(paper_id))
 
-    def _call_service_with_kwargs(input: dict, cancel_check: Callable[[], bool]) -> Any:  # noqa: ARG001
-        return fn(**input)
+    def _call_claim_extractor(input: dict, cancel_check: Callable[[], bool], progress) -> Any:  # noqa: ARG001
+        return fn(input["paper_id"], source_text=input.get("source_text"))
+
+    def _call_service_with_kwargs(input: dict, cancel_check: Callable[[], bool], progress) -> Any:  # noqa: ARG001
+        """通用适配：按 handler 签名传入 input 键 + 可选 progress/cancel_check"""
+        import inspect as _inspect
+
+        params = _inspect.signature(fn).parameters
+        kwargs = {k: v for k, v in input.items() if k in params}
+        if "progress" in params:
+            kwargs["progress"] = progress
+        if "cancel_check" in params:
+            kwargs["cancel_check"] = cancel_check
+        return fn(**kwargs)
 
     mod = getattr(fn, "__module__", "") or ""
     if "paper_pipelines" in mod and "extract" not in (getattr(fn, "__name__", "") or ""):
         return _call_paper_pipeline
     if "claim_extractor" in mod:
-        return lambda input, cancel_check: fn(
-            input["paper_id"], source_text=input.get("source_text")
-        )
+        return _call_claim_extractor
     return _call_service_with_kwargs

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import select
+
 from packages.domain.exceptions import NotFoundError
 
 if TYPE_CHECKING:
@@ -41,7 +43,13 @@ def create_batch_job(
 
 
 def get_batch_job(session: Session, job_id: str) -> dict[str, Any] | None:
-    """查询批量任务状态；不存在返回 None"""
+    """查询批量任务状态（C11 退出口：durable ProcessUnreadBatch 为权威，batch_jobs 行仅投影）
+
+    durable 状态由 idempotency_key=batch:{job_id} 关联；无 durable Job 的历史行
+    保留 batch_jobs 表的冻结值。
+    """
+    from packages.application.queries.jobs import get_job_graph
+    from packages.storage.models import Job
     from packages.storage.repositories import BatchJobRepository
 
     try:
@@ -50,6 +58,28 @@ def get_batch_job(session: Session, job_id: str) -> dict[str, Any] | None:
         return None
     if job is None:
         return None
+
+    durable_job = session.execute(
+        select(Job).where(Job.idempotency_key == f"batch:{job_id}")
+    ).scalar_one_or_none()
+    if durable_job is not None:
+        graph = get_job_graph(session, durable_job.id)
+        tasks = graph["tasks"]
+        total = len(tasks)
+        done = sum(1 for t in tasks if t["status"] == "succeeded")
+        failed = sum(1 for t in tasks if t["status"] in ("failed", "dead_letter"))
+        # 观测对齐：单篇错误明细从 durable Task 的 last_error 投影
+        errors = [t["last_error"] for t in tasks if t.get("last_error")]
+        return {
+            "job_id": str(job.id),
+            "kind": job.kind,
+            "status": graph["status"],
+            "total": total or job.total,
+            "done": done,
+            "failed": failed,
+            "error_log": errors or job.error_log,
+            "durable_job_id": durable_job.id,
+        }
     return {
         "job_id": str(job.id),
         "kind": job.kind,

@@ -12,7 +12,38 @@
 
 services:
   # ==========================================
-  # 后端服务 (FastAPI)
+  # Go Core（控制面网关：Executor Protocol → durable-state API）
+  # ==========================================
+  core:
+    build:
+      context: ./core
+      dockerfile: Dockerfile.core
+    container_name: papermind-core
+    environment:
+      - CORE_ADDR=0.0.0.0:8081
+      - CORE_TOKEN=${CORE_TOKEN:-}
+      - STATE_ADDR=http://backend:8000
+      - STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
+      - RECONCILE_INTERVAL_S=15
+      - RECLAIM_BACKOFF_S=60
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
+  # ==========================================
+  # 后端服务 (FastAPI；durable-state 内部 API 需 DURABLE_STATE_TOKEN)
   # ==========================================
   backend:
     build:
@@ -34,6 +65,8 @@ services:
       - SITE_URL=https://pm.vibingu.cn
       - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002,https://pm.vibingu.cn
       - DEMO_MODE=false
+      # durable-state 内部 API（P0）：非空才挂载 /internal/durable/*，Core 凭此访问权威状态
+      - DURABLE_STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -73,9 +106,15 @@ services:
     environment:
       - APP_ENV=production
       - SITE_URL=https://pm.vibingu.cn
+      # Executor 宿主（C7）：经 Go Core 领取执行；未配置则仅调度提交
+      - CORE_ADDR=core:8081
+      - CORE_TOKEN=${CORE_TOKEN:-}
+      - WORKER_EXECUTOR_ID=worker-1
     restart: unless-stopped
     depends_on:
       backend:
+        condition: service_started
+      core:
         condition: service_started
       postgres:
         condition: service_healthy

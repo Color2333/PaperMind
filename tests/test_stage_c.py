@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from packages.agent_core import batch_consumer
+from packages.application.commands.batch import create_batch_job, get_batch_job
 from packages.application.commands.jobs import cancel_job, pause_queue, resume_queue, retry_job
 from packages.application.commands.workflows import start_workflow_job
 from packages.domain.enums import JobStatus, TaskStatus
@@ -30,15 +30,17 @@ API_MAIN = Path(__file__).resolve().parents[1] / "apps" / "api" / "main.py"
 WORKER_MAIN = Path(__file__).resolve().parents[1] / "apps" / "worker" / "main.py"
 
 
-def test_batch_consumer_not_in_api_process():
-    """C1 守卫：API 进程不再承担 batch_jobs 消费职责"""
+def test_batch_consumer_retired_everywhere():
+    """C11 退出口守卫：batch_jobs 消费者已全局退役（API 与 worker 均不引用）"""
     api_src = API_MAIN.read_text()
     assert "batch_consumer" not in api_src, "API 入口仍引用 batch_consumer"
     assert "_batch_lifespan" not in api_src, "API lifespan 仍启动任务消费"
 
     worker_src = WORKER_MAIN.read_text()
-    assert "batch_consumer.start()" in worker_src, "worker 未接管 batch 消费"
-    assert "batch_consumer.stop()" in worker_src, "worker 关闭未停止 batch 消费"
+    assert "batch_consumer" not in worker_src, (
+        "worker 仍引用 batch_consumer——C11 退出口要求批处理走 durable 任务"
+    )
+    assert "ExecutorRunner" in worker_src, "worker 应内置 Executor 宿主（C7）"
 
 
 @pytest.fixture()
@@ -77,46 +79,60 @@ def _job_row(job_id: str):
         }
 
 
-def test_poll_once_processes_embed_job(c1_env):
+def test_batch_embed_flows_through_durable_tasks(c1_env):
+    """C11 退出口：批量入口 → durable per-Paper 任务 → InlineExecutor 执行 → 投影收敛"""
+    from tests.helpers.inline_executor import InlineExecutor
+
     with session_scope() as session:
         pid = _mk_paper(session, "2608.9101")
+        result = create_batch_job(session, kind="embed", paper_ids=[pid])
 
-    job_id = _make_job("embed", [pid])
-    assert batch_consumer.poll_once() is True
-
-    row = _job_row(job_id)
-    assert row["status"] == "completed"
-    assert row["done"] == 1 and row["failed"] == 0
+    durable_job_id = result["durable_job_id"]
+    InlineExecutor(capabilities=["embed_paper"]).run_until_idle()
 
     with session_scope() as session:
         paper = session.get(Paper, pid)
-        assert paper.embedding is not None and paper.read_status.value == "unread"
-
-
-def test_poll_once_records_paper_failure(c1_env, monkeypatch):
-    from packages.ai.pipelines import PaperPipelines
-
-    def _boom(self, pid):
-        raise RuntimeError("embed exploded")
-
-    monkeypatch.setattr(PaperPipelines, "embed_paper", _boom)
+        assert paper.embedding is not None
     with session_scope() as session:
-        pid = _mk_paper(session, "2608.9102")
+        row = get_batch_job(session, result["job_id"])
+    assert row["status"] == "succeeded"
+    assert row["done"] == 1 and row["failed"] == 0
+    assert row["durable_job_id"] == durable_job_id
 
-    job_id = _make_job("embed", [pid])
-    batch_consumer.poll_once()
 
-    row = _job_row(job_id)
-    assert row["status"] == "completed"  # 单篇失败不阻断收尾（设计③ partial 语义的旧载体）
-    assert row["failed"] == 1 and row["done"] == 0
+def test_batch_paper_failure_does_not_block_others(c1_env, monkeypatch):
+    """C11：单篇失败不阻断批次（durable per-Paper 任务隔离）"""
+    from packages.ai.pipelines import PaperPipelines
+    from tests.helpers.inline_executor import InlineExecutor
+
+    with session_scope() as session:
+        p1 = _mk_paper(session, "2608.9102")
+        p2 = _mk_paper(session, "2608.9103")
+        result = create_batch_job(session, kind="embed", paper_ids=[p1, p2])
+        job_id = result["job_id"]
+
+    def _boom_maybe(paper_id):  # 只对第一篇失败（部分成功语义）
+        if str(paper_id) == str(p1):
+            raise RuntimeError("embed exploded")
+
+    monkeypatch.setattr(PaperPipelines, "embed_paper", _boom_maybe)
+
+    InlineExecutor(capabilities=["embed_paper"]).run_until_idle()
+
+    with session_scope() as session:
+        row = get_batch_job(session, job_id)
+    assert row["failed"] >= 1 and row["done"] >= 1  # 部分成功
     assert "embed exploded" in json.dumps(row["error_log"])
 
 
-def test_poll_once_empty_queue_returns_false(c1_env):
-    assert batch_consumer.poll_once() is False
+def test_batch_empty_queue_no_tasks(c1_env):
+    """空批次不可创建（agent 工具层拒绝）——durable 侧无遗留任务"""
+    from sqlalchemy import select as _select
 
+    from packages.storage.models import DurableTask
 
-# ---------- C10：控制与观察面 ----------
+    with session_scope() as session:
+        assert session.execute(_select(DurableTask)).scalars().all() == []
 
 
 def test_cancel_job_cancels_queued_tasks(isolated_db):

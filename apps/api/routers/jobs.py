@@ -42,7 +42,7 @@ def get_durable_job(job_id: str) -> dict:
 
 
 @router.post("/jobs/durable")
-def submit_durable_job(body: dict) -> dict:
+def submit_durable(body: dict) -> dict:
     """P0 权威提交入口：只写 durable Job/Task（queued），由独立 Executor 经 Go Core 执行。
 
     body: {kind, capability, title?, input_ref?, idempotency_key?, resource_class?,
