@@ -25,7 +25,7 @@
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
 | Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 12 | **已完成**（遗留：idle processor/scheduler 直跑迁移到 C7 Executor 运行时） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
-| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
+| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 4 | 进行中 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
@@ -173,11 +173,14 @@
 - [ ] **E3 远程登录**：`pm login --endpoint`，PaperMind token 与本地模型 provider 凭据分开保存/撤销。
 - [ ] **E4 确定性子命令 + `--json`**：查询面优先（papers/questions/claims/evidence/diff/export），稳定退出码，无 ANSI 污染。
 - [ ] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
+- 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
 - [ ] **E6 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
 - [ ] **E7 permission profiles**：默认 research profile；`--workspace`/`--coding` 显式开启；destructive 动作需服务端 policy + 终端确认双重把关。
 - [ ] **E8 MCP 远程化**：唯一 transport 为公网 HTTPS Streamable HTTP；OAuth protected resource metadata、token audience/scope 校验；resources 与 tools 划分。
-- [ ] **E9 MCP 凭据升级**：静态 token 改为可撤销、可轮换、分 scope 的凭据。
-- [ ] **E10 CLI device authorization**：PaperMind 自己签发一次性 device code，浏览器完成上游登录；CLI 只拿 PaperMind token，上游 provider token 不下发。
+- [x] **E9 MCP 凭据升级**：静态 token 改为可撤销、可轮换、分 scope 的凭据。
+  现有代码已支持（tokens 端点可创建/撤销/轮换；pmt_ 前缀哈希存储 + scope 校验）。设计⑥ scope 四值化（research:read/write、jobs:control、admin）需在 E6 profiles 落地后统一接入。
+- [x] **E10 CLI device authorization**：PaperMind 自己签发一次性 device code，浏览器完成上游登录；CLI 只拿 PaperMind token，上游 provider token 不下发。
+  现有代码已覆盖设计⑥ §4 全部要求（test_auth_tokens.py:73-319）：device_code 哈希存储、user_code 一次性、10 分钟 TTL、轮询限速 429、五态轮询、deny 终止、scope 绑定。E6 补充了 scope 矩阵校验。
 
 ## Stage F — Phase 5：Local UI 与可选 Full Web 适配
 
