@@ -142,6 +142,28 @@ destructive/高成本 PaperMind command：服务端 policy 校验（scope/预算
 4. E2b：第一批确定性命令（papers/questions/claims/evidence/diff/export——只读切片，对应设计② B2/B3 能力）。
 5. E2c：Pi extension tools + renderer + 主题（读写与任务命令在 Stage C Job 面就绪后接入）。
 
+### 2.1 Patch stack 实况（2026-09-03）
+
+| # | 关注点 | 落点 | 状态 | 验证 |
+| --- | --- | --- | --- | --- |
+| 0001 | `baseToolsOverride` 透传——PaperMind 传 `{}` 使 8 个内置 coding 工具**零构造**（非"不启用"） | `core/sdk.ts`（options 接口 + new AgentSession 透传）+ `core/agent-session-services.ts`（from-services 透传） | ✅ 已实施 | `packages/coding-agent/test/papermind-patches.test.ts`（vitest，2 项：{} 零构造 / 不传时上游默认行为不变）+ pm 侧 `_baseToolDefinitions.size===0` 断言 |
+| 0002 | pm 无 project trust 交互 | pm 侧 `SettingsManager.create(cwd, agentDir, { projectTrusted: true })`（公开参数，无上游改动） | ✅ 已实施 | pm 回环测试 |
+| 0003 | TUI 去 bash 模式（interactive-mode.ts 10 处） | TUI 层 patch | 待做 | — |
+| 0004 | footer/status 去 git/cwd coding 元数据 → PaperMind 语义（endpoint/账号/在途任务数） | TUI 层 patch | 待做 | — |
+| 0005 | @file 补全 → 论文/问题 ID 补全 | TUI 层 patch | 待做 | — |
+
+### 2.2 产品层 coding DNA 裁剪 checklist（audit 2026-09-03）
+
+extension 级定制（E2c）不触及的产品层残留，按风险排序：
+
+- [x] coding 工具运行时构造（4,299 行 tools/，`createAllToolDefinitions` 无条件调用）→ **0001 解决**
+- [x] project trust 交互（interactive-mode.ts 19 处引用）→ **0002 解决**（pm 侧）
+- [ ] bash 模式/命令面板（10 处）→ 0003
+- [ ] footer git/cwd 元数据 → 0004
+- [ ] @file 补全 → 0005
+- [ ] diff/bash-execution 组件进 bundle（build pruning 剔除，随 E2 release 流水线）
+- [ ] source pruning（物理删除 src/core/tools 等，pm 产品稳定后）
+
 ## 10. 待确认决策点
 
 1. **独立仓库时机**：PaperMind-Terminal 仓库在 E1a 即建立，还是先在本仓库 `terminal/` 目录原型、稳定后搬出？提案：直接独立仓库（patch stack/Git 历史从一开始就干净）。
@@ -152,3 +174,5 @@ destructive/高成本 PaperMind command：服务端 policy 校验（scope/预算
 ## 变更记录
 
 - 2026-09-02：初版（A8）。
+- 2026-09-03：patch stack 落地 0001 + 裁剪 checklist（见 §2.1/§2.2）；pm 侧 productTrusted=true 关闭 trust 交互（无需上游 patch——SettingsManager 公开参数）。
+- 2026-09-03：E2c/E6 落地（extension 级定制：受控工具集/renderer/主题/系统提示）；本文 §2.1/§2.2 记录"extension 定制不触及的产品层 coding DNA"与后续 patch 计划。
