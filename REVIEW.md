@@ -114,6 +114,128 @@ HEAD 已继续前进，修复后请重新运行完整测试、构建 wheel，并
 
 ---
 
+## 第二轮复审（2026-09-03）
+
+> 审查基线：`6c5dbee`（`refactor/papermind-2026`）；核心执行链结论基于其父提交 `ddc00e1`，最新 Research State 前端提交也已补充审查。
+>
+> 结论：**禁止合并到 `main`，且当前还不能进入服务器实验。** Stage C 的“完成”状态与真实运行路径不一致；先修完以下阻塞项，再做可重复的本地故障注入实验，最后才讨论 merge。
+
+### [P0] Go Core、Python durable store 与真实业务执行没有闭环
+
+- [ ] 状态：待修复
+
+位置：`core/main.go:19`、`core/controlplane.go:3-5`、`packages/application/commands/jobs.py:51-130`、`packages/executor_runtime/runner.py:90-107`
+
+当前 Go Core 每次启动都构造一个新的内存 `Registry`，任务与 lease 会随进程退出全部丢失；与此同时，真实业务入口仍在 Python SQLAlchemy durable store 中创建并用 `executor_id="api-thread"` 领取 Task，然后交给进程内 `global_tracker` 执行。`ExecutorRunner` 只从 Go 内存队列 claim，仓库中也没有生产启动入口、注册流程或 worker 接线。结果是两套互不连通的 Task ID、队列和状态机：Go 重启无法从 durable store 恢复，Python 业务也根本不经过 Go Executor。
+
+这直接违反 Stage C 出口条件“API/Executor 任意重启后可解释、可恢复”和“Go Core + Python Executor”。C3/C6/C7/C9/C11 以及“Stage C 完成”不应继续标记完成。
+
+验收至少应包含一条真实 capability（建议 skim）的完整链路：API 只写 durable Job/Task → Go 从同一权威状态调度 → 独立 Python Executor 注册并领取 → proposal 经 fencing 提交 → 杀死并重启 API/Core/Executor 后恢复；全过程不得回落到 `global_tracker` 直接执行业务。
+
+### [P1] Go Core 文档中的启动命令无法运行
+
+- [ ] 状态：待修复
+
+位置：`core/main.go:1-23`、`core/README.md:12-18`、`.github/workflows/tests.yml:31-50`
+
+`core/main.go` 是 `package core`，只有 `Run()`，没有 `package main`/`func main()`。复现：
+
+```text
+$ cd core && go run .
+package github.com/Color2333/PaperMind/core is not a main package
+```
+
+当前 CI 只跑 `go vet` 与 `go test`，因此测试全绿也发现不了服务不可启动。应增加独立 `cmd/papermind-core`（或等价入口）以及 build/start/health smoke test。
+
+### [P1] Core 控制端点无认证，默认暴露到所有网卡
+
+- [ ] 状态：待修复
+
+位置：`core/main.go:13-23`、`core/server.go:31-42`
+
+默认地址 `:8081` 会监听所有接口；register、submit、claim、complete、fail、cancel 等所有写端点直接挂载，没有 token、scope、executor identity 或 mTLS 校验，服务本身也只启动明文 HTTP。只要端口可达，任意客户端都能注册 Executor、领取/篡改/取消任务。路线图 C0 写的是“版本化 HTTPS API”，当前实现不满足。
+
+在阿里云实验前，至少应默认绑定 loopback/私网，并把反向代理边界、服务凭证、executor audience/scope 与轮换方式写成可测试契约；不能只依赖“部署时别暴露 8081”。
+
+### [P1] lease/fencing 没有验证 Executor 身份，且过期 lease 可以被续活
+
+- [ ] 状态：待修复
+
+位置：`packages/storage/repositories/durable.py:327-343`、`packages/storage/repositories/durable.py:481-489`、`core/registry.go:111-168`
+
+Python `_check_lease()` 接收 `executor_id` 却完全不校验它；拿到 token 的其他 Executor 可以提交该 Attempt。`heartbeat_lease()` 只比较 token，不检查 Task 状态或当前租期是否已过期，因此过期 lease 在 Reconciler 扫描前可以被复活。Go 侧也允许过期 lease heartbeat/complete；此外 claim 只验证 executor 已注册，却直接相信请求里的 `wanted` capability，没有与注册能力取交集。
+
+应补齐“错误 executor + 正确 token”“过期后 heartbeat/complete”“已完成后 heartbeat”“未注册 capability 越权 claim”四类契约测试，并让 Python/Go 使用同一套 fencing 语义。
+
+### [P1] cancel/pause 接口对当前真实执行路径不起作用
+
+- [ ] 状态：待修复
+
+位置：`packages/storage/repositories/durable.py:243-325`、`packages/storage/repositories/durable.py:436-489`、`apps/api/routers/jobs.py:176-189`
+
+`cancel_job()` 对运行中 Task 只是把 lease 设为立即过期，`heartbeat_lease()` 却恒定返回 `cancel_requested=False`；当前 `global_tracker` 路径也没有协作取消检查。`pause_queue()` 只是进程内模块变量，只拦截 `claim_task()`，而真实业务入口使用不检查该变量的 `claim_task_by_id()`。因此 API 可以返回“已取消/已暂停”，任务仍可能继续执行和产生副作用。
+
+验收应从 HTTP 端点发起：暂停后新 Job 不得执行；恢复后可继续；取消正在运行的真实 handler 后必须在安全点停止，并在 Job/Task/Attempt 中留下确定状态。跨进程状态必须持久化或由唯一控制面维护。
+
+### [P1] 完整测试存在可复现竞态，不是稳定绿灯
+
+- [ ] 状态：待修复
+
+位置：`packages/application/commands/jobs.py:121-130`、`tests/test_stage_c3.py:37-60`
+
+在项目 `.venv` 中运行完整 `pytest -q`，出现 1 个失败：后台 `_wrapped` 已把 Job 收敛为 succeeded，而主线程尚未执行 `set_external_ref()`，测试读到 `pending:*`。单独重跑通过，确认这是时序竞态而非固定断言错误。当前流程先启动 tracker 线程、后回填关联 ID，本身就允许调用方在已完成状态下读到临时引用。
+
+应在启动执行前原子确定并持久化 external reference，或彻底移除过渡 tracker ID；CI 还应增加重复/并发运行，避免一次性“212 passed”掩盖竞态。
+
+### [P1] Worker 停机途中会把未处理完的 batch 标成 completed
+
+- [ ] 状态：待修复
+
+位置：`packages/agent_core/batch_consumer.py:23-28`、`packages/agent_core/batch_consumer.py:47-63`、`apps/worker/main.py:321-326`
+
+收到终止信号后 `_run_one_job()` 会在剩余 paper 前直接 break，但 `poll_once()` 随后无条件 `mark_finished(..., "completed")`。这会把未执行 paper 静默丢掉，并使“优雅关闭”产生错误完成态。停机应进入 cancelling/retryable 状态，或把未完成原子 Task 留在 durable 队列等待恢复，不能标 completed。
+
+### [P1] Executor 吞掉 complete/fail 协议错误，可能重复副作用
+
+- [ ] 状态：待修复
+
+位置：`packages/executor_runtime/runner.py:127-178`
+
+handler 成功后，`client.complete()` 被 `suppress(Exception)` 包住。若业务副作用已发生而完成回执因网络失败/409/协议错误未落地，Executor 会静默继续；lease 到期后同一任务可能再次执行。fail/no-handler/cancel 上报也存在同类吞错。至少应记录并重试幂等提交，把“执行成功但提交结果未知”持久化为可恢复状态，且外部副作用必须由 effect key 保护。
+
+### [P2] F6“端到端验证”只有文档声明，没有可重放证据
+
+- [ ] 状态：待澄清
+
+位置：commit `ddc00e1`、`docs/plans/2026-09-02-rearchitecture-roadmap.md`
+
+该 commit 只增加一行“全链路正常”的路线图文字，没有新增测试、脚本、日志或实验产物。它验证的是现有 Python 路径与部署 profile，不是 Go Core/独立 Executor/durable recovery 的端到端实验。应保留为“手工 smoke 记录”，不要用它关闭重构出口或替代用户尚未完成的实验。
+
+### [P2] 新 Research State 页面没有正常入口，导出失败会被保存成 Markdown
+
+- [ ] 状态：待修复
+
+位置：`frontend/src/App.tsx:119-122`、`frontend/src/components/Sidebar.tsx:34-47`、`frontend/src/services/api.ts:802-806`
+
+`6c5dbee` 注册了 `/research` 路由，但没有在 Sidebar 或其他页面增加入口，普通用户只能手输 URL。`exportMd()` 又绕过公共 HTTP 错误处理，直接对任意响应调用 `text()`；404/401/500 时仍会把错误正文下载成 `.md`，也不会触发现有的 401 清理流程。应补导航入口，并在导出前检查 `response.ok`、复用统一认证/错误处理；增加路由可发现性和导出失败测试。
+
+### 本轮独立验证
+
+- `go test ./...`：通过。
+- `go run .`：失败，`core is not a main package`。
+- `.venv/bin/python -m pytest -q`：出现 1 个竞态失败、2 个 skip；单独重跑该用例通过，进一步确认 flaky。
+- 系统 Python 因未安装项目声明依赖 `fastmcp` 在 collection 阶段失败；项目 `.venv` 已包含该依赖，因此未把这一点列为代码缺陷。
+
+### 合并门槛
+
+1. 上述 P0/P1 全部处理并附 commit 与测试证据。
+2. 路线图把“已写骨架/已有 hermetic test”与“真实链路完成”拆开，撤回失真的 Stage C/F6 完成声明。
+3. 先在本地跑可重复故障注入：真实任务、Core/Executor/API 分别强杀、lease 过期、重复回执、取消、pause/resume。
+4. 本地结果稳定后，再由用户在阿里云运行基线与部署实验。
+5. 用户确认实验结果后，才允许 merge 到 `main`；此轮明确不执行 merge/push。
+
+---
+
 ## 修复记录（2026-09-02，重构 Agent）
 
 - 6/6 项全部处理，处理说明已附在各条状态处。

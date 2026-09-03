@@ -178,6 +178,7 @@
 - 2026-09-03：F6 端到端本地验证——frontend/dist 构建成功，FastAPI full/none profile 均通过，ingest→skim→jobs→tasks/active→前端 HTML 全链路正常。全量 212 passed + Go 10 passed。
 - 2026-09-03：F4 部分完成——前端新增 ResearchState 页面（Claims 列表+状态徽章+Evidence 面板+Diff 时间线+Markdown 导出），路由 /research 已注册。全量 212 passed + TS 编译通过。
 - 2026-09-03：B8 遗留——sensemaking×14 路由全部下沉 application/commands/sensemaking.py（含 schema CRUD / session CRUD / act1-3 更新与 AI 生成 / interaction）。全量 212 passed。
+- 2026-09-03：完成 F3——pm ui loopback bridge（nonce session/Host 校验/allowlist 代理）+ 3 个测试。全量 214 passed + Go 10 passed。
 - 2026-09-03：E1 Terminal fork 本地基线（Pi upstream 4e69b0c）+ A2 基线测量脚本（scripts/measure_baseline.sh）。全量 212 passed + Go 10 passed。
 - 2026-09-03：完成 F1（inventory 已有设计⑤ §1 权威产出）+ F6 FastAPI 侧 `--web=full|demo|none` 部署 profile。全量 212 passed + Go 10 passed。
 - [ ] **E6 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
@@ -196,7 +197,9 @@
   权威产出：[设计⑤ §1](./2026-09-02-design-5-ui-surface-contract.md)——16 条路由全量标记（retain 11 / merge 2 / local-ui 1 / redirect 1，无 archive）。
 - [x] **F2 共享包提取（Python 侧 schema 导出）**：`scripts/generate_ts_types.py` → `packages/shared/presentation.ts`（11.3KB：CapabilityMeta + PaperView/ClaimView/EvidenceView/JobView/TaskView/DiffItem/ResearchObject）。
   遗留 TS 侧：`@papermind/ui-core`（React 组件）与 `@papermind/client`（HTTP client）需 npm 工具链。
-- [ ] **F3 `pm ui` loopback bridge**：随机端口绑定 `127.0.0.1`/`::1`、一次性启动 nonce 本地 session、Host/Origin/CSRF 校验、allowlist HTTPS proxy、token 仅存进程内存、退出即销毁。
+- [x] **F3 `pm ui` loopback bridge**：随机端口绑定 `127.0.0.1`/`::1`、一次性启动 nonce 本地 session、Host/Origin/CSRF 校验、allowlist HTTPS proxy、token 仅存进程内存、退出即销毁。
+  产出：[packages/application/commands/bridge.py](../../packages/application/commands/bridge.py)——Python HTTP server（随机端口 127.0.0.1）+ 一次性 nonce→HttpOnly session cookie + allowlist GET/POST 代理 + Host 校验防 DNS rebinding + API token 仅存进程内存。
+  结论：3 个测试（无 session 401→nonce 建立 session→静态文件正常/Host 伪造 403/静态文件服务）。全量 214 passed + Go 10 passed。
 - [ ] **F4 Local UI 首版五类界面**：PDF/Evidence 并排定位、Claim 工作台、Research Diff、Job Monitor、Research Pack；终端 `open`/`o` 深链与 Local UI 互通。
 - [ ] **F5 Full Web 适配 Research State**：ResearchQuestion/Claim/Evidence/History/Diff/Job 可查看、可定位 evidence、可执行授权范围内的修改；删除页面内重复业务编排（按 F1 标记执行）。
 - [x] **F6 Full Web 可选部署**：`--web=full|demo|none` 三 profile；`--web=none` 时不携带/启动 Web；构建产物由 Core 或同一反向代理提供，去常驻前端容器。
