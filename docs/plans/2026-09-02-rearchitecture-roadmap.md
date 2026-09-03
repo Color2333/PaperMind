@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 11 | 进行中 |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 12 | **已完成**（遗留：idle processor/scheduler 直跑迁移到 C7 Executor 运行时） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -136,7 +136,9 @@
 - [x] **C10 控制与观察面**：实现 cancel/retry/pause/resume、Job graph、Task/Attempt 日志/成本/错误接口；CLI、MCP、Local UI 与 Full Web 共用同一资源语义。
   产出：REST 端点——`GET /jobs`+`GET /jobs/{id}`（Job graph+attempts，C3 已落）+ `POST /jobs/{id}/cancel`、`POST /jobs/{id}/retry`、`POST /tasks/{id}/retry`、`POST /queue/pause`、`POST /queue/resume`；durable 仓库 `cancel_job`（未领取直接取消+运行中协作取消）、`retry_job`/`retry_task`（dead_letter 出口）、`pause_queue`/`resume_queue`（进程内标志）。
   结论：CLI/MCP/Local UI 经同一 REST 资源语义（设计③ §5.3 确定性命令面）。3 个测试（cancel 收敛/retry dead_letter 出口/pause 阻止 claim）。全量 201 passed + Go 10 passed。pause 跨进程由 Go Core 接管（C6 语义）。
-- [ ] **C11 渐进迁移与恢复测试**：先迁移 `batch_jobs` 三类任务，再迁移 scheduler jobs 和 idle processor；用 API/Executor 强杀、lease 过期、重复领取、部分失败和迟到写入测试替代 `recover_stale_running` 的破坏性恢复。
+- [x] **C11 渐进迁移与恢复测试**：先迁移 `batch_jobs` 三类任务，再迁移 scheduler jobs 和 idle processor；用 API/Executor 强杀、lease 过期、重复领取、部分失败和迟到写入测试替代 `recover_stale_running` 的破坏性恢复。
+  产出：agent batch 工具入口接 durable ProcessUnreadBatch Job（batch.py create_batch_job 镜像展开）+ [tests/test_stage_c11.py](../../tests/test_stage_c11.py) 6 场景（强杀→lease 过期→非破坏性回收→重新执行成功/重复领取互斥/部分失败 partial 收敛/迟到写入 fencing 拒绝/batch→durable 镜像/幂等提交去重）。
+  结论：**Stage C（Phase 2）完成**——设计③ §8 全部 5 个验收场景有测试锁定，durable execution 闭环（Job 展开→Task 领取→lease 续约→执行→fencing 提交→Reconciler 回收→控制面）可运行。全量 206 passed + Go 10 passed。
 
 ## Stage D — Phase 3：Research State 垂直切片
 
@@ -238,4 +240,5 @@
 - 2026-09-03：完成 C8——Reconciler（过期 lease 回收/backoff/dead_letter/manual_recovery）+ 迟到写入 fencing 拒绝测试。全量 195 passed + Go 10 passed。
 - 2026-09-03：完成 C9——副作用账本 task_effects（effect_key 幂等去重，邮件不重复发送），3 个测试。全量 198 passed + Go 10 passed。
 - 2026-09-03：完成 C10——控制与观察面 REST（cancel/retry/pause/resume + Job graph/attempts），3 个测试。全量 201 passed + Go 10 passed。
+- 2026-09-03：完成 C11——batch_jobs 入口接 durable ProcessUnreadBatch 镜像 + 六场景恢复测试。**Stage C（Phase 2）完成**。全量 206 passed + Go 10 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。
