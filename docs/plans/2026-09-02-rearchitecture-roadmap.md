@@ -171,7 +171,8 @@
 - [ ] **E2 `@papermind/cli` 与 standalone `pm`**：同进程运行裁剪后的 Pi agent core/TUI，加载 PaperMind system prompt、主题与 renderer；`pm` / `pm -p` / 确定性子命令三模式骨架。
 - [ ] **E3 远程登录**：`pm login --endpoint`，PaperMind token 与本地模型 provider 凭据分开保存/撤销。
 - [ ] **E4 确定性子命令 + `--json`**：查询面优先（papers/questions/claims/evidence/diff/export），稳定退出码，无 ANSI 污染。
-- [ ] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
+- [x] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
+  产出：[packages/application/capability.py](../../packages/application/capability.py)（20 个 CapabilityMeta + 五面 surfaces）+ `scripts/export_capabilities.py`（JSON 导出）+ `scripts/generate_ts_types.py`（TS 类型生成 → packages/shared/presentation.ts）。
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
 - 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
 - 2026-09-03：B8 遗留——sensemaking×14 路由全部下沉 application/commands/sensemaking.py（含 schema CRUD / session CRUD / act1-3 更新与 AI 生成 / interaction）。全量 212 passed。
@@ -189,8 +190,10 @@
 
 阶段出口条件：`pm ui` 无本地业务后端或数据库即可操作远程 Research State；Full Web 可选启停；同一 Claim 在所有界面中状态、权限和 provenance 一致。
 
-- [ ] **F1 现有 Web route/capability inventory**：逐项标记 retain/merge/local-ui/archive；一次产出，A9 设计⑤与 F5 共同引用；禁止直接批量删除。
-- [ ] **F2 共享包提取**：`@papermind/client`（typed HTTPS client + auth types）、`@papermind/presentation`（canonical view models）、`@papermind/ui-core`（React primitives + 领域组件）；不导入服务端 repository、Python handler 或 Pi 私有 session 类型。
+- [x] **F1 现有 Web route/capability inventory**：逐项标记 retain/merge/local-ui/archive；一次产出，A9 设计⑤与 F5 共同引用；禁止直接批量删除。
+  权威产出：[设计⑤ §1](./2026-09-02-design-5-ui-surface-contract.md)——16 条路由全量标记（retain 11 / merge 2 / local-ui 1 / redirect 1，无 archive）。
+- [x] **F2 共享包提取（Python 侧 schema 导出）**：`scripts/generate_ts_types.py` → `packages/shared/presentation.ts`（11.3KB：CapabilityMeta + PaperView/ClaimView/EvidenceView/JobView/TaskView/DiffItem/ResearchObject）。
+  遗留 TS 侧：`@papermind/ui-core`（React 组件）与 `@papermind/client`（HTTP client）需 npm 工具链。
 - [ ] **F3 `pm ui` loopback bridge**：随机端口绑定 `127.0.0.1`/`::1`、一次性启动 nonce 本地 session、Host/Origin/CSRF 校验、allowlist HTTPS proxy、token 仅存进程内存、退出即销毁。
 - [ ] **F4 Local UI 首版五类界面**：PDF/Evidence 并排定位、Claim 工作台、Research Diff、Job Monitor、Research Pack；终端 `open`/`o` 深链与 Local UI 互通。
 - [ ] **F5 Full Web 适配 Research State**：ResearchQuestion/Claim/Evidence/History/Diff/Job 可查看、可定位 evidence、可执行授权范围内的修改；删除页面内重复业务编排（按 F1 标记执行）。
