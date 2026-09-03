@@ -114,9 +114,10 @@ pm demo                              # Demo 引导教程（Phase 6）
 
 | profile | 能力 | 开关 |
 | --- | --- | --- |
-| `research`（默认） | PM tools + 本地导出写（仅 cwd 之外明确路径需确认） | 默认 |
-| `--workspace .` | 增加当前目录内研究文件读写 | 显式 |
-| `--coding` | 完整 Pi coding tools | 显式；**Demo 永不开放** |
+| `research`（默认） | PM tools + **工作区文件工具**（read/edit/write/grep/find/ls——查看/修改，写论文场景的核心能力，Zotero+AI 打法）+ 本地导出写 | 默认 |
+| `--coding` | 完整 Pi coding tools（含 bash/powershell） | 显式；**Demo 永不开放** |
+
+边界：bash/powershell **零构造**（patch 0001：baseToolsOverride 不含即不进运行时）——research profile 永无任意 shell 执行；文件读写局限 cwd 工作区（Pi 工具原生行为），写论文即编辑本地 markdown/LaTeX 工程。
 
 destructive/高成本 PaperMind command：服务端 policy 校验（scope/预算）+ 终端确认 UI **双重**把关；本地确认不能绕过服务端权限。工具结果限制大小并支持分页/资源引用，不把整本 PDF 或全量日志注入模型 context。
 
