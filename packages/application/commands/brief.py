@@ -11,6 +11,7 @@ import time
 from datetime import UTC, datetime
 
 from packages.application.commands.jobs import submit_tracked_compat
+from packages.application.commands.task_registry import get_spec
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ def start_daily_brief_task(*, recipient: str | None = None) -> dict:
             progress_callback("简报生成完成", 95, 100)
         return result
 
+    spec = get_spec("build_daily_brief")
     task_id = submit_tracked_compat(
         kind="StartDailyBrief",
         capability="build_daily_brief",
@@ -92,6 +94,8 @@ def start_daily_brief_task(*, recipient: str | None = None) -> dict:
         fn=_fn,
         total=100,
         category="generation",
+        timeout_s=spec.timeout_s,
+        max_attempts=spec.max_attempts,
     )
     return {
         "task_id": task_id,

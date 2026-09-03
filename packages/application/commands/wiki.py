@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from packages.application.commands.jobs import submit_tracked_compat
+from packages.application.commands.task_registry import get_spec
 
 
 def start_topic_wiki(*, keyword: str, limit: int = 120) -> str:
@@ -53,5 +54,7 @@ def start_topic_wiki_with_save(*, keyword: str, limit: int = 120) -> dict:
         title=f"Wiki: {keyword}",
         fn=_run,
         category="generation",
+        resource_class=get_spec("generate_topic_wiki").resource_class,
+        timeout_s=get_spec("generate_topic_wiki").timeout_s,
     )
     return {"task_id": task_id, "status": "pending"}
