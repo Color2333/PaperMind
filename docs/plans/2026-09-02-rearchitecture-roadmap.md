@@ -175,6 +175,7 @@
   产出：[packages/application/capability.py](../../packages/application/capability.py)（20 个 CapabilityMeta + 五面 surfaces）+ `scripts/export_capabilities.py`（JSON 导出）+ `scripts/generate_ts_types.py`（TS 类型生成 → packages/shared/presentation.ts）。
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
 - 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
+- 2026-09-03：F6 端到端本地验证——frontend/dist 构建成功，FastAPI full/none profile 均通过，ingest→skim→jobs→tasks/active→前端 HTML 全链路正常。全量 212 passed + Go 10 passed。
 - 2026-09-03：B8 遗留——sensemaking×14 路由全部下沉 application/commands/sensemaking.py（含 schema CRUD / session CRUD / act1-3 更新与 AI 生成 / interaction）。全量 212 passed。
 - 2026-09-03：E1 Terminal fork 本地基线（Pi upstream 4e69b0c）+ A2 基线测量脚本（scripts/measure_baseline.sh）。全量 212 passed + Go 10 passed。
 - 2026-09-03：完成 F1（inventory 已有设计⑤ §1 权威产出）+ F6 FastAPI 侧 `--web=full|demo|none` 部署 profile。全量 212 passed + Go 10 passed。
