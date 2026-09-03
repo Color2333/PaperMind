@@ -71,7 +71,8 @@ class InlineExecutor:
                     # （与 durable-state /complete 的权威语义一致）
                     stored_ref = json_result
                     proposal = (json_result or {}).get("proposal") or {}
-                    if proposal.get("kind") == "skim_paper":
+                    kind = proposal.get("kind")
+                    if kind == "skim_paper":
                         from packages.application.commands.domain_apply import (
                             apply_prompt_trace,
                             apply_skim_proposal,
@@ -80,6 +81,29 @@ class InlineExecutor:
                         apply_skim_proposal(session, proposal)
                         apply_prompt_trace(session, proposal)
                         stored_ref = proposal.get("skim") or json_result
+                    elif kind == "deep_read_paper":
+                        from packages.application.commands.domain_apply import (
+                            apply_deep_read_proposal,
+                            apply_prompt_trace,
+                        )
+
+                        apply_deep_read_proposal(session, proposal)
+                        apply_prompt_trace(session, proposal)
+                        stored_ref = proposal.get("deep") or json_result
+                    elif kind == "embed_paper":
+                        from packages.application.commands.domain_apply import apply_embed_proposal
+
+                        apply_embed_proposal(session, proposal)
+                        stored_ref = {"embedded": True}
+                    elif kind == "extract_claims":
+                        from packages.application.commands.domain_apply import (
+                            apply_extract_claims_proposal,
+                            apply_prompt_trace,
+                        )
+
+                        stats = apply_extract_claims_proposal(session, proposal)
+                        apply_prompt_trace(session, proposal)
+                        stored_ref = stats or json_result
                     TaskRepository(session).complete_task(
                         task_id=task_id,
                         executor_id=self.executor_id,

@@ -344,6 +344,44 @@ def skim_paper_proposal(*, paper_id: str, progress: ProgressFn = None, **_: Any)
     return PaperPipelines().skim_proposal(paper_id)
 
 
+def deep_read_paper_proposal(*, paper_id: str, progress: ProgressFn = None, **_: Any) -> dict:
+    """deep read 纯计算（Go-authority 切片）：返回 proposal，不写领域表"""
+    from packages.ai.pipelines import PaperPipelines
+
+    return PaperPipelines().deep_dive_proposal(paper_id)
+
+
+def embed_paper_proposal(*, paper_id: str, progress: ProgressFn = None, **_: Any) -> dict:
+    """embed 纯计算（Go-authority 切片）：返回向量 proposal，不写领域表"""
+    from packages.ai.pipelines import PaperPipelines
+
+    return PaperPipelines().embed_paper_proposal(paper_id)
+
+
+def extract_claims_proposal(
+    *, paper_id: str, source_text: str = "", progress: ProgressFn = None, **_: Any
+) -> dict:
+    """claim 抽取纯计算（proposal 模式）：LLM 抽取候选 claim 项，不写领域表。
+
+    领域 apply（claims/evidence/research_run 指纹去重写入）在权威面完成。
+    """
+    from packages.ai.claim_extractor import ClaimExtractionService
+
+    svc = ClaimExtractionService()
+    paper_id, items, trace, run_meta = svc.extract_compute(
+        paper_id, source_text=source_text or None
+    )
+    return {
+        "proposal": {
+            "kind": "extract_claims",
+            "paper_id": paper_id,
+            "items": items,
+            "trace": trace,
+            "run_meta": run_meta,
+        }
+    }
+
+
 def upsert_paper_data(
     *,
     arxiv_id: str,

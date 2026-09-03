@@ -111,11 +111,12 @@ def test_batch_paper_failure_does_not_block_others(c1_env, monkeypatch):
         result = create_batch_job(session, kind="embed", paper_ids=[p1, p2])
         job_id = result["job_id"]
 
-    def _boom_maybe(paper_id):  # 只对第一篇失败（部分成功语义）
+    def _boom_maybe_proposal(self, paper_id):  # 只对第一篇失败（部分成功语义）
         if str(paper_id) == str(p1):
             raise RuntimeError("embed exploded")
+        return {"proposal": {"kind": "embed_paper", "paper_id": str(paper_id), "vector": [0.1]}}
 
-    monkeypatch.setattr(PaperPipelines, "embed_paper", _boom_maybe)
+    monkeypatch.setattr(PaperPipelines, "embed_paper_proposal", _boom_maybe_proposal)
 
     InlineExecutor(capabilities=["embed_paper"]).run_until_idle()
 

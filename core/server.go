@@ -49,6 +49,7 @@ func NewServerWithStore(reg *ExecutorRegistry, state *StateClient, store *CoreSt
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
 	s.mux.HandleFunc("POST /v1/jobs", s.enveloped(s.handleSubmitJob))
 	s.mux.HandleFunc("GET /v1/jobs/{id}", s.handleJobGraphGET)
+	s.mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.enveloped(s.handleJobCancel))
 	s.mux.HandleFunc("GET /v1/jobs", s.handleJobsListGET)
 	s.mux.HandleFunc("POST /v1/executors/register", s.enveloped(s.handleRegister))
 	s.mux.HandleFunc("POST /v1/tasks/claim", s.enveloped(s.handleClaim))
@@ -288,7 +289,7 @@ func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request, cid stri
 	}
 	// Go-authority 路由：core 任务 → apply-result 单事务；其余 → 代理
 	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
-		status, err := s.Store.ApplySkimResult(s.taskID(r), req.ExecutorID, req.LeaseToken, req.Result)
+		status, err := s.Store.ApplyResult(s.taskID(r), req.ExecutorID, req.LeaseToken, req.Result)
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				writeJSON(w, http.StatusNotFound, cid, map[string]any{"ok": false, "error": "task_not_found", "detail": err.Error()})
@@ -511,19 +512,16 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request, cid str
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_job_request"})
 		return
 	}
-	if req.Capability != "skim_paper" {
+	migrated := map[string]bool{"skim_paper": true, "deep_read_paper": true, "embed_paper": true}
+	if !migrated[req.Capability] {
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{
 			"ok": false, "error": "capability_not_migrated",
-			"detail": "仅 skim_paper 已迁移到 Go authority（切片）",
+			"detail": "该 capability 尚未迁移到 Go authority（逐项迁移中）",
 		})
 		return
 	}
-	paperID, _ := req.InputRef["paper_id"].(string)
-	if paperID == "" {
-		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "paper_id_required"})
-		return
-	}
-	jobID, taskID, created, err := s.Store.SubmitSkimJob(paperID, req.IdempotencyKey, req.TimeoutS)
+	inputJSON, _ := json.Marshal(req.InputRef)
+	jobID, taskID, created, err := s.Store.SubmitCoreTask(req.Capability, string(inputJSON), req.IdempotencyKey, req.TimeoutS)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, cid, map[string]any{"ok": false, "error": "submit_failed", "detail": err.Error()})
 		return
@@ -532,6 +530,20 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request, cid str
 		"ok": true, "job_id": jobID, "task_id": taskID,
 		"status": "queued", "created": created, "authority": "go_core",
 	})
+}
+
+// handleJobCancel：Go 权威 Job 取消（控制面路由）
+func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusNotImplemented, cid, map[string]any{"ok": false, "error": "core_store_not_configured"})
+		return
+	}
+	counts, err := s.Store.CancelJob(jobIDFromPath(r))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, cid, map[string]any{"ok": false, "error": "cancel_failed", "detail": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, map[string]any{"ok": true, "counts": counts})
 }
 
 // handleJobsListGET：core Job 列表（观察面合并）

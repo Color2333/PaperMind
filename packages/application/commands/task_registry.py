@@ -83,7 +83,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="deep_read_paper",
-            handler="packages.ai.pipelines.paper_pipelines:PaperPipelines.deep_dive",
+            handler="packages.ai.task_handlers:deep_read_paper_proposal",
             side_effect="AnalysisReport（deep_dive_md）+ ImageAnalysis + 同事务 ClaimExtraction",
             input_keys=("paper_id",),
             idempotency_template="deep:{paper_id}:{source_version_hash}",
@@ -94,7 +94,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="extract_claims",
-            handler="packages.ai.claim_extractor:ClaimExtractionService.extract_for_paper",
+            handler="packages.ai.task_handlers:extract_claims_proposal",
             side_effect="ResearchRun + papermind Claims + Evidence（幂等指纹去重）",
             input_keys=("paper_id", "source_text"),
             idempotency_template="claims:{paper_id}:{source_version_hash}",
@@ -105,7 +105,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="embed_paper",
-            handler="packages.ai.pipelines.paper_pipelines:PaperPipelines.embed_paper",
+            handler="packages.ai.task_handlers:embed_paper_proposal",
             side_effect="papers.embedding 列更新",
             input_keys=("paper_id",),
             idempotency_template="embed:{paper_id}:{source_version_hash}",

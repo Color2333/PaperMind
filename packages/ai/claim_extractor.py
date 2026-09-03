@@ -105,6 +105,51 @@ class ClaimExtractionService:
                 research_question_id=research_question_id,
             )
 
+    def extract_compute(self, paper_id: str, *, source_text: str | None = None) -> tuple:
+        """纯计算（proposal 模式）：读 paper + LLM 抽取候选 claim 项。
+
+        返回 (paper_id, items, trace, run_meta)——不写任何领域表。
+        领域 apply（claims/evidence/run 指纹去重）在权威面 apply 阶段执行。
+        """
+        from packages.storage.db import session_scope
+
+        started = time.perf_counter()
+        with session_scope() as session:
+            paper = PaperRepository(session).get_by_id(paper_id)
+            text = (source_text or paper.abstract or "").strip()
+            if not text:
+                raise ValidationError(f"论文 {paper_id} 没有可抽取的文本")
+
+            prompt = build_claim_extraction_prompt(paper.title, text)
+            result = self.llm.complete_json(prompt, stage="claim_extraction")
+
+            items = []
+            for item in (result.parsed_json or {}).get("claims") or []:
+                if isinstance(item, dict) and str(item.get("statement") or "").strip():
+                    items.append(item)
+
+            trace = {
+                "stage": "claim_extraction",
+                "paper_id": str(paper.id),
+                "provider": self.llm.provider,
+                "model": get_settings().llm_model_deep,
+                "prompt_digest": prompt[:500],
+                "input_tokens": result.input_tokens or 0,
+                "output_tokens": result.output_tokens or 0,
+                "input_cost_usd": result.input_cost_usd or 0.0,
+                "output_cost_usd": result.output_cost_usd or 0.0,
+                "total_cost_usd": result.total_cost_usd or 0.0,
+            }
+            run_meta = {
+                "model_policy": {
+                    "provider": self.llm.provider,
+                    "model": get_settings().llm_model_deep,
+                    "policy_version": "claim-extraction-v1",
+                },
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            }
+            return str(paper.id), items, trace, run_meta
+
     def extract_in_session(
         self,
         session,

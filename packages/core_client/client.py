@@ -169,6 +169,10 @@ class CoreClient:
             return None
         return resp.json()
 
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        """Go 权威 Job 取消"""
+        return self._call(f"/v1/jobs/{job_id}/cancel", {})
+
     def jobs_list(self, limit: int = 20) -> list[dict[str, Any]]:
         """Go 权威 Job 列表（观察面合并）"""
         try:

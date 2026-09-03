@@ -581,6 +581,74 @@ class PaperPipelines:
                 run_repo.fail(run.id, str(exc))
                 raise
 
+    def deep_dive_proposal(self, paper_id: UUID) -> dict:
+        """Go-authority 切片：deep read 纯计算——不写领域表。
+
+        PDF 缺失时下载（幂等基础设施写入：文件落盘 + set_pdf_path，非研究结果）；
+        返回 {deep, trace} proposal 由权威面 apply。inline claim 抽取在 proposal
+        模式下跳过（claims 由独立 extract_claims 任务承载）。
+        """
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            paper = paper_repo.get_by_id(paper_id)
+            if not paper.pdf_path:
+                paper_repo.set_pdf_path(
+                    paper_id,
+                    self.arxiv.download_pdf(paper.arxiv_id),
+                )
+                paper = paper_repo.get_by_id(paper_id)
+            pdf_path = paper.pdf_path
+            paper_title = paper.title
+            extracted = self.vision.extract_page_descriptions(pdf_path)
+            extracted_text = self.pdf_extractor.extract_text(pdf_path, max_pages=10)
+            combined = f"{extracted}\n\n[TextLayer]\n{extracted_text[:8000]}"
+            prompt = build_deep_prompt(paper_title, combined)
+            decision = CostGuardService(session, self.llm).choose_model(
+                stage="deep",
+                prompt=prompt,
+                default_model=self.settings.llm_model_deep,
+            )
+            result = self.llm.complete_json(
+                prompt,
+                stage="deep",
+                model_override=decision.chosen_model,
+            )
+            deep = self._build_deep_structured(result.content, result.parsed_json)
+            return {
+                "proposal": {
+                    "kind": "deep_read_paper",
+                    "paper_id": str(paper_id),
+                    "deep": deep.model_dump(mode="json"),
+                    "trace": {
+                        "stage": "deep_dive",
+                        "paper_id": str(paper_id),
+                        "provider": self.llm.provider,
+                        "model": decision.chosen_model,
+                        "prompt_digest": prompt[:500],
+                        "input_tokens": result.input_tokens or 0,
+                        "output_tokens": result.output_tokens or 0,
+                        "input_cost_usd": result.input_cost_usd or 0.0,
+                        "output_cost_usd": result.output_cost_usd or 0.0,
+                        "total_cost_usd": result.total_cost_usd or 0.0,
+                    },
+                }
+            }
+
+    def embed_paper_proposal(self, paper_id: UUID) -> dict:
+        """Go-authority 切片：embed 纯计算——不写领域表，返回向量 proposal"""
+        with session_scope() as session:
+            paper_repo = PaperRepository(session)
+            paper = paper_repo.get_by_id(paper_id)
+            content = self._build_embed_content(session, paper)
+            vector = self.llm.embed_text(content)
+            return {
+                "proposal": {
+                    "kind": "embed_paper",
+                    "paper_id": str(paper_id),
+                    "vector": vector,
+                }
+            }
+
     def embed_paper(self, paper_id: UUID) -> None:
         """向量化嵌入（带追踪）"""
         started = time.perf_counter()

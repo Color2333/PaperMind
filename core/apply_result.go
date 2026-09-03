@@ -9,14 +9,102 @@ import (
 	"fmt"
 )
 
-// ApplySkimResult 在单事务内：
+// ApplyResult 按 capability 分派的 apply-result 入口（单事务）。
+func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	var capability string
+	err := s.DB.QueryRow(`SELECT capability FROM core_tasks WHERE id=?`, taskID).Scan(&capability)
+	if err != nil {
+		return "", fmt.Errorf("task %s not found", taskID)
+	}
+	switch capability {
+	case "skim_paper":
+		return s.applySkimResult(taskID, executorID, leaseToken, result)
+	case "deep_read_paper":
+		return s.applyDeepReadResult(taskID, executorID, leaseToken, result)
+	case "embed_paper":
+		return s.applyEmbedResult(taskID, executorID, leaseToken, result)
+	default:
+		return "", fmt.Errorf("capability %s 未实现 Go apply-result（迁移清单中）", capability)
+	}
+}
+
+// fencingGuard 在事务内校验 lease 持有者 + attempt 匹配；返回 attempt fencing token。
+func fencingGuard(tx *sql.Tx, taskID, executorID, leaseToken string) (int, error) {
+	var status string
+	var attemptCount int
+	var leaseTokenDB sql.NullString
+	err := tx.QueryRow(
+		`SELECT status, attempt_count, lease_token FROM core_tasks WHERE id=?`,
+		taskID,
+	).Scan(&status, &attemptCount, &leaseTokenDB)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("task %s not found", taskID)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if status != "leased" {
+		return 0, fmt.Errorf("task %s 状态 %s 不可提交", taskID, status)
+	}
+	if !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
+		return 0, fmt.Errorf("task %s lease token 不匹配（迟到写入被拒绝）", taskID)
+	}
+	var attemptExecutor string
+	err = tx.QueryRow(
+		`SELECT executor_id FROM core_attempts
+		 WHERE task_id=? AND fencing_token=? AND status='running'`,
+		taskID, attemptCount,
+	).Scan(&attemptExecutor)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("task %s 无 running attempt（fencing token %d）", taskID, attemptCount)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if attemptExecutor != executorID {
+		return 0, fmt.Errorf("task %s lease 属于 %s，不能由 %s 提交", taskID, attemptExecutor, executorID)
+	}
+	return attemptCount, nil
+}
+
+// finalizeTask 终态：Task succeeded + Attempt succeeded + Job 收敛（与领域变化同事务）
+func finalizeTask(tx *sql.Tx, taskID string, result map[string]any) error {
+	now := nowISO()
+	if _, err := tx.Exec(
+		`UPDATE core_tasks SET status='succeeded', lease_token=NULL, lease_expires_at=NULL,
+		 result_ref=? WHERE id=?`,
+		mustJSON(result), taskID,
+	); err != nil {
+		return err
+	}
+	var attemptCount int
+	if err := tx.QueryRow(`SELECT attempt_count FROM core_tasks WHERE id=?`, taskID).Scan(&attemptCount); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE core_attempts SET status='succeeded', finished_at=?
+		 WHERE task_id=? AND fencing_token=? AND status='running'`,
+		now, taskID, attemptCount,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE core_jobs SET status='succeeded', finished_at=? WHERE id=? AND status='running'`,
+		now, jobIDOf(tx, taskID),
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// applySkimResult 在单事务内：
 //  1. 校验 fencing（lease_token 持有者 + attempt 匹配 + 未过期）；
 //  2. 提交领域变化：analysis_reports upsert + papers read_status/metadata +
 //     prompt_traces 插入；
 //  3. Task → succeeded，Attempt → succeeded。
 //
 // 任一步失败整体回滚——迟到/重复 proposal 不会产生部分领域状态。
-func (s *CoreStore) ApplySkimResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
 	proposal, _ := result["proposal"].(map[string]any)
 	if proposal == nil {
 		return "", fmt.Errorf("result 缺少 proposal（skim 切片要求 proposal 模式）")
@@ -35,41 +123,8 @@ func (s *CoreStore) ApplySkimResult(taskID, executorID, leaseToken string, resul
 	defer tx.Rollback()
 
 	// ---- 1. fencing 校验（行锁内）----
-	var status string
-	var attemptCount int
-	var leaseTokenDB sql.NullString
-	var leaseExpires sql.NullString
-	err = tx.QueryRow(
-		`SELECT status, attempt_count, lease_token, lease_expires_at FROM core_tasks WHERE id=?`,
-		taskID,
-	).Scan(&status, &attemptCount, &leaseTokenDB, &leaseExpires)
-	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("task %s not found", taskID)
-	}
-	if err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
 		return "", err
-	}
-	if status != "leased" {
-		return "", fmt.Errorf("task %s 状态 %s 不可提交", taskID, status)
-	}
-	if !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
-		return "", fmt.Errorf("task %s lease token 不匹配（迟到写入被拒绝）", taskID)
-	}
-	// attempt 行存在且属于该 executor（fencing 完整性）
-	var attemptStatus, attemptExecutor string
-	err = tx.QueryRow(
-		`SELECT status, executor_id FROM core_attempts
-		 WHERE task_id=? AND fencing_token=? AND status='running'`,
-		taskID, attemptCount,
-	).Scan(&attemptStatus, &attemptExecutor)
-	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("task %s 无 running attempt（fencing token %d）", taskID, attemptCount)
-	}
-	if err != nil {
-		return "", err
-	}
-	if attemptExecutor != executorID {
-		return "", fmt.Errorf("task %s lease 属于 %s，不能由 %s 提交", taskID, attemptExecutor, executorID)
 	}
 
 	// ---- 2. 领域变化（与 Python domain_apply.apply_skim_proposal 逐字段对齐）----
@@ -153,29 +208,139 @@ func (s *CoreStore) ApplySkimResult(taskID, executorID, leaseToken string, resul
 	}
 
 	// ---- 3. Task/Attempt 终态（与领域变化同一事务）----
-	now := nowISO()
-	if _, err = tx.Exec(
-		`UPDATE core_tasks SET status='succeeded', lease_token=NULL, lease_expires_at=NULL,
-		 result_ref=? WHERE id=?`,
-		mustJSON(result), taskID,
-	); err != nil {
-		return "", err
-	}
-	if _, err = tx.Exec(
-		`UPDATE core_attempts SET status='succeeded', finished_at=?
-		 WHERE task_id=? AND fencing_token=? AND status='running'`,
-		now, taskID, attemptCount,
-	); err != nil {
-		return "", err
-	}
-	// Job 收敛（单任务 Job：task succeeded → job succeeded）
-	if _, err = tx.Exec(
-		`UPDATE core_jobs SET status='succeeded', finished_at=? WHERE id=? AND status='running'`,
-		now, jobIDOf(tx, taskID),
-	); err != nil {
+	if err = finalizeTask(tx, taskID, result); err != nil {
 		return "", err
 	}
 
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return "succeeded", nil
+}
+
+// applyDeepReadResult：analysis_reports.deep_dive_md + read_status 升级（只升不降）
+// + prompt_traces——与 Python domain_apply 语义对齐；proposal 模式下 inline
+// claim 抽取由独立 extract_claims 任务承载。
+func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	paperID, _ := proposal["paper_id"].(string)
+	deep, _ := proposal["deep"].(map[string]any)
+	trace, _ := proposal["trace"].(map[string]any)
+	if paperID == "" || deep == nil {
+		return "", fmt.Errorf("proposal 缺少 paper_id/deep")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	methodSummary, _ := deep["method_summary"].(string)
+	experimentsSummary, _ := deep["experiments_summary"].(string)
+	ablationSummary, _ := deep["ablation_summary"].(string)
+	reviewerRisks := jsonStringList(deep["reviewer_risks"])
+	deepMD := fmt.Sprintf(
+		"## Method\n%s\n\n## Experiments\n%s\n\n## Ablation\n%s\n\n## Reviewer Risks\n%s",
+		methodSummary, experimentsSummary, ablationSummary, bulletList(reviewerRisks),
+	)
+
+	var existingReport string
+	err = tx.QueryRow(`SELECT id FROM analysis_reports WHERE paper_id=?`, paperID).Scan(&existingReport)
+	switch {
+	case err == sql.ErrNoRows:
+		if _, err = tx.Exec(
+			`INSERT INTO analysis_reports (id, paper_id, deep_dive_md, key_insights, created_at, updated_at)
+			 VALUES (?, ?, ?, '{}', datetime('now'), datetime('now'))`,
+			newCoreID(), paperID, deepMD,
+		); err != nil {
+			return "", fmt.Errorf("analysis_reports insert: %w", err)
+		}
+	case err != nil:
+		return "", err
+	default:
+		// key_insights 保留既有 skim 内容（Python 语义：合并而非覆盖）
+		if _, err = tx.Exec(
+			`UPDATE analysis_reports SET deep_dive_md=?, updated_at=datetime('now') WHERE paper_id=?`,
+			deepMD, paperID,
+		); err != nil {
+			return "", fmt.Errorf("analysis_reports update: %w", err)
+		}
+	}
+
+	// read_status 只升不降（unread→skimmed→deep_read）
+	if _, err = tx.Exec(
+		`UPDATE papers SET read_status='deep_read'
+		 WHERE id=? AND (read_status='unread' OR read_status='skimmed')`,
+		paperID,
+	); err != nil {
+		return "", fmt.Errorf("papers read_status: %w", err)
+	}
+
+	if trace != nil {
+		if _, err = tx.Exec(
+			`INSERT INTO prompt_traces (id, paper_id, stage, provider, model, prompt_digest,
+			 input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+			newCoreID(), nullIfEmpty(stringOr(trace["paper_id"])),
+			stringOr(trace["stage"]), stringOr(trace["provider"]), stringOr(trace["model"]),
+			stringOr(trace["prompt_digest"]),
+			jsonInt(trace["input_tokens"]), jsonInt(trace["output_tokens"]),
+			jsonFloat(trace["input_cost_usd"]), jsonFloat(trace["output_cost_usd"]),
+			jsonFloat(trace["total_cost_usd"]),
+		); err != nil {
+			return "", fmt.Errorf("prompt_traces insert: %w", err)
+		}
+	}
+
+	if err = finalizeTask(tx, taskID, result); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return "succeeded", nil
+}
+
+// applyEmbedResult：papers.embedding_vec 写入（JSON 数组形态，SQLite fallback）+ 终态
+func (s *CoreStore) applyEmbedResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	paperID, _ := proposal["paper_id"].(string)
+	vector, _ := proposal["vector"].([]any)
+	if paperID == "" || vector == nil {
+		return "", fmt.Errorf("proposal 缺少 paper_id/vector")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	if _, err = tx.Exec(
+		`UPDATE papers SET embedding_vec=?, updated_at=datetime('now') WHERE id=?`,
+		mustJSON(vector), paperID,
+	); err != nil {
+		return "", fmt.Errorf("papers embedding: %w", err)
+	}
+
+	if err = finalizeTask(tx, taskID, result); err != nil {
+		return "", err
+	}
 	if err = tx.Commit(); err != nil {
 		return "", err
 	}
@@ -306,6 +471,46 @@ func (s *CoreStore) JobsList(limit int) ([]map[string]any, error) {
 		})
 	}
 	return items, nil
+}
+
+// CancelJob 取消 Job：queued 直接取消，leased 协作取消
+func (s *CoreStore) CancelJob(jobID string) (map[string]int, error) {
+	now := nowISO()
+	counts := map[string]int{"cancelled": 0, "cancel_requested": 0}
+	if _, err := s.DB.Exec(
+		`UPDATE core_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL
+		 WHERE job_id=? AND status='queued'`, jobID,
+	); err != nil {
+		return nil, err
+	}
+	r1, _ := s.DB.Exec(
+		`UPDATE core_tasks SET status='cancelled', last_error='cancelled by user'
+		 WHERE job_id=? AND status IN ('leased','running')`, jobID,
+	)
+	if n, err := r1.RowsAffected(); err == nil {
+		counts["cancel_requested"] = int(n)
+	}
+	r2, _ := s.DB.Exec(
+		`UPDATE core_jobs SET status='cancelled', finished_at=? WHERE id=? AND status IN ('running','queued')`,
+		now, jobID,
+	)
+	if n, err := r2.RowsAffected(); err == nil && n > 0 {
+		if _, err = s.DB.Exec(
+			`UPDATE core_attempts SET status='cancelled', finished_at=?
+			 WHERE task_id IN (SELECT id FROM core_tasks WHERE job_id=?) AND status='running'`,
+			now, jobID,
+		); err != nil {
+			return nil, err
+		}
+	}
+	return counts, nil
+}
+
+// OwnsJob 报告 job 是否属于 Go 权威
+func (s *CoreStore) OwnsJob(jobID string) bool {
+	var one string
+	err := s.DB.QueryRow(`SELECT id FROM core_jobs WHERE id=?`, jobID).Scan(&one)
+	return err == nil
 }
 
 // OwnsTask 报告 task 是否属于 Go 权威（claim/complete 路由用）

@@ -59,7 +59,8 @@ def get_durable_job(job_id: str) -> dict:
             go_graph = get_go_job_graph(job_id)
             if go_graph is None:
                 raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-            return {**go_graph, "attempts": []}
+            # Go graph 自带 attempts（core_attempts 快照）
+            return {**go_graph, "attempts": go_graph.get("attempts", [])}
         graph["attempts"] = get_job_attempts(session, job_id)
         return graph
 

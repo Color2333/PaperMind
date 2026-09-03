@@ -374,7 +374,22 @@ def test_main_research_flow_import_skim_deep_ask_brief(e2e_env):
         paper = session.execute(select(Paper).where(Paper.id == paper_id)).scalar_one()
         assert paper.read_status == ReadStatus.deep_read
 
-    # ---- D3：deep read 的 ResearchRun 生成待验证 Claim（引用可核实 → 带证据）----
+    # ---- D3：claims 由独立 extract_claims 任务承载（proposal 架构：
+    # deep read 纯计算不写领域表；claims 指纹去重 apply 在权威面同事务）----
+    resp = client.post(
+        "/jobs/durable",
+        json={
+            "kind": "ExtractClaims",
+            "capability": "extract_claims",
+            "title": "claim 抽取",
+            "input_ref": {"paper_id": paper_id, "source_text": "[fake source text for claims]"},
+            "timeout_s": 300,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    claims_task_id = resp.json()["task_id"]
+    _wait_task(client, claims_task_id)
+
     with session_scope() as session:
         extracted = (
             session.execute(select(Claim).where(Claim.origin == ClaimOrigin.papermind))

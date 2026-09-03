@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS papers (
 	arxiv_id TEXT UNIQUE,
 	read_status TEXT NOT NULL DEFAULT 'unread',
 	"metadata" TEXT,
-	pdf_path TEXT
+	pdf_path TEXT,
+	embedding_vec TEXT,
+	updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS analysis_reports (
 	id TEXT PRIMARY KEY,
@@ -88,7 +90,7 @@ func skimProposal() map[string]any {
 
 func TestApplySkimResultSingleTransaction(t *testing.T) {
 	s := newTestStore(t)
-	jobID, taskID, _, err := s.SubmitSkimJob("paper-1", "skim:test:1")
+	jobID, taskID, _, err := s.SubmitCoreTask("skim_paper", `{"paper_id":"paper-1"}`, "skim:test:1", 600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +101,7 @@ func TestApplySkimResultSingleTransaction(t *testing.T) {
 	}
 
 	proposal := skimProposal()
-	status, err := s.ApplySkimResult(taskID, "exec-1", own.LeaseToken, proposal)
+	status, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, proposal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +148,7 @@ func TestApplySkimResultSingleTransaction(t *testing.T) {
 
 func TestApplySkimResultFencingRejectsStaleLease(t *testing.T) {
 	s := newTestStore(t)
-	_, taskID, _, _ := s.SubmitSkimJob("paper-1", "skim:test:2")
+	_, taskID, _, _ := s.SubmitCoreTask("skim_paper", `{"paper_id":"paper-1"}`, "skim:test:2", 600)
 	own, _ := s.ClaimTask("exec-1", []string{"skim_paper"})
 
 	// 模拟 lease 过期回收后新 attempt
@@ -157,7 +159,7 @@ func TestApplySkimResultFencingRejectsStaleLease(t *testing.T) {
 	}
 
 	// 旧 lease 的 proposal → 409 语义（fencing 拒绝）
-	_, err = s.ApplySkimResult(taskID, "exec-1", own.LeaseToken, skimProposal())
+	_, err = s.ApplyResult(taskID, "exec-1", own.LeaseToken, skimProposal())
 	if err == nil {
 		t.Fatal("旧 lease 的 apply 应被拒绝")
 	}
@@ -168,14 +170,14 @@ func TestApplySkimResultFencingRejectsStaleLease(t *testing.T) {
 		t.Fatalf("被拒绝的 apply 不得留下领域状态（事务应回滚），analysis_reports=%d", count)
 	}
 	// 新 lease 的 apply 成功
-	if _, err = s.ApplySkimResult(taskID, "exec-2", own2.LeaseToken, skimProposal()); err != nil {
+	if _, err = s.ApplyResult(taskID, "exec-2", own2.LeaseToken, skimProposal()); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestClaimConcurrentSingleWinner(t *testing.T) {
 	s := newTestStore(t)
-	_, _, _, _ = s.SubmitSkimJob("paper-1", "skim:test:3")
+	_, _, _, _ = s.SubmitCoreTask("skim_paper", `{"paper_id":"paper-1"}`, "skim:test:3", 600)
 
 	winner := make(chan bool, 2)
 	for i := 0; i < 2; i++ {
@@ -194,4 +196,73 @@ func TestClaimConcurrentSingleWinner(t *testing.T) {
 		t.Fatalf("并发 claim 应恰好一个赢家，got %d", wins)
 	}
 	_ = os.Remove(filepath.Join(t.TempDir(), "unused"))
+}
+
+func TestApplyDeepReadResultReadStatusUpgradeOnly(t *testing.T) {
+	s := newTestStore(t)
+	_, taskID, _, _ := s.SubmitCoreTask("deep_read_paper", `{"paper_id":"paper-1"}`, "dr:1", 600)
+	own, err := s.ClaimTask("exec-1", []string{"deep_read_paper"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	// skim 的 task，但提交 deep_read proposal——capability 分派按 core_tasks 行
+	// （此处验证 read_status 只升不降语义：unread → deep_read）
+	deepProposal := map[string]any{
+		"proposal": map[string]any{
+			"kind":     "deep_read_paper",
+			"paper_id": "paper-1",
+			"deep": map[string]any{
+				"method_summary":      "M",
+				"experiments_summary": "E",
+				"ablation_summary":    "A",
+				"reviewer_risks":      []any{"R"},
+			},
+			"trace": map[string]any{
+				"stage": "deep_dive", "paper_id": "paper-1",
+				"provider": "test", "model": "mock", "prompt_digest": "d",
+			},
+		},
+	}
+	if _, err = s.ApplyResult(taskID, "exec-1", own.LeaseToken, deepProposal); err != nil {
+		t.Fatal(err)
+	}
+	var readStatus, deepMD string
+	_ = s.DB.QueryRow(`SELECT read_status FROM papers WHERE id='paper-1'`).Scan(&readStatus)
+	_ = s.DB.QueryRow(`SELECT deep_dive_md FROM analysis_reports WHERE paper_id='paper-1'`).Scan(&deepMD)
+	if readStatus != "deep_read" {
+		t.Fatalf("read_status=%s（unread 应可直升 deep_read）", readStatus)
+	}
+	if deepMD == "" {
+		t.Fatal("deep_dive_md 未写入")
+	}
+}
+
+func TestApplyEmbedResult(t *testing.T) {
+	s := newTestStore(t)
+	_, taskID, _, _ := s.SubmitCoreTask("embed_paper", `{"paper_id":"paper-1"}`, "em:1", 600)
+	own, err := s.ClaimTask("exec-1", []string{"embed_paper"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	embedProposal := map[string]any{
+		"proposal": map[string]any{
+			"kind":     "embed_paper",
+			"paper_id": "paper-1",
+			"vector":   []any{0.1, 0.2, 0.3},
+		},
+	}
+	if _, err = s.ApplyResult(taskID, "exec-1", own.LeaseToken, embedProposal); err != nil {
+		t.Fatal(err)
+	}
+	var embedding string
+	if err = s.DB.QueryRow(`SELECT embedding_vec FROM papers WHERE id='paper-1'`).Scan(&embedding); err != nil {
+		t.Fatal(err)
+	}
+	var vec []float64
+	if err = json.Unmarshal([]byte(embedding), &vec); err != nil {
+		t.Fatalf("embedding 解析: %v", err)
+	}
+	if len(vec) != 3 || vec[0] != 0.1 {
+		t.Fatalf("embedding 内容异常: %v", vec)
+	}
 }

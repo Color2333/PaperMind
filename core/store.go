@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS core_attempts (
 	executor_id TEXT NOT NULL,
 	fencing_token INTEGER NOT NULL,
 	status TEXT NOT NULL DEFAULT 'running',
+	error_class TEXT,
+	error_message TEXT,
 	started_at TEXT NOT NULL,
 	finished_at TEXT
 );
@@ -123,10 +125,11 @@ func nullIfEmpty(s string) any {
 
 // ---------- Job/Task 创建（skim 切片：单任务 Job） ----------
 
-// SubmitSkimJob 创建 skim Job + Task（queued）。幂等：idempotency_key 命中返回既有。
-func (s *CoreStore) SubmitSkimJob(paperID, idempotencyKey string, timeoutS int) (jobID, taskID string, created bool, err error) {
+// SubmitCoreTask 创建单任务 Job（通用：capability + input_ref）。幂等：idempotency_key。
+// 仅接受已迁移到 Go authority 的 capability（白名单见 server handleSubmitJob）。
+func (s *CoreStore) SubmitCoreTask(capability, inputRefJSON, idempotencyKey string, timeoutS int) (jobID, taskID string, created bool, err error) {
 	if timeoutS <= 0 {
-		timeoutS = 900
+		timeoutS = 1800
 	}
 	now := nowISO()
 	if idempotencyKey != "" {
@@ -150,17 +153,25 @@ func (s *CoreStore) SubmitSkimJob(paperID, idempotencyKey string, timeoutS int) 
 	}
 	defer tx.Rollback()
 
+	jobKind := "CoreTask"
+	if capability == "skim_paper" {
+		jobKind = "SkimPaper"
+	} else if capability == "deep_read_paper" {
+		jobKind = "StartDeepRead"
+	} else if capability == "embed_paper" {
+		jobKind = "StartEmbedding"
+	}
 	if _, err = tx.Exec(
 		`INSERT INTO core_jobs (id, kind, capability, payload, idempotency_key, status, created_at)
-		 VALUES (?, 'SkimPaper', 'skim_paper', ?, ?, 'queued', ?)`,
-		jobID, mustJSON(map[string]string{"paper_id": paperID}), nullIfEmpty(idempotencyKey), now,
+		 VALUES (?, ?, ?, ?, ?, 'queued', ?)`,
+		jobID, jobKind, capability, inputRefJSON, nullIfEmpty(idempotencyKey), now,
 	); err != nil {
 		return "", "", false, err
 	}
 	if _, err = tx.Exec(
 		`INSERT INTO core_tasks (id, job_id, capability, input_ref, status, max_attempts, timeout_s, created_at)
-		 VALUES (?, ?, 'skim_paper', ?, 'queued', 2, ?, ?)`,
-		taskID, jobID, mustJSON(map[string]string{"paper_id": paperID}), timeoutS, now,
+		 VALUES (?, ?, ?, ?, 'queued', 2, ?, ?)`,
+		taskID, jobID, capability, inputRefJSON, timeoutS, now,
 	); err != nil {
 		return "", "", false, err
 	}
@@ -176,25 +187,30 @@ func (s *CoreStore) ClaimTask(executorID string, capabilities []string) (*Task, 
 	for _, c := range capabilities {
 		want[c] = true
 	}
-	if !want["skim_paper"] {
+	// 跨进程 pause：system_flags 与 Python durable 共用同一 DB——Go claim 同样遵守
+	var paused string
+	if err := s.DB.QueryRow(`SELECT value FROM system_flags WHERE key='queue_paused'`).Scan(&paused); err == nil && paused == "1" {
 		return nil, nil
 	}
-
 	rows, err := s.DB.Query(
-		`SELECT id, timeout_s FROM core_tasks WHERE status='queued' ORDER BY created_at LIMIT 10`)
+		`SELECT id, capability, timeout_s FROM core_tasks WHERE status='queued' ORDER BY created_at LIMIT 10`)
 	if err != nil {
 		return nil, err
 	}
 	type candidate struct {
-		id       string
-		timeoutS int
+		id         string
+		capability string
+		timeoutS   int
 	}
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		if err = rows.Scan(&c.id, &c.timeoutS); err != nil {
+		if err = rows.Scan(&c.id, &c.capability, &c.timeoutS); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if !want[c.capability] {
+			continue
 		}
 		candidates = append(candidates, c)
 	}
@@ -253,7 +269,7 @@ func (s *CoreStore) ClaimTask(executorID string, capabilities []string) (*Task, 
 		return &Task{
 			TaskID:        c.id,
 			AttemptID:     fmt.Sprintf("%s:%d", c.id, fencing),
-			Capability:    "skim_paper",
+			Capability:    c.capability,
 			Input:         input,
 			ResourceClass: "llm",
 			TimeoutS:      c.timeoutS,
@@ -306,10 +322,34 @@ func (s *CoreStore) JobGraph(jobID string) (map[string]any, error) {
 			"last_error": le,
 		})
 	}
+	attempts := []map[string]any{}
+	aRows, err := s.DB.Query(
+		`SELECT a.id, a.task_id, a.attempt_no, a.executor_id, a.status, a.started_at, a.finished_at
+		 FROM core_attempts a JOIN core_tasks t ON t.id = a.task_id WHERE t.job_id=? ORDER BY a.started_at`, jobID,
+	)
+	if err == nil {
+		for aRows.Next() {
+			var id, taskID, executorID, aStatus, startedAt string
+			var finishedAt sql.NullString
+			var attemptNo int
+			if err = aRows.Scan(&id, &taskID, &attemptNo, &executorID, &aStatus, &startedAt, &finishedAt); err == nil {
+				fin := ""
+				if finishedAt.Valid {
+					fin = finishedAt.String
+				}
+				attempts = append(attempts, map[string]any{
+					"id": id, "task_id": taskID, "attempt_no": attemptNo,
+					"executor_id": executorID, "status": aStatus,
+					"started_at": startedAt, "finished_at": fin,
+				})
+			}
+		}
+		aRows.Close()
+	}
 	var payloadAny map[string]any
 	_ = json.Unmarshal([]byte(payload), &payloadAny)
 	return map[string]any{
 		"id": jobID, "kind": kind, "status": status,
-		"payload": payloadAny, "tasks": tasks, "authority": "go_core",
+		"payload": payloadAny, "tasks": tasks, "attempts": attempts, "authority": "go_core",
 	}, nil
 }

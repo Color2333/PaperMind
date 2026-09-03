@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
-GO_OWNED_CAPABILITIES = {"skim_paper"}  # 已迁移到 Go 权威的 capability（切片）
+# 已迁移到 Go 权威的 capability（切片：skim → deep_read → embed；逐项迁移中）
+GO_OWNED_CAPABILITIES = {"skim_paper", "deep_read_paper", "embed_paper"}
 
 
 def submit_job(
@@ -165,9 +166,25 @@ def list_go_jobs(limit: int = 20) -> list[dict]:
 
 
 def cancel_job(job_id: str) -> dict[str, int]:
-    """取消 Job：未领取 Task 直接取消，运行中的协作取消"""
+    """取消 Job：Go 权威 job 代理取消；其余 python durable 取消"""
     from packages.storage.db import session_scope
     from packages.storage.repositories import TaskRepository
+
+    # Go 权威优先（skim/deep_read/embed 切片）
+    if _core_api_enabled():
+        from packages.core_client.client import CoreClient
+
+        client = CoreClient(
+            __import__("os").environ["PAPERMIND_CORE_URL"],
+            token=__import__("os").environ.get("PAPERMIND_CORE_TOKEN", ""),
+        )
+        try:
+            body = client._call(f"/v1/jobs/{job_id}/cancel", {})
+            return {"cancelled": 0, "cancel_requested": 0, "go": body.get("counts", {})}
+        except Exception:
+            pass  # 非 Go job / core 不可达 → 回退 python durable
+        finally:
+            client.close()
 
     with session_scope() as session:
         return TaskRepository(session).cancel_job(job_id)
