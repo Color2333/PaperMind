@@ -506,3 +506,72 @@ def test_state_api_requires_internal_token(harness: Harness):
     ok = httpx.get(url, headers={"X-Internal-Token": STATE_TOKEN}, timeout=5)
     assert ok.status_code == 200
     assert "counts" in json.loads(ok.text)
+
+
+def test_domain_committed_then_killed_guard_prevents_rerun(harness: Harness):
+    """P0-1（第三轮 REVIEW）：领域事务已提交、complete 回执丢失 → 第二 Attempt
+    经幂等卫兵复用既有结果，不重复执行 handler（不重复 LLM 成本/领域写入）"""
+    paper_id = harness.seed_paper()
+
+    # 注入"前 Attempt 已提交领域结果但 complete 丢失"状态：
+    # Task1 succeeded（带 result_ref），同 Job 同 capability+paper 的 Task2 queued
+    task2_id = (
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                f"""
+from packages.storage.db import session_scope
+from packages.storage.repositories import JobRepository, TaskRepository
+from packages.domain.enums import TaskStatus
+with session_scope() as s:
+    job, _ = JobRepository(s).create_job(kind="GuardTest")
+    t1, _ = TaskRepository(s).add_task(
+        job_id=job.id, capability="skim_paper",
+        input_ref={{"paper_id": "{paper_id}", "result_ref": {{"one_liner": "前次结果", "skim_score": 0.9}}}},
+        idempotency_key="guard:t1",
+    )
+    t1.status = TaskStatus.succeeded
+    t2, _ = TaskRepository(s).add_task(
+        job_id=job.id, capability="skim_paper",
+        input_ref={{"paper_id": "{paper_id}"}},
+        idempotency_key="guard:t2",
+    )
+    print(t2.id)
+""",
+            ],
+            cwd=REPO_ROOT,
+            env=harness.base_env(),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        .stdout.strip()
+        .splitlines()[-1]
+    )
+
+    harness.start_executor(executor_id="exec-guard")
+    deadline = time.monotonic() + 30
+    status = ""
+    while time.monotonic() < deadline:
+        resp = httpx.get(
+            f"http://127.0.0.1:{harness.api_port}/internal/durable/tasks/{task2_id}",
+            headers={"X-Internal-Token": STATE_TOKEN},
+            timeout=5,
+        )
+        task = resp.json()["task"]
+        status = task["status"]
+        if status in ("succeeded", "failed", "dead_letter"):
+            with httpx.Client() as c:
+                r = c.get(
+                    f"http://127.0.0.1:{harness.api_port}/internal/durable/tasks/{task2_id}/domain-result",
+                    headers={"X-Internal-Token": STATE_TOKEN},
+                    timeout=5,
+                )
+            break
+        time.sleep(0.4)
+    assert status == "succeeded", f"Task2 应经卫兵 succeeded，实际 {status}"
+    # 卫兵语义：result 来自前 Attempt（one_liner=前次结果），handler 未重新执行
+    body = r.json()
+    assert body["found"] is True
+    assert body["result"]["one_liner"] == "前次结果"

@@ -43,15 +43,32 @@ def run_reconcile(session: Session, *, now: Any = None, backoff_s: int = 60) -> 
 
     requeued = sum(1 for v in outcomes.values() if v == "requeued") - len(manual_moved)
     dead = sum(1 for v in outcomes.values() if v == "dead_letter")
+
+    # 失败传播（第三轮 REVIEW）：对存在终态失败 Task 的 Job 做下游 skip，
+    # 保证 Job 可收敛（partially_succeeded/cancelled 可达）。
+    skipped_jobs: dict[str, int] = {}
+    from sqlalchemy import select
+
+    from packages.application.commands.workflows import skip_blocked_tasks
+    from packages.storage.models import DurableTask
+
+    job_ids = session.execute(select(DurableTask.job_id).distinct()).scalars()
+    for jid in job_ids:
+        skipped = skip_blocked_tasks(session, jid)
+        if skipped:
+            skipped_jobs[jid] = len(skipped)
+
     logger.info(
-        "Reconcile 完成：回收 %d，requeue %d，dead_letter %d，manual_recovery %d",
+        "Reconcile 完成：回收 %d，requeue %d，dead_letter %d，manual_recovery %d，skipped %s",
         len(outcomes),
         requeued,
         dead,
         len(manual_moved),
+        skipped_jobs or "{}",
     )
     return {
         "reclaimed": len(outcomes),
         "outcomes": outcomes,
         "manual_recovery": manual_moved,
+        "skipped": skipped_jobs,
     }

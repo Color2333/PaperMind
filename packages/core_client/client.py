@@ -136,6 +136,15 @@ class CoreClient:
             },
         )
 
+    def domain_result(self, task_id: str) -> dict[str, Any]:
+        """幂等卫兵：查同 Job 内同 capability+input 的既有成功领域结果"""
+        resp = self._client.get(f"{self._base}/v1/tasks/{task_id}/domain-result")
+        if resp.status_code >= 400:
+            raise CoreProtocolError(
+                f"domain-result → {resp.status_code}", status_code=resp.status_code
+            )
+        return resp.json().get("body", {})
+
     def complete(
         self,
         executor_id: str,

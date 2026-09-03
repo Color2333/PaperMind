@@ -21,20 +21,22 @@ services:
     container_name: papermind-core
     environment:
       - CORE_ADDR=0.0.0.0:8081
-      - CORE_TOKEN=${CORE_TOKEN:-}
+      # P1 fail-closed：缺任一令牌 Core 拒绝启动（见 papermind-core main）
+      - CORE_TOKEN=${CORE_TOKEN:?CORE_TOKEN required}
       - STATE_ADDR=http://backend:8000
-      - STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
+      - STATE_TOKEN=${DURABLE_STATE_TOKEN:?DURABLE_STATE_TOKEN required}
       - RECONCILE_INTERVAL_S=15
       - RECLAIM_BACKOFF_S=60
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_started
+    # readiness：/readyz 探测 durable-state 可用性（state 不可达 → 503 → unhealthy）
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/readyz || exit 1"]
+      interval: 15s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 3
     deploy:
       resources:
@@ -115,7 +117,7 @@ services:
       backend:
         condition: service_started
       core:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
     # worker 共用 Dockerfile.backend（含 HEALTHCHECK curl 8000/health），但 worker

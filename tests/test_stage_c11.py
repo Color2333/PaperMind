@@ -137,7 +137,8 @@ def test_scenario_batch_creates_durable_job(isolated_db):
 
         durable_job = JobRepository(session).get(result["durable_job_id"])
         assert durable_job.kind == "ProcessUnreadBatch"
-        assert durable_job.idempotency_key == f"batch:{result['job_id']}"
+        # C13 修订：新路径不再双写 batch_jobs——job_id 即 durable id，无幂等键
+        assert durable_job.idempotency_key is None
 
         tasks = TaskRepository(session).list_for_job(durable_job.id)
         assert len(tasks) == 2  # 2 篇 × skim

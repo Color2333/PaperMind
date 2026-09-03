@@ -16,6 +16,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -36,6 +37,7 @@ type Server struct {
 func NewServer(reg *ExecutorRegistry, state *StateClient) *Server {
 	s := &Server{Registry: reg, State: state, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /readyz", s.handleReady)
 	s.mux.HandleFunc("POST /v1/executors/register", s.enveloped(s.handleRegister))
 	s.mux.HandleFunc("POST /v1/tasks/claim", s.enveloped(s.handleClaim))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/heartbeat", s.enveloped(s.handleHeartbeat))
@@ -44,6 +46,7 @@ func NewServer(reg *ExecutorRegistry, state *StateClient) *Server {
 	s.mux.HandleFunc("POST /v1/tasks/{id}/fail", s.enveloped(s.handleFail))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel-execution", s.enveloped(s.handleCancelExecution))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.enveloped(s.handleCancel))
+	s.mux.HandleFunc("GET /v1/tasks/{id}/domain-result", s.handleDomainResultGET)
 	s.mux.HandleFunc("GET /v1/tasks/{id}/status", s.handleTaskStatusGET)
 	return s
 }
@@ -87,14 +90,45 @@ func (s *Server) enveloped(h func(w http.ResponseWriter, r *http.Request, correl
 	}
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+// handleHealth：liveness（进程存活）恒为 200；
+// state 字段反映 durable-state API 的最近探测结果（readiness 由部署层消费）。
+// 设计④：durable-state 不可达时 Core 不能假装健康——/healthz 与 /readyz 分离。
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	stateReachable := s.checkStateReady(r.Context())
 	writeJSON(w, http.StatusOK, "", HealthResponse{
 		Envelope:    Envelope{SchemaVersion: SchemaVersion},
 		Status:      "ok",
 		CoreVersion: CoreVersion,
 		GoVersion:   runtime.Version(),
 		StateURL:    s.State.BaseURL,
+		StateReady:  stateReachable,
 	})
+}
+
+// handleReady：readiness——durable-state API 不可达时返回 503（编排层摘除流量）
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if !s.checkStateReady(r.Context()) {
+		writeJSON(w, http.StatusServiceUnavailable, "", map[string]any{
+			"ok": false, "error": "state_unavailable", "state_url": s.State.BaseURL,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, "", map[string]any{"ok": true})
+}
+
+// checkStateReady 快速探测 durable-state（1.5s 超时；结果不缓存——编排层轮询频率即探测频率）
+func (s *Server) checkStateReady(ctx context.Context) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.State.BaseURL+"/health", nil)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode < 500
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
@@ -299,16 +333,25 @@ func (s *Server) handleCancelExecution(w http.ResponseWriter, r *http.Request, c
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	// 以 URL path id 为唯一资源标识；payload 携带 task_id 时必须一致（P1 修复）
+	pathID := s.taskID(r)
 	var req CancelRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_cancel_request"})
+		return
+	}
+	if req.TaskID != "" && req.TaskID != pathID {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{
+			"ok": false, "error": "task_id_mismatch",
+			"detail": "payload task_id must match URL resource id",
+		})
 		return
 	}
 	var out struct {
 		OK     bool   `json:"ok"`
 		Status string `json:"status"`
 	}
-	err := s.State.Post("/internal/durable/tasks/"+req.TaskID+"/cancel", map[string]any{
+	err := s.State.Post("/internal/durable/tasks/"+pathID+"/cancel", map[string]any{
 		"reason": req.Reason,
 	}, &out)
 	if err != nil {
@@ -320,6 +363,20 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, cid string
 		OK:       out.OK,
 		Status:   out.Status,
 	})
+}
+
+// handleDomainResultGET 幂等卫兵：既有成功领域结果查询（透传 durable store）
+func (s *Server) handleDomainResultGET(w http.ResponseWriter, r *http.Request) {
+	var out struct {
+		Found  bool           `json:"found"`
+		TaskID string         `json:"task_id,omitempty"`
+		Result map[string]any `json:"result,omitempty"`
+	}
+	if err := s.State.Get("/internal/durable/tasks/"+s.taskID(r)+"/domain-result", &out); err != nil {
+		s.writeStateError(w, "", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, "", out)
 }
 
 func (s *Server) handleTaskStatusGET(w http.ResponseWriter, r *http.Request) {

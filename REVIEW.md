@@ -257,7 +257,7 @@ handler 成功后，`client.complete()` 被 `suppress(Exception)` 包住。若�
 
 ### [P0] fencing 只保护任务终态，旧 Attempt 仍可提前提交领域写入
 
-- [ ] 状态：未修复，合并阻塞。
+- [~] 状态：**过渡缓解已实施，完整方案待架构决策**。已落地：`domain-result` 幂等卫兵（durable-state 端点 + Go 代理 + runner 执行前检查）——Attempt B 执行前发现前 Attempt 已提交领域结果即直接复用（不重复 LLM 成本/领域写入），故障注入测试 `test_domain_committed_then_killed_guard_prevents_rerun` 锁定。完整 apply-result 事务（单一事务提交领域+outbox+终态）依赖 P0-2 架构决策（proposal 模式需要 Go authority）。
 
 位置：`packages/executor_runtime/runner.py:188-227`、`packages/ai/pipelines/paper_pipelines.py:423-556`、`packages/storage/repositories/durable.py:403-425`
 
@@ -274,7 +274,7 @@ Executor 先调用 handler，handler 内部通过 `session_scope()` 直接提交
 
 ### [P0] Go Core 被实现为 Python 状态 API 的代理，与已确认架构相反
 
-- [ ] 状态：需要恢复既定决策，或由用户明确批准修改总设计；在此之前不能把 Stage C 标为完成。
+- [ ] 状态：**待用户决策**（这是架构方向选择，不由 Agent 拍板）。已完成的部分：路线图 C6/C7/C9/C12 的失真完成声明已撤回为待定状态；当前实现如实描述为"Python durable authority + Go gateway"。两个选项：(a) 坚持既定 Go authority → 需 SkimPaper 纵向切片起步（大工程）；(b) 批准当前过渡架构为正式决策 → 更新总设计 §Go Core 职责。**合并阻塞保持。**
 
 位置：`core/registry.go:3-8`、`core/server.go:14-15`、`core/README.md:5-25`、`apps/api/routers/durable_state.py:1-21`、`docs/plans/2026-09-02-papermind-2026-rearchitecture.md:708-732`
 
@@ -286,7 +286,7 @@ Executor 先调用 handler，handler 内部通过 `session_scope()` 直接提交
 
 ### [P1] 多论文 Workflow 的依赖被折叠到第一篇论文
 
-- [ ] 状态：未修复。
+- [x] 状态：已修复。TaskSpec.depends_on 改用 **logical node key（= idempotency_key）**解析（expand 期 node→task id 映射）；模板逐 paper 生成精确边（upsert→download→skim→claims，upsert→embed）；测试重写为按 idempotency_key 逐 paper 断言精确边（不再用 capability 做 dict key）。
 
 位置：`packages/application/commands/workflows.py:78-133`、`packages/application/commands/workflows.py:266-287`、`tests/test_workflows.py:52-61`
 
@@ -296,7 +296,7 @@ Executor 先调用 handler，handler 内部通过 `session_scope()` 直接提交
 
 ### [P1] 两个已登记的 Workflow Task 无法按当前输入契约执行
 
-- [ ] 状态：未修复。
+- [~] 状态：**主体已修复**。upsert_paper → `task_handlers.upsert_paper_data`（arxiv_id/title/abstract，返回 paper_id 供下游绑定）；download_source → `download_source_data`（arxiv_id）；send_brief_email → `send_brief_email_effect`（recipient/subject/content_id，effect ledger 接入）；**输出绑定语义**已定义：input_ref 支持 `${node:field}` 占位符，expand 期从上游 result_ref 解析（未就绪则本轮不创建，下一轮补）。RunTopicResearch 两篇 + BuildDailyBrief→send 的独立 Executor 端到端测试待补（当前覆盖 expand/绑定/传播单测）。
 
 位置：`packages/application/commands/workflows.py:68-95`、`packages/application/commands/workflows.py:173-205`、`packages/application/commands/task_registry.py:51-70`、`packages/application/commands/task_registry.py:141-163`、`packages/executor_runtime/runner.py:298-373`
 
@@ -311,7 +311,7 @@ Executor 先调用 handler，handler 内部通过 `session_scope()` 直接提交
 
 ### [P1] 上游 Task 失败后，下游永久 queued，Job 无法收敛
 
-- [ ] 状态：未修复。
+- [x] 状态：已修复。`skip_blocked_tasks()`：前驱终态失败 → 下游 queued 标 cancelled（last_error 注明 skipped）+ recompute 收敛；接入 run_reconcile（对所有 Job 生效）。测试 `test_upstream_failure_propagates_and_job_converges`：1 篇成功 + 1 篇 dead_letter 链 → partially_succeeded 确定收敛、无遗留 queued。
 
 位置：`packages/storage/repositories/durable.py:136-176`、`packages/storage/repositories/durable.py:319-362`、`packages/storage/repositories/durable.py:460-510`
 
@@ -321,7 +321,7 @@ claim 只允许全部依赖 succeeded 的 Task；若 download/build 等前驱进
 
 ### [P1] effect ledger 只存在于测试示例，生产发送路径未接入
 
-- [ ] 状态：未修复。
+- [~] 状态：**发送路径已接入**：`task_handlers.send_brief_email_effect` 是唯一邮件发送 handler（先查 has_effect → 发送 → register_effect；发送异常不登记 → manual_recovery 由人工重放，重放时账本挡重复）。"先登记后发送崩溃漏发"窗口已用 manual_recovery 语义覆盖。**待补**：provider idempotency key（SMTP 无原生支持，属部署侧改进）；AutoReadService 的直发路径审计。
 
 位置：`packages/application/commands/effect_ledger.py:22-52`、`tests/test_effect_ledger.py:34-51`、`packages/ai/task_handlers.py:93-112`、`packages/integrations/notifier.py:16-35`
 
@@ -331,7 +331,7 @@ claim 只允许全部依赖 succeeded 的 Task；若 download/build 等前驱进
 
 ### [P1] C13 的精简出口未完成：新批处理仍双写 `batch_jobs` 与 durable Job
 
-- [ ] 状态：未修复。
+- [x] 状态：已修复。`create_batch_job` 直接创建 durable ProcessUnreadBatch 并返回 **durable job id**（不再写 batch_jobs 行）；get_batch_job 支持新（durable id 直查）与旧（只读迁移投影）两种 id；`get_batch_job_legacy_row` 为显式迁移适配器。I1 守卫新增 `test_batch_jobs_no_new_writes`（生产代码禁止创建 batch_jobs 行）。删除条件已记录（agent 工具 id 全切换后删表）。
 
 位置：`packages/application/commands/batch.py:1-42`、`packages/application/commands/batch.py:45-90`、`packages/storage/models.py:682`、`packages/storage/db.py:349-350`
 
@@ -341,7 +341,7 @@ claim 只允许全部依赖 succeeded 的 Task；若 download/build 等前驱进
 
 ### [P1] 默认 Compose 会启动一个无认证且假健康的 Core
 
-- [ ] 状态：未修复。
+- [x] 状态：已修复。Core main fail-closed：缺 CORE_TOKEN/STATE_TOKEN 任一拒绝启动（ALLOW_INSECURE_CORE=1 仅限本地实验显式覆盖）；compose 用 `${CORE_TOKEN:?required}` 语法强制；**liveness/readiness 分离**：/health（进程存活，附 state_ready 字段）与 /readyz（探测 durable-state，不可达 503）分离，compose healthcheck 改用 /readyz，worker depends_on core healthy。
 
 位置：`docker-compose.yml:17-38`、`core/cmd/papermind-core/main.go:30-60`、`core/server.go:90-98`、`.env.example:129-133`
 
@@ -351,7 +351,7 @@ Compose 把 Core 绑定到 `0.0.0.0:8081`，但 `CORE_TOKEN` 与 `DURABLE_STATE_
 
 ### [P1] Core cancel 信任 payload 的 Task ID，而不是 URL 资源 ID
 
-- [ ] 状态：未修复。
+- [x] 状态：已修复。handleCancel 以 URL path id 为唯一资源标识；payload task_id 与 path 不一致返回 400（task_id_mismatch）。测试 TestCancelPathPayloadMismatchRejected 覆盖 A/B 冲突场景。
 
 位置：`core/server.go:301-323`、`core/server_test.go:390-410`
 
@@ -359,7 +359,7 @@ Compose 把 Core 绑定到 `0.0.0.0:8081`，但 `CORE_TOKEN` 与 `DURABLE_STATE_
 
 ### [P1] Terminal permission-profile 修改当前有真实失败，并会挂住测试进程
 
-- [ ] 状态：PaperMind-Terminal 工作区存在未提交修改，尚未修复。
+- [x] 状态：已修复（后续两个 commit：3f674a0/660510f1 已入库）。说明：审查基于 d334743b 时点的未提交工作区；随后 (1) `--coding` 已传入 runPmOneshot；(2) 测试资源改 try/finally 清理；(3) 语义已与用户对齐——**用户明确要求默认 profile 保留查看/修改（写论文）能力**，故 research profile 含工作区文件工具（read/edit/write/grep/find/ls），bash/powershell 零构造；此为对设计④ §6 的用户批准修订，已回写设计文档。npm test 15/15。
 
 位置：`packages/papermind-cli/src/agent/session.js:78-134`、`packages/papermind-cli/bin/pm.js:13-37`、`packages/papermind-cli/test/agent-loop.test.js:170-236`
 
@@ -369,7 +369,7 @@ Compose 把 Core 绑定到 `0.0.0.0:8081`，但 `CORE_TOKEN` 与 `DURABLE_STATE_
 
 ### [P2] Terminal 的主题加载依赖 monorepo 私有 `dist` 路径
 
-- [ ] 状态：发布前阻塞，当前开发树可运行。
+- [~] 状态：**已改为稳定 export**：coding-agent package.json 新增 `./theme-loader` 子路径导出（dist theme.js），pm 经 `@earendil-works/pi-coding-agent/theme-loader` 加载——不再依赖相对 dist 路径。tarball/standalone 安装验证待 release 流水线（E2 后续）实施。
 
 位置：`packages/papermind-cli/src/agent/session.js:31-38`
 
@@ -377,7 +377,7 @@ Compose 把 Core 绑定到 `0.0.0.0:8081`，但 `CORE_TOKEN` 与 `DURABLE_STATE_
 
 ### [P2] 路线图存在互相冲突的完成状态与证据
 
-- [ ] 状态：未修复。
+- [~] 状态：**主体已修复**：C6/C7/C9/C12/C13 完成声明撤回为 `[~]` 待定状态（附具体缺什么）；E2c/E6 表述修正（"零上游源码改动"改为"零上游源码改动 + patch 0001 产品层透传"，E6 主题已独立成条）；E1 标注为"本地 downstream 工作树（origin 仍指 Pi upstream，待用户建 fork/push）"。建议的四态标记（implemented/locally verified/experiment verified/released）待下一版路线图重构统一引入。
 
 位置：`docs/plans/2026-09-02-rearchitecture-roadmap.md:124-161`、`docs/plans/2026-09-02-rearchitecture-roadmap.md:191-225`
 

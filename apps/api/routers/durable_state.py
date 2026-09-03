@@ -226,6 +226,49 @@ def task_status(task_id: str) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/tasks/{task_id}/domain-result")
+def domain_result(task_id: str) -> dict:
+    """幂等卫兵（P0-1 过渡缓解）：查同 Job 内同 capability+input 的既有成功 result。
+
+    场景：Attempt A 已把领域结果写入（AnalysisReport/embedding），但 complete
+    回执丢失 → lease 过期 → Attempt B 领取。B 执行前查此端点：命中即直接
+    以既有结果 complete（跳过 handler，不重复 LLM 成本/领域写入）。
+    """
+    from packages.storage.db import session_scope
+    from packages.storage.models import DurableTask
+    from packages.storage.repositories import TaskRepository
+
+    try:
+        with session_scope() as session:
+            task = TaskRepository(session).get(task_id)
+            siblings = (
+                session.execute(
+                    select(DurableTask).where(
+                        DurableTask.job_id == task.job_id,
+                        DurableTask.capability == task.capability,
+                        DurableTask.status == TaskStatus.succeeded,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sib in siblings:
+                if sib.id == task.id:
+                    continue
+                sib_input = sib.input_ref or {}
+                # 关键输入一致（paper_id/arxiv_id）即视为同一逻辑作业
+                for key in ("paper_id", "arxiv_id"):
+                    if key in (task.input_ref or {}) and sib_input.get(key) == (
+                        task.input_ref or {}
+                    ).get(key):
+                        result = sib_input.get("result_ref")
+                        if result:
+                            return {"found": True, "task_id": sib.id, "result": result}
+            return {"found": False}
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/reclaim")
 def reclaim(body: dict) -> dict:
     """Reconciler 入口：回收过期 lease（requeued / dead_letter）"""

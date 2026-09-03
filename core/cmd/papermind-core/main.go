@@ -42,6 +42,14 @@ func main() {
 		reclaimBackoff = v
 	}
 
+	// P1 fail-closed：生产默认要求双令牌齐备（executor 面 + state 面）。
+	// 缺任一即拒绝启动——无认证的控制面不应"碰巧能跑"。
+	if (token == "" || stateToken == "") && os.Getenv("ALLOW_INSECURE_CORE") != "1" {
+		log.Fatalf(
+			"refusing to start: CORE_TOKEN and STATE_TOKEN are required (set ALLOW_INSECURE_CORE=1 to override for local experiments)",
+		)
+	}
+
 	registry := core.NewExecutorRegistry()
 	state := core.NewStateClient(stateAddr, stateToken)
 	server := core.NewServer(registry, state)

@@ -24,7 +24,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 13 | 13 | 完成（P0 闭环 + C13 退出口：全部长任务走 submit_job+Executor，TaskTracker/batch_consumer/双写观察面已删除；10 闭环场景 + 6/6 故障注入 PASS） |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 13 | 11 | **过渡架构待用户决策**（第三轮 REVIEW：当前实现为 Python durable authority + Go gateway 代理，与既定 Go authority 架构相反；fencing 未保护领域提交。已修：cancel/readyz/fail-closed、workflow 依赖/失败传播、batch 双写退役、effect ledger 接入、幂等卫兵。详见 REVIEW.md 第三轮） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | 进行中（E2 全含 E2c：Pi agent core 接入 + 受控工具集 + 六类 renderer + 双主题；剩 E6 收尾/E7/E8） |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
@@ -121,16 +121,16 @@
 - [x] **C5 代码化 Workflow 模板**：实现顺序依赖、条件分支和 per-Paper fan-out；父 Job 支持 succeeded、partially_succeeded、failed、cancelled，并能解释每个子 Task 的贡献。
   产出：[packages/application/commands/workflows.py](../../packages/application/commands/workflows.py)——WORKFLOW_TEMPLATES 注册 4 个代码定义模板（RunTopicResearch：fetch+每篇 upsert→download→skim∥embed→extract fan-out；ProcessUnreadBatch：per-Paper skim∥embed；BuildDailyBrief：build→条件 send_mail；RunCitationSync：per-Paper fan-out）+ `expand_job` 幂等展开（idempotency 去重，重放不重复）+ `start_workflow_job`。
   结论：depends_on 在展开期解析为同 Job task id；claim 按依赖满足过滤；父 Job 收敛复用 C2 recompute（全成功→succeeded/部分→partially_succeeded）。6 个测试（fan-out 数量/依赖解析/幂等重放/条件分支/收敛）。全量 185 passed + Go 7 passed。
-- [x] **C6 Go 调度控制面**：在 Go Core 中实现 Scheduler、Planner、Dispatcher 和 Reconciler；旧 APScheduler 仅在过渡期把到期事件提交为 Go Job，不再进程内直跑研究逻辑。
+- [~] **C6 Go 调度控制面**（完成状态待用户架构决策后确认——当前为 gateway 代理形态，见 REVIEW 第三轮 P0-2）：在 Go Core 中实现 Scheduler、Planner、Dispatcher 和 Reconciler；旧 APScheduler 仅在过渡期把到期事件提交为 Go Job，不再进程内直跑研究逻辑。
   产出：core/controlplane.go——控制面 `POST /v1/tasks/submit`（capability/input/resource_class/timeout/priority）入 Core 内存调度队列；观察面 `GET /v1/tasks/{id}/status`（状态/attempt/失败计数/结果）；Reconciler 循环回收过期 lease（回队列重跑，C8 扩展退避）。
   结论：Go 测试 10 个（控制面提交→fake Executor 闭环/观察面含结果/过期 lease 回收后新 attempt/schema 校验）；Planner/Dispatcher 的依赖与优先级逻辑与 C2 仓储/HTTP claim 共享（claim 端点即 Dispatcher 出口）；APScheduler 提交切换待 C7 Executor 可执行后落地（Core 任务当前无真实 handler 执行者）。全量 185 passed + Go 10 passed。
-- [x] **C7 Python Executor 落地**：Python Executor 每次只执行一个 Task Attempt，通过 C0 协议注册 capability/version/resource class、领取和续约 lease、提交 result proposal/Artifact，支持协作取消与 drain；不直写 Job/Task/Attempt 或 Research State 表。
+- [~] **C7 Python Executor 落地**（核心执行面真实；但 handler 仍直写领域表——apply-result 事务未实施，见第三轮 P0-1；过渡缓解：幂等卫兵）：Python Executor 每次只执行一个 Task Attempt，通过 C0 协议注册 capability/version/resource class、领取和续约 lease、提交 result proposal/Artifact，支持协作取消与 drain；不直写 Job/Task/Attempt 或 Research State 表。
   产出：[packages/executor_runtime/runner.py](../../packages/executor_runtime/runner.py)——ExecutorRunner（claim→handler→complete/fail 循环 + 心跳线程续约 + cancel_requested 协作取消 + drain/idle-exit）+ `handlers_from_registry`（C4 注册表 dotted path 解析与适配）。Executor 不直写任何领域表——提交面全部经 C0 协议。
   结论：5 个 hermetic 测试（完整周期/handler 异常→fail/no_handler/cancel_requested 协作退出/drain 停止领取）。全量 190 passed + Go 10 passed。
 - [x] **C8 lease、fencing 与 Reconciler**：领取和续约 lease 时签发 fencing token；迟到 Attempt 不能覆盖新结果；Reconciler 回收过期 lease 并执行 backoff、dead-letter 或 manual recovery。
   产出：durable 仓库 `reclaim_expired_leases`（backoff 窗口内不回收；attempts 耗尽→dead_letter）+ 应用层 [commands/reconciler.py](../../packages/application/commands/reconciler.py)（按 C4 注册表判定 manual_recovery 能力不回队列）。
   结论：5 个测试（requeue 分流/backoff 窗口/dead_letter 收敛/迟到 Attempt 写入 ConflictError 拒绝+新 fencing 成功/manual_recovery 不回队）。全量 195 passed + Go 10 passed。
-- [x] **C9 Go 权威提交与副作用账本**：Go Core 校验 attempt、fencing token、result schema 和幂等键后，将 Paper/Claim/Evidence 变化与 outbox 在同一事务提交；Python 只提交 proposal。邮件、provider call 等外部效果使用 provider key 或 effect ledger 去重。
+- [~] **C9 Go 权威提交与副作用账本**（账本已接入真实发送路径 send_brief_email_effect；Go 权威提交未实施——依赖 P0-2 架构决策）：Go Core 校验 attempt、fencing token、result schema 和幂等键后，将 Paper/Claim/Evidence 变化与 outbox 在同一事务提交；Python 只提交 proposal。邮件、provider call 等外部效果使用 provider key 或 effect ledger 去重。
   产出：`task_effects` 表（effect_key 唯一约束 + migration `a3b4c5d6e7f8`）+ [commands/effect_ledger.py](../../packages/application/commands/effect_ledger.py)（register_effect 幂等 / has_effect）。 fencing 校验已在 C2 complete_task（lease_token+attempt 匹配）与 C6 Go 端（executor+attempt）落地。
   结论：3 个测试（幂等登记/has_effect/邮件去重集成——3 次调度只发 1 封）。全量 198 passed + Go 10 passed。
   遗留：Go 侧直接写 Python 领域表的完整权威提交（跨语言事务）在 C11 与部署验证阶段补齐——当前 Python proposal→domain write 路径已闭环，effect ledger 幂等去重已生效。
@@ -140,7 +140,7 @@
 - [x] **C11 渐进迁移与恢复测试**：先迁移 `batch_jobs` 三类任务，再迁移 scheduler jobs 和 idle processor；用 API/Executor 强杀、lease 过期、重复领取、部分失败和迟到写入测试替代 `recover_stale_running` 的破坏性恢复。
   产出：agent batch 工具入口接 durable ProcessUnreadBatch Job（batch.py create_batch_job 镜像展开）+ [tests/test_stage_c11.py](../../tests/test_stage_c11.py) 6 场景（强杀→lease 过期→非破坏性回收→重新执行成功/重复领取互斥/部分失败 partial 收敛/迟到写入 fencing 拒绝/batch→durable 镜像/幂等提交去重）。
   结论：6 场景恢复测试 + batch 镜像落地（本条完成状态曾因 P0 撤回，随 P0 闭环修复恢复，见 2026-09-03 P0 修复记录）。全量 206 passed + Go 10 passed。
-- [x] **C12 P0 闭环修复（第二轮 REVIEW）**：durable store 成为唯一权威状态，Go Core 重构为零任务内存态的控制面网关，独立 Python Executor 进程承担真实业务执行。
+- [~] **C12 P0 闭环修复（第二轮 REVIEW）**（闭环真实可运行；但架构形态与既定决策相反，见第三轮 P0-2——完成声明撤回，待用户决策）：durable store 成为唯一权威状态，Go Core 重构为零任务内存态的控制面网关，独立 Python Executor 进程承担真实业务执行。
   产出：
   - durable-state 内部 API [apps/api/routers/durable_state.py](../../apps/api/routers/durable_state.py)（`/internal/durable/*`：claim/heartbeat/complete/fail/cancel-execution/cancel/status/reclaim/queue-stats/pause/resume；`X-Internal-Token` 校验，`settings.durable_state_token` 非空才挂载，未配置=不暴露）；
   - 权威提交入口 `commands/jobs.py::submit_job` + `POST /jobs/durable`（只写 Job/Task，不 claim 不执行——设计③「API 只负责提交、查询和控制」）；
@@ -208,6 +208,7 @@
 - 2026-09-03：F3 loopback bridge + F4 Job Monitor/Research Pack 页面 + F5 Full Web 适配 + F7 surface contract 测试 + search_multi metadata 兼容修复。全量 217 passed + Go 10 passed。
 - 2026-09-03：处理第二轮 REVIEW——P0 诚实撤回 Stage C 完成声明；P1 修复 Go main package 入口/lease executor 校验/heartbeat 过期/pause 有效性/external_ref 竞态/batch_consumer 停机/executor 吞错/F2 页面导航与导出。全量 217 passed + Go 10 passed。
 - 2026-09-03（E2c/E6）：pm 接入 Pi agent core——受控工具集 10 项 + 六类领域 renderer + 双主题 + 系统提示覆盖，零上游源码改动（全走扩展点）；agentDir 隔离实现模型凭据三方分离；headless 全链路回环测试（子进程真实 bin）。Terminal 仓 3f674a0（含 .gitignore 补齐与 node_modules 误提交 amend 修复）。PaperMind 仓 285 passed 不变。
+- 2026-09-03（第三轮 REVIEW 修复）：见 REVIEW.md 第三轮勾选——Go cancel/readyz/fail-closed、workflow logical node key+失败传播+输出绑定、upsert/download/send 可执行 handler（send 接 effect ledger）、batch_jobs 双写退役（新路径只返回 durable id）、P0-1 过渡缓解（domain-result 幂等卫兵 + complete 前强杀测试）。**P0-2（Go authority vs Python authority）待用户决策**——路线图 C6/C7/C9/C12 完成声明已撤回为待定状态。
 - 2026-09-03（裁剪修订 + 品牌主题）：**patch 0001 修订**——按"Zotero+AI"定位，baseToolsOverride 从 `{}` 改为**工作区文件工具集**（read/edit/write/grep/find/ls 六项：查看/修改，写论文核心能力）；bash/powershell 仍零构造；`--coding` 显式恢复完整 coding 工具。**PaperMind 风格主题重做**——暖纸底/暖墨底 + 赭石品牌色 #C4663C（与前端设计语言同源），替换掉 Pi 冷色 rebrand 版。0005（@file 补全移除）撤销——写论文需要附加本地草稿。测试 15/15（新增 read/edit 可达 + bash/powershell 不可达 + 恰好六项断言）。
 - 2026-09-03（C13 旧路径退出）：第五版基线双重完成门落地——全部长任务（~40 调用点）迁移 submit_job+Executor；TaskTracker/batch_consumer/双写观察面/前端 /tasks/track 退役；worker 只提交并内置 Executor 宿主；idle_processor 纯触发器化；进度协议（executor→Go→state API→durable）打通；新增 Stage I 守卫测试。全量 285 passed + 2 skipped + Go 10 passed。
 - 2026-09-03（P0 闭环修复）：**durable store 唯一权威状态 + Go Core 控制面网关 + 独立 Python Executor**——新增 durable-state 内部 API（token 保护）与 `POST /jobs/durable` 权威提交入口；Go Core 删除全部任务内存态改为代理调度（claim 能力交集/未注册 403/fencing 409 透传/Reconciler 驱动 reclaim）；`apps/executor` 独立进程执行真实 skim；修复 SQLite 并发 claim 双签 lease 竞态（CAS）与取消链路（协作取消回执/cancelling 粘性/跨进程 pause 持久化 `b9c8d7e6f5a4`）。验收：`test_p0_closed_loop.py` 10 场景 + `scripts/fault_injection_local.py` 6/6（SIGKILL API/Core/Executor 分别强杀重启均恢复）+ fencing 四契约。全量 234 passed + 2 skipped + Go 10 passed；竞态敏感用例 3 次重复运行稳定。

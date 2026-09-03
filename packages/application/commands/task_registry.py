@@ -49,7 +49,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="upsert_paper",
-            handler="packages.storage.repositories.paper:PaperRepository.upsert_paper",
+            handler="packages.ai.task_handlers:upsert_paper_data",
             side_effect="papers 行 + v1 SourceVersion + SourceAdded/SourceVersionDetected 事件（同事务）",
             input_keys=("arxiv_id", "title", "abstract"),
             idempotency_template="upsert:{arxiv_id}",
@@ -60,9 +60,9 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="download_source",
-            handler="packages.integrations.arxiv_client:ArxivClient.download_pdf",
+            handler="packages.ai.task_handlers:download_source_data",
             side_effect="PDF 文件落盘 + set_pdf_path",
-            input_keys=("paper_id", "arxiv_id"),
+            input_keys=("arxiv_id",),
             idempotency_template="dl:{arxiv_id}",
             timeout_s=300,
             max_attempts=3,
@@ -151,9 +151,9 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="send_brief_email",
-            handler="packages.integrations.notifier:NotificationService.send_email_html",
-            side_effect="外部邮件发送（不可撤回）",
-            input_keys=("recipient", "html_ref"),
+            handler="packages.ai.task_handlers:send_brief_email_effect",
+            side_effect="外部邮件发送（不可撤回；effect ledger 幂等去重）",
+            input_keys=("recipient", "subject", "content_id"),
             idempotency_template="mail:{date}:{recipient}",
             timeout_s=60,
             max_attempts=1,

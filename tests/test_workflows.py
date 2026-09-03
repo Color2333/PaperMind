@@ -27,6 +27,7 @@ def test_unknown_kind_raises(isolated_db):
 
 
 def test_topic_research_fanout_and_dependencies(isolated_db):
+    """第三轮 REVIEW：依赖必须用 logical node key 解析——逐 paper 断言精确边"""
     with session_scope() as session:
         job, tasks, created = start_workflow_job(
             session,
@@ -38,27 +39,26 @@ def test_topic_research_fanout_and_dependencies(isolated_db):
             idempotency_key="topic:diarization:run1",
         )
         assert created is True
-        caps = sorted(t.capability for t in tasks)
-        # fetch×1 + 每篇（upsert+download+skim+embed+extract）×2 = 11
-        assert caps.count("upsert_paper") == 2
-        assert caps.count("download_source") == 2
-        assert caps.count("skim_paper") == 2
-        assert caps.count("embed_paper") == 2
-        assert caps.count("extract_claims") == 2
-        assert caps.count("fetch_feed") == 1
-        assert len(tasks) == 11
-        del caps
-
-        # 依赖解析：skim 的 depends_on 指向同 Job 内 download task id
         repo = TaskRepository(session)
-        by_cap = {
-            t.capability: t for t in repo.list_for_job(job.id) if t.capability == "skim_paper"
-        }
-        download_ids = {
-            t.id for t in repo.list_for_job(job.id) if t.capability == "download_source"
-        }
-        for skim in by_cap.values():
-            assert set(skim.depends_on) <= download_ids and skim.depends_on
+        all_tasks = repo.list_for_job(job.id)
+        # fetch×1 + 每篇（upsert+download+skim+embed+extract）×2 = 11
+        assert len(all_tasks) == 11
+
+        # 按 idempotency_key（logical node key）索引——精确断言每篇的边
+        by_key = {t.idempotency_key: t for t in all_tasks}
+        for pid in ("p1", "p2"):
+            upsert = by_key[f"{job.id}:upsert:{pid}"]
+            download = by_key[f"{job.id}:download:{pid}"]
+            skim = by_key[f"{job.id}:skim:{pid}"]
+            embed = by_key[f"{job.id}:embed:{pid}"]
+            claims = by_key[f"{job.id}:claims:{pid}"]
+            fetch = by_key[f"{job.id}:fetch"]
+            # 精确边（不得错连到别的 paper）
+            assert upsert.depends_on == [fetch.id]
+            assert download.depends_on == [upsert.id]
+            assert skim.depends_on == [download.id]
+            assert embed.depends_on == [upsert.id]
+            assert claims.depends_on == [skim.id]
 
         # 幂等重放：再 expand 不产生新 Task
         again = expand_job(session, job.id)
@@ -85,27 +85,81 @@ def test_batch_fanout_and_claim_order(isolated_db):
 
 
 def test_daily_brief_conditional_mail_task(isolated_db):
+    """send 节点：build 完成且 result 就绪后，下一轮 expand 才绑定展开（输出绑定）"""
     with session_scope() as session:
         # 无收件人：只有 build
         job1, tasks1, _ = start_workflow_job(
             session, kind="BuildDailyBrief", payload={}, idempotency_key="brief:1"
         )
-        assert [t.capability for t in tasks1] == ["build_daily_brief"]
+        assert [t.capability for t in tasks1] == ["daily_brief_publish"]
         del job1
 
-        # 有收件人：build → send（依赖 build）
+        # 有收件人：首轮只展开 build（send 等 build 的 result）
         job2, tasks2, _ = start_workflow_job(
             session,
             kind="BuildDailyBrief",
             payload={"recipient": "me@example.com"},
             idempotency_key="brief:2",
         )
-        caps = {t.capability: t for t in tasks2}
-        assert set(caps) == {"build_daily_brief", "send_brief_email"}
-        assert caps["send_brief_email"].depends_on == [caps["build_daily_brief"].id]
-        # manual_recovery 能力：不自动重试
-        assert caps["send_brief_email"].max_attempts == 1
+        assert [t.capability for t in tasks2] == ["daily_brief_publish"]
+        build = next(t for t in tasks2 if t.capability == "daily_brief_publish")
+
+        # build 未完成 → expand 不产生 send
+        assert expand_job(session, job2.id) == []
+
+        # 模拟 build 完成（result_ref 携带 content_id）→ 下一轮展开 send
+        build.status = TaskStatus.succeeded
+        build.input_ref = {**build.input_ref, "result_ref": {"content_id": "gc-1", "title": "简报"}}
+        session.flush()
+        send_tasks = expand_job(session, job2.id)
+        assert [t.capability for t in send_tasks] == ["send_brief_email"]
+        send = send_tasks[0]
+        assert send.depends_on == [build.id]
+        assert send.input_ref["recipient"] == "me@example.com"
+        assert send.input_ref["content_id"] == "gc-1"  # 输出绑定已解析
+        assert send.max_attempts == 1  # manual_recovery
         del job2
+
+
+def test_upstream_failure_propagates_and_job_converges(isolated_db):
+    """第三轮 REVIEW：前驱 dead_letter → 下游 skipped（cancelled）→ Job 确定收敛"""
+    from packages.application.commands.reconciler import run_reconcile
+
+    with session_scope() as session:
+        job, tasks, _ = start_workflow_job(
+            session,
+            kind="RunTopicResearch",
+            payload={"paper_ids": ["ok1", "bad1"]},  # 无 fetch_query——upsert 立即可建
+            idempotency_key="topic:prop:1",
+        )
+        del job
+        from packages.storage.repositories import TaskRepository as _TR
+
+        all_tasks = _TR(session).list_for_job(tasks[0].job_id)
+        by_key = {t.idempotency_key: t for t in all_tasks}
+
+        # ok1 全链成功；bad1 的 upsert 失败进 dead_letter（max_attempts=1 直接推到终态）
+        for pid in ("ok1",):
+            for step in ("upsert", "download", "skim", "embed", "claims"):
+                t = by_key[f"{tasks[0].job_id}:{step}:{pid}"]
+                t.status = TaskStatus.succeeded
+        bad_upsert = by_key[f"{tasks[0].job_id}:upsert:bad1"]
+        bad_upsert.status = TaskStatus.dead_letter
+        bad_upsert.max_attempts = 1
+        session.flush()
+
+        # Reconciler 驱动失败传播：bad1 链的下游全部 skipped
+        result = run_reconcile(session)
+        assert result["skipped"].get(tasks[0].job_id, 0) >= 3  # download/skim/embed/claims ≥3
+
+        # 收敛：ok1 全成功 + bad1 dead_letter + 下游 cancelled → partially_succeeded
+        job_row = JobRepository(session).get(tasks[0].job_id)
+        assert job_row.status is JobStatus.partially_succeeded, (
+            f"Job 应收敛为 partially_succeeded，实际 {job_row.status}"
+        )
+        # 下游不再 queued（不会永远 running）
+        remaining_queued = [t for t in all_tasks if t.status is TaskStatus.queued]
+        assert remaining_queued == []
 
 
 def test_citation_sync_fanout(isolated_db):

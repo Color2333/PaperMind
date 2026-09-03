@@ -126,3 +126,43 @@ def test_capability_specs_survive_registry_invariants():
         assert spec.timeout_s > 0 and spec.max_attempts >= 1, f"{name}: 重试参数非法"
         if spec.manual_recovery:
             assert spec.max_attempts == 1, f"{name}: manual_recovery 不得自动重试"
+
+
+def test_batch_jobs_no_new_writes():
+    """R3 P1：生产代码不得创建 batch_jobs 行（只读历史投影/迁移适配器除外）"""
+    offenders = []
+    for base in ("packages", "apps"):
+        for py in (REPO / base).rglob("*.py"):
+            if "test" in py.parts or "__pycache__" in py.parts:
+                continue
+            text = py.read_text(errors="replace")
+            if "BatchJobRepository(" in text:
+                # batch.py 的只读投影/迁移适配器豁免（不含 .create( 调用即可）
+                if py.name == "batch.py" and ".create(" not in text:
+                    continue
+                offenders.append(str(py.relative_to(REPO)))
+    assert offenders == [], f"batch_jobs 仍存在生产写入点：{offenders}"
+
+
+def test_create_batch_job_returns_durable_id_only(isolated_db):
+    """R3 P1：create_batch_job 直接返回 durable job id，不再双写 batch_jobs 行"""
+    from packages.application.commands.batch import create_batch_job
+    from packages.storage.db import session_scope as _scope
+    from packages.storage.models import Job
+
+    with _scope() as session:
+        from packages.domain.schemas import PaperCreate
+        from packages.storage.repositories import PaperRepository
+
+        pid = (
+            PaperRepository(session)
+            .upsert_paper(PaperCreate(title="t", abstract="a", arxiv_id="2609.00001"))
+            .id
+        )
+        result = create_batch_job(session, kind="skim", paper_ids=[pid])
+
+    # 返回的 job_id 就是 durable Job id
+    with _scope() as session:
+        job = session.get(Job, result["job_id"])
+        assert job is not None and job.kind == "ProcessUnreadBatch"
+    assert result["durable_job_id"] == result["job_id"]

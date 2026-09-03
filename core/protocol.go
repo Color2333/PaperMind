@@ -177,4 +177,6 @@ type HealthResponse struct {
 	CoreVersion string `json:"core_version"`
 	GoVersion   string `json:"go_version"`
 	StateURL    string `json:"state_url,omitempty"`
+	// readiness 探测结果（liveness 恒 ok；state 不可达时编排层应摘除）
+	StateReady bool `json:"state_ready"`
 }

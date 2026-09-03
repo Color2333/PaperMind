@@ -522,3 +522,47 @@ func TestSchemaVersionMismatchRejected(t *testing.T) {
 		t.Fatalf("错误类型不符: %v", envelope.Body)
 	}
 }
+
+func TestCancelPathPayloadMismatchRejected(t *testing.T) {
+	url, fake := newGateway(t)
+	registerExecutor(t, url, "cid-c1", "fake-1", []string{"fake_cap"})
+	fake.addTask("task-A", "fake_cap", nil)
+
+	// POST /v1/tasks/A/cancel 携带 task_id=B → 400（path 为唯一资源标识）
+	var cancel map[string]any
+	code := post(t, url+"/v1/tasks/task-A/cancel", "cid-c1",
+		map[string]any{"task_id": "task-B", "reason": "x"}, &cancel)
+	if code != http.StatusBadRequest {
+		t.Fatalf("payload 与 path 不一致应 400，got %d: %v", code, cancel)
+	}
+	if fake.get("task-A").status != TaskQueued {
+		t.Fatalf("task-A 不应被取消: %s", fake.get("task-A").status)
+	}
+}
+
+func TestReadinessFollowsStateAvailability(t *testing.T) {
+	fake := newFakeState()
+	stateSrv := httptest.NewServer(fake.handler(t))
+	coreSrv := httptest.NewServer(NewServer(NewExecutorRegistry(), NewStateClient(stateSrv.URL, "")).Handler())
+	defer coreSrv.Close()
+	defer stateSrv.Close()
+
+	resp, err := http.Get(coreSrv.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("state 可用时应 200，got %d", resp.StatusCode)
+	}
+
+	stateSrv.Close() // 制造 state 不可达
+	resp2, err := http.Get(coreSrv.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("state 不可用时应 503，got %d", resp2.StatusCode)
+	}
+}

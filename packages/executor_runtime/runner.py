@@ -186,6 +186,26 @@ class ExecutorRunner:
             hb_thread.start()
             progress = self._make_progress(task_id, lease_token)
             try:
+                # P0-1 过渡缓解（幂等卫兵）：前次 Attempt 已提交领域结果但 complete
+                # 丢失时，本 Attempt 直接复用既有结果——不重复 LLM 成本/领域写入。
+                with suppress(Exception):
+                    existing = self.client.domain_result(task_id)
+                    if existing.get("found"):
+                        logger.info(
+                            "task %s 命中幂等卫兵（前 Attempt 已提交领域结果）——跳过 handler",
+                            task_id[:8],
+                        )
+                        self._submit_with_retry(
+                            lambda: self.client.complete(
+                                self.config.executor_id,
+                                task_id,
+                                lease_token,
+                                result=existing.get("result") or {},
+                            ),
+                            task_id=task_id,
+                            action="complete(卫兵)",
+                        )
+                        return
                 input_ref = task.get("input") or {}
                 result = handler(
                     input=input_ref, cancel_check=self.should_cancel, progress=progress

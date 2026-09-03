@@ -330,6 +330,92 @@ def cs_feed_fetch_category(*, category_code: str, progress: ProgressFn = None, *
     return _fetch_category_impl(category_code=category_code, progress=progress)
 
 
+# ---------- Workflow 可执行 handler（第三轮 REVIEW：注册表任务须可被独立 Executor 执行）----------
+
+
+def upsert_paper_data(
+    *,
+    arxiv_id: str,
+    title: str = "",
+    abstract: str = "",
+    metadata: dict | None = None,
+    progress: ProgressFn = None,
+    **_: Any,
+) -> dict:
+    """按元数据 upsert 论文（RunTopicResearch fan-out 的 upsert 节点）。
+
+    返回 {paper_id}——下游节点经输出绑定（${node:paper_id}）引用。
+    """
+    from packages.domain.schemas import PaperCreate
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import PaperRepository
+
+    with session_scope() as session:
+        paper = PaperRepository(session).upsert_paper(
+            PaperCreate(
+                arxiv_id=arxiv_id,
+                title=title or f"arXiv:{arxiv_id}",
+                abstract=abstract or "",
+                metadata=metadata or {},
+            )
+        )
+        return {"paper_id": str(paper.id), "arxiv_id": arxiv_id}
+
+
+def download_source_data(*, arxiv_id: str, progress: ProgressFn = None, **_: Any) -> dict:
+    """按 arXiv ID 下载 PDF 并回填 paper.pdf_path（download_source 节点）"""
+    from packages.integrations.arxiv_client import ArxivClient
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import PaperRepository
+
+    pdf_path = ArxivClient().download_pdf(arxiv_id)
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        paper = repo.get_by_arxiv(arxiv_id)
+        if paper is None:
+            raise ValueError(f"论文 {arxiv_id} 不在库中（upsert 应先行）")
+        repo.set_pdf_path(paper.id, pdf_path)
+        return {"paper_id": str(paper.id), "pdf_path": pdf_path}
+
+
+def send_brief_email_effect(
+    *,
+    recipient: str,
+    subject: str = "PaperMind 每日简报",
+    content_id: str = "",
+    progress: ProgressFn = None,
+    **_: Any,
+) -> dict:
+    """发送简报邮件（BuildDailyBrief 的 send 节点）——effect ledger 保护的唯一发送路径。
+
+    幂等语义（第三轮 REVIEW P1）：发送前查账本，已登记则跳过；
+    "先登记后发送崩溃会漏发"窗口以 manual_recovery 兜底（发送异常时账本
+    不登记，Task 进 manual_recovery 由人工重放——人工重放时账本挡重复）。
+    """
+    from packages.application.commands.effect_ledger import has_effect, register_effect
+    from packages.storage.db import session_scope
+
+    effect_key = f"brief_mail:{recipient}:{content_id or subject}"
+    with session_scope() as session:
+        if has_effect(session, effect_key):
+            return {"sent": False, "skipped": True, "effect_key": effect_key}
+
+    from packages.storage.db import session_scope as _scope
+    from packages.storage.repositories import GeneratedContentRepository
+
+    html = ""
+    if content_id:
+        with _scope() as session:
+            content = GeneratedContentRepository(session).get(content_id)
+            html = content.markdown or ""
+    from packages.integrations.notifier import NotificationService
+
+    NotificationService().send_email_html(recipient=recipient, subject=subject, html=html)
+    with session_scope() as session:
+        register_effect(session, effect_key=effect_key, kind="email")
+    return {"sent": True, "effect_key": effect_key}
+
+
 # ---------- 引用图谱 / 生成 ----------
 
 
