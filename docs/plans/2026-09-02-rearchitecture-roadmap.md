@@ -242,4 +242,5 @@
 - 2026-09-03：完成 C10——控制与观察面 REST（cancel/retry/pause/resume + Job graph/attempts），3 个测试。全量 201 passed + Go 10 passed。
 - 2026-09-03：完成 C11——batch_jobs 入口接 durable ProcessUnreadBatch 镜像 + 六场景恢复测试。**Stage C（Phase 2）完成**。全量 206 passed + Go 10 passed。
 - 2026-09-03：B8 遗留批次——tags×8 路由全部经 application/commands/tags.py。全量 207 passed。
+- 2026-09-03：B8 遗留——cs_feeds×6 + settings×12 + llm_configs×6 全部下沉 application/commands（settings.py/cs_feeds.py），llm_configs 瘦身为 repo 直调（纯 CRUD 无业务编排）。全量 207 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。
