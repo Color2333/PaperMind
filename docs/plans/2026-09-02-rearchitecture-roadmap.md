@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 8 | 进行中 |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 9 | 进行中 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -126,7 +126,9 @@
 - [x] **C7 Python Executor 落地**：Python Executor 每次只执行一个 Task Attempt，通过 C0 协议注册 capability/version/resource class、领取和续约 lease、提交 result proposal/Artifact，支持协作取消与 drain；不直写 Job/Task/Attempt 或 Research State 表。
   产出：[packages/executor_runtime/runner.py](../../packages/executor_runtime/runner.py)——ExecutorRunner（claim→handler→complete/fail 循环 + 心跳线程续约 + cancel_requested 协作取消 + drain/idle-exit）+ `handlers_from_registry`（C4 注册表 dotted path 解析与适配）。Executor 不直写任何领域表——提交面全部经 C0 协议。
   结论：5 个 hermetic 测试（完整周期/handler 异常→fail/no_handler/cancel_requested 协作退出/drain 停止领取）。全量 190 passed + Go 10 passed。
-- [ ] **C8 lease、fencing 与 Reconciler**：领取和续约 lease 时签发 fencing token；迟到 Attempt 不能覆盖新结果；Reconciler 回收过期 lease 并执行 backoff、dead-letter 或 manual recovery。
+- [x] **C8 lease、fencing 与 Reconciler**：领取和续约 lease 时签发 fencing token；迟到 Attempt 不能覆盖新结果；Reconciler 回收过期 lease 并执行 backoff、dead-letter 或 manual recovery。
+  产出：durable 仓库 `reclaim_expired_leases`（backoff 窗口内不回收；attempts 耗尽→dead_letter）+ 应用层 [commands/reconciler.py](../../packages/application/commands/reconciler.py)（按 C4 注册表判定 manual_recovery 能力不回队列）。
+  结论：5 个测试（requeue 分流/backoff 窗口/dead_letter 收敛/迟到 Attempt 写入 ConflictError 拒绝+新 fencing 成功/manual_recovery 不回队）。全量 195 passed + Go 10 passed。
 - [ ] **C9 Go 权威提交与副作用账本**：Go Core 校验 attempt、fencing token、result schema 和幂等键后，将 Paper/Claim/Evidence 变化与 outbox 在同一事务提交；Python 只提交 proposal。邮件、provider call 等外部效果使用 provider key 或 effect ledger 去重。
 - [ ] **C10 控制与观察面**：实现 cancel/retry/pause/resume、Job graph、Task/Attempt 日志/成本/错误接口；CLI、MCP、Local UI 与 Full Web 共用同一资源语义。
 - [ ] **C11 渐进迁移与恢复测试**：先迁移 `batch_jobs` 三类任务，再迁移 scheduler jobs 和 idle processor；用 API/Executor 强杀、lease 过期、重复领取、部分失败和迟到写入测试替代 `recover_stale_running` 的破坏性恢复。
@@ -228,4 +230,5 @@
 - 2026-09-03：完成 C5——代码化 Workflow 模板（4 模板注册 + 幂等展开 + fan-out/依赖/条件分支），6 个测试。全量 185 passed + Go 7 passed。
 - 2026-09-03：完成 C6——Go 控制面（任务提交/观察端点 + Reconciler 过期 lease 回收），Go 测试 10 个。全量 185 passed + Go 10 passed。
 - 2026-09-03：完成 C7——Python Executor 运行时（claim/handler/complete/fail + 心跳续约 + 协作取消 + drain），5 个 hermetic 测试。全量 190 passed + Go 10 passed。
+- 2026-09-03：完成 C8——Reconciler（过期 lease 回收/backoff/dead_letter/manual_recovery）+ 迟到写入 fencing 拒绝测试。全量 195 passed + Go 10 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。

@@ -394,6 +394,40 @@ class TaskRepository:
         JobRepository(self.session).recompute_job_status(task.job_id)
         return task
 
+    def reclaim_expired_leases(
+        self, *, now: datetime | None = None, backoff_s: int = 60
+    ) -> dict[str, str]:
+        """回收过期 lease（Reconciler 核心，C8）。
+
+        - lease 到期超 backoff_s 的 leased Task：
+          attempt_count < max_attempts → 回队列（重试，Attempt 计数已计）；
+          attempt_count 耗尽 → dead_letter；
+        - 返回 {task_id: 处置}（requeued / dead_letter）。
+        迟到 Attempt 的提交此后会被 _check_lease 拒绝（lease 已清空/更换）。
+        """
+        now = now or _utcnow()
+        cutoff = now - timedelta(seconds=backoff_s)
+        rows = self.session.execute(
+            select(DurableTask).where(
+                DurableTask.status == TaskStatus.leased,
+                DurableTask.lease_expires_at.is_not(None),
+                DurableTask.lease_expires_at < cutoff,
+            )
+        ).scalars()
+        outcomes: dict[str, str] = {}
+        for task in rows:
+            task.lease_token = None
+            task.lease_expires_at = None
+            if task.attempt_count >= task.max_attempts:
+                task.status = TaskStatus.dead_letter
+                outcomes[task.id] = "dead_letter"
+            else:
+                task.status = TaskStatus.queued
+                outcomes[task.id] = "requeued"
+            self.session.flush()
+            JobRepository(self.session).recompute_job_status(task.job_id)
+        return outcomes
+
     def heartbeat_lease(self, *, task_id: str, lease_token: str) -> tuple[bool, bool]:
         """续约 lease；返回 (ok, cancel_requested)。取消协作语义的探测点。"""
         task = self.get(task_id)
