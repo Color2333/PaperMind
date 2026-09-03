@@ -165,6 +165,12 @@ class TaskStatus(StrEnum):
     manual_recovery = "manual_recovery"
 
 
+class EffectKind(StrEnum):
+    mail_send = "mail_send"
+    provider_call = "provider_call"
+    domain_write = "domain_write"
+
+
 class TaskAttemptStatus(StrEnum):
     running = "running"
     succeeded = "succeeded"

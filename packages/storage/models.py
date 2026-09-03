@@ -26,6 +26,7 @@ from packages.domain.enums import (
     ClaimCertainty,
     ClaimOrigin,
     ClaimStatus,
+    EffectKind,
     EventAggregate,
     EventType,
     EvidenceKind,
@@ -980,6 +981,21 @@ class ResearchEvent(Base):
         DateTime, default=_utcnow, nullable=False, index=True
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TaskEffect(Base):
+    """副作用账本（设计③ §9：幂等去重外部效果；effect_key 唯一）"""
+
+    __tablename__ = "task_effects"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    task_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    effect_key: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
+    kind: Mapped[EffectKind] = mapped_column(Enum(EffectKind, name="effect_kind"), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    committed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
 # ---------- 原子 durable execution（设计③ §1，Stage C2）----------
