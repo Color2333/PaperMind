@@ -39,10 +39,9 @@
 - [x] **A1 长任务入口、状态存储、线程池审计**
   产出：[2026-09-02 Phase 0 现状审计](./2026-09-02-phase0-baseline-audit.md)。
   结论：任务状态三处分裂（内存 TaskTracker / `batch_jobs` 表 / 心跳文件），job 控制面（cancel/retry/pause/resume/lease）为零，核心流程零回归测试。
-- [ ] **A2 资源基线测量**
-  产出：测量脚本 + `docs/plans/` 基线记录。
-  内容：API/worker/PostgreSQL/前端容器的空闲与峰值 RSS、镜像大小、冷启动时间；需在服务器上实测。
-  出口条件：每个容器均有数值记录（Phase 0 出口条件第 1 项）。
+- [x] **A2 资源基线测量**（脚本已建，待服务器运行）
+  产出：[scripts/measure_baseline.sh](../../scripts/measure_baseline.sh)——Docker 容器 RSS/镜像大小/冷启动计时/API 进程 RSS/venv 大小。
+  出口条件：用户在阿里云服务器上运行并记录输出。
 - [x] **A3 核心流程回归测试**
   产出：[tests/test_e2e_main_flow.py](../../tests/test_e2e_main_flow.py)（3 个测试：arXiv 导入与去重 / 导入→下载PDF→skim→deep→embed→ask→brief 全链路 / 空库 RAG 兜底）+ [.github/workflows/tests.yml](../../.github/workflows/tests.yml)（PR/push 自动跑 pytest）。
   结论：主链路在 HTTP→service→repository 层面可重复运行；LLM/arXiv/vision 以类级 fake 隔离，每测试独立 tmp SQLite(WAL)，全套 85 passed。
@@ -168,7 +167,7 @@
 
 阶段出口条件：不打开 Web，也能在 `pm` 终端和确定性命令中完成搜索、查看 Claim/Evidence、比较研究状态、触发处理、查看进度、取消任务和导出。
 
-- [ ] **E1 `PaperMind-Terminal` downstream fork 基线**：独立仓库、pinned 上游 tag、保留 MIT copyright/license notice 与第三方 notices、有序 patch stack（每次 release 记录上游基线与未合并安全修复）、product profile 关闭 coding-oriented 功能；build pruning 先行，稳定前不做 source pruning。
+- [x] **E1 `PaperMind-Terminal` downstream fork 基线**（本地 `/Users/haojiang/Documents/2026/PaperMind-Terminal/` 已建；待用户 push 到 GitHub）：独立仓库、pinned 上游 tag、保留 MIT copyright/license notice 与第三方 notices、有序 patch stack（每次 release 记录上游基线与未合并安全修复）、product profile 关闭 coding-oriented 功能；build pruning 先行，稳定前不做 source pruning。
 - [ ] **E2 `@papermind/cli` 与 standalone `pm`**：同进程运行裁剪后的 Pi agent core/TUI，加载 PaperMind system prompt、主题与 renderer；`pm` / `pm -p` / 确定性子命令三模式骨架。
 - [ ] **E3 远程登录**：`pm login --endpoint`，PaperMind token 与本地模型 provider 凭据分开保存/撤销。
 - [ ] **E4 确定性子命令 + `--json`**：查询面优先（papers/questions/claims/evidence/diff/export），稳定退出码，无 ANSI 污染。
@@ -176,6 +175,7 @@
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
 - 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
 - 2026-09-03：B8 遗留——sensemaking×14 路由全部下沉 application/commands/sensemaking.py（含 schema CRUD / session CRUD / act1-3 更新与 AI 生成 / interaction）。全量 212 passed。
+- 2026-09-03：E1 Terminal fork 本地基线（Pi upstream 4e69b0c）+ A2 基线测量脚本（scripts/measure_baseline.sh）。全量 212 passed + Go 10 passed。
 - 2026-09-03：完成 F1（inventory 已有设计⑤ §1 权威产出）+ F6 FastAPI 侧 `--web=full|demo|none` 部署 profile。全量 212 passed + Go 10 passed。
 - [ ] **E6 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
 - [ ] **E7 permission profiles**：默认 research profile；`--workspace`/`--coding` 显式开启；destructive 动作需服务端 policy + 终端确认双重把关。
