@@ -232,3 +232,26 @@ func (s *Server) handleTaskStatusGET(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
+
+
+// TokenAuthMiddleware 校验 Bearer token（P1 修复：控制面认证）。
+func TokenAuthMiddleware(next http.Handler, token string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer "+token {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"schema_version": SchemaVersion,
+				"correlation_id": "",
+				"body":           map[string]any{"ok": false, "error": "unauthorized"},
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

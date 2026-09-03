@@ -145,6 +145,7 @@ class TaskTracker:
         *args: Any,
         total: int = 100,
         category: str = "general",
+        task_id: str | None = None,
         **kwargs: Any,
     ) -> str:
         """
@@ -153,7 +154,8 @@ class TaskTracker:
         fn 可接收 progress_callback(message, current, total) 参数
         返回 task_id
         """
-        task_id = f"{task_type}_{uuid.uuid4().hex[:8]}"
+        if task_id is None:
+            task_id = f"{task_type}_{uuid.uuid4().hex[:8]}"
         self.start(task_id, task_type, title, total=total, category=category)
 
         def _run():

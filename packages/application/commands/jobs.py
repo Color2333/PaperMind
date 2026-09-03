@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -48,6 +49,8 @@ def submit_durable_job(
     fn 签名：fn(progress_callback: Callable[[str,int,int],None] | None = None, **fn_kwargs) -> Any
     （JSON-able 返回值会存入 Task result，供 /tasks/{id}/result 查询。）
     """
+    from uuid import uuid4
+
     from packages.domain.task_tracker import global_tracker
     from packages.storage.db import session_scope
     from packages.storage.repositories import JobRepository, TaskRepository
@@ -79,10 +82,7 @@ def submit_durable_job(
         lease_token = claimed.lease_token
 
     # 2. 进度桥接：透传 tracker + 刷新 durable 进度/lease
-    progress_state = {"current": 0, "total": total}
-
     def _bridged_progress(msg: str, cur: int, tot: int) -> None:
-        progress_state["current"], progress_state["total"] = cur, tot
         with suppress(Exception), session_scope() as session:
             JobRepository(session).update_progress(job_id, current=cur, total=tot, message=msg)
             TaskRepository(session).touch_lease(task_id, lease_token)
@@ -118,16 +118,19 @@ def submit_durable_job(
             )
         return json_result
 
-    # 4. tracker 驱动执行（进程内通道；C7 换 Executor），回填 external_ref
-    tracker_task_id = global_tracker.submit(
+    # 4. tracker 驱动执行（P1 修复：原子设置 external_ref 再启动，消除竞态）
+    tracker_task_id = f"{kind.lower()}_{uuid4().hex[:8]}"
+    with session_scope() as session:
+        TaskRepository(session).set_external_ref(task_id, tracker_task_id)
+
+    global_tracker.submit(
         task_type=kind.lower(),
         title=title,
         fn=_wrapped,
         total=total,
         category=category,
+        task_id=tracker_task_id,
     )
-    with suppress(Exception), session_scope() as session:
-        TaskRepository(session).set_external_ref(task_id, tracker_task_id)
 
     return {
         "task_id": tracker_task_id,
@@ -262,12 +265,19 @@ def submit_tracked_compat(
             )
         return result
 
-    # 4. tracker 驱动执行，回填 external_ref
-    tracker_task_id = global_tracker.submit(
-        task_type, title, _wrapped, total=total, category=category
-    )
-    with suppress(Exception), session_scope() as session:
+    # 4. tracker 驱动执行（P1 修复：原子设置 external_ref 再启动）
+    tracker_task_id = f"{task_type}_{uuid4().hex[:8]}"
+    with session_scope() as session:
         TaskRepository(session).set_external_ref(task_id, tracker_task_id)
+
+    global_tracker.submit(
+        task_type,
+        title,
+        _wrapped,
+        total=total,
+        category=category,
+        task_id=tracker_task_id,
+    )
 
     return tracker_task_id
 

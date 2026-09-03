@@ -58,6 +58,11 @@ def poll_once() -> bool:
         kind = job.kind
         paper_ids = list(job.paper_ids or [])
     _run_one_job(job_id, kind, paper_ids)
+    # P1 修复：检查 _stop——如果停机中途 break，不应标 completed
+    if _stop.is_set():
+        with session_scope() as s:
+            BatchJobRepository(s).mark_finished(job_id, "failed")
+        return True
     with session_scope() as s:
         BatchJobRepository(s).mark_finished(job_id, "completed")
     return True

@@ -305,6 +305,8 @@ class TaskRepository:
 
         仅 queued 可领取；签发 lease + attempt + fencing（复用 claim_task 的签发逻辑）。
         """
+        if queue_paused:
+            raise ConflictError("队列已暂停")
         task = self.get(task_id)
         if task.status is not TaskStatus.queued:
             raise ConflictError(f"Task {task_id} 状态 {task.status} 不可领取")
@@ -325,13 +327,19 @@ class TaskRepository:
         return task
 
     def _check_lease(self, task: DurableTask, executor_id: str, lease_token: str) -> None:
-        """fencing 最简形态：lease 持有者必须匹配（C8 扩展租期过期回收）"""
+        """fencing 校验：lease 持有者 + executor 身份 + 租期（P1 修复）"""
         if task.status not in (TaskStatus.leased, TaskStatus.running):
             raise ConflictError(f"Task {task.id} 状态 {task.status} 不可提交")
-        if task.lease_token != lease_token or (
-            task.lease_expires_at and task.lease_expires_at.replace(tzinfo=UTC) < _utcnow()
-        ):
-            raise ConflictError(f"Task {task.id} lease 已失效（迟到写入被拒绝）")
+        if task.lease_token != lease_token:
+            raise ConflictError(f"Task {task.id} lease token 不匹配（迟到写入被拒绝）")
+        # P1 修复：校验 executor 身份
+        attempt = self._running_attempt(task.id, task.attempt_count)
+        if attempt is not None and attempt.executor_id != executor_id:
+            raise ConflictError(
+                f"Task {task.id} lease 属于 {attempt.executor_id}，不能由 {executor_id} 提交"
+            )
+        if task.lease_expires_at and task.lease_expires_at.replace(tzinfo=UTC) < _utcnow():
+            raise ConflictError(f"Task {task.id} lease 已过期（迟到写入被拒绝）")
 
     def _running_attempt(self, task_id: str, fencing_token: int) -> TaskAttempt | None:
         return self.session.execute(
@@ -479,14 +487,20 @@ class TaskRepository:
         return task
 
     def heartbeat_lease(self, *, task_id: str, lease_token: str) -> tuple[bool, bool]:
-        """续约 lease；返回 (ok, cancel_requested)。取消协作语义的探测点。"""
+        """续约 lease；返回 (ok, cancel_requested)。
+        P1 修复：过期 lease 不续约；cancel_job 设 cancelling 时返回 cancel_requested=True。"""
         task = self.get(task_id)
         if task.lease_token != lease_token:
             return False, False
+        # P1 修复：lease 已过期则不续约（交给 Reconciler）
+        if task.lease_expires_at and task.lease_expires_at.replace(tzinfo=UTC) < _utcnow():
+            return False, False
         task.lease_expires_at = _utcnow() + timedelta(seconds=task.timeout_s or _LEASE_BASE_S)
         self.session.flush()
-        # cancelling 流程在 C8 接入（cancel_requested 探测）；C2 阶段恒为 False
-        return True, False
+        # P1 修复：Job 处于 cancelling 时返回 cancel_requested=True
+        job = JobRepository(self.session).get(task.job_id)
+        cancel_requested = job.status is JobStatus.cancelling
+        return True, cancel_requested
 
 
 class ArtifactRepository:

@@ -83,14 +83,27 @@ export default function ResearchState() {
 
   const exportMd = async () => {
     if (!questionId) return;
-    const md = await researchApi.exportMd(questionId);
-    const blob = new Blob([md], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `research_object_${questionId}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    setError("");
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_API_BASE || "/api"}/research/questions/${questionId}/export?format=markdown`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` } }
+      );
+      if (!resp.ok) {
+        setError(`导出失败: ${resp.status}`);
+        return;
+      }
+      const md = await resp.text();
+      const blob = new Blob([md], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `research_object_${questionId}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "导出失败");
+    }
   };
 
   return (

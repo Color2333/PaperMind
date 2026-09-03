@@ -42,7 +42,7 @@ const TOOLS = [
   { to: "/brief", icon: Newspaper, label: "研究简报", accent: false },
   { to: "/dashboard", icon: LayoutDashboard, label: "看板", accent: false },
   { to: "/statistics", icon: BarChart3, label: "主题统计", accent: false },
-  { to: "/research", icon: FileText, label: "Research State", accent: false },
+  { to: "/research", icon: BookOpen, label: "Research", accent: false },
 ];
 
 function useDarkMode() {

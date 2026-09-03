@@ -127,14 +127,13 @@ class ExecutorRunner:
         try:
             if handler is None:
                 logger.error("capability %s 无 handler，上报失败", capability)
-                with suppress(Exception):
-                    self.client.fail(
-                        self.config.executor_id,
-                        task_id,
-                        attempt_id,
-                        error_class="no_handler",
-                        message=f"capability {capability} 未注册 handler",
-                    )
+                self.client.fail(
+                    self.config.executor_id,
+                    task_id,
+                    attempt_id,
+                    error_class="no_handler",
+                    message=f"capability {capability} 未注册 handler",
+                )
                 return
 
             hb_stop = threading.Event()
@@ -162,20 +161,31 @@ class ExecutorRunner:
 
             if self.should_cancel():
                 # 协作取消：handler 已安全退出，任务交还 Core（fail→重入队）
-                with suppress(Exception):
-                    self.client.fail(
-                        self.config.executor_id,
-                        task_id,
-                        attempt_id,
-                        error_class="cancelled",
-                        message="协作取消退出",
-                    )
+                self.client.fail(
+                    self.config.executor_id,
+                    task_id,
+                    attempt_id,
+                    error_class="cancelled",
+                    message="协作取消退出",
+                )
                 return
 
-            with suppress(Exception):
-                self.client.complete(
-                    self.config.executor_id, task_id, attempt_id, result=_jsonable(result)
-                )
+            # P1 修复：complete 失败不可吞——记录并重试
+            for attempt in range(3):
+                try:
+                    self.client.complete(
+                        self.config.executor_id, task_id, attempt_id, result=_jsonable(result)
+                    )
+                    break
+                except Exception as exc:
+                    if attempt == 2:
+                        logger.error(
+                            "task %s complete 3 次均失败（副作用已发生但结果未知）: %s",
+                            task_id,
+                            exc,
+                        )
+                    else:
+                        time.sleep(1 << attempt)
         finally:
             self._current = None
 
@@ -187,7 +197,7 @@ class ExecutorRunner:
                 if resp.get("cancel_requested") and self._current is not None:
                     self._current.cancel_event.set()
                     logger.info("task %s 收到取消请求", task_id)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("heartbeat 失败（续期重试于下轮）: %s", exc)
 
 

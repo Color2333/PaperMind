@@ -23,9 +23,9 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 12 | **已完成**（遗留：idle processor/scheduler 直跑迁移到 C7 Executor 运行时） |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 11 | 进行中（P0：Go Core/Python durable store 未闭环——真实业务仍走 global_tracker，撤回完成声明） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
-| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 5 | 进行中 |
+| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 6 | 进行中 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
@@ -175,6 +175,7 @@
   产出：[packages/application/capability.py](../../packages/application/capability.py)（20 个 CapabilityMeta + 五面 surfaces）+ `scripts/export_capabilities.py`（JSON 导出）+ `scripts/generate_ts_types.py`（TS 类型生成 → packages/shared/presentation.ts）。
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
 - 2026-09-03：F3 loopback bridge + F4 Job Monitor/Research Pack 页面 + F5 Full Web 适配 + F7 surface contract 测试 + search_multi metadata 兼容修复。全量 217 passed + Go 10 passed。
+- 2026-09-03：处理第二轮 REVIEW——P0 诚实撤回 Stage C 完成声明；P1 修复 Go main package 入口/lease executor 校验/heartbeat 过期/pause 有效性/external_ref 竞态/batch_consumer 停机/executor 吞错/F2 页面导航与导出。全量 217 passed + Go 10 passed。
 - 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
 - 2026-09-03：F6 端到端本地验证——frontend/dist 构建成功，FastAPI full/none profile 均通过，ingest→skim→jobs→tasks/active→前端 HTML 全链路正常。全量 212 passed + Go 10 passed。
 - 2026-09-03：F4 部分完成——前端新增 ResearchState 页面（Claims 列表+状态徽章+Evidence 面板+Diff 时间线+Markdown 导出），路由 /research 已注册。全量 212 passed + TS 编译通过。
