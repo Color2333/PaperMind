@@ -92,7 +92,7 @@
   结论：canonical result 平铺 plain dict，HTTP 404/detail 形状逐处兼容；e2e 覆盖 topics/stats/actions/runs/tasks/trends/graph 空库路径。全量 126 passed。
 - [x] **B8 命令面迁移**：ImportPaper/CreateResearchQuestion/StartSkim/StartDeepRead/StartEmbedding 等写路径走 application command，长任务入口统一创建 Job，不再直接调用具体 Worker 或线程池（为 Stage C 铺路）。
   产出（2026-09-02，四批）：papers 写×6（flag/download-pdf/figures-analyze/reasoning/ieee → commands/papers + ingest + queries/analysis）；topics 写×6（CRUD/fetch/references → commands/topics）；ingest/arxiv（→ commands/ingest.import_from_arxiv_query + describe_ingested_papers）；pipelines Start*×3（commands/pipelines.start_*）；graph 同步×5（commands/graph）；content×3（wiki task → commands/wiki.start_topic_wiki_with_save、brief/daily → commands/brief.start_daily_brief_task、generated delete）；jobs POST×5（commands/daily：daily_job/weekly_maintenance/batch_unread/daily_report×2——BackgroundTasks 原语在该层消失，命令自管后台线程）。
-  结论：长任务入口统一在 application command 内提交（tracker 为过渡载体，Stage C 将其替换为 durable Job——每命令一处替换点）；执行中修掉两个迁移引入的 bug（action_type=None 覆盖默认、brief 任务错用 agent 形状丢 content_id）。e2e 覆盖 flag/引用同步/generate-only。全量 127 passed。**遗留后期批次**：tags×8、cs_feeds×6、settings/llm_configs×18、sensemaking/translate/writing（设计② "B7 后期" 档）。
+  结论：长任务入口统一在 application command 内提交（tracker 为过渡载体，Stage C 将其替换为 durable Job——每命令一处替换点）；执行中修掉两个迁移引入的 bug（action_type=None 覆盖默认、brief 任务错用 agent 形状丢 content_id）。e2e 覆盖 flag/引用同步/generate-only。全量 127 passed。**遗留后期批次**：tags×8（已迁移→commands/tags.py）、cs_feeds×6、settings/llm_configs×18、sensemaking/translate/writing（设计② "B7 后期" 档）。
 
 ## Stage C — Phase 2：Go Core + 原子 durable execution
 
@@ -241,4 +241,5 @@
 - 2026-09-03：完成 C9——副作用账本 task_effects（effect_key 幂等去重，邮件不重复发送），3 个测试。全量 198 passed + Go 10 passed。
 - 2026-09-03：完成 C10——控制与观察面 REST（cancel/retry/pause/resume + Job graph/attempts），3 个测试。全量 201 passed + Go 10 passed。
 - 2026-09-03：完成 C11——batch_jobs 入口接 durable ProcessUnreadBatch 镜像 + 六场景恢复测试。**Stage C（Phase 2）完成**。全量 206 passed + Go 10 passed。
+- 2026-09-03：B8 遗留批次——tags×8 路由全部经 application/commands/tags.py。全量 207 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。
