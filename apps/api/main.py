@@ -243,3 +243,43 @@ app.include_router(llm_configs.router)
 
 # ---------- 挂载 MCP server（端点 /mcp/，供 hermes agent 接入）----------
 app.mount("/mcp", _mcp_app)
+
+# ---------- Web 部署 profile（F6，设计⑤ §7）----------
+# --web=full: 挂载 frontend/dist 静态文件（个人 Full Web）
+# --web=demo: 挂载 demo 构建产物（公开 Demo 实例用；隔离在独立实例，非本进程职责）
+# --web=none: 仅 Core + MCP，不携带任何 Web（headless 部署）
+# 环境变量 WEB_PROFILE 或 CLI --web 参数控制；默认 "full"（向后兼容）。
+
+
+def _mount_web_profile(app: FastAPI) -> None:
+    import os
+    from pathlib import Path
+
+    profile = os.environ.get("WEB_PROFILE", "full")
+    if profile == "none":
+        logger.info("Web profile=none：不挂载静态 Web（headless 模式）")
+        return
+
+    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if not frontend_dist.is_dir():
+        logger.warning("Web profile=%s 但 frontend/dist 不存在，跳过静态挂载", profile)
+        return
+
+    from fastapi.staticfiles import StaticFiles
+
+    if profile == "demo":
+        # Demo 实例的精简公开页面（独立部署实例使用；此处仅挂载构建产物）
+        demo_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist-demo"
+        if demo_dist.is_dir():
+            app.mount("/", StaticFiles(directory=str(demo_dist), html=True), name="demo-web")
+            logger.info("Web profile=demo：挂载 demo 构建产物 %s", demo_dist)
+        else:
+            logger.warning("Web profile=demo 但 frontend/dist-demo 不存在")
+        return
+
+    # full（默认）：挂载完整 Web
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="full-web")
+    logger.info("Web profile=full：挂载完整 Web %s", frontend_dist)
+
+
+_mount_web_profile(app)

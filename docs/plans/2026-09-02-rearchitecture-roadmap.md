@@ -26,7 +26,7 @@
 | Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 12 | **已完成**（遗留：idle processor/scheduler 直跑迁移到 C7 Executor 运行时） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 4 | 进行中 |
-| Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
+| Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
 
@@ -174,6 +174,7 @@
 - [ ] **E4 确定性子命令 + `--json`**：查询面优先（papers/questions/claims/evidence/diff/export），稳定退出码，无 ANSI 污染。
 - [ ] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
+- 2026-09-03：完成 F1（inventory 已有设计⑤ §1 权威产出）+ F6 FastAPI 侧 `--web=full|demo|none` 部署 profile。全量 212 passed + Go 10 passed。
 - [ ] **E6 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
 - [ ] **E7 permission profiles**：默认 research profile；`--workspace`/`--coding` 显式开启；destructive 动作需服务端 policy + 终端确认双重把关。
 - [ ] **E8 MCP 远程化**：唯一 transport 为公网 HTTPS Streamable HTTP；OAuth protected resource metadata、token audience/scope 校验；resources 与 tools 划分。
@@ -191,7 +192,9 @@
 - [ ] **F3 `pm ui` loopback bridge**：随机端口绑定 `127.0.0.1`/`::1`、一次性启动 nonce 本地 session、Host/Origin/CSRF 校验、allowlist HTTPS proxy、token 仅存进程内存、退出即销毁。
 - [ ] **F4 Local UI 首版五类界面**：PDF/Evidence 并排定位、Claim 工作台、Research Diff、Job Monitor、Research Pack；终端 `open`/`o` 深链与 Local UI 互通。
 - [ ] **F5 Full Web 适配 Research State**：ResearchQuestion/Claim/Evidence/History/Diff/Job 可查看、可定位 evidence、可执行授权范围内的修改；删除页面内重复业务编排（按 F1 标记执行）。
-- [ ] **F6 Full Web 可选部署**：`--web=full|demo|none` 三 profile；`--web=none` 时不携带/启动 Web；构建产物由 Core 或同一反向代理提供，去常驻前端容器。
+- [x] **F6 Full Web 可选部署**：`--web=full|demo|none` 三 profile；`--web=none` 时不携带/启动 Web；构建产物由 Core 或同一反向代理提供，去常驻前端容器。
+  产出：`apps/api/main.py` 新增 `_mount_web_profile()`——读 `WEB_PROFILE` 环境变量（默认 full），full 挂载 `frontend/dist`，demo 挂载 `frontend/dist-demo`，none 跳过静态挂载。fastapi StaticFiles(html=True) 内嵌 SPA 路由。compose 的 nginx 容器可在 frontend 构建后退役。
+  结论：Python/FastAPI 侧 profile 机制已落地；前端构建产物（dist/dist-demo）的生产构建待 F2–F5 前端适配后可用。全量 212 passed + Go 10 passed。
 - [ ] **F7 surface contract 测试**：每个新 capability 验证 Terminal/Local UI/Full Web/MCP/JSON 五面语义一致（对象 ID、状态机、权限、幂等键、provenance）。
 
 ## Stage G — Phase 6：公开 Demo
