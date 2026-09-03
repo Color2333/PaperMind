@@ -52,7 +52,20 @@ func main() {
 
 	registry := core.NewExecutorRegistry()
 	state := core.NewStateClient(stateAddr, stateToken)
-	server := core.NewServer(registry, state)
+
+	// Go-authority 存储（skim 切片）：CORE_DB_PATH 指向 papermind.db（与 Python 同文件）
+	var store *core.CoreStore
+	if dbPath := os.Getenv("CORE_DB_PATH"); dbPath != "" {
+		st, err := core.OpenCoreStore(dbPath)
+		if err != nil {
+			log.Fatalf("core store open failed: %v", err)
+		}
+		defer st.Close()
+		store = st
+		log.Printf("Go-authority store ready: %s", dbPath)
+	}
+
+	server := core.NewServerWithStore(registry, state, store)
 	server.StartReconciler(reconcileInterval, reclaimBackoff, make(chan struct{}))
 
 	var handler http.Handler = server.Handler()

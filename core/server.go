@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"runtime"
@@ -27,17 +28,28 @@ import (
 )
 
 // Server 把 durable-state API 暴露为 Executor Protocol。
+// Store 非 nil 时为 Go-authority 模式（skim 切片）：自有任务优先，
+// 其余 capability 代理 Python durable-state（过渡期双轨，逐 capability 迁移）。
 type Server struct {
 	Registry *ExecutorRegistry
 	State    *StateClient
+	Store    *CoreStore
 	mux      *http.ServeMux
 }
 
 // NewServer 创建带全部路由的 Server。
 func NewServer(reg *ExecutorRegistry, state *StateClient) *Server {
-	s := &Server{Registry: reg, State: state, mux: http.NewServeMux()}
+	return NewServerWithStore(reg, state, nil)
+}
+
+// NewServerWithStore 创建带权威存储的 Server（Go-authority 切片）。
+func NewServerWithStore(reg *ExecutorRegistry, state *StateClient, store *CoreStore) *Server {
+	s := &Server{Registry: reg, State: state, Store: store, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
+	s.mux.HandleFunc("POST /v1/jobs", s.enveloped(s.handleSubmitJob))
+	s.mux.HandleFunc("GET /v1/jobs/{id}", s.handleJobGraphGET)
+	s.mux.HandleFunc("GET /v1/jobs", s.handleJobsListGET)
 	s.mux.HandleFunc("POST /v1/executors/register", s.enveloped(s.handleRegister))
 	s.mux.HandleFunc("POST /v1/tasks/claim", s.enveloped(s.handleClaim))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/heartbeat", s.enveloped(s.handleHeartbeat))
@@ -167,6 +179,23 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request, cid string,
 		})
 		return
 	}
+	// Go-authority：自有 queued 任务优先（skim 切片）
+	if s.Store != nil {
+		own, err := s.Store.ClaimTask(req.ExecutorID, wanted)
+		if err != nil {
+			log.Printf("core claim: %v", err)
+		}
+		if own != nil {
+			s.Registry.Touch(req.ExecutorID)
+			writeJSON(w, http.StatusOK, cid, ClaimResponse{
+				Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+				OK:       true,
+				Task:     own,
+			})
+			return
+		}
+		// 自有无任务 → 继续代理 Python durable-state（其他 capability 过渡期）
+	}
 
 	var out struct {
 		Task *Task `json:"task"`
@@ -257,6 +286,25 @@ func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request, cid stri
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_complete_request"})
 		return
 	}
+	// Go-authority 路由：core 任务 → apply-result 单事务；其余 → 代理
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		status, err := s.Store.ApplySkimResult(s.taskID(r), req.ExecutorID, req.LeaseToken, req.Result)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeJSON(w, http.StatusNotFound, cid, map[string]any{"ok": false, "error": "task_not_found", "detail": err.Error()})
+				return
+			}
+			// fencing 拒绝/校验失败 → 409（迟到写入被拒绝的信号）
+			writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "apply_rejected", "detail": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, cid, CompleteResponse{
+			Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:       true,
+			Status:   status,
+		})
+		return
+	}
 	var out struct {
 		OK     bool   `json:"ok"`
 		Status string `json:"status"`
@@ -281,6 +329,22 @@ func (s *Server) handleFail(w http.ResponseWriter, r *http.Request, cid string, 
 	var req FailRequest
 	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_fail_request"})
+		return
+	}
+	// Go-authority 路由
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		status, err := s.Store.FailTask(s.taskID(r), req.ExecutorID, req.LeaseToken, req.ErrorClass, req.Message)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "fail_rejected", "detail": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, cid, FailResponse{
+			Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:              true,
+			Status:          status,
+			RetryScheduled:  status == TaskQueued,
+			AttemptRecorded: true,
+		})
 		return
 	}
 	var out struct {
@@ -430,6 +494,93 @@ func (s *Server) writeStateError(w http.ResponseWriter, cid string, err error) {
 	writeJSON(w, http.StatusBadGateway, cid, map[string]any{"ok": false, "error": "state_unavailable"})
 }
 
+// handleSubmitJob：Go-authority 任务提交（skim 切片：capability=skim_paper）。
+func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusNotImplemented, cid, map[string]any{"ok": false, "error": "core_store_not_configured"})
+		return
+	}
+	var req struct {
+		Kind           string         `json:"kind"`
+		Capability     string         `json:"capability"`
+		InputRef       map[string]any `json:"input_ref"`
+		IdempotencyKey string         `json:"idempotency_key"`
+		TimeoutS       int            `json:"timeout_s"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_job_request"})
+		return
+	}
+	if req.Capability != "skim_paper" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{
+			"ok": false, "error": "capability_not_migrated",
+			"detail": "仅 skim_paper 已迁移到 Go authority（切片）",
+		})
+		return
+	}
+	paperID, _ := req.InputRef["paper_id"].(string)
+	if paperID == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "paper_id_required"})
+		return
+	}
+	jobID, taskID, created, err := s.Store.SubmitSkimJob(paperID, req.IdempotencyKey, req.TimeoutS)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, cid, map[string]any{"ok": false, "error": "submit_failed", "detail": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, map[string]any{
+		"ok": true, "job_id": jobID, "task_id": taskID,
+		"status": "queued", "created": created, "authority": "go_core",
+	})
+}
+
+// handleJobsListGET：core Job 列表（观察面合并）
+func (s *Server) handleJobsListGET(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusNotImplemented, "", map[string]any{"ok": false, "error": "core_store_not_configured"})
+		return
+	}
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	items, err := s.Store.JobsList(limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, "", map[string]any{"ok": false, "error": "list_failed"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+}
+
+// handleJobGraphGET：core 任务图（观察面）
+func (s *Server) handleJobGraphGET(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusNotImplemented, "", map[string]any{"ok": false, "error": "core_store_not_configured"})
+		return
+	}
+	graph, err := s.Store.JobGraph(jobIDFromPath(r))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, "", map[string]any{"ok": false, "error": "graph_failed"})
+		return
+	}
+	if graph == nil {
+		writeJSON(w, http.StatusNotFound, "", map[string]any{"ok": false, "error": "job_not_found"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(graph)
+}
+
+// jobIDFromPath：/v1/jobs/{id} 第二段
+func jobIDFromPath(r *http.Request) string {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) >= 3 {
+		return parts[2]
+	}
+	return ""
+}
+
 // StartReconciler 周期驱动 durable store 回收过期 lease（权威逻辑在 Python 侧）。
 func (s *Server) StartReconciler(interval time.Duration, backoffS int, stop <-chan struct{}) {
 	go func() {
@@ -440,6 +591,14 @@ func (s *Server) StartReconciler(interval time.Duration, backoffS int, stop <-ch
 			case <-stop:
 				return
 			case <-ticker.C:
+				if s.Store != nil {
+					coreOutcomes, err := s.Store.ReclaimExpired(backoffS)
+					if err != nil {
+						log.Printf("core reclaim: %v", err)
+					} else if len(coreOutcomes) > 0 {
+						log.Printf("reconciler reclaimed %d core lease(s): %v", len(coreOutcomes), coreOutcomes)
+					}
+				}
 				var out struct {
 					Outcomes map[string]string `json:"outcomes"`
 				}

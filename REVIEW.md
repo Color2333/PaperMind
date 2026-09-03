@@ -257,7 +257,7 @@ handler 成功后，`client.complete()` 被 `suppress(Exception)` 包住。若�
 
 ### [P0] fencing 只保护任务终态，旧 Attempt 仍可提前提交领域写入
 
-- [~] 状态：**过渡缓解已实施，完整方案待架构决策**。已落地：`domain-result` 幂等卫兵（durable-state 端点 + Go 代理 + runner 执行前检查）——Attempt B 执行前发现前 Attempt 已提交领域结果即直接复用（不重复 LLM 成本/领域写入），故障注入测试 `test_domain_committed_then_killed_guard_prevents_rerun` 锁定。完整 apply-result 事务（单一事务提交领域+outbox+终态）依赖 P0-2 架构决策（proposal 模式需要 Go authority）。
+- [~] 状态：**skim 已根治（proposal 模式 + Go apply-result 单事务）**：skim Executor 纯计算不写领域表，领域提交只发生在权威面且与 fencing 校验同事务——"complete 前强杀"结构性安全（重跑只是重复计算），测试 `test_skim_proposal_mode_no_premature_domain_writes` 锁定。Python durable 路径的 skim /complete 也改为同事务 apply。domain-result 幂等卫兵保留（双保险）。**待迁移 capability**（deep_read/embed/claims）仍为直写——随逐项迁移根治。
 
 位置：`packages/executor_runtime/runner.py:188-227`、`packages/ai/pipelines/paper_pipelines.py:423-556`、`packages/storage/repositories/durable.py:403-425`
 
@@ -274,7 +274,7 @@ Executor 先调用 handler，handler 内部通过 `session_scope()` 直接提交
 
 ### [P0] Go Core 被实现为 Python 状态 API 的代理，与已确认架构相反
 
-- [ ] 状态：**待用户决策**（这是架构方向选择，不由 Agent 拍板）。已完成的部分：路线图 C6/C7/C9/C12 的失真完成声明已撤回为待定状态；当前实现如实描述为"Python durable authority + Go gateway"。两个选项：(a) 坚持既定 Go authority → 需 SkimPaper 纵向切片起步（大工程）；(b) 批准当前过渡架构为正式决策 → 更新总设计 §Go Core 职责。**合并阻塞保持。**
+- [~] 状态：**用户已选 (a)——SkimPaper 纵向切片已落地**。Go Core 现持有权威 Job/Task/Attempt（core_jobs/core_tasks/core_attempts，modernc.org/sqlite 纯 Go 驱动，与领域表同一文件）；`POST /v1/jobs`（skim 专属）+ claim 自有优先→代理回退 + **apply-result 单事务**（fencing + analysis_reports/papers/prompt_traces + 终态）；skim Executor 纯计算 proposal。测试：Go 4 项 + 回环（领域写入由 Go 完成）+ proposal 强杀安全。**后续**：deep_read/embed/claims 等逐 capability 迁移；未迁移前其余 capability 仍经 Python durable（过渡期如实标注）。
 
 位置：`core/registry.go:3-8`、`core/server.go:14-15`、`core/README.md:5-25`、`apps/api/routers/durable_state.py:1-21`、`docs/plans/2026-09-02-papermind-2026-rearchitecture.md:708-732`
 

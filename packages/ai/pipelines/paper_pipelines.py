@@ -420,6 +420,50 @@ class PaperPipelines:
         )
         return saved
 
+    def skim_proposal(self, paper_id: UUID) -> dict:
+        """Go-authority 切片（第三轮 REVIEW P0-2 选 a）：skim 纯计算——不写任何领域表。
+
+        返回结构化 proposal（report + trace），由权威面（Go Core apply-result /
+        Python durable /complete 同事务 apply）校验 fencing 后提交。
+        """
+        with session_scope() as session:
+            paper = PaperRepository(session).get_by_id(paper_id)
+            prompt = build_skim_prompt(paper.title, paper.abstract)
+            decision = CostGuardService(session, self.llm).choose_model(
+                stage="skim",
+                prompt=prompt,
+                default_model=self.settings.llm_model_skim,
+            )
+            result = self.llm.complete_json(
+                prompt,
+                stage="skim",
+                model_override=decision.chosen_model,
+            )
+            skim = self._build_skim_structured(
+                paper.abstract,
+                result.content,
+                result.parsed_json,
+            )
+            return {
+                "proposal": {
+                    "kind": "skim_paper",
+                    "paper_id": str(paper_id),
+                    "skim": skim.model_dump(mode="json"),
+                    "trace": {
+                        "stage": "skim",
+                        "paper_id": str(paper_id),
+                        "provider": self.llm.provider,
+                        "model": decision.chosen_model,
+                        "prompt_digest": prompt[:500],
+                        "input_tokens": result.input_tokens or 0,
+                        "output_tokens": result.output_tokens or 0,
+                        "input_cost_usd": result.input_cost_usd or 0.0,
+                        "output_cost_usd": result.output_cost_usd or 0.0,
+                        "total_cost_usd": result.total_cost_usd or 0.0,
+                    },
+                }
+            }
+
     def skim(self, paper_id: UUID) -> SkimReport:
         started = time.perf_counter()
         with session_scope() as session:

@@ -1,15 +1,19 @@
-"""统一任务提交（C3 退出口：权威入口 submit_job，旧 tracker 桥接已退役）
+"""统一任务提交（C3 退出口 + Go-authority 切片路由）
 
-- `submit_job` 只写 durable Job/Task（queued），执行由独立 Python Executor
-  经 Go Core 调度（claim→handler→fencing 提交）——API/命令不得在此启动
-  线程或 fn（设计③「API 只负责提交、查询和控制」）；
-- 观察面（/jobs、/tasks/*）直接读 durable store；
+- `submit_job` 只写 Job/Task（queued），执行由独立 Python Executor 经 Go Core
+  调度——API/命令不得在此启动线程或 fn（设计③「API 只负责提交、查询和控制」）；
+- **Go-authority 切片**（第三轮 P0-2 选 a）：`skim_paper` 路由到 Go Core 的
+  权威 Job/Task/Attempt 存储（PAPERMIND_CORE_URL）；其余 capability 暂留
+  Python durable store（逐 capability 迁移，迁移清单见路线图 C6）；
+- 观察面（/jobs、/tasks/*）合并两权威（durable store + Go proxy）；
 - cancel/retry/pause/resume 为控制面命令，pause 持久化到 system_flags。
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+GO_OWNED_CAPABILITIES = {"skim_paper"}  # 已迁移到 Go 权威的 capability（切片）
 
 
 def submit_job(
@@ -33,6 +37,18 @@ def submit_job(
     调用方（API/CLI/agent）不得在此启动线程或 fn——见设计③「API 只负责提交、
     查询和控制」。input_ref 是 handler 的输入契约（见 C4 注册表 input_keys）。
     """
+    # Go-authority 路由：已迁移的 capability 且部署配置了 Core → 提交 Go 权威。
+    # 未配置 PAPERMIND_CORE_URL = 本地单进程模式（全 Python durable store）。
+    if capability in GO_OWNED_CAPABILITIES and _core_api_enabled():
+        return _submit_via_go_core(
+            kind=kind,
+            capability=capability,
+            title=title,
+            input_ref=input_ref or {},
+            idempotency_key=idempotency_key,
+            timeout_s=timeout_s,
+        )
+
     from packages.storage.db import session_scope
     from packages.storage.repositories import JobRepository, TaskRepository
 
@@ -68,6 +84,84 @@ def submit_job(
         "status": task_status,
         "created": task_created,
     }
+
+
+def _core_api_enabled() -> bool:
+    """是否启用 Go-authority 路由（部署开关：PAPERMIND_CORE_URL）"""
+    import os
+
+    return bool(os.environ.get("PAPERMIND_CORE_URL"))
+
+
+def _submit_via_go_core(
+    *,
+    kind: str,
+    capability: str,
+    title: str,
+    input_ref: dict,
+    idempotency_key: str | None,
+    timeout_s: int = 1800,
+) -> dict:
+    """经 Go Core 提交（权威 Job/Task/Attempt 在 Go）。Core 不可达 → 抛错（fail closed）。"""
+    import os
+
+    from packages.core_client.client import CoreClient
+
+    base = os.environ["PAPERMIND_CORE_URL"]
+    token = os.environ.get("PAPERMIND_CORE_TOKEN", "")
+    client = CoreClient(base, token=token, timeout_s=10.0)
+    try:
+        body = client.submit_job(
+            kind=kind,
+            capability=capability,
+            input_ref=input_ref,
+            idempotency_key=idempotency_key,
+            timeout_s=timeout_s,
+        )
+    finally:
+        client.close()
+    return {
+        "job_id": body["job_id"],
+        "task_id": body["task_id"],
+        "capability": capability,
+        "status": body.get("status", "queued"),
+        "created": bool(body.get("created", True)),
+        "authority": "go_core",
+    }
+
+
+def get_go_job_graph(job_id: str) -> dict | None:
+    """从 Go 权威读 Job graph（观察面代理；非 Go 任务/未配置返回 None）"""
+    import os
+
+    if not os.environ.get("PAPERMIND_CORE_URL"):
+        return None
+    from packages.core_client.client import CoreClient
+
+    client = CoreClient(
+        os.environ["PAPERMIND_CORE_URL"], token=os.environ.get("PAPERMIND_CORE_TOKEN", "")
+    )
+    try:
+        return client.jobs_graph(job_id)
+    finally:
+        client.close()
+
+
+def list_go_jobs(limit: int = 20) -> list[dict]:
+    """Go 权威 Job 列表（观察面合并；未配置返回 []）"""
+    import os
+
+    if not os.environ.get("PAPERMIND_CORE_URL"):
+        return []
+    from packages.core_client.client import CoreClient
+
+    client = CoreClient(
+        os.environ["PAPERMIND_CORE_URL"], token=os.environ.get("PAPERMIND_CORE_TOKEN", "")
+    )
+    try:
+        return client.jobs_list(limit)
+    finally:
+        client.close()
 
 
 def cancel_job(job_id: str) -> dict[str, int]:

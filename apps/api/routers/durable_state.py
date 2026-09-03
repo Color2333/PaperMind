@@ -109,11 +109,30 @@ def _fencing_op(task_id: str, body: dict, op_name: str) -> dict:
         with session_scope() as session:
             repo = TaskRepository(session)
             if op_name == "complete":
+                result_payload = body.get("result") or {}
+                # P0-1（Python authority 路径同修）：proposal 与 Task 终态在同一
+                # 事务提交——fencing 校验通过后先应用领域变化，再落终态。
+                proposal = (
+                    (result_payload.get("proposal") or {})
+                    if isinstance(result_payload, dict)
+                    else {}
+                )
+                # result_ref 存裸 skim 字段（/tasks/{id}/result 消费者契约向后兼容）；
+                # proposal 整体仅用于本事务内的领域 apply。
+                stored_ref = proposal.get("skim") or result_payload
+                if proposal.get("kind") == "skim_paper":
+                    from packages.application.commands.domain_apply import (
+                        apply_prompt_trace,
+                        apply_skim_proposal,
+                    )
+
+                    apply_skim_proposal(session, proposal)
+                    apply_prompt_trace(session, proposal)
                 task = repo.complete_task(
                     task_id=task_id,
                     executor_id=executor_id,
                     lease_token=lease_token,
-                    result_ref=body.get("result") or {},
+                    result_ref=stored_ref,
                 )
             elif op_name == "fail":
                 task = repo.fail_task(

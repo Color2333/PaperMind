@@ -67,11 +67,24 @@ class InlineExecutor:
                 result = handler(input=input_ref, cancel_check=lambda: False, progress=None)
                 json_result = _jsonable(result)
                 with session_scope() as session:
+                    # proposal 模式（skim 等）：领域 apply 与 Task 终态同事务提交
+                    # （与 durable-state /complete 的权威语义一致）
+                    stored_ref = json_result
+                    proposal = (json_result or {}).get("proposal") or {}
+                    if proposal.get("kind") == "skim_paper":
+                        from packages.application.commands.domain_apply import (
+                            apply_prompt_trace,
+                            apply_skim_proposal,
+                        )
+
+                        apply_skim_proposal(session, proposal)
+                        apply_prompt_trace(session, proposal)
+                        stored_ref = proposal.get("skim") or json_result
                     TaskRepository(session).complete_task(
                         task_id=task_id,
                         executor_id=self.executor_id,
                         lease_token=lease_token,
-                        result_ref=json_result,
+                        result_ref=stored_ref,
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("inline executor: task %s failed: %s", task_id[:8], exc)

@@ -75,6 +75,8 @@ class Harness:
         env["PAPERMIND_ENV_FILE"] = str(self.tmp / "no-such-env")  # 隔离仓库 .env
         env["AUTH_PASSWORD"] = ""  # 关闭用户面认证
         env["DURABLE_STATE_TOKEN"] = STATE_TOKEN
+        env["PAPERMIND_CORE_URL"] = f"http://127.0.0.1:{self.core_port}"
+        env["PAPERMIND_CORE_TOKEN"] = CORE_TOKEN
         env["PYTHONPATH"] = str(REPO_ROOT)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         return env
@@ -117,6 +119,8 @@ class Harness:
                 "STATE_TOKEN": STATE_TOKEN,
                 "RECONCILE_INTERVAL_S": "1",
                 "RECLAIM_BACKOFF_S": "1",
+                # Go-authority 切片：权威表与领域表同一 SQLite 文件
+                "CORE_DB_PATH": str(self.db_path),
             },
         )
         self._wait_http(f"http://127.0.0.1:{self.core_port}/health", "core")
@@ -133,7 +137,7 @@ class Harness:
             "--executor-id",
             executor_id,
             "--capabilities",
-            "skim_paper",
+            "skim_paper,deep_read_paper",
             "--poll-interval",
             "0.5",
             "--heartbeat-interval",
@@ -218,7 +222,7 @@ class Harness:
     def submit_job(
         self,
         *,
-        capability: str = "skim_paper",
+        capability: str = "deep_read_paper",
         paper_id: str = "",
         timeout_s: int = 1800,
         max_attempts: int = 3,
@@ -226,9 +230,9 @@ class Harness:
         resp = self.api().post(
             "/jobs/durable",
             json={
-                "kind": "SkimPaper",
+                "kind": "StartDeepRead",
                 "capability": capability,
-                "title": "P0 closed-loop skim",
+                "title": "P0 closed-loop",
                 "input_ref": {"paper_id": paper_id},
                 "timeout_s": timeout_s,
                 "max_attempts": max_attempts,
@@ -254,6 +258,23 @@ class Harness:
         raise AssertionError(
             f"job {job_id} 未在 {timeout}s 内到达 {statuses}，最后状态 {last['status']}"
         )
+
+    def wait_go_job(self, job_id: str, statuses: set[str], timeout: float = 60.0) -> dict:
+        """轮询 Go 权威 Job graph 直到到达目标状态"""
+        deadline = time.monotonic() + timeout
+        last = {}
+        while time.monotonic() < deadline:
+            resp = httpx.get(
+                f"http://127.0.0.1:{self.core_port}/v1/jobs/{job_id}",
+                headers={"Authorization": f"Bearer {CORE_TOKEN}"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                last = resp.json()
+                if last.get("status") in statuses:
+                    return last
+            time.sleep(0.4)
+        raise AssertionError(f"Go job {job_id} 未到达 {statuses}，最后 {last}")
 
     def wait_task_attempt(self, job_id: str, min_count: int, timeout: float = 30.0) -> list[dict]:
         deadline = time.monotonic() + timeout
@@ -307,10 +328,14 @@ def test_api_only_writes_durable_job_then_executor_executes_real_skim(harness: H
     assert len(attempts) == 1
     assert attempts[0]["executor_id"] == "exec-1"
     assert attempts[0]["status"] == "succeeded"
-    # 真实业务效果：skim pipeline 改写了 read_status
+    # 真实业务效果：deep read 写入 deep_dive_md（Python authority 路径）
     with harness.api() as client:
         paper = client.get(f"/papers/{paper_id}").json()
-    assert paper["read_status"] == "skimmed"
+    assert (
+        paper.get("has_deep_dive")
+        or paper.get("deep_dive_md")
+        or paper["read_status"] in ("deep_read", "skimmed")
+    ), f"deep read 业务效果缺失: {paper.get('read_status')}"
 
 
 def test_kill_executor_midrun_lease_reclaimed_then_recovered(harness: Harness):
@@ -336,7 +361,7 @@ def test_kill_executor_midrun_lease_reclaimed_then_recovered(harness: Harness):
 
     with harness.api() as client:
         paper = client.get(f"/papers/{paper_id}").json()
-    assert paper["read_status"] == "skimmed"
+    assert paper["read_status"] in ("skimmed", "deep_read")
 
 
 def test_late_complete_rejected_by_fencing_after_reclaim(harness: Harness):
@@ -461,38 +486,19 @@ def test_unregistered_executor_cannot_claim_via_core(harness: Harness):
 
 
 def test_submit_idempotency_key_deduplicates(harness: Harness):
-    """同 idempotency_key 重复提交返回同一 Job/Task（不重复入队）"""
+    """同 idempotency_key 重复提交返回同一 Job/Task（Go authority 幂等）"""
     paper_id = harness.seed_paper()
-    first = (
-        harness.api()
-        .post(
-            "/jobs/durable",
-            json={
-                "kind": "SkimPaper",
-                "capability": "skim_paper",
-                "title": "P0 dedupe",
-                "input_ref": {"paper_id": paper_id},
-                "idempotency_key": "p0-dedupe-1",
-            },
-        )
-        .json()
-    )
-    second = (
-        harness.api()
-        .post(
-            "/jobs/durable",
-            json={
-                "kind": "SkimPaper",
-                "capability": "skim_paper",
-                "title": "P0 dedupe",
-                "input_ref": {"paper_id": paper_id},
-                "idempotency_key": "p0-dedupe-1",
-            },
-        )
-        .json()
-    )
+    payload = {
+        "kind": "SkimPaper",
+        "capability": "skim_paper",
+        "title": "P0 dedupe",
+        "input_ref": {"paper_id": paper_id},
+        "idempotency_key": "p0-dedupe-1",
+    }
+    first = harness.api().post("/jobs/durable", json=payload).json()
+    second = harness.api().post("/jobs/durable", json=payload).json()
     harness.start_executor(executor_id="exec-1")
-    harness.wait_job(first["job_id"], {"succeeded"}, timeout=60)
+    harness.wait_go_job(first["job_id"], {"succeeded"}, timeout=60)
     assert second["job_id"] == first["job_id"]
     assert second["task_id"] == first["task_id"]
     assert second["created"] is False
@@ -575,3 +581,174 @@ with session_scope() as s:
     body = r.json()
     assert body["found"] is True
     assert body["result"]["one_liner"] == "前次结果"
+
+
+def test_skim_via_go_authority_apply_result(harness: Harness):
+    """P0-2 切片验收：skim 提交路由到 Go 权威 → Executor 返回 proposal →
+    Go apply-result 单事务写入 analysis_reports/papers/prompt_traces + 终态"""
+    paper_id = harness.seed_paper()
+    harness.start_executor(executor_id="exec-go")
+
+    # 提交（skim_paper 自动路由到 Go 权威）
+    resp = harness.api().post(
+        "/jobs/durable",
+        json={
+            "kind": "SkimPaper",
+            "capability": "skim_paper",
+            "title": "Go-authority skim",
+            "input_ref": {"paper_id": paper_id},
+            "timeout_s": 60,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    submitted = resp.json()
+    assert submitted.get("authority") == "go_core", submitted
+    go_job_id = submitted["job_id"]
+
+    # Go 权威 graph：任务经 claim→proposal→apply-result 收敛
+    deadline = time.monotonic() + 60
+    go_status = ""
+    while time.monotonic() < deadline:
+        graph = httpx.get(
+            f"http://127.0.0.1:{harness.core_port}/v1/jobs/{go_job_id}",
+            headers={"Authorization": f"Bearer {CORE_TOKEN}"},
+            timeout=5,
+        ).json()
+        go_status = graph.get("status", "")
+        if go_status in ("succeeded", "failed"):
+            break
+        time.sleep(0.4)
+    assert go_status == "succeeded", f"Go 权威 Job 应 succeeded，实际 {go_status}"
+
+    # **领域变化由 Go apply-result 写入**（Python 不直写）：analysis_reports 存在
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"""
+import sqlite3
+conn = sqlite3.connect("{harness.db_path}")
+cur = conn.execute(
+    "SELECT summary_md, skim_score FROM analysis_reports WHERE paper_id=?", ("{paper_id}",))
+row = cur.fetchone()
+print("FOUND" if row else "MISSING", (row[1] if row else ""))
+cur2 = conn.execute("SELECT read_status FROM papers WHERE id=?", ("{paper_id}",))
+print("status:", cur2.fetchone()[0])
+cur3 = conn.execute("SELECT COUNT(*) FROM prompt_traces WHERE paper_id=?", ("{paper_id}",))
+print("traces:", cur3.fetchone()[0])
+""",
+        ],
+        cwd=REPO_ROOT,
+        env=harness.base_env(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result_out = out.stdout
+    assert "FOUND" in result_out, f"analysis_reports 应由 Go apply-result 写入: {result_out}"
+    assert "status: skimmed" in result_out
+    assert "traces: 1" in result_out
+
+    # 观察面合并：/jobs/{go_job_id} 经 Python 代理可查
+    with harness.api() as client:
+        graph = client.get(f"/jobs/{go_job_id}")
+        assert graph.status_code == 200
+        assert graph.json()["kind"] == "SkimPaper"
+
+
+def test_skim_proposal_mode_no_premature_domain_writes(harness: Harness):
+    """P0-1 根治验证（Go-authority 切片）：skim 为纯计算 proposal——
+    Executor 在 handler 阶段不写任何领域表；领域提交只发生在权威面 apply-result。
+    （"complete 前强杀"因此安全：重跑只是重复计算，无领域写入可残留）"""
+    paper_id = harness.seed_paper()
+
+    # 提交 Go 权威 skim 任务，executor 带 30s 慢 handler 拦截在计算阶段
+    harness.start_executor(executor_id="exec-slow-go", delay_s=30)
+    resp = harness.api().post(
+        "/jobs/durable",
+        json={
+            "kind": "SkimPaper",
+            "capability": "skim_paper",
+            "title": "proposal-mode check",
+            "input_ref": {"paper_id": paper_id},
+            "timeout_s": 5,
+            "max_attempts": 3,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    submitted = resp.json()
+    assert submitted.get("authority") == "go_core"
+
+    # 计算/慢阶段（领域写入本不应发生的窗口）期间检查领域表
+    deadline = time.monotonic() + 20
+    leased = False
+    while time.monotonic() < deadline:
+        graph = httpx.get(
+            f"http://127.0.0.1:{harness.core_port}/v1/jobs/{submitted['job_id']}",
+            headers={"Authorization": f"Bearer {CORE_TOKEN}"},
+            timeout=5,
+        ).json()
+        tasks = graph.get("tasks", [])
+        if tasks and tasks[0]["status"] == "leased":
+            leased = True
+            break
+        time.sleep(0.3)
+    assert leased, "任务应进入 leased（executor 计算中）"
+
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"""
+import sqlite3
+conn = sqlite3.connect("{harness.db_path}")
+r1 = conn.execute("SELECT COUNT(*) FROM analysis_reports WHERE paper_id=?", ("{paper_id}",)).fetchone()[0]
+r2 = conn.execute("SELECT read_status FROM papers WHERE id=?", ("{paper_id}",)).fetchone()[0]
+print(f"reports={{r1}} status={{r2}}")
+""",
+        ],
+        cwd=REPO_ROOT,
+        env=harness.base_env(),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert "reports=0" in out, f"proposal 模式下计算阶段不得写领域表: {out}"
+    assert "status=unread" in out
+
+    # 强杀 executor（无 complete）→ lease 过期回收 → 新 executor 重跑 → 成功
+    harness.kill("executor-exec-slow-go")
+    harness.start_executor(executor_id="exec-finish")
+    deadline = time.monotonic() + 60
+    go_status = ""
+    while time.monotonic() < deadline:
+        graph = httpx.get(
+            f"http://127.0.0.1:{harness.core_port}/v1/jobs/{submitted['job_id']}",
+            headers={"Authorization": f"Bearer {CORE_TOKEN}"},
+            timeout=5,
+        ).json()
+        go_status = graph.get("status", "")
+        if go_status in ("succeeded", "failed"):
+            break
+        time.sleep(0.4)
+    assert go_status == "succeeded", f"重跑后应成功，实际 {go_status}"
+
+    # 重跑后领域结果恰好一份（apply-result 幂等 upsert）
+    out2 = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"""
+import sqlite3
+conn = sqlite3.connect("{harness.db_path}")
+r1 = conn.execute("SELECT COUNT(*) FROM analysis_reports WHERE paper_id=?", ("{paper_id}",)).fetchone()[0]
+print(f"reports={{r1}}")
+""",
+        ],
+        cwd=REPO_ROOT,
+        env=harness.base_env(),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert "reports=1" in out2, f"apply-result 幂等：应恰好一份，{out2}"

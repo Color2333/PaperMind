@@ -333,6 +333,17 @@ def cs_feed_fetch_category(*, category_code: str, progress: ProgressFn = None, *
 # ---------- Workflow 可执行 handler（第三轮 REVIEW：注册表任务须可被独立 Executor 执行）----------
 
 
+def skim_paper_proposal(*, paper_id: str, progress: ProgressFn = None, **_: Any) -> dict:
+    """skim 纯计算（Go-authority 切片）：返回 proposal，不写领域表。
+
+    权威面（Go Core apply-result / Python durable /complete 同事务 apply）
+    在 fencing 校验通过后提交领域变化与 Task 终态。
+    """
+    from packages.ai.pipelines import PaperPipelines
+
+    return PaperPipelines().skim_proposal(paper_id)
+
+
 def upsert_paper_data(
     *,
     arxiv_id: str,

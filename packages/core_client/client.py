@@ -136,6 +136,49 @@ class CoreClient:
             },
         )
 
+    def submit_job(
+        self,
+        *,
+        kind: str,
+        capability: str,
+        input_ref: dict[str, Any],
+        idempotency_key: str | None = None,
+        timeout_s: int = 1800,
+    ) -> dict[str, Any]:
+        """Go-authority 任务提交（skim 切片）"""
+        return self._call(
+            "/v1/jobs",
+            {
+                "kind": kind,
+                "capability": capability,
+                "input_ref": input_ref,
+                "idempotency_key": idempotency_key or "",
+                "timeout_s": timeout_s,
+            },
+        )
+
+    def jobs_graph(self, job_id: str) -> dict[str, Any] | None:
+        """Go 权威 Job graph（观察面代理）；404 返回 None"""
+        try:
+            resp = self._client.get(f"{self._base}/v1/jobs/{job_id}")
+        except Exception:
+            return None
+        if resp.status_code == 404:
+            return None
+        if resp.status_code >= 400:
+            return None
+        return resp.json()
+
+    def jobs_list(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Go 权威 Job 列表（观察面合并）"""
+        try:
+            resp = self._client.get(f"{self._base}/v1/jobs?limit={limit}")
+        except Exception:
+            return []
+        if resp.status_code >= 400:
+            return []
+        return resp.json().get("items", [])
+
     def domain_result(self, task_id: str) -> dict[str, Any]:
         """幂等卫兵：查同 Job 内同 capability+input 的既有成功领域结果"""
         resp = self._client.get(f"{self._base}/v1/tasks/{task_id}/domain-result")

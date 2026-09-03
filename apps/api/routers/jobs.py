@@ -19,11 +19,26 @@ def list_durable_jobs(
     kind: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
-    """durable Job 列表（C3 统一观察面）"""
+    """Job 列表（统一观察面：durable store + Go authority 合并）"""
     from packages.application.queries.jobs import list_jobs as app_list_jobs
 
     with session_scope() as session:
-        return app_list_jobs(session, status=status, kind=kind, limit=limit)
+        result = app_list_jobs(session, status=status, kind=kind, limit=limit)
+
+    # Go-authority Job 合并（skim 切片）
+    from packages.application.commands.jobs import list_go_jobs
+
+    go_items = list_go_jobs(limit=limit)
+    if go_items:
+        known = {i["id"] for i in result["items"]}
+        for item in go_items:
+            if item["id"] not in known:
+                if status and item["status"] != status:
+                    continue
+                if kind and item["kind"] != kind:
+                    continue
+                result["items"].append(item)
+    return result
 
 
 @router.get("/jobs/{job_id}")
@@ -35,8 +50,16 @@ def get_durable_job(job_id: str) -> dict:
     with session_scope() as session:
         try:
             graph = get_job_graph(session, job_id)
-        except NotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except NotFoundError:
+            graph = None
+        if graph is None:
+            # durable store 无 → Go 权威代理（skim 切片）
+            from packages.application.commands.jobs import get_go_job_graph
+
+            go_graph = get_go_job_graph(job_id)
+            if go_graph is None:
+                raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+            return {**go_graph, "attempts": []}
         graph["attempts"] = get_job_attempts(session, job_id)
         return graph
 

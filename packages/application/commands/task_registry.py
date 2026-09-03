@@ -72,7 +72,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         # ---------- 研究流水线 ----------
         CapabilitySpec(
             name="skim_paper",
-            handler="packages.ai.pipelines.paper_pipelines:PaperPipelines.skim",
+            handler="packages.ai.task_handlers:skim_paper_proposal",
             side_effect="AnalysisReport（summary_md/skim_score）+ PromptTrace 成本 + pipeline_runs",
             input_keys=("paper_id",),
             idempotency_template="skim:{paper_id}:{source_version_hash}",
