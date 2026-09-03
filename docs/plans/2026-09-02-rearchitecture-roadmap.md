@@ -26,7 +26,7 @@
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
 | Stage C · Phase 2 Go Core + 原子 durable execution | 13 | 13 | 完成（P0 闭环 + C13 退出口：全部长任务走 submit_job+Executor，TaskTracker/batch_consumer/双写观察面已删除；10 闭环场景 + 6/6 故障注入 PASS） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
-| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 6 | 进行中 |
+| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | 进行中（E2/E3/E4 完成：@papermind/cli 命令面 v1 + 设备码登录 + --json 契约；剩 E6/E7/E8） |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
@@ -189,9 +189,11 @@
 阶段出口条件：不打开 Web，也能在 `pm` 终端和确定性命令中完成搜索、查看 Claim/Evidence、比较研究状态、触发处理、查看进度、取消任务和导出。
 
 - [x] **E1 `PaperMind-Terminal` downstream fork 基线**（本地 `/Users/haojiang/Documents/2026/PaperMind-Terminal/` 已建；待用户 push 到 GitHub）：独立仓库、pinned 上游 tag、保留 MIT copyright/license notice 与第三方 notices、有序 patch stack（每次 release 记录上游基线与未合并安全修复）、product profile 关闭 coding-oriented 功能；build pruning 先行，稳定前不做 source pruning。
-- [ ] **E2 `@papermind/cli` 与 standalone `pm`**：同进程运行裁剪后的 Pi agent core/TUI，加载 PaperMind system prompt、主题与 renderer；`pm` / `pm -p` / 确定性子命令三模式骨架。
-- [ ] **E3 远程登录**：`pm login --endpoint`，PaperMind token 与本地模型 provider 凭据分开保存/撤销。
-- [ ] **E4 确定性子命令 + `--json`**：查询面优先（papers/questions/claims/evidence/diff/export），稳定退出码，无 ANSI 污染。
+- [x] **E2 `@papermind/cli` 三模式骨架**（2026-09-03）：`packages/papermind-cli`（零依赖，node>=18，不触碰 fork 上游 lockfile）。三模式：`pm`（无参数，TUI 接线在 E2c 并提示）、`pm -p`（同，退出码 2）、确定性子命令（已全部实现）。bin 入口 await 化（真实冒烟抓到 Promise 退出码 bug）。
+- [x] **E3 远程登录（TS 侧）**（2026-09-03）：`pm login --endpoint` 走 `/auth/device/start|poll` 设备码协议（PaperMind 签发 device code、浏览器完成上游登录、CLI 只拿 PaperMind token）；凭据与 Python 版 pm **同一文件** `~/.config/papermind/config.toml`（0600，TOML 兼容互读）——PaperMind token 与模型 provider 凭据天然分离；logout 先撤销服务端令牌再清本地。
+- [x] **E4 确定性子命令 + `--json`**（2026-09-03）：命令面 v1 全量——papers search/show、questions show、claims list/show、diff、export（research-pack/json/markdown）、jobs list/show/cancel、tasks retry、queue pause/resume；五类退出码（0/2/3/4/5）；`--json` canonical result 原样无 ANSI；非 TTY plain 渲染保留状态词（数组逐项展开不折叠）。
+  测试：`node --test` 13 项契约（三模式/退出码五类/JSON 无 ANSI/plain 同语义/凭据互通 mock 全链路登录）+ 真实 API 冒烟（doctor/jobs/search/404→4）。
+  遗留：E2c 接线 Pi TUI 与一次性 AI；I4 对齐退役——TS pm login 与 Python pm login 已对齐（同一凭据文件），Python pm 对应命令待 TS standalone `pm` 发布（E2 release 流水线）后退役。
 - [x] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
   产出：[packages/application/capability.py](../../packages/application/capability.py)（20 个 CapabilityMeta + 五面 surfaces）+ `scripts/export_capabilities.py`（JSON 导出）+ `scripts/generate_ts_types.py`（TS 类型生成 → packages/shared/presentation.ts）。
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
