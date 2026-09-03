@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 5 | 进行中 |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 6 | 进行中 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -117,7 +117,9 @@
 - [x] **C4 第一批原子 Task 清单**：为 Skim、DeepRead、Embedding、Topic Research 和 Daily Brief 标出单一有意义副作用、输入输出、timeout、retry、resource class 与无法自动重试的边界；禁止把普通 helper 机械拆成 Task。
   产出：[packages/application/commands/task_registry.py](../../packages/application/commands/task_registry.py)——12 个 CapabilitySpec（fetch_feed/upsert_paper/download_source/skim/deep_read/extract_claims/embed/sync_citations_paper/topic_wiki/daily_brief/send_brief_email），每条含 handler dotted path、幂等键模板、timeout、max_attempts、resource_class、manual_recovery 边界与产出声明。
   结论：不变量测试 5 项（handler 可导入/timeout>0/resource class 合法/manual_recovery ⇒ max_attempts=1/四类资源覆盖）；Start* 命令（pipelines×3、wiki、brief）已改为从注册表读 spec。全量 179 passed + Go 7 passed。
-- [ ] **C5 代码化 Workflow 模板**：实现顺序依赖、条件分支和 per-Paper fan-out；父 Job 支持 succeeded、partially_succeeded、failed、cancelled，并能解释每个子 Task 的贡献。
+- [x] **C5 代码化 Workflow 模板**：实现顺序依赖、条件分支和 per-Paper fan-out；父 Job 支持 succeeded、partially_succeeded、failed、cancelled，并能解释每个子 Task 的贡献。
+  产出：[packages/application/commands/workflows.py](../../packages/application/commands/workflows.py)——WORKFLOW_TEMPLATES 注册 4 个代码定义模板（RunTopicResearch：fetch+每篇 upsert→download→skim∥embed→extract fan-out；ProcessUnreadBatch：per-Paper skim∥embed；BuildDailyBrief：build→条件 send_mail；RunCitationSync：per-Paper fan-out）+ `expand_job` 幂等展开（idempotency 去重，重放不重复）+ `start_workflow_job`。
+  结论：depends_on 在展开期解析为同 Job task id；claim 按依赖满足过滤；父 Job 收敛复用 C2 recompute（全成功→succeeded/部分→partially_succeeded）。6 个测试（fan-out 数量/依赖解析/幂等重放/条件分支/收敛）。全量 185 passed + Go 7 passed。
 - [ ] **C6 Go 调度控制面**：在 Go Core 中实现 Scheduler、Planner、Dispatcher 和 Reconciler；旧 APScheduler 仅在过渡期把到期事件提交为 Go Job，不再进程内直跑研究逻辑。
 - [ ] **C7 Python Executor 落地**：Python Executor 每次只执行一个 Task Attempt，通过 C0 协议注册 capability/version/resource class、领取和续约 lease、提交 result proposal/Artifact，支持协作取消与 drain；不直写 Job/Task/Attempt 或 Research State 表。
 - [ ] **C8 lease、fencing 与 Reconciler**：领取和续约 lease 时签发 fencing token；迟到 Attempt 不能覆盖新结果；Reconciler 回收过期 lease 并执行 backoff、dead-letter 或 manual recovery。
@@ -219,4 +221,5 @@
 - 2026-09-02（第二十六次）：完成 C2——durable execution 四表 schema + durable 仓储（幂等/lease/fencing/收敛）+ 9 个契约测试。全量 150 passed。
 - 2026-09-03：完成 C3——12 个任务入口接 durable 桥接（权威切换到 job store），统一观察面端点（/jobs、/jobs/{id}、/tasks/* durability 优先）。全量 154 passed + Go 7 passed。
 - 2026-09-03：完成 C4——原子 Task 能力注册表（12 spec + 不变量测试），Start* 命令改读注册表。全量 179 passed + Go 7 passed。
+- 2026-09-03：完成 C5——代码化 Workflow 模板（4 模板注册 + 幂等展开 + fan-out/依赖/条件分支），6 个测试。全量 185 passed + Go 7 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。
