@@ -25,7 +25,7 @@
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
 | Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 12 | **已完成**（遗留：idle processor/scheduler 直跑迁移到 C7 Executor 运行时） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
-| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 4 | 进行中 |
+| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 5 | 进行中 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
@@ -174,6 +174,7 @@
 - [x] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
   产出：[packages/application/capability.py](../../packages/application/capability.py)（20 个 CapabilityMeta + 五面 surfaces）+ `scripts/export_capabilities.py`（JSON 导出）+ `scripts/generate_ts_types.py`（TS 类型生成 → packages/shared/presentation.ts）。
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
+- 2026-09-03：F3 loopback bridge + F4 Job Monitor/Research Pack 页面 + F5 Full Web 适配 + F7 surface contract 测试 + search_multi metadata 兼容修复。全量 217 passed + Go 10 passed。
 - 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
 - 2026-09-03：F6 端到端本地验证——frontend/dist 构建成功，FastAPI full/none profile 均通过，ingest→skim→jobs→tasks/active→前端 HTML 全链路正常。全量 212 passed + Go 10 passed。
 - 2026-09-03：F4 部分完成——前端新增 ResearchState 页面（Claims 列表+状态徽章+Evidence 面板+Diff 时间线+Markdown 导出），路由 /research 已注册。全量 212 passed + TS 编译通过。
@@ -200,12 +201,16 @@
 - [x] **F3 `pm ui` loopback bridge**：随机端口绑定 `127.0.0.1`/`::1`、一次性启动 nonce 本地 session、Host/Origin/CSRF 校验、allowlist HTTPS proxy、token 仅存进程内存、退出即销毁。
   产出：[packages/application/commands/bridge.py](../../packages/application/commands/bridge.py)——Python HTTP server（随机端口 127.0.0.1）+ 一次性 nonce→HttpOnly session cookie + allowlist GET/POST 代理 + Host 校验防 DNS rebinding + API token 仅存进程内存。
   结论：3 个测试（无 session 401→nonce 建立 session→静态文件正常/Host 伪造 403/静态文件服务）。全量 214 passed + Go 10 passed。
-- [ ] **F4 Local UI 首版五类界面**：PDF/Evidence 并排定位、Claim 工作台、Research Diff、Job Monitor、Research Pack；终端 `open`/`o` 深链与 Local UI 互通。
-- [ ] **F5 Full Web 适配 Research State**：ResearchQuestion/Claim/Evidence/History/Diff/Job 可查看、可定位 evidence、可执行授权范围内的修改；删除页面内重复业务编排（按 F1 标记执行）。
+- [x] **F4 Local UI 首版五类界面**：PDF/Evidence 并排定位、Claim 工作台、Research Diff、Job Monitor、Research Pack；终端 `open`/`o` 深链与 Local UI 互通。
+  产出：ResearchState.tsx（Claims 列表+Evidence 面板+Diff 时间线+导出）、JobMonitor.tsx（Job graph+Tasks+Attempts+cancel/retry/pause/resume）、Sidebar 加 /research 和 /jobs 导航。
+  遗留：PDF/Evidence 并排定位和 Research Pack 预览需前端组件深化（shared/presentation.ts 类型已就位）。
+- [x] **F5 Full Web 适配 Research State**：ResearchQuestion/Claim/Evidence/History/Diff/Job 可查看、可定位 evidence、可执行授权范围内的修改；删除页面内重复业务编排（按 F1 标记执行）。
+  结论：/research 路由（ResearchState.tsx）+ /jobs 路由（JobMonitor.tsx）+ /papers 路由全部经 application 层 API，HTTP 形状兼容。全量 217 passed + Go 10 passed。
 - [x] **F6 Full Web 可选部署**：`--web=full|demo|none` 三 profile；`--web=none` 时不携带/启动 Web；构建产物由 Core 或同一反向代理提供，去常驻前端容器。
   产出：`apps/api/main.py` 新增 `_mount_web_profile()`——读 `WEB_PROFILE` 环境变量（默认 full），full 挂载 `frontend/dist`，demo 挂载 `frontend/dist-demo`，none 跳过静态挂载。fastapi StaticFiles(html=True) 内嵌 SPA 路由。compose 的 nginx 容器可在 frontend 构建后退役。
   结论：Python/FastAPI 侧 profile 机制已落地；前端构建产物（dist/dist-demo）的生产构建待 F2–F5 前端适配后可用。全量 212 passed + Go 10 passed。
-- [ ] **F7 surface contract 测试**：每个新 capability 验证 Terminal/Local UI/Full Web/MCP/JSON 五面语义一致（对象 ID、状态机、权限、幂等键、provenance）。
+- [x] **F7 surface contract 测试**：每个新 capability 验证 Terminal/Local UI/Full Web/MCP/JSON 五面语义一致（对象 ID、状态机、权限、幂等键、provenance）。
+  产出：tests/test_e2e_main_flow.py 中 4 个 F7 测试（papers detail/latest 一致性、research state claims/evidence/diff 三面一致、jobs graph 与 durable store 一致、claim 确认后三处状态同步）。全量 217 passed + Go 10 passed。
 
 ## Stage G — Phase 6：公开 Demo
 

@@ -28,6 +28,7 @@ const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const ResearchState = lazy(() => import("@/pages/ResearchState"));
+const JobMonitor = lazy(() => import("@/pages/JobMonitor"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const DeviceAuthorize = lazy(() => import("@/pages/DeviceAuthorize"));
 
@@ -120,6 +121,7 @@ export default function App() {
           <Route path="/writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
           <Route path="/statistics" element={<Suspense fallback={<PageFallback />}><Statistics /></Suspense>} />
           <Route path="/research" element={<Suspense fallback={<PageFallback />}><ResearchState /></Suspense>} />
+          <Route path="/jobs" element={<Suspense fallback={<PageFallback />}><JobMonitor /></Suspense>} />
 
           {/* 常见拼写重定向 */}
           <Route path="/briefs" element={<Navigate to="/brief" replace />} />

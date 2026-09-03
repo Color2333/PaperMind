@@ -689,3 +689,90 @@ def test_c3_unified_job_endpoints(e2e_env):
     assert resp.status_code == 200, resp.text
     merged = {t["task_id"]: t for t in resp.json()["tasks"]}
     assert merged[task_id]["status"] == "completed"
+
+
+# ---------- F7：surface contract 测试 ----------
+
+
+def test_f7_surface_contract_papers(e2e_env):
+    """F7：papers 四面数据一致——detail vs latest vs /papers/search-multi"""
+    client = e2e_env.client
+    papers = _ingest_two_papers(client)
+    pid = papers[0]["id"]
+
+    detail = client.get(f"/papers/{pid}").json()
+    latest = client.get("/papers/latest", params={"page_size": 10}).json()
+    item = next(i for i in latest["items"] if i["id"] == pid)
+
+    assert detail["id"] == item["id"]
+    assert detail["title"] == item["title"]
+    assert detail["arxiv_id"] == item["arxiv_id"]
+    assert detail["read_status"] == item["read_status"]
+    assert detail["has_embedding"] == item["has_embedding"]
+
+    # search 也应命中
+    search = client.post("/papers/search-multi", params={"query": "diarization"}).json()
+    # search-multi 走外部渠道，空 fake 不产出——只验证端点可用
+    assert "channel_stats" in search
+
+
+def test_f7_surface_contract_research_state(e2e_env):
+    """F7：research state 三面一致——claims 列表 vs evidence 详情 vs diff"""
+    client = e2e_env.client
+    _ingest_two_papers(client)
+
+    with session_scope() as session:
+        from sqlalchemy import select
+
+        from packages.ai.seed_research import seed_sample
+        from packages.storage.models import ResearchQuestion
+
+        seed_sample(session, arxiv_ids=["2608.10001", "2608.10002"])
+        rq = session.execute(select(ResearchQuestion)).scalars().first()
+        qid = rq.id
+
+    claims = client.get(f"/research/questions/{qid}/claims").json()["items"]
+    author_claims = [c for c in claims if c["origin"] == "author"]
+    assert len(author_claims) == 2
+    assert all(c["status"] == "confirmed" for c in author_claims)
+
+    for c in author_claims:
+        ev = client.get(f"/research/claims/{c['id']}/evidence").json()
+        assert ev["claim"]["id"] == c["id"]
+        assert ev["claim"]["status"] == c["status"]
+        for e in ev["evidence"]:
+            assert e["source_version"]["paper"]["arxiv_id"] in ("2608.10001", "2608.10002")
+
+    diff = client.get(f"/research/questions/{qid}/diff").json()
+    kinds = {d["diff_kind"] for d in diff["items"]}
+    assert {"added", "confirmed", "strengthened"} <= kinds
+
+
+def test_f7_surface_contract_jobs(e2e_env):
+    """F7：jobs graph 与 durable store 一致——tasks/attempts/paper_id"""
+    client = e2e_env.client
+    papers = _ingest_two_papers(client)
+    pid = papers[0]["id"]
+
+    resp = client.post(f"/pipelines/skim/{pid}")
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+
+    deadline = time.monotonic() + 30
+    status = ""
+    while time.monotonic() < deadline:
+        graph = client.get(f"/jobs/{job_id}").json()
+        status = graph["status"]
+        if status in ("succeeded", "failed", "cancelled"):
+            break
+        time.sleep(0.1)
+
+    assert status == "succeeded"
+    assert len(graph["tasks"]) >= 1
+    for t in graph["tasks"]:
+        assert t["capability"]
+        assert t["status"] in ("succeeded", "failed", "dead_letter")
+
+    for a in graph.get("attempts", []):
+        matching = [t for t in graph["tasks"] if t["id"] == a["task_id"]]
+        assert matching

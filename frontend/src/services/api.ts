@@ -571,7 +571,70 @@ export const jobApi = {
     post<{ processed: number; failed: number; total: number; message: string }>(
       `/jobs/batch-process-unread?max_papers=${maxPapers}`
     ),
+  // durable execution（C3/C10）
+  list: (params?: { status?: string; kind?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set("status", params.status);
+    if (params?.kind) q.set("kind", params.kind);
+    if (params?.limit) q.set("limit", String(params.limit));
+    return get<{ items: DurableJobItem[] }>(`/jobs?${q.toString()}`);
+  },
+  graph: (jobId: string) => get<DurableJobGraph>(`/jobs/${jobId}`),
+  cancel: (jobId: string) => post<{ cancelled: number; cancel_requested: number }>(`/jobs/${jobId}/cancel`),
+  retry: (jobId: string) => post<{ retried: number }>(`/jobs/${jobId}/retry`),
+  retryTask: (taskId: string) => post<{ task_id: string; status: string }>(`/tasks/${taskId}/retry`),
+  pauseQueue: () => post<{ paused: boolean }>("/queue/pause"),
+  resumeQueue: () => post<{ paused: boolean }>("/queue/resume"),
 };
+
+export interface DurableJobItem {
+  id: string;
+  kind: string;
+  status: string;
+  priority: number;
+  progress: { current: number; total: number; message: string };
+  created_by: string;
+  research_run_id: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface DurableJobGraph {
+  id: string;
+  kind: string;
+  status: string;
+  payload: Record<string, unknown>;
+  progress: { current: number; total: number; message: string };
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  tasks: {
+    id: string;
+    seq: number;
+    capability: string;
+    status: string;
+    attempt_count: number;
+    resource_class: string;
+    timeout_s: number;
+    max_attempts: number;
+    last_error: string | null;
+    external_ref: string | null;
+    output_artifact_id: string | null;
+  }[];
+  attempts: {
+    id: string;
+    task_id: string;
+    attempt_no: number;
+    executor_id: string;
+    fencing_token: number;
+    status: string;
+    error_class: string | null;
+    error_message: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+  }[];
+}
 
 /* ========== 指标 ========== */
 export const metricsApi = {
