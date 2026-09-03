@@ -26,7 +26,7 @@
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
 | Stage C · Phase 2 Go Core + 原子 durable execution | 13 | 13 | 完成（P0 闭环 + C13 退出口：全部长任务走 submit_job+Executor，TaskTracker/batch_consumer/双写观察面已删除；10 闭环场景 + 6/6 故障注入 PASS） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
-| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | 进行中（E2/E3/E4 完成：@papermind/cli 命令面 v1 + 设备码登录 + --json 契约；剩 E6/E7/E8） |
+| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | 进行中（E2 全含 E2c：Pi agent core 接入 + 受控工具集 + 六类 renderer + 双主题；剩 E6 收尾/E7/E8） |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
@@ -194,11 +194,20 @@
 - [x] **E4 确定性子命令 + `--json`**（2026-09-03）：命令面 v1 全量——papers search/show、questions show、claims list/show、diff、export（research-pack/json/markdown）、jobs list/show/cancel、tasks retry、queue pause/resume；五类退出码（0/2/3/4/5）；`--json` canonical result 原样无 ANSI；非 TTY plain 渲染保留状态词（数组逐项展开不折叠）。
   测试：`node --test` 13 项契约（三模式/退出码五类/JSON 无 ANSI/plain 同语义/凭据互通 mock 全链路登录）+ 真实 API 冒烟（doctor/jobs/search/404→4）。
   遗留：E2c 接线 Pi TUI 与一次性 AI；I4 对齐退役——TS pm login 与 Python pm login 已对齐（同一凭据文件），Python pm 对应命令待 TS standalone `pm` 发布（E2 release 流水线）后退役。
+- [x] **E2c+E6 Pi agent core 接入与领域 renderer**（2026-09-03）：pm 成为完整 AI+论文交互终端。**零上游源码改动**——全部走 Pi 公开扩展点（customTools + DefaultResourceLoader overrides + 复用 InteractiveMode/runPrintMode），patch stack 零负担：
+  - 受控工具集 10 项（pm_search_papers/pm_get_paper/pm_list_claims/pm_get_claim_evidence/pm_diff_research_state/pm_export_research_pack/pm_submit_job/pm_get_job/pm_list_jobs/pm_cancel_job），TypeBox schema，全部 HTTPS application API；submit/cancel 走 ctx.ui.confirm 双重把关；
+  - E6 六类领域卡片 renderer（Paper/Claim/Evidence/Diff/Job/Research Pack）+ papermind-dark/light 双主题（Pi theme schema，themesOverride 注入）+ 系统提示覆盖（claim 卫生规则：draft 不冒充 confirmed、引用带证据坐标）；
+  - agentDir 隔离 ~/.config/papermind/agent——模型凭据与 Pi 上游、PaperMind 登录三方分离；
+  - bin 三模式接线：无参→TUI、-p→一次性（headless）、子命令→确定性路径。
+  踩坑记录：noTools:"all" 连 customTools 一并禁用（改显式 allowlist）；runPrintMode 内部已 dispose（二次 dispose 挂死）；测试进程内 monkeypatch process.stdout.write 会挂死 print-mode（改子进程跑真实 bin）；loadThemeFromPath 未从包根导出（fork 内相对路径取 dist，发布期 bundle 化）。
+  测试：+1 headless 全链路回环（子进程真实 bin：mock LLM SSE tool_call→PaperMind API→最终回答；断言内置 bash 工具不可达/提示注入/无 ANSI/PaperMind 调用发生）；npm test 14/14。
+  遗留：E6 收尾（深链 open/o 指向 Local UI、主题热切换体验）；I4 对齐退役条件同前。
 - [x] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
   产出：[packages/application/capability.py](../../packages/application/capability.py)（20 个 CapabilityMeta + 五面 surfaces）+ `scripts/export_capabilities.py`（JSON 导出）+ `scripts/generate_ts_types.py`（TS 类型生成 → packages/shared/presentation.ts）。
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
 - 2026-09-03：F3 loopback bridge + F4 Job Monitor/Research Pack 页面 + F5 Full Web 适配 + F7 surface contract 测试 + search_multi metadata 兼容修复。全量 217 passed + Go 10 passed。
 - 2026-09-03：处理第二轮 REVIEW——P0 诚实撤回 Stage C 完成声明；P1 修复 Go main package 入口/lease executor 校验/heartbeat 过期/pause 有效性/external_ref 竞态/batch_consumer 停机/executor 吞错/F2 页面导航与导出。全量 217 passed + Go 10 passed。
+- 2026-09-03（E2c/E6）：pm 接入 Pi agent core——受控工具集 10 项 + 六类领域 renderer + 双主题 + 系统提示覆盖，零上游源码改动（全走扩展点）；agentDir 隔离实现模型凭据三方分离；headless 全链路回环测试（子进程真实 bin）。Terminal 仓 3f674a0（含 .gitignore 补齐与 node_modules 误提交 amend 修复）。PaperMind 仓 285 passed 不变。
 - 2026-09-03（C13 旧路径退出）：第五版基线双重完成门落地——全部长任务（~40 调用点）迁移 submit_job+Executor；TaskTracker/batch_consumer/双写观察面/前端 /tasks/track 退役；worker 只提交并内置 Executor 宿主；idle_processor 纯触发器化；进度协议（executor→Go→state API→durable）打通；新增 Stage I 守卫测试。全量 285 passed + 2 skipped + Go 10 passed。
 - 2026-09-03（P0 闭环修复）：**durable store 唯一权威状态 + Go Core 控制面网关 + 独立 Python Executor**——新增 durable-state 内部 API（token 保护）与 `POST /jobs/durable` 权威提交入口；Go Core 删除全部任务内存态改为代理调度（claim 能力交集/未注册 403/fencing 409 透传/Reconciler 驱动 reclaim）；`apps/executor` 独立进程执行真实 skim；修复 SQLite 并发 claim 双签 lease 竞态（CAS）与取消链路（协作取消回执/cancelling 粘性/跨进程 pause 持久化 `b9c8d7e6f5a4`）。验收：`test_p0_closed_loop.py` 10 场景 + `scripts/fault_injection_local.py` 6/6（SIGKILL API/Core/Executor 分别强杀重启均恢复）+ fencing 四契约。全量 234 passed + 2 skipped + Go 10 passed；竞态敏感用例 3 次重复运行稳定。
 - 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
