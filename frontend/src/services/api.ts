@@ -739,3 +739,68 @@ export const deviceAuthApi = {
   deny: (userCode: string) =>
     post<{ status: string }>(`/auth/device/${encodeURIComponent(userCode)}/deny`),
 };
+
+/* ========== Research State（C/D 阶段新增） ========== */
+export interface ClaimItem {
+  id: string;
+  statement: string;
+  statement_zh: string | null;
+  origin: "author" | "papermind" | "user";
+  status: "draft" | "pending_verification" | "confirmed" | "superseded" | "invalidated";
+  certainty: "established" | "conditional" | "conflicted" | "insufficient_evidence" | "unknown";
+  evidence_count: number;
+  superseded_by_id: string | null;
+  run_id: string | null;
+  created_at: string | null;
+}
+
+export interface EvidenceItem {
+  id: string;
+  kind: string;
+  stance: string;
+  locator: Record<string, unknown>;
+  quote: string | null;
+  experiment_conditions: Record<string, unknown> | null;
+  extracted_by: string;
+  source_version: {
+    id: string;
+    version_label: number;
+    external_version: string | null;
+    content_hash: string;
+    paper: { id: string; title: string; arxiv_id: string; doi: string | null };
+  };
+}
+
+export interface DiffEntry {
+  id: string;
+  event: string;
+  diff_kind: string;
+  aggregate_id: string;
+  actor: string;
+  payload: Record<string, unknown>;
+  occurred_at: string | null;
+}
+
+export const researchApi = {
+  getQuestion: (id: string) =>
+    get<{
+      id: string; title: string; question: string; status: string;
+      claim_counts: { by_status: Record<string, number>; by_certainty: Record<string, number> };
+    }>(`/research/questions/${id}`),
+  listClaims: (questionId: string, status?: string) =>
+    get<{ items: ClaimItem[] }>(
+      `/research/questions/${questionId}/claims${status ? `?status=${status}` : ""}`
+    ),
+  getClaimEvidence: (claimId: string) =>
+    get<{ claim: Record<string, unknown>; evidence: EvidenceItem[] }>(
+      `/research/claims/${claimId}/evidence`
+    ),
+  diff: (questionId: string, sinceHours?: number) =>
+    get<{ items: DiffEntry[] }>(
+      `/research/questions/${questionId}/diff${sinceHours ? `?since_hours=${sinceHours}` : ""}`
+    ),
+  exportMd: (questionId: string) =>
+    fetch(`${getApiBase()}/research/questions/${questionId}/export?format=markdown`, {
+      headers: { Authorization: `Bearer ${getAuthToken()}` },
+    }).then((r) => r.text()),
+};

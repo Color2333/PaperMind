@@ -176,6 +176,7 @@
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
 - 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
 - 2026-09-03：F6 端到端本地验证——frontend/dist 构建成功，FastAPI full/none profile 均通过，ingest→skim→jobs→tasks/active→前端 HTML 全链路正常。全量 212 passed + Go 10 passed。
+- 2026-09-03：F4 部分完成——前端新增 ResearchState 页面（Claims 列表+状态徽章+Evidence 面板+Diff 时间线+Markdown 导出），路由 /research 已注册。全量 212 passed + TS 编译通过。
 - 2026-09-03：B8 遗留——sensemaking×14 路由全部下沉 application/commands/sensemaking.py（含 schema CRUD / session CRUD / act1-3 更新与 AI 生成 / interaction）。全量 212 passed。
 - 2026-09-03：E1 Terminal fork 本地基线（Pi upstream 4e69b0c）+ A2 基线测量脚本（scripts/measure_baseline.sh）。全量 212 passed + Go 10 passed。
 - 2026-09-03：完成 F1（inventory 已有设计⑤ §1 权威产出）+ F6 FastAPI 侧 `--web=full|demo|none` 部署 profile。全量 212 passed + Go 10 passed。
