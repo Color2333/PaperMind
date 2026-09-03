@@ -181,6 +181,8 @@ def test_retry_job_requeues_dead_letter(isolated_db):
 
 
 def test_pause_resume_queue(isolated_db):
+    """P0：pause 持久化到 system_flags——跨进程 claim 一致可见"""
+    from packages.storage.db import session_scope as _scope
     from packages.storage.repositories import durable as durable_repo
 
     with session_scope() as session:
@@ -191,16 +193,16 @@ def test_pause_resume_queue(isolated_db):
         )
 
     pause_queue()
-    assert durable_repo.is_queue_paused()
-    with session_scope() as session:
+    with _scope() as session:
+        assert durable_repo._queue_paused(session)
         assert (
             TaskRepository(session).claim_task(executor_id="e", capabilities=["embed_paper"])
             is None
         )
 
     resume_queue()
-    assert not durable_repo.is_queue_paused()
-    with session_scope() as session:
+    with _scope() as session:
+        assert not durable_repo._queue_paused(session)
         assert (
             TaskRepository(session).claim_task(executor_id="e", capabilities=["embed_paper"])
             is not None

@@ -41,6 +41,36 @@ def get_durable_job(job_id: str) -> dict:
         return graph
 
 
+@router.post("/jobs/durable")
+def submit_durable_job(body: dict) -> dict:
+    """P0 权威提交入口：只写 durable Job/Task（queued），由独立 Executor 经 Go Core 执行。
+
+    body: {kind, capability, title?, input_ref?, idempotency_key?, resource_class?,
+           timeout_s?, max_attempts?, payload?}
+    """
+    from packages.application.commands.jobs import submit_job as app_submit_job
+    from packages.domain.exceptions import AppError
+
+    capability = str(body.get("capability") or "")
+    kind = str(body.get("kind") or "")
+    if not capability or not kind:
+        raise HTTPException(status_code=422, detail="kind and capability are required")
+    try:
+        return app_submit_job(
+            kind=kind,
+            capability=capability,
+            title=str(body.get("title") or ""),
+            payload=body.get("payload") or {},
+            input_ref=body.get("input_ref") or {},
+            idempotency_key=body.get("idempotency_key"),
+            resource_class=str(body.get("resource_class") or "default"),
+            timeout_s=int(body.get("timeout_s") or 1800),
+            max_attempts=int(body.get("max_attempts") or 1),
+        )
+    except AppError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/jobs/daily/run-once")
 def run_daily_once() -> dict:
     """每日任务（抓取+简报）- 后台执行（业务在 application/commands/daily.py）"""

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     auth_secret_key: str = ""  # JWT 密钥，生产环境必须配置，为空时启用认证会报错
 
     database_url: str = "sqlite:////app/data/papermind.db"
+    # durable-state 内部 API 令牌（P0）：非空才挂载 /internal/durable/*，Go Core 凭此访问权威状态
+    durable_state_token: str = ""
     pdf_storage_root: Path = Path("./data/papers")
     brief_output_root: Path = Path("./data/briefs")
     # 跨进程共享限流器状态目录：backend/api 与 worker 容器需挂载同一目录才能共享令牌桶。

@@ -82,6 +82,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in self.WHITELIST or request.url.path.startswith("/mcp"):
             return await call_next(request)
 
+        # /internal/* 有独立的 X-Internal-Token 校验（durable-state API），不走用户面凭证
+        if request.url.path.startswith("/internal/"):
+            return await call_next(request)
+
         # 静态文件和文档跳过
         if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi"):
             return await call_next(request)
@@ -222,6 +226,12 @@ from apps.api.routers import (  # noqa: E402
 from apps.api.routers import (  # noqa: E402
     settings as settings_router,
 )
+
+# P0：durable-state 内部 API——仅当配置了内部令牌才挂载（未配置 = 不暴露此面）
+if settings.durable_state_token:
+    from apps.api.routers import durable_state  # noqa: E402
+
+    app.include_router(durable_state.router)
 
 app.include_router(system.router)
 app.include_router(papers.router)

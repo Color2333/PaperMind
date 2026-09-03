@@ -1,12 +1,14 @@
-"""Go Core Executor Protocol 的 Python 客户端（Stage C0）。
+"""Go Core Executor Protocol 的 Python 客户端（P0 lease 语义）。
 
 协议契约（与 core/protocol.go 对齐）：
 - 所有请求/响应为信封 {"schema_version", "correlation_id", "payload"}；
 - correlation_id 由客户端生成（全链路追踪）；
-- schema_version 不匹配时服务端返回 400，客户端抛 SchemaMismatchError。
+- schema_version 不匹配时服务端返回 400，客户端抛 SchemaMismatchError；
+- claim 返回的 lease_token 是 durable store 签发的 fencing 凭证，
+  heartbeat/complete/fail/cancel_execution 必须原样带回。
 
-C0 阶段仅覆盖协议面（register/claim/heartbeat/complete/fail/cancel + health）；
-执行循环、lease 续约策略与失败退避在 C7 落地。
+Go Core 是控制面网关：这些调用最终落在 Python durable-state API
+（/internal/durable/*）——权威状态只有一份（durable store）。
 """
 
 from __future__ import annotations
@@ -27,6 +29,10 @@ class SchemaMismatchError(RuntimeError):
 class CoreProtocolError(RuntimeError):
     """Core 拒绝了协议请求（4xx/409 等）"""
 
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 def _new_correlation_id() -> str:
     return uuid4().hex
@@ -39,11 +45,14 @@ class CoreClient:
         self,
         base_url: str,
         *,
+        token: str = "",
         timeout_s: float = 30.0,
         transport: httpx.BaseTransport | None = None,
     ):
         self._base = base_url.rstrip("/")
-        self._client = httpx.Client(timeout=timeout_s, transport=transport)
+        self._token = token
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._client = httpx.Client(timeout=timeout_s, transport=transport, headers=headers)
 
     def close(self) -> None:
         self._client.close()
@@ -63,13 +72,16 @@ class CoreClient:
         envelope = {"schema_version": SCHEMA_VERSION, "correlation_id": cid, "payload": payload}
         resp = self._client.post(f"{self._base}{path}", json=envelope)
         if resp.status_code == 400:
-            body = resp.json().get("body", {})
+            with suppress(Exception):
+                body = resp.json().get("body", {})
             if body.get("error") == "schema_version_mismatch":
                 raise SchemaMismatchError(f"core 期望 schema_version={body.get('expected')}")
         if resp.status_code >= 400:
             with suppress(Exception):
                 body = resp.json().get("body", {})
-            raise CoreProtocolError(f"{path} → {resp.status_code}: {body}")
+            raise CoreProtocolError(
+                f"{path} → {resp.status_code}: {body}", status_code=resp.status_code
+            )
         envelope_out = resp.json()
         if envelope_out.get("correlation_id") != cid:
             raise CoreProtocolError("correlation_id 未回显")
@@ -95,40 +107,62 @@ class CoreClient:
         )
         return body.get("task")
 
-    def heartbeat(self, executor_id: str, task_id: str, attempt_id: str) -> dict[str, Any]:
+    def heartbeat(self, executor_id: str, task_id: str, lease_token: str) -> dict[str, Any]:
         return self._call(
             f"/v1/tasks/{task_id}/heartbeat",
-            {"executor_id": executor_id, "task_id": task_id, "attempt_id": attempt_id},
+            {"executor_id": executor_id, "task_id": task_id, "lease_token": lease_token},
         )
 
     def complete(
-        self, executor_id: str, task_id: str, attempt_id: str, result: dict[str, Any]
+        self,
+        executor_id: str,
+        task_id: str,
+        lease_token: str,
+        result: dict[str, Any],
     ) -> dict[str, Any]:
         return self._call(
             f"/v1/tasks/{task_id}/complete",
             {
                 "executor_id": executor_id,
                 "task_id": task_id,
-                "attempt_id": attempt_id,
+                "lease_token": lease_token,
                 "result": result,
             },
         )
 
     def fail(
-        self, executor_id: str, task_id: str, attempt_id: str, *, error_class: str, message: str
+        self,
+        executor_id: str,
+        task_id: str,
+        lease_token: str,
+        *,
+        error_class: str,
+        message: str,
     ) -> dict[str, Any]:
         return self._call(
             f"/v1/tasks/{task_id}/fail",
             {
                 "executor_id": executor_id,
                 "task_id": task_id,
-                "attempt_id": attempt_id,
+                "lease_token": lease_token,
                 "error_class": error_class,
                 "message": message,
             },
         )
 
+    def cancel_execution(self, executor_id: str, task_id: str, lease_token: str) -> dict[str, Any]:
+        """协作取消的完成回执：安全点退出后把 Task/Attempt 标记 cancelled（不重试）"""
+        return self._call(
+            f"/v1/tasks/{task_id}/cancel-execution",
+            {
+                "executor_id": executor_id,
+                "task_id": task_id,
+                "lease_token": lease_token,
+            },
+        )
+
     def cancel(self, task_id: str, *, reason: str = "") -> dict[str, Any]:
+        """控制面取消（queued→直接取消；leased→协作取消标记）"""
         return self._call(
             f"/v1/tasks/{task_id}/cancel",
             {"task_id": task_id, "reason": reason},

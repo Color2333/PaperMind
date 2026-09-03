@@ -315,14 +315,77 @@ def retry_task(task_id: str) -> dict[str, Any]:
 
 
 def pause_queue() -> dict[str, Any]:
+    """暂停队列（持久化到 system_flags——跨进程生效，executor 侧 claim 同样可见）"""
+    from packages.storage.db import session_scope
     from packages.storage.repositories import durable as durable_repo
 
-    durable_repo.pause_queue()
+    with session_scope() as session:
+        durable_repo.pause_queue(session)
     return {"paused": True}
 
 
 def resume_queue() -> dict[str, Any]:
+    from packages.storage.db import session_scope
     from packages.storage.repositories import durable as durable_repo
 
-    durable_repo.resume_queue()
+    with session_scope() as session:
+        durable_repo.resume_queue(session)
     return {"paused": False}
+
+
+def submit_job(
+    *,
+    kind: str,
+    capability: str,
+    title: str = "",
+    payload: dict | None = None,
+    input_ref: dict | None = None,
+    idempotency_key: str | None = None,
+    resource_class: str = "default",
+    timeout_s: int = 1800,
+    max_attempts: int = 1,
+    priority: int = 0,
+    research_run_id: str | None = None,
+    created_by: str = "api",
+) -> dict:
+    """P0 权威入口：只写 durable Job/Task（queued），不 claim、不执行。
+
+    执行由独立 Python Executor 经 Go Core 调度（领取→handler→fencing 提交）。
+    调用方（API/CLI/agent）不得在此启动线程或 fn——见设计③「API 只负责提交、
+    查询和控制」。input_ref 是 handler 的输入契约（见 C4 注册表 input_keys）。
+    """
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import JobRepository, TaskRepository
+
+    with session_scope() as session:
+        job_repo = JobRepository(session)
+        task_repo = TaskRepository(session)
+        job, _created = job_repo.create_job(
+            kind=kind,
+            payload={**(payload or {}), "title": title} if title else (payload or {}),
+            idempotency_key=idempotency_key,
+            priority=priority,
+            research_run_id=research_run_id,
+            created_by=created_by,
+        )
+        task, task_created = task_repo.add_task(
+            job_id=job.id,
+            capability=capability,
+            input_ref=input_ref or {},
+            idempotency_key=(f"{idempotency_key}:task:0" if idempotency_key else None),
+            seq=0,
+            priority=priority,
+            resource_class=resource_class,
+            timeout_s=timeout_s,
+            max_attempts=max_attempts,
+        )
+        job_id, task_id = job.id, task.id
+        task_status = task.status.value if hasattr(task.status, "value") else str(task.status)
+
+    return {
+        "job_id": job_id,
+        "task_id": task_id,
+        "capability": capability,
+        "status": task_status,
+        "created": task_created,
+    }

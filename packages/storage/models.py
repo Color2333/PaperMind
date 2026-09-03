@@ -1116,3 +1116,19 @@ class TaskArtifact(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     metadata_json: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
+class SystemFlag(Base):
+    """跨进程控制面标志（P0 修复：pause/resume 必须持久化，不能只活在进程内存）。
+
+    key → value 简单 KV；queue_paused 由 /queue/pause|resume 与 durable-state
+    claim 端点共同消费。唯一控制面 = durable store 本身。
+    """
+
+    __tablename__ = "system_flags"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )

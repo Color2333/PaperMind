@@ -6,7 +6,7 @@
 
 分支：`refactor/papermind-2026`
 
-依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md)（下称"设计文档"，2026-09-02 第四版：Go Core + Python Executors + Pi downstream fork + Local PM UI + Full Web 可选化 + 原子 Durable Execution）
+依据：[PaperMind 2026 形态与重构设计](./2026-09-02-papermind-2026-rearchitecture.md)（下称"设计文档"，2026-09-03 第五版：Go Core + Python Executors + Pi downstream fork + Local PM UI + Full Web 可选化 + 原子 Durable Execution + 精简与收敛门）
 
 ## 工作规则
 
@@ -16,6 +16,7 @@
 4. 重构期间冻结新增页面（设计文档 Phase 0 约束），除非直接服务于重构或 Demo。
 5. Full Web 瘦身以 route/capability inventory 的 retain/merge/local-ui/archive 标记为准，禁止直接批量删除。
 6. 每个目标完成后在本文档勾选状态并写一行结论；发现新事实时更新拆解，不靠口头记忆。
+7. **精简是完成条件，不是收尾美化。**新路径落地后必须退出对应旧路径；若新旧入口、状态源、执行器或业务编排仍同时存在，该目标只能标记为“迁移中”，不得以测试骨架或兼容桥存在为由勾选完成。
 
 ## 进度总览
 
@@ -23,14 +24,15 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 11 | 进行中（P0：Go Core/Python durable store 未闭环——真实业务仍走 global_tracker，撤回完成声明） |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 12 | 完成（P0 闭环已修复：durable store 唯一权威状态 + Go 控制面网关 + 独立 Executor；10 闭环场景 + 6/6 故障注入 PASS。遗留：存量 tracker 调用点迁移到 submit_job 为 C12 增量项） |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 6 | 进行中 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
+| Stage I · Phase 8 精简与收敛门 | 8 | 0 | 未开始（各阶段同步执行，最终统一验收） |
 
-主线顺序：A → B → C → D → E → F → G → H（对应设计文档 Phase 0–7）。其中设计文档 §11 的**第一个只读垂直切片**（SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence，贯穿 application handlers → typed HTTPS client → deterministic CLI → Pi tool + renderer → Local UI/Full Web adapters → MCP adapter）横跨 B3/B4、E4–E6、F4/F5 与 E8，是 Stage B→F 的主线验收样例；六份设计（A5–A10）获确认后即从它开始。
+主线顺序：A → B → C → D → E → F → G → H → I（对应设计文档 Phase 0–8）。Stage I 不是等到最后才删除代码：I1–I8 的退出动作应随 B–H 同步完成，末期只做统一审计和量化验收。其中设计文档 §11 的**第一个只读垂直切片**（SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence，贯穿 application handlers → typed HTTPS client → deterministic CLI → Pi tool + renderer → Local UI/Full Web adapters → MCP adapter）横跨 B3/B4、E4–E6、F4/F5 与 E8，是 Stage B→F 的主线验收样例；六份设计（A5–A10）获确认后即从它开始。
 
 ## Stage A — Phase 0 基线与六份设计
 
@@ -137,7 +139,16 @@
   结论：CLI/MCP/Local UI 经同一 REST 资源语义（设计③ §5.3 确定性命令面）。3 个测试（cancel 收敛/retry dead_letter 出口/pause 阻止 claim）。全量 201 passed + Go 10 passed。pause 跨进程由 Go Core 接管（C6 语义）。
 - [x] **C11 渐进迁移与恢复测试**：先迁移 `batch_jobs` 三类任务，再迁移 scheduler jobs 和 idle processor；用 API/Executor 强杀、lease 过期、重复领取、部分失败和迟到写入测试替代 `recover_stale_running` 的破坏性恢复。
   产出：agent batch 工具入口接 durable ProcessUnreadBatch Job（batch.py create_batch_job 镜像展开）+ [tests/test_stage_c11.py](../../tests/test_stage_c11.py) 6 场景（强杀→lease 过期→非破坏性回收→重新执行成功/重复领取互斥/部分失败 partial 收敛/迟到写入 fencing 拒绝/batch→durable 镜像/幂等提交去重）。
-  结论：**Stage C（Phase 2）完成**——设计③ §8 全部 5 个验收场景有测试锁定，durable execution 闭环（Job 展开→Task 领取→lease 续约→执行→fencing 提交→Reconciler 回收→控制面）可运行。全量 206 passed + Go 10 passed。
+  结论：6 场景恢复测试 + batch 镜像落地（本条完成状态曾因 P0 撤回，随 P0 闭环修复恢复，见 2026-09-03 P0 修复记录）。全量 206 passed + Go 10 passed。
+- [x] **C12 P0 闭环修复（第二轮 REVIEW）**：durable store 成为唯一权威状态，Go Core 重构为零任务内存态的控制面网关，独立 Python Executor 进程承担真实业务执行。
+  产出：
+  - durable-state 内部 API [apps/api/routers/durable_state.py](../../apps/api/routers/durable_state.py)（`/internal/durable/*`：claim/heartbeat/complete/fail/cancel-execution/cancel/status/reclaim/queue-stats/pause/resume；`X-Internal-Token` 校验，`settings.durable_state_token` 非空才挂载，未配置=不暴露）；
+  - 权威提交入口 `commands/jobs.py::submit_job` + `POST /jobs/durable`（只写 Job/Task，不 claim 不执行——设计③「API 只负责提交、查询和控制」）；
+  - Go Core 重写：`registry.go`（Executor 注册表 + StateClient，任务/lease 内存态全删）、`server.go`（九端点全部代理 durable-state，claim 能力与注册声明取交集，未注册 403，fencing 409 透传，Reconciler 驱动 reclaim）、`core/cmd/papermind-core/main.go`（STATE_ADDR/STATE_TOKEN/RECONCILE_INTERVAL 环境配置）；
+  - 独立 Executor 进程 [apps/executor/main.py](../../apps/executor/main.py)（注册→claim→C4 handler→心跳续约→fencing 提交；SIGTERM drain；`--fake-llm`/`--handler-delay-s` 为故障注入测试钩子）；
+  - `packages/executor_runtime/runner.py` lease_token 语义 + claim 403 自动重注册（Core 重启恢复）+ 协作取消经 `cancel-execution` 回执；
+  - durable 仓储修复：SQLite 多 Executor 并发 claim 双签 lease 竞态（`_lease_task` CAS 条件 UPDATE）、`cancel_job`/`heartbeat_lease`/`reclaim_expired_leases` 的取消一致性（cancelling 粘性 + 过期 lease 不复活 + 取消意图传达）、跨进程 pause 持久化（`system_flags` 表，迁移 `b9c8d7e6f5a4`）、`cancel_task_execution` 回执方法。
+  结论：`tests/test_p0_closed_loop.py` 10 场景全绿（真实 skim 全链路/SIGKILL Executor 回收恢复/迟到 complete 409/SIGKILL Core 重启/SIGKILL API 恢复/跨进程 pause/协作取消/未注册 403/幂等/token 401）；`scripts/fault_injection_local.py` 6/6 PASS（可重复全进程故障注入）；`test_lease_fencing.py` 四类 fencing 契约；`test_concurrent_claim_single_winner` 并发回归。全量 234 passed + 2 skipped + Go 10 passed。**遗留（C12 后续）**：存量 ~40 个 tracker 调用点从 `submit_tracked_compat`/`submit_durable_job`（进程内 fn 执行）渐进迁移到 `submit_job`+Executor。
 
 ## Stage D — Phase 3：Research State 垂直切片
 
@@ -176,6 +187,7 @@
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
 - 2026-09-03：F3 loopback bridge + F4 Job Monitor/Research Pack 页面 + F5 Full Web 适配 + F7 surface contract 测试 + search_multi metadata 兼容修复。全量 217 passed + Go 10 passed。
 - 2026-09-03：处理第二轮 REVIEW——P0 诚实撤回 Stage C 完成声明；P1 修复 Go main package 入口/lease executor 校验/heartbeat 过期/pause 有效性/external_ref 竞态/batch_consumer 停机/executor 吞错/F2 页面导航与导出。全量 217 passed + Go 10 passed。
+- 2026-09-03（P0 闭环修复）：**durable store 唯一权威状态 + Go Core 控制面网关 + 独立 Python Executor**——新增 durable-state 内部 API（token 保护）与 `POST /jobs/durable` 权威提交入口；Go Core 删除全部任务内存态改为代理调度（claim 能力交集/未注册 403/fencing 409 透传/Reconciler 驱动 reclaim）；`apps/executor` 独立进程执行真实 skim；修复 SQLite 并发 claim 双签 lease 竞态（CAS）与取消链路（协作取消回执/cancelling 粘性/跨进程 pause 持久化 `b9c8d7e6f5a4`）。验收：`test_p0_closed_loop.py` 10 场景 + `scripts/fault_injection_local.py` 6/6（SIGKILL API/Core/Executor 分别强杀重启均恢复）+ fencing 四契约。全量 234 passed + 2 skipped + Go 10 passed；竞态敏感用例 3 次重复运行稳定。
 - 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
 - 2026-09-03：F6 端到端本地验证——frontend/dist 构建成功，FastAPI full/none profile 均通过，ingest→skim→jobs→tasks/active→前端 HTML 全链路正常。全量 212 passed + Go 10 passed。
 - 2026-09-03：F4 部分完成——前端新增 ResearchState 页面（Claims 列表+状态徽章+Evidence 面板+Diff 时间线+Markdown 导出），路由 /research 已注册。全量 212 passed + TS 编译通过。
@@ -226,8 +238,24 @@
 - [ ] **H1 重测资源基线**：对照 A2 记录，验证 Go Core/Python Executor 拆分后的空闲 RSS、冷启动、镜像大小、任务峰值与故障恢复表现。
 - [ ] **H2 存储与容量决策记录**：根据单写者约束、并发领取和恢复测试决定个人服务用 SQLite 还是 PostgreSQL，并确定 Executor 资源分组。出口条件：配置有测量证据和独立回滚路径。
 
+## Stage I — Phase 8：精简与收敛门
+
+阶段出口条件：PaperMind 的默认路径只有一套权威状态、一套能力入口和一个 `pm`；部署 profile 只携带所需组件与依赖；旧实现、过渡桥和重复业务编排已经删除、归档或隔离，并有量化前后对照。**新增代码存在不等于完成，旧路径退出才算完成。**
+
+- [ ] **I1 单一任务系统**：删除 `global_tracker`、旧 `batch_jobs` 权威状态、破坏性恢复和重复队列；所有长任务只经过 durable `Job → Task → Attempt`，兼容读取仅允许有明确退役日期的只读 adapter。
+- [ ] **I2 单一能力入口**：HTTP、MCP、PM Terminal、Local UI 与 Full Web 只调用 application capability；adapter 不包含领域判断、数据库写入、provider 编排或独立状态机，并以架构测试阻止回流。
+- [ ] **I3 Executor 原子化收敛**：退役 batch consumer、idle processor 和 scheduler 中直接运行研究逻辑的路径；Scheduler 只创建 Job，Executor 每次只运行一个 Task Attempt。
+- [ ] **I4 CLI 收敛**：Pi downstream Terminal 每对齐一个确定性命令，就退役 Python CLI 对应命令；最终只发行一个 `pm`，旧 Python CLI 不再作为第二套产品入口。
+- [ ] **I5 UI 与 schema 收敛**：Local UI、Full Web 和 Demo 复用 typed client、presentation model 与领域组件；允许信息架构不同，不允许复制 Claim/Evidence/Job/权限业务逻辑。
+- [ ] **I6 依赖与包拆分**：Core、API、Executor、Terminal 和 Web 使用独立最小依赖集；Core/查询面不安装 AI、PDF、OCR、NumPy 或前端依赖，Executor 按 resource class 安装所需 extras。
+- [ ] **I7 部署与产物精简**：`--web=none` 不构建、不携带也不启动 Web；个人最小部署不需要常驻前端容器；Full/Demo/None 的镜像、进程和配置边界可独立验证。
+- [ ] **I8 废弃物与量化审计**：删除或归档死代码、重复 schema、过期迁移桥和失真文档；记录常驻进程数、空闲/峰值 RSS、冷启动、镜像与安装体积、默认依赖数、同一 capability 实现入口数和兼容桥数量的前后对照。
+
+合并门槛：任何阶段若仍保留无退役计划的旧权威路径，不得以“兼容”为由标记完成；进入 `main` 前至少完成与本次重构直接相关的 I1–I3，Phase 8 关闭前完成 I1–I8。
+
 ## 变更记录
 
+- 2026-09-03：用户确认“精简”是一等重构要求；新增工作规则 7 与 Stage I（I1–I8），将旧路径退出、单一入口、CLI/UI/依赖/部署收敛和量化审计纳入正式验收门。
 - 2026-09-02：建立路线图；完成 A1 审计。
 - 2026-09-02（第二次）：同步设计基线第二版——Pi 从 SDK adapter 改为 downstream fork 策略（A8/E1）、新增 Local PM UI（A9/F3/F4）、Full Web 从瘦身删除改为可选模块（F1/F5/F6）、设计五份变六份（A5–A10）、Phase 0–6 变 0–7（Stage A–H）、Phase 1 出口新增 canonical presentation model（B2）。
 - 2026-09-02（第三次）：完成 A3——主用户流程端到端回归测试（tests/test_e2e_main_flow.py，LLM/arXiv/vision 全 fake + tmp SQLite）与 CI 测试 workflow（tests.yml）。

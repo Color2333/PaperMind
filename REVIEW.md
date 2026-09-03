@@ -122,7 +122,11 @@ HEAD 已继续前进，修复后请重新运行完整测试、构建 wheel，并
 
 ### [P0] Go Core、Python durable store 与真实业务执行没有闭环
 
-- [ ] 状态：待修复
+- [x] 状态：已修复（2026-09-03）。架构重构：**durable store 是唯一权威状态，Go Core 变为控制面网关（零任务内存态）**——claim/complete/fail/heartbeat/cancel/status/reclaim 全部代理到新增的 Python durable-state API（`apps/api/routers/durable_state.py`，`/internal/durable/*`，`X-Internal-Token` 保护，`settings.durable_state_token` 非空才挂载）。API 新增权威提交入口 `submit_job` 命令 + `POST /jobs/durable`（只写 Job/Task，不 claim 不执行）。独立 Executor 进程 `apps/executor/main.py` 注册→领取→执行 C4 handler→fencing 提交；Go Core 重启后 Executor 经 403 探测自动重注册。验收证据：
+  - `tests/test_p0_closed_loop.py`：10 场景全绿（真实 skim 全链路且 attempt.executor_id=独立进程 / SIGKILL executor→lease 回收→attempt2 完成 / 迟到 complete 409 fencing / SIGKILL Core 重启恢复 / SIGKILL API 恢复 / 跨进程 pause / 协作取消无副作用 / 未注册 executor 403 / 幂等提交 / 内部 token 401）；
+  - `scripts/fault_injection_local.py`：6/6 PASS（A 基线 / B 强杀 Executor / C 强杀 Core / D 强杀 API / E 协作取消 / F pause-resume），进程日志落 `data/fault-injection/`；
+  - 修复过程中发现并修复 SQLite 多 Executor 并发 claim 双签 lease 竞态（`_lease_task` CAS 条件 UPDATE，`tests/test_durable_schema.py::test_concurrent_claim_single_winner`）；
+  - 全程无 `global_tracker` 参与闭环（断言 attempts 的 executor 身份）。
 
 位置：`core/main.go:19`、`core/controlplane.go:3-5`、`packages/application/commands/jobs.py:51-130`、`packages/executor_runtime/runner.py:90-107`
 
@@ -134,7 +138,7 @@ HEAD 已继续前进，修复后请重新运行完整测试、构建 wheel，并
 
 ### [P1] Go Core 文档中的启动命令无法运行
 
-- [ ] 状态：待修复
+- [x] 状态：已修复（`core/cmd/papermind-core/main.go` 独立 main package；`core/main.go`（旧 package core Run()）已删除。验证：`go build ./cmd/papermind-core` 成功且闭环测试/故障注入脚本均以该二进制起服务）
 
 位置：`core/main.go:1-23`、`core/README.md:12-18`、`.github/workflows/tests.yml:31-50`
 
@@ -149,7 +153,7 @@ package github.com/Color2333/PaperMind/core is not a main package
 
 ### [P1] Core 控制端点无认证，默认暴露到所有网卡
 
-- [ ] 状态：待修复
+- [x] 状态：已修复（默认绑定 `127.0.0.1:8081`；`CORE_TOKEN` 启用 Bearer 校验（`TokenAuthMiddleware`，/health 豁免）；本轮新增 durable-state 内部 API 的第二层 `X-Internal-Token` 校验，且未配置令牌时整个内部面不挂载。部署边界（反代 HTTPS/私网）写入 `core/cmd/papermind-core/main.go` 头注释与 core/README）
 
 位置：`core/main.go:13-23`、`core/server.go:31-42`
 
@@ -159,7 +163,7 @@ package github.com/Color2333/PaperMind/core is not a main package
 
 ### [P1] lease/fencing 没有验证 Executor 身份，且过期 lease 可以被续活
 
-- [ ] 状态：待修复
+- [x] 状态：已修复。Python 侧：`_check_lease` 校验 executor 身份（`tests/test_lease_fencing.py::test_wrong_executor_with_valid_token_rejected`）；`heartbeat_lease` 过期不续约且过期后 complete 被拒（`test_expired_lease_cannot_heartbeat_or_complete`）；已完成 Task heartbeat ok=False（`test_heartbeat_after_completion_returns_not_ok`）。Go 侧：未注册 executor claim → 403（`TestUnregisteredExecutorForbidden`）；claim 能力与注册声明取交集（`TestClaimCapabilityIntersection`）。fencing 语义单一实现于 durable store（`_check_lease`），Go 仅透传 409（闭环测试断言迟到 complete=409）
 
 位置：`packages/storage/repositories/durable.py:327-343`、`packages/storage/repositories/durable.py:481-489`、`core/registry.go:111-168`
 
@@ -169,7 +173,7 @@ Python `_check_lease()` 接收 `executor_id` 却完全不校验它；拿到 toke
 
 ### [P1] cancel/pause 接口对当前真实执行路径不起作用
 
-- [ ] 状态：待修复
+- [x] 状态：已修复。取消：`cancel_job` 置 Job=cancelling 并保持 lease 有效，`heartbeat_lease` 探测 cancelling 返回 `cancel_requested=true`（即使 lease 已过期也传达取消意图），Executor 在安全点退出后经新增 `cancel_task_execution` 回执（Task/Attempt=cancelled，不重试不失败）；`recompute_job_status` 中 cancelling 为粘性过程态；Reconciler 回收 cancelling Job 的过期 lease 直接收敛为 cancelled。暂停：`queue_paused` 从进程内模块变量改为 `system_flags` 表持久化（新迁移 `b9c8d7e6f5a4`），任意进程 claim 前一致可见。验收自 HTTP 端点：闭环测试 `test_cancel_running_task_cooperative_exit`（取消运行中真实 handler→cancelled、论文未被 skim）、`test_pause_blocks_claims_cross_process_then_resume`（独立进程写 pause 标志→另一进程 executor 领取不到）；故障注入脚本场景 E/F 同样通过
 
 位置：`packages/storage/repositories/durable.py:243-325`、`packages/storage/repositories/durable.py:436-489`、`apps/api/routers/jobs.py:176-189`
 
@@ -179,7 +183,7 @@ Python `_check_lease()` 接收 `executor_id` 却完全不校验它；拿到 toke
 
 ### [P1] 完整测试存在可复现竞态，不是稳定绿灯
 
-- [ ] 状态：待修复
+- [x] 状态：已修复（external_ref 在启动执行前原子落库（`7f71034`）；本轮重复运行验证：`test_stage_c3.py + test_stage_c.py` 连续 3 次全绿；全量 pytest 234 passed + 2 skipped；并发 claim 竞态另见 P0 条目中的 CAS 修复）
 
 位置：`packages/application/commands/jobs.py:121-130`、`tests/test_stage_c3.py:37-60`
 
@@ -189,7 +193,7 @@ Python `_check_lease()` 接收 `executor_id` 却完全不校验它；拿到 toke
 
 ### [P1] Worker 停机途中会把未处理完的 batch 标成 completed
 
-- [ ] 状态：待修复
+- [x] 状态：已修复（`batch_consumer.poll_once` 在 `_stop.is_set()` 时的剩余任务标记为 failed 而非 completed（`7f71034`）；测试：`tests/test_stage_c.py::test_batch_consumer_not_in_api_process` 及 poll_once 系列）
 
 位置：`packages/agent_core/batch_consumer.py:23-28`、`packages/agent_core/batch_consumer.py:47-63`、`apps/worker/main.py:321-326`
 
@@ -197,7 +201,7 @@ Python `_check_lease()` 接收 `executor_id` 却完全不校验它；拿到 toke
 
 ### [P1] Executor 吞掉 complete/fail 协议错误，可能重复副作用
 
-- [ ] 状态：待修复
+- [x] 状态：已修复（`_submit_with_retry`：complete/fail 3 次指数退避重试，失败不吞——记录"执行已发生、回执未落地"并注明靠 lease 过期回收兜底（`tests/test_executor_runtime.py` 覆盖 complete/fail/cancel-execution 回执路径）；外部副作用由 C9 effect ledger（`task_effects` 表 + effect_key 唯一约束）保护）
 
 位置：`packages/executor_runtime/runner.py:127-178`
 
@@ -205,7 +209,7 @@ handler 成功后，`client.complete()` 被 `suppress(Exception)` 包住。若�
 
 ### [P2] F6“端到端验证”只有文档声明，没有可重放证据
 
-- [ ] 状态：待澄清
+- [x] 状态：已澄清并补齐可重放证据（部署 profile 的 F6 验证保留为手工 smoke 记录、不用于关闭出口；P0 闭环的可重放证据由 `tests/test_p0_closed_loop.py`（多进程 pytest，每次运行重建三进程）与 `scripts/fault_injection_local.py`（可重复执行的全进程故障注入，输出 PASS 清单与进程日志）承担；路线图中已把"骨架/hermetic test"与"真实链路完成"分开表述）
 
 位置：commit `ddc00e1`、`docs/plans/2026-09-02-rearchitecture-roadmap.md`
 
@@ -213,7 +217,7 @@ handler 成功后，`client.complete()` 被 `suppress(Exception)` 包住。若�
 
 ### [P2] 新 Research State 页面没有正常入口，导出失败会被保存成 Markdown
 
-- [ ] 状态：待修复
+- [x] 状态：已修复（Sidebar 增加 Research/JobMonitor 导航入口；`exportMd` 先检查 `response.ok` 再下载，错误不再被存成 .md（`6c5dbee` 后续修复提交）；路由可发现性由 Sidebar 集成保证）
 
 位置：`frontend/src/App.tsx:119-122`、`frontend/src/components/Sidebar.tsx:34-47`、`frontend/src/services/api.ts:802-806`
 

@@ -258,3 +258,73 @@ def test_job_progress_with_run_and_attempts(isolated_db):
             job_id=job.id, capability="extract_claims", idempotency_key="claims:p1"
         )
         assert created_again is False
+
+
+# ---------- P0：并发 claim 原子性（多 Executor 场景） ----------
+
+
+def test_concurrent_claim_single_winner(tmp_path, monkeypatch):
+    """两个并发连接抢同一个 queued Task：CAS 保证恰好一个赢家（P0 修复回归）。
+
+    用独立文件库（每会话独立连接 + WAL）模拟多 Executor 进程的真实并发；
+    StaticPool 单连接会共享事务上下文，无法表达这个语义。
+    """
+    import threading
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import NullPool
+
+    from packages.storage import db as db_module
+    from packages.storage.models import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path}/conc.db",
+        connect_args={"check_same_thread": False, "timeout": 30},
+        poolclass=NullPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    maker = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    monkeypatch.setattr(db_module, "engine", engine)
+    monkeypatch.setattr(db_module, "SessionLocal", maker)
+
+    from packages.storage.repositories import JobRepository
+
+    with maker() as session:
+        job, _ = JobRepository(session).create_job(kind="skim_paper")
+        TaskRepository(session).add_task(job_id=job.id, capability="skim_paper")
+        global_job_id = job.id
+        session.commit()
+
+    results: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def _claim(idx: int) -> None:
+        barrier.wait()
+        session = maker()
+        try:
+            claimed = TaskRepository(session).claim_task(
+                executor_id=f"exec-{idx}", capabilities=["skim_paper"]
+            )
+            results.append("win" if claimed is not None else "lose")
+            session.commit()
+        except Exception:
+            session.rollback()
+            results.append("error")
+        finally:
+            session.close()
+
+    t1 = threading.Thread(target=_claim, args=(1,))
+    t2 = threading.Thread(target=_claim, args=(2,))
+    t1.start()
+    t2.start()
+    t1.join(30)
+    t2.join(30)
+
+    assert sorted(results) == ["lose", "win"], f"应恰好一个赢家: {results}"
+
+    with maker() as session:
+        task = TaskRepository(session).list_for_job(global_job_id)[0]
+        assert task.attempt_count == 1, "并发输家不得重复计 attempt"
+        assert task.status is TaskStatus.leased
+    engine.dispose()

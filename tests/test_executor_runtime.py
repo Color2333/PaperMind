@@ -1,7 +1,8 @@
 """C7：Python Executor 运行时测试（hermetic——fake Core 走 httpx MockTransport）
 
-覆盖：完整执行周期（claim→handler→complete）、handler 异常→fail、
-心跳响应 cancel_requested→协作取消、drain 停止领取、capability 无 handler→fail(no_handler)。
+覆盖：自注册、完整执行周期（claim→handler→complete）、handler 异常→fail、
+心跳响应 cancel_requested→协作取消（cancel-execution 回执，非 fail）、
+drain 停止领取、capability 无 handler→fail(no_handler)。
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ class FakeCore:
         self.claimed: list[dict] = []
         self.completed: list[dict] = []
         self.failed: list[dict] = []
+        self.cancelled: list[dict] = []
+        self.registered: list[dict] = []
         self.cancel_on_heartbeat = cancel_on_heartbeat
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -35,8 +38,11 @@ class FakeCore:
                 status, json={"schema_version": 1, "correlation_id": cid, "body": body}
             )
 
+        if path == "/v1/executors/register":
+            self.registered.append(json.loads(request.content)["payload"])
+            return env({"ok": True, "core_version": "0.2.0-p0", "executor_id": "py-test"})
         if path == "/v1/tasks/claim":
-            if self.tasks and not self._drained():
+            if self.tasks:
                 task = self.tasks.pop(0)
                 self.claimed.append(task)
                 return env({"ok": True, "task": task})
@@ -45,14 +51,14 @@ class FakeCore:
             return env({"ok": True, "cancel_requested": self.cancel_on_heartbeat})
         if path.endswith("/complete"):
             self.completed.append(json.loads(request.content)["payload"])
-            return env({"ok": True, "status": "done"})
+            return env({"ok": True, "status": "succeeded"})
+        if path.endswith("/cancel-execution"):
+            self.cancelled.append(json.loads(request.content)["payload"])
+            return env({"ok": True, "status": "cancelled"})
         if path.endswith("/fail"):
             self.failed.append(json.loads(request.content)["payload"])
-            return env({"ok": True, "retry_scheduled": True, "attempt_recorded": True})
+            return env({"ok": True, "status": "queued", "retry_scheduled": True})
         return env({"ok": True})
-
-    def _drained(self) -> bool:
-        return False
 
 
 def _make_runner(fake: FakeCore, handlers: dict, **cfg) -> tuple[ExecutorRunner, ExecutorConfig]:
@@ -67,12 +73,14 @@ def _make_runner(fake: FakeCore, handlers: dict, **cfg) -> tuple[ExecutorRunner,
 def _task(task_id: str, capability: str = "fake_cap") -> dict:
     return {
         "task_id": task_id,
-        "attempt_id": f"att_{task_id}",
+        "attempt_id": f"{task_id}:1",
         "capability": capability,
         "input": {"paper_id": "p1"},
         "resource_class": "default",
         "timeout_s": 60,
-        "cancel_requested": False,
+        "attempt_no": 1,
+        "fencing_token": 1,
+        "lease_token": f"lease-{task_id}",
     }
 
 
@@ -82,6 +90,22 @@ def _run_until(runner: ExecutorRunner, done: threading.Event, timeout: float = 1
     runner.drain()
     runner.wait_stopped(timeout)
     thread.join(timeout=5)
+
+
+def test_registers_before_claiming():
+    """P0：run_forever 先向 Core 注册能力声明，再进入领取循环"""
+    fake = FakeCore([])
+    runner, _ = _make_runner(fake, {"fake_cap": lambda input, cancel_check: {}})
+
+    thread = runner.run_in_thread()
+    time.sleep(0.3)
+    runner.drain()
+    runner.wait_stopped(5)
+    thread.join(timeout=5)
+
+    assert len(fake.registered) == 1
+    assert fake.registered[0]["executor_id"] == "py-test"
+    assert fake.registered[0]["capabilities"][0]["name"] == "fake_cap"
 
 
 def test_full_cycle_claim_execute_complete():
@@ -100,6 +124,7 @@ def test_full_cycle_claim_execute_complete():
     assert executed == [{"paper_id": "p1"}]
     assert len(fake.completed) == 1
     assert fake.completed[0]["result"] == {"out": "ok"}
+    assert fake.completed[0]["lease_token"] == "lease-t1"
     assert not fake.failed
 
 
@@ -117,6 +142,7 @@ def test_handler_exception_reports_fail():
     assert len(fake.failed) == 1
     assert fake.failed[0]["error_class"] == "RuntimeError"
     assert "handler exploded" in fake.failed[0]["message"]
+    assert fake.failed[0]["lease_token"] == "lease-t2"
     assert not fake.completed
 
 
@@ -132,7 +158,8 @@ def test_no_handler_capability_reports_fail():
     assert fake.failed[0]["error_class"] == "no_handler"
 
 
-def test_cancel_requested_cooperative_exit():
+def test_cancel_requested_cooperative_exit_via_cancel_execution():
+    """协作取消：cancel_requested → handler 安全点退出 → cancel-execution（非 fail）"""
     fake = FakeCore([_task("t4")], cancel_on_heartbeat=True)
     done = threading.Event()
     cancel_seen = threading.Event()
@@ -151,8 +178,10 @@ def test_cancel_requested_cooperative_exit():
     time.sleep(0.2)
 
     assert cancel_seen.is_set()
-    assert len(fake.failed) == 1
-    assert fake.failed[0]["error_class"] == "cancelled"
+    assert len(fake.cancelled) == 1
+    assert fake.cancelled[0]["lease_token"] == "lease-t4"
+    assert not fake.failed
+    assert not fake.completed
 
 
 def test_drain_stops_claiming():

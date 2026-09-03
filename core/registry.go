@@ -1,18 +1,114 @@
-// 能力注册表与内存任务存储（Stage C0 骨架；持久化 schema 在 C2 落库）。
+// P0：Executor 注册表 + durable-state 客户端。
+//
+// 架构契约（第二轮 REVIEW P0 修复）：
+//   - **权威任务状态只有一份**：Python durable store（jobs/tasks/attempts 表）。
+//     Go Core 不再持有任何任务/lease 内存态——进程重启零状态损失。
+//   - Go Core 是控制面网关：Executor 注册/认证、claim/complete/fail/heartbeat/
+//     cancel/status/reclaim 全部代理到 Python durable-state API。
+//   - Executor 只能与自身注册的能力交集 claim（防止越权领取未声明能力）。
 package core
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
 	"time"
 )
 
-// CoreVersion 是 Go Core 的版本（C0 骨架阶段手工递增）。
-const CoreVersion = "0.1.0-c0"
+// CoreVersion 是 Go Core 的版本。
+const CoreVersion = "0.2.0-p0"
 
-// Executor 是一个已注册的执行载体。
+// StateClient 是 Python durable-state API（/internal/durable/*）的 HTTP 客户端。
+type StateClient struct {
+	BaseURL string
+	Token   string
+	HTTP    *http.Client
+}
+
+func NewStateClient(baseURL, token string) *StateClient {
+	return &StateClient{
+		BaseURL: baseURL,
+		Token:   token,
+		HTTP:    &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// Post 调用 state API；非 2xx 返回 error（含状态码与响应体摘要）。
+func (c *StateClient) Post(path string, in any, out any) error {
+	body, err := json.Marshal(in)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Token != "" {
+		req.Header.Set("X-Internal-Token", c.Token)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 {
+		return &StateError{StatusCode: resp.StatusCode, Body: string(raw)}
+	}
+	if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *StateClient) Get(path string, out any) error {
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	if c.Token != "" {
+		req.Header.Set("X-Internal-Token", c.Token)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 {
+		return &StateError{StatusCode: resp.StatusCode, Body: string(raw)}
+	}
+	if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return nil
+}
+
+// StateError 表示 durable-state API 返回了非 2xx。
+type StateError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *StateError) Error() string {
+	return fmt.Sprintf("state api %d: %s", e.StatusCode, e.Body)
+}
+
+// Executor 是一个已注册的执行载体（内存态——重启后 Executor 重新注册即可）。
 type Executor struct {
 	ID           string
 	Capabilities []Capability
@@ -20,56 +116,21 @@ type Executor struct {
 	LastSeen     time.Time
 }
 
-// internalTask 是 Core 侧的任务记录（内存态）。
-type internalTask struct {
-	Task
-	Status          string
-	ExecutorID      string // 当前 lease 持有者
-	LeaseExpires    time.Time
-	Result          map[string]any
-	FailCount       int
-	AttemptCount    int
-	LastError       string
-	CancelRequested bool
-	CreatedAt       time.Time
+// ExecutorRegistry 只管 Executor 身份与能力声明（无任务态）。
+type ExecutorRegistry struct {
+	mu        sync.Mutex
+	executors map[string]*Executor
 }
 
-// Registry 持有 Executor、能力与任务的内存态。所有方法并发安全。
-type Registry struct {
-	mu         sync.Mutex
-	executors  map[string]*Executor
-	caps       map[string]Capability // capability name → 声明
-	tasks      map[string]*internalTask
-	queue      []string // FIFO 的 task_id（C0 简化；优先级/依赖在 C6）
-	LeaseBaseS int      // lease 基础时长（秒）
-}
-
-// NewRegistry 创建空的注册表。
-func NewRegistry() *Registry {
-	return &Registry{
-		executors:  map[string]*Executor{},
-		caps:       map[string]Capability{},
-		tasks:      map[string]*internalTask{},
-		LeaseBaseS: 600,
-	}
-}
-
-func newID(prefix string) string {
-	b := make([]byte, 12)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
-	}
-	return prefix + "_" + hex.EncodeToString(b)
+func NewExecutorRegistry() *ExecutorRegistry {
+	return &ExecutorRegistry{executors: map[string]*Executor{}}
 }
 
 // RegisterExecutor 登记 Executor 及其能力（重复注册覆盖能力声明）。
-func (r *Registry) RegisterExecutor(id string, caps []Capability) {
+func (r *ExecutorRegistry) RegisterExecutor(id string, caps []Capability) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now().UTC()
-	for _, c := range caps {
-		r.caps[c.Name] = c
-	}
 	if e, ok := r.executors[id]; ok {
 		e.Capabilities = caps
 		e.LastSeen = now
@@ -79,164 +140,53 @@ func (r *Registry) RegisterExecutor(id string, caps []Capability) {
 }
 
 // HasExecutor 报告 Executor 是否已注册。
-func (r *Registry) HasExecutor(id string) bool {
+func (r *ExecutorRegistry) HasExecutor(id string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, ok := r.executors[id]
 	return ok
 }
 
-// SubmitTask 入队一个新任务（fake Executor 测试与 C6 调度器都会用）。
-func (r *Registry) SubmitTask(capability string, input map[string]any, resourceClass string, timeoutS int) string {
+// Touch 更新 Executor 的 LastSeen。
+func (r *ExecutorRegistry) Touch(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	id := newID("task")
-	if timeoutS <= 0 {
-		timeoutS = 600
-	}
-	if resourceClass == "" {
-		resourceClass = "default"
-	}
-	r.tasks[id] = &internalTask{
-		Task:      Task{TaskID: id, Capability: capability, Input: input, ResourceClass: resourceClass, TimeoutS: timeoutS},
-		Status:    TaskQueued,
-		CreatedAt: time.Now().UTC(),
-	}
-	r.queue = append(r.queue, id)
-	return id
-}
-
-// ClaimTask 为 Executor 领取一个与其能力匹配的排队任务并签发 lease。
-// 无匹配任务返回 nil。
-func (r *Registry) ClaimTask(executorID string, wanted []string) *Task {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, ok := r.executors[executorID]; !ok {
-		return nil // 未注册的 Executor 不能领取
-	}
-	want := map[string]bool{}
-	for _, w := range wanted {
-		want[w] = true
-	}
-	now := time.Now().UTC()
-	for i, tid := range r.queue {
-		t := r.tasks[tid]
-		if t.Status != TaskQueued || !want[t.Capability] {
-			continue
-		}
-		// 出队并签发 lease
-		r.queue = append(r.queue[:i], r.queue[i+1:]...)
-		t.Status = TaskLeased
-		t.ExecutorID = executorID
-		t.AttemptID = newID("att")
-		t.LeaseExpires = now.Add(time.Duration(r.LeaseBaseS) * time.Second)
-		task := t.Task
-		task.AttemptID = t.AttemptID
-		return &task
-	}
-	return nil
-}
-
-// Heartbeat 续约 lease 并回传取消请求。任务不存在/lease 不属于该 Executor → false。
-func (r *Registry) Heartbeat(executorID, taskID, attemptID string) (bool, bool, time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	t, ok := r.tasks[taskID]
-	if !ok || t.ExecutorID != executorID || t.AttemptID != attemptID {
-		return false, false, time.Time{}
-	}
-	if e, ok := r.executors[executorID]; ok {
+	if e, ok := r.executors[id]; ok {
 		e.LastSeen = time.Now().UTC()
 	}
-	t.LeaseExpires = time.Now().UTC().Add(time.Duration(r.LeaseBaseS) * time.Second)
-	return true, t.CancelRequested, t.LeaseExpires
 }
 
-// CompleteTask 校验 lease 持有者后提交结果（fencing 的最简形态：executor + attempt 必须匹配）。
-func (r *Registry) CompleteTask(executorID, taskID, attemptID string, result map[string]any) (bool, string) {
+// DeclaredCapabilities 返回 Executor 注册时声明的能力名集合。
+func (r *ExecutorRegistry) DeclaredCapabilities(id string) map[string]bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	t, ok := r.tasks[taskID]
-	if !ok || t.ExecutorID != executorID || t.AttemptID != attemptID {
-		return false, "unknown_task"
-	}
-	if t.Status == TaskCanceled {
-		return false, "cancelled"
-	}
-	t.Status = TaskDone
-	t.Result = result
-	return true, TaskDone
-}
-
-// FailTask 记录失败；C0 一律重新入队（backoff/死信在 C8）。
-func (r *Registry) FailTask(executorID, taskID, attemptID string) (bool, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	t, ok := r.tasks[taskID]
-	if !ok || t.ExecutorID != executorID || t.AttemptID != attemptID {
-		return false, false
-	}
-	t.FailCount++
-	t.ExecutorID = ""
-	t.Status = TaskQueued
-	t.AttemptID = ""
-	r.queue = append(r.queue, taskID)
-	return true, true
-}
-
-// CancelTask 标记取消：未领取直接取消；已领取标记协作取消（Executor 经 heartbeat 感知）。
-func (r *Registry) CancelTask(taskID, _ string) (bool, string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	t, ok := r.tasks[taskID]
+	e, ok := r.executors[id]
+	out := map[string]bool{}
 	if !ok {
-		return false, ""
+		return out
 	}
-	switch t.Status {
-	case TaskQueued:
-		t.Status = TaskCanceled
-		return true, TaskCanceled
-	case TaskLeased:
-		t.CancelRequested = true
-		return true, TaskLeased
-	default:
-		return false, t.Status
+	for _, c := range e.Capabilities {
+		out[c.Name] = true
 	}
+	return out
+}
+
+// Intersect 返回 wanted ∩ declared（claim 越权防护）。
+func Intersect(wanted []string, declared map[string]bool) []string {
+	out := make([]string, 0, len(wanted))
+	seen := map[string]bool{}
+	for _, w := range wanted {
+		if declared[w] && !seen[w] {
+			out = append(out, w)
+			seen[w] = true
+		}
+	}
+	return out
 }
 
 // ExecutorCount 返回已注册 Executor 数（健康检查/测试用）。
-func (r *Registry) ExecutorCount() int {
+func (r *ExecutorRegistry) ExecutorCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.executors)
-}
-
-// TaskStatus 返回观察面快照（状态/计数/结果）。
-func (r *Registry) TaskStatus(taskID string) (internalTask, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	t, ok := r.tasks[taskID]
-	if !ok {
-		return internalTask{}, false
-	}
-	return *t, true
-}
-
-// ReclaimExpiredLeases 回收过期 lease：leased 任务租期已过 → 回队列（C8 扩展退避）。
-func (r *Registry) ReclaimExpiredLeases(now time.Time) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	reclaimed := 0
-	for _, t := range r.tasks {
-		if t.Status == TaskLeased && !t.LeaseExpires.IsZero() && t.LeaseExpires.Before(now) {
-			t.Status = TaskQueued
-			t.ExecutorID = ""
-			t.AttemptID = ""
-			t.FailCount++
-			t.AttemptCount++
-			r.queue = append(r.queue, t.TaskID)
-			reclaimed++
-		}
-	}
-	return reclaimed
 }

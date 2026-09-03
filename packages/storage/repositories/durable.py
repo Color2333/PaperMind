@@ -16,7 +16,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from packages.domain.enums import (
     JobStatus,
@@ -31,18 +31,34 @@ if TYPE_CHECKING:
 from packages.storage.models import (
     DurableTask,
     Job,
+    SystemFlag,
     TaskArtifact,
     TaskAttempt,
 )
 
 _LEASE_BASE_S = 600
 
-# 队列暂停（C10；进程内标志——跨进程 pause 由 Go Core 接管）
-queue_paused = False
+_QUEUE_PAUSED_FLAG = "queue_paused"
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _queue_paused(session: Session) -> bool:
+    """跨进程 pause（P0 修复）：读持久化 system_flags，任何进程 claim 前一致可见"""
+    flag = session.get(SystemFlag, _QUEUE_PAUSED_FLAG)
+    return flag is not None and flag.value == "1"
+
+
+def set_queue_paused(session: Session, paused: bool) -> None:
+    flag = session.get(SystemFlag, _QUEUE_PAUSED_FLAG)
+    if flag is None:
+        flag = SystemFlag(key=_QUEUE_PAUSED_FLAG, value="1" if paused else "0")
+        session.add(flag)
+    else:
+        flag.value = "1" if paused else "0"
+    session.flush()
 
 
 def _lease_expiry() -> datetime:
@@ -139,7 +155,10 @@ class JobRepository:
         now = _utcnow()
         job.finished_at = None
         if active > 0:
-            job.status = JobStatus.running
+            # cancelling 是粘性过程态：取消中的 Job 不因子任务重入队翻回 running
+            job.status = (
+                JobStatus.cancelling if job.status is JobStatus.cancelling else JobStatus.running
+            )
             return job
         # 无活跃 Task：全部到达终态
         if terminal_bad == 0 and cancelled == 0:
@@ -240,14 +259,52 @@ class TaskRepository:
         task.external_ref = external_ref
         self.session.flush()
 
+    def _lease_task(
+        self, task_id: str, executor_id: str, timeout_s: int | None
+    ) -> DurableTask | None:
+        """原子领取（P0 修复）：CAS `queued → leased`，并发 claim 只有一个赢家。
+
+        SQLite 无行锁语义（FOR UPDATE 被方言忽略）——多 Executor 并发领取时
+        读-改-写会双签 lease；条件 UPDATE 让输家 rowcount=0。
+        """
+        token = secrets.token_hex(16)
+        res = self.session.execute(
+            update(DurableTask)
+            .where(DurableTask.id == task_id, DurableTask.status == TaskStatus.queued)
+            .values(
+                status=TaskStatus.leased,
+                lease_token=token,
+                lease_expires_at=_utcnow() + timedelta(seconds=timeout_s or _LEASE_BASE_S),
+                attempt_count=DurableTask.attempt_count + 1,
+            )
+        )
+        if res.rowcount != 1:
+            # 被并发 claim 抢走——丢弃本事务的读快照，回到干净状态
+            self.session.rollback()
+            return None
+        self.session.flush()
+        self.session.expire_all()  # 惰性缓存失效——重新读出最新 attempt_count
+        task = self.get(task_id)
+        attempt = TaskAttempt(
+            task_id=task.id,
+            attempt_no=task.attempt_count,
+            executor_id=executor_id,
+            fencing_token=task.attempt_count,
+            status=TaskAttemptStatus.running,
+        )
+        self.session.add(attempt)
+        self.session.flush()
+        JobRepository(self.session).set_status(task.job_id, JobStatus.running)
+        return task
+
     def claim_task(
         self, *, executor_id: str, capabilities: list[str], resource_class: str | None = None
     ) -> DurableTask | None:
         """领取一个匹配能力且依赖已满足的 queued Task；签发 lease + attempt + fencing。
 
-        PG 用 skip_locked 行锁；SQLite（无行锁语义）靠单 Dispatcher 串行。
+        PG 用 skip_locked 行锁 + CAS；SQLite 靠条件 UPDATE CAS 原子领取（设计③ §5）。
         """
-        if queue_paused:
+        if _queue_paused(self.session):
             return None
         wanted = set(capabilities)
         q = (
@@ -274,57 +331,31 @@ class TaskRepository:
             )
             depends_done[jid] = succeeded
 
-        now = _utcnow()
         for task in candidates:
             if task.capability not in wanted:
                 continue
             deps = set(task.depends_on or [])
             if deps and not deps <= depends_done.get(task.job_id, set()):
                 continue
-            # 签发 lease + fencing token（= attempt_count+1）
-            task.status = TaskStatus.leased
-            task.attempt_count += 1
-            task.lease_token = secrets.token_hex(16)
-            task.lease_expires_at = now + timedelta(seconds=task.timeout_s or _LEASE_BASE_S)
-            attempt = TaskAttempt(
-                task_id=task.id,
-                attempt_no=task.attempt_count,
-                executor_id=executor_id,
-                fencing_token=task.attempt_count,
-                status=TaskAttemptStatus.running,
-            )
-            self.session.add(attempt)
-            self.session.flush()
-            # Job 进入 running
-            JobRepository(self.session).set_status(task.job_id, JobStatus.running)
-            return task
+            claimed = self._lease_task(task.id, executor_id, task.timeout_s)
+            if claimed is not None:
+                return claimed
         return None
 
     def claim_task_by_id(self, *, task_id: str, executor_id: str) -> DurableTask:
         """领取指定 Task（fn 与 Task 绑定的入口用此语义，不做工作窃取）。
 
-        仅 queued 可领取；签发 lease + attempt + fencing（复用 claim_task 的签发逻辑）。
+        仅 queued 可领取；CAS 原子领取（并发下只有一个赢家），否则 ConflictError。
         """
-        if queue_paused:
+        if _queue_paused(self.session):
             raise ConflictError("队列已暂停")
         task = self.get(task_id)
         if task.status is not TaskStatus.queued:
             raise ConflictError(f"Task {task_id} 状态 {task.status} 不可领取")
-        task.status = TaskStatus.leased
-        task.attempt_count += 1
-        task.lease_token = secrets.token_hex(16)
-        task.lease_expires_at = _utcnow() + timedelta(seconds=task.timeout_s or _LEASE_BASE_S)
-        attempt = TaskAttempt(
-            task_id=task.id,
-            attempt_no=task.attempt_count,
-            executor_id=executor_id,
-            fencing_token=task.attempt_count,
-            status=TaskAttemptStatus.running,
-        )
-        self.session.add(attempt)
-        self.session.flush()
-        JobRepository(self.session).set_status(task.job_id, JobStatus.running)
-        return task
+        claimed = self._lease_task(task.id, executor_id, task.timeout_s)
+        if claimed is None:
+            raise ConflictError(f"Task {task_id} 已被并发领取")
+        return claimed
 
     def _check_lease(self, task: DurableTask, executor_id: str, lease_token: str) -> None:
         """fencing 校验：lease 持有者 + executor 身份 + 租期（P1 修复）"""
@@ -431,18 +462,39 @@ class TaskRepository:
         for task in rows:
             task.lease_token = None
             task.lease_expires_at = None
-            if task.attempt_count >= task.max_attempts:
+            # 遗留 running Attempt 收敛为失败（观察面不得永远 running）
+            stale_attempt = self._running_attempt(task.id, task.attempt_count)
+            # 取消中的 Job：过期 lease 不重入队，直接收敛为 cancelled
+            job_status = JobRepository(self.session).get(task.job_id).status
+            if job_status is JobStatus.cancelling:
+                task.status = TaskStatus.cancelled
+                if stale_attempt is not None:
+                    stale_attempt.status = TaskAttemptStatus.cancelled
+                    stale_attempt.finished_at = now
+                outcomes[task.id] = "cancelled"
+            elif task.attempt_count >= task.max_attempts:
                 task.status = TaskStatus.dead_letter
+                if stale_attempt is not None:
+                    stale_attempt.status = TaskAttemptStatus.failed
+                    stale_attempt.error_class = "lease_expired"
+                    stale_attempt.finished_at = now
                 outcomes[task.id] = "dead_letter"
             else:
                 task.status = TaskStatus.queued
+                if stale_attempt is not None:
+                    stale_attempt.status = TaskAttemptStatus.failed
+                    stale_attempt.error_class = "lease_expired"
+                    stale_attempt.finished_at = now
                 outcomes[task.id] = "requeued"
             self.session.flush()
             JobRepository(self.session).recompute_job_status(task.job_id)
         return outcomes
 
     def cancel_job(self, job_id: str) -> dict[str, int]:
-        """取消 Job：未领取 Task 直接取消，已领取标记协作取消（经 heartbeat 探测）"""
+        """取消 Job：未领取 Task 直接取消；已领取保持 lease 有效并置 Job=cancelling，
+        Executor 经 heartbeat 探测 cancel_requested 后在安全点退出（cancel-execution 回执）。
+        （不缩短 lease——lease 失效会让 heartbeat 走拒绝分支，取消意图无法传达）
+        """
         job = JobRepository(self.session).get(job_id)
         job.status = JobStatus.cancelling
         self.session.flush()
@@ -453,11 +505,31 @@ class TaskRepository:
                 t.status = TaskStatus.cancelled
                 counts["cancelled"] += 1
             elif t.status in (TaskStatus.leased, TaskStatus.running):
-                t.lease_expires_at = _utcnow()  # 触发过期→Reconciler 收敛
                 counts["cancel_requested"] += 1
         self.session.flush()
         JobRepository(self.session).recompute_job_status(job_id)
         return counts
+
+    def cancel_task_execution(
+        self, *, task_id: str, executor_id: str, lease_token: str
+    ) -> DurableTask:
+        """Executor 协作取消的完成回执：安全点退出后把 Task/Attempt 标记 cancelled。
+
+        与 fail（重入队/dead_letter）不同——取消不是失败，不重试。
+        """
+        task = self.get(task_id)
+        self._check_lease(task, executor_id, lease_token)
+        fencing = task.attempt_count
+        task.status = TaskStatus.cancelled
+        task.lease_token = None
+        task.lease_expires_at = None
+        attempt = self._running_attempt(task_id, fencing)
+        if attempt is not None:
+            attempt.status = TaskAttemptStatus.cancelled
+            attempt.finished_at = _utcnow()
+        self.session.flush()
+        JobRepository(self.session).recompute_job_status(task.job_id)
+        return task
 
     def retry_job(self, job_id: str) -> int:
         """重试 Job：dead_letter/failed Task 重置回 queued（attempt 保留）"""
@@ -488,18 +560,21 @@ class TaskRepository:
 
     def heartbeat_lease(self, *, task_id: str, lease_token: str) -> tuple[bool, bool]:
         """续约 lease；返回 (ok, cancel_requested)。
-        P1 修复：过期 lease 不续约；cancel_job 设 cancelling 时返回 cancel_requested=True。"""
+
+        - P1 修复：过期 lease 不续约（交给 Reconciler）；
+        - P1 修复：Job 处于 cancelling 时返回 cancel_requested=True——即使 lease 已
+          过期也要把取消意图传达给 Executor（安全点退出），只是不允许续约。
+        """
         task = self.get(task_id)
         if task.lease_token != lease_token:
             return False, False
-        # P1 修复：lease 已过期则不续约（交给 Reconciler）
-        if task.lease_expires_at and task.lease_expires_at.replace(tzinfo=UTC) < _utcnow():
-            return False, False
-        task.lease_expires_at = _utcnow() + timedelta(seconds=task.timeout_s or _LEASE_BASE_S)
-        self.session.flush()
-        # P1 修复：Job 处于 cancelling 时返回 cancel_requested=True
         job = JobRepository(self.session).get(task.job_id)
         cancel_requested = job.status is JobStatus.cancelling
+        # P1 修复：lease 已过期则不续约（迟到心跳拿不回 lease）
+        if task.lease_expires_at and task.lease_expires_at.replace(tzinfo=UTC) < _utcnow():
+            return False, cancel_requested
+        task.lease_expires_at = _utcnow() + timedelta(seconds=task.timeout_s or _LEASE_BASE_S)
+        self.session.flush()
         return True, cancel_requested
 
 
@@ -542,16 +617,10 @@ class ArtifactRepository:
         )
 
 
-def pause_queue() -> None:
-    """暂停队列（进程内）：claim_task 返回 None 直到 resume"""
-    global queue_paused
-    queue_paused = True
+def pause_queue(session: Session) -> None:
+    """暂停队列（持久化，跨进程生效）"""
+    set_queue_paused(session, True)
 
 
-def resume_queue() -> None:
-    global queue_paused
-    queue_paused = False
-
-
-def is_queue_paused() -> bool:
-    return queue_paused
+def resume_queue(session: Session) -> None:
+    set_queue_paused(session, False)

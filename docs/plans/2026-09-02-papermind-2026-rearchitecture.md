@@ -1,8 +1,10 @@
 # PaperMind 2026 形态与重构设计
 
-状态：**设计基线，待实施**
+状态：**设计基线，实施中**
 
 日期：2026-09-02
+
+更新：2026-09-03（第五版，新增精简与收敛双重完成门）
 
 适用范围：个人阿里云服务、可选完整 Web、公开 Demo、本地 PM UI、PM Research Terminal、远程 MCP 客户端
 
@@ -17,6 +19,8 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 现有 Web 不整体删除，而是保留为可选的 Full Web 模块，并逐步适配新的 Research State。与此同时，`pm ui` 在本地启动一个随 CLI 分发的轻量浏览器 UI，通过 loopback bridge 和公网 HTTPS 连接远程 Core；它只保留 PDF/证据对照、Claim 工作台、Research Diff 和任务监控等适合图形界面的高价值交互，不携带本地业务后端或数据库。
 
 重构先从现有实现提炼稳定的 application command/query 与 presentation contract，随后直接以 **Go 建立新的权威控制核心**，再让 Full Web、Local UI、PM Research Terminal 和 MCP 复用它。长流程不再由某个 Worker 一次性包办，而被表达为 `Job → Task → Attempt → Artifact/Event`：Go Core 拥有研究状态、权限、任务状态机、调度、幂等和事件提交；Python 退化为可替换的无状态研究计算 Executor，只负责 PDF、LLM、embedding、OCR 与 graph 等依赖 Python 生态的工作。本轮不逐行重写全部 Python 算法，但 Go control plane 是重构前提，不再是末期可选项。
+
+**精简是本轮重构的一等目标和完成条件。**系统不会以“新旧两套都能跑”作为兼容成功：新路径落地后，对应旧状态源、执行路径、CLI 命令、页面业务编排、依赖和常驻组件必须退出、归档或被明确隔离。功能完成与旧路径退出构成双重验收门，避免重构最终只是给旧系统再叠加一套新系统。
 
 目标结果：**个人服务可长期稳定运行，公开 Demo 能在一分钟内展示 PaperMind 如何把论文转化为可验证、可演进的研究认知；本地电脑无需安装完整后端，即可通过 `pm`、`pm ui` 或 MCP 使用同一远程研究状态。**
 
@@ -43,6 +47,7 @@ PaperMind 在 2026 年不应继续以“功能不断增加的 AI 论文网站”
 - Scheduler 只创建 Job，Workflow Planner 展开 Task，Dispatcher 分派，Executor 每次执行一个 Task Attempt，Reconciler 负责 lease 过期与恢复。
 - PaperMind Core 的权威控制面使用 Go 实现；Python 不再承载公网 API、任务事实状态、调度或核心领域写入。
 - Python 仅作为版本化 Executor，通过受控协议领取 Task、续约 lease、提交 Artifact/结果，不直连并修改 Core 领域表。
+- 精简是完成条件：新能力通过验收后，旧权威路径必须删除、归档或转为有明确退役日期的只读兼容层，不允许无限期双轨运行。
 
 ### 1.2 明确不做
 
@@ -518,6 +523,23 @@ PaperMind 不选择“AI Zotero++”作为终局，也不直接跳到不受控�
 
 自动科研能力只有建立在可验证 Evidence、持久化 Research State 和权限边界之上，才允许逐步增加。
 
+### 4.10 精简优先与双重完成门
+
+PaperMind 的精简对象不是有价值的能力，而是重复机制、默认复杂度、常驻资源和无法解释的兼容层。每个迁移目标同时满足以下两项才算完成：
+
+1. **功能门：**新路径具备测试、观察、恢复和回滚证据。
+2. **退出门：**旧路径已删除、归档、隔离，或具有明确负责人、截止时间和只读边界。
+
+具体约束：
+
+- 任务状态只能有一个权威来源；不得让 Go 队列、`TaskTracker`、`batch_jobs` 和心跳文件长期并存为事实源。
+- HTTP、MCP、Terminal 与 UI 只保留 application capability 这一套业务入口；adapter 只转换协议和展示。
+- Pi Terminal 对齐一个命令即退役 Python CLI 对应命令，最终只发布一个 `pm`。
+- Local UI、Full Web 与 Demo 共享 typed client、presentation model 和领域组件，不复制业务状态机。
+- Core、API、Executor、Terminal 和 Web 使用独立最小依赖与构建产物；`none` profile 不携带未启用界面。
+- 兼容桥默认是临时资产，必须记录退役条件；没有退役计划的兼容层视为未完成。
+- 精简效果以常驻进程数、RSS、冷启动、镜像/安装体积、默认依赖数、同一 capability 实现入口数和兼容桥数量衡量，不能只用源码行数证明。
+
 ## 5. 目标后端边界
 
 ### 5.1 Application 层是唯一能力入口
@@ -934,6 +956,19 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 
 **出口条件：**Go Core 已是权威控制面；存储与资源配置有测量证据和独立回滚路径。
 
+### Phase 8：精简与收敛门
+
+Phase 8 是贯穿 Phase 1–7 的持续工作，末期只进行统一审计，不把删除旧路径全部拖到最后：
+
+- 收敛为单一 durable task system、单一 application capability 入口和单一 `pm` 产品入口。
+- 退役旧 `TaskTracker`、`batch_jobs` 权威状态、直接运行研究逻辑的 scheduler/worker 路径和 Python CLI 对应命令。
+- 收敛 Local UI、Full Web、Demo 的 typed client、presentation model 与领域组件。
+- 按 Core/API/Executor/Terminal/Web 切分最小依赖、镜像和部署 profile。
+- 删除或归档死代码、重复 schema、过期兼容桥和失真文档。
+- 对比 Phase 0/7 数据，记录常驻进程数、RSS、冷启动、镜像与安装体积、默认依赖数和重复实现数量。
+
+**出口条件：**功能门与退出门同时满足；默认部署没有重复权威状态和无意义常驻组件；关闭 Web 或某类 Executor 时，对应依赖与产物不会被携带；所有保留兼容层都有明确退役记录。
+
 ## 9. 验收标准
 
 ### 架构
@@ -951,6 +986,17 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 - SQLite profile 不启动 PostgreSQL；PostgreSQL profile 不携带无效 SQLite 假设。
 - Full Web 不是必需部署单元，但可通过部署 profile 完整保留。
 - 所有新 capability 都声明并验证 Terminal、Local UI、Full Web、MCP 与 JSON 的 surface contract。
+
+### 精简与收敛
+
+- 同一个 Job/Task/Attempt 只有一个权威状态源，不再双写到进程内 tracker 或旧队列表。
+- 同一个 capability 只有一个 application handler；其他界面全部是薄 adapter。
+- 生产默认路径不存在 scheduler、batch consumer 或 API thread 直接执行长任务的旁路。
+- 对外只发行一个 `pm`；Python 过渡 CLI 的已对齐命令已经退役。
+- Local UI、Full Web 与 Demo 不复制 Claim/Evidence/Job/权限业务逻辑。
+- `full`、`demo`、`none` 与各 Executor resource class 只安装和携带自身所需依赖。
+- 所有兼容桥和 deprecated 模块都有可检查的退役状态，不存在无限期双轨。
+- Phase 0 与最终状态具有进程数、RSS、冷启动、镜像/安装体积、依赖数和重复入口数的量化对照。
 
 ### PM Research Terminal
 
@@ -1009,6 +1055,7 @@ Demo 页面只需要围绕这三段旅程组织。Research Pulse、Ask PaperMind
 ## 10. 风险与约束
 
 - **重构范围失控：**先保持外部行为兼容，按 adapter 替换内部调用，不同时重做 UI 和领域模型。
+- **新旧系统长期双轨：**每个目标同时设置功能门和退出门；兼容桥必须有退役条件与截止点，旧权威路径未退出时不得宣布阶段完成。
 - **双实例仍共享秘密：**Demo 使用独立模型 key；最低限度也必须使用独立 scope 和硬预算。
 - **第三方登录演化成账号产品：**只保存最小身份映射和 TTL 数据；不建设资料页、社交关系、团队或计费。
 - **身份提供方锁定：**PaperMind session 与 provider token 分离，以统一 identity adapter 支持 GitHub 首发、微信后续。
@@ -1059,6 +1106,8 @@ SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence
 ```
 
 第一个切片不涉及长任务，能验证接口边界；随后再迁移 `StartSkim → durable job → Claim/Evidence draft → review/confirm → diff/export`，验证完整研究执行链。
+
+每个切片迁移完成后立即执行对应精简动作：删除旧调用入口、重复状态写入和过渡测试；全部阶段完成后再按 Phase 8 做统一依赖、产物、部署与废弃物审计。重构的最终结果必须同时证明“新路径可用”和“旧复杂度已经退出”。
 
 ## Sources
 

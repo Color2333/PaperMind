@@ -1,28 +1,51 @@
-// PaperMind Go Core 入口（P1 修复：独立 main package）。
+// PaperMind Go Core 入口（P0：durable-state 网关模式）。
 //
-// 默认绑定 127.0.0.1:8081（P1 修复：不暴露到所有网卡）。
-// 生产部署通过反向代理（HTTPS）暴露；CORE_ADDR 可覆盖。
+// 环境变量：
+//
+//	CORE_ADDR          监听地址（默认 127.0.0.1:8081，不绑所有网卡）
+//	CORE_TOKEN         Executor/控制面 Bearer token（空 = 不校验）
+//	STATE_ADDR         Python durable-state API 地址（默认 127.0.0.1:8000）
+//	STATE_TOKEN        X-Internal-Token（与 settings.durable_state_token 一致）
+//	RECONCILE_INTERVAL 过期 lease 回收周期（默认 15s）
+//	RECLAIM_BACKOFF_S  lease 过期后的额外宽限（默认 60s）
 package main
 
 import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/Color2333/PaperMind/core"
 )
 
-func main() {
-	addr := os.Getenv("CORE_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8081" // P1 修复：默认 loopback，不绑 0.0.0.0
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	// P1 修复：可选静态 token 校验
-	token := os.Getenv("CORE_TOKEN")
+	return def
+}
 
-	registry := core.NewRegistry()
-	server := core.NewServer(registry)
+func main() {
+	addr := envOr("CORE_ADDR", "127.0.0.1:8081")
+	stateAddr := envOr("STATE_ADDR", "http://127.0.0.1:8000")
+	token := os.Getenv("CORE_TOKEN")
+	stateToken := os.Getenv("STATE_TOKEN")
+
+	reconcileInterval := 15 * time.Second
+	if v, err := strconv.Atoi(envOr("RECONCILE_INTERVAL_S", "15")); err == nil && v > 0 {
+		reconcileInterval = time.Duration(v) * time.Second
+	}
+	reclaimBackoff := 60
+	if v, err := strconv.Atoi(envOr("RECLAIM_BACKOFF_S", "60")); err == nil && v > 0 {
+		reclaimBackoff = v
+	}
+
+	registry := core.NewExecutorRegistry()
+	state := core.NewStateClient(stateAddr, stateToken)
+	server := core.NewServer(registry, state)
+	server.StartReconciler(reconcileInterval, reclaimBackoff, make(chan struct{}))
 
 	var handler http.Handler = server.Handler()
 	if token != "" {
@@ -34,6 +57,6 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	log.Printf("PaperMind Go Core (%s) listening on %s", core.CoreVersion, addr)
+	log.Printf("PaperMind Go Core (%s) listening on %s [state=%s]", core.CoreVersion, addr, stateAddr)
 	log.Fatal(srv.ListenAndServe())
 }

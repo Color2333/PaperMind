@@ -100,3 +100,6 @@ line-ending = "auto"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "p0_closed_loop: P0 全链路闭环（多进程 + Go 工具链，较慢）",
+]

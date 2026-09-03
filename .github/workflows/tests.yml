@@ -22,11 +22,24 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      # P0 闭环测试需要 Go 工具链构建 core binary（无 Go 时自动 skip）
+      - name: Setup Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
       - name: Install dependencies
         run: pip install -e ".[dev,llm,pdf]"
 
       - name: Run pytest
         run: pytest --tb=short
+
+      # P0 闭环 + 竞态敏感用例重复运行（防 flaky；每遍独立多进程编排）
+      - name: P0 closed-loop repeat runs
+        run: |
+          for i in 1 2; do
+            pytest tests/test_p0_closed_loop.py tests/test_stage_c3.py --tb=short
+          done
 
   go-core:
     # Stage C0：Go Core（Executor Protocol）测试

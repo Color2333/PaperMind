@@ -1,43 +1,48 @@
-// Go Core 的版本化 HTTPS API（Stage C0 骨架）。
+// Go Core 的版本化 API（P0：控制面网关）。
 //
-// 端点：
+// 端点（Executor↔Core，统一信封）：
 //
-//	GET  /health                              健康检查（版本化）
-//	POST /v1/executors/register               Executor 注册（能力声明）
-//	POST /v1/tasks/claim                      领取任务
-//	POST /v1/tasks/{id}/heartbeat             续约 lease + 取消探测
-//	POST /v1/tasks/{id}/complete              提交结果 proposal
-//	POST /v1/tasks/{id}/fail                  上报失败
-//	POST /v1/tasks/{id}/cancel                取消任务（控制面）
+//	GET  /health                    健康检查（版本化）
+//	POST /v1/executors/register     Executor 注册（能力声明）
+//	POST /v1/tasks/claim            领取任务（代理 durable store）
+//	POST /v1/tasks/{id}/heartbeat   续约 lease + 取消探测
+//	POST /v1/tasks/{id}/complete    提交结果 proposal
+//	POST /v1/tasks/{id}/fail        上报失败
+//	POST /v1/tasks/{id}/cancel      取消任务（控制面）
+//	GET  /v1/tasks/{id}/status      观察面状态（durable store 快照）
 //
-// 所有消息走统一信封（protocol.go）：schema_version + correlation_id。
+// 任务/lease 状态全部代理到 Python durable-state API（/internal/durable/*）；
+// Go Core 自身零任务内存态（P0：重启零状态损失）。
 package core
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"runtime"
 	"strings"
 	"time"
 )
 
-// Server 把 Registry 暴露为 HTTP API。
+// Server 把 durable-state API 暴露为 Executor Protocol。
 type Server struct {
-	Registry *Registry
+	Registry *ExecutorRegistry
+	State    *StateClient
 	mux      *http.ServeMux
 }
 
 // NewServer 创建带全部路由的 Server。
-func NewServer(reg *Registry) *Server {
-	s := &Server{Registry: reg, mux: http.NewServeMux()}
+func NewServer(reg *ExecutorRegistry, state *StateClient) *Server {
+	s := &Server{Registry: reg, State: state, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /v1/executors/register", s.enveloped(s.handleRegister))
 	s.mux.HandleFunc("POST /v1/tasks/claim", s.enveloped(s.handleClaim))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/heartbeat", s.enveloped(s.handleHeartbeat))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/complete", s.enveloped(s.handleComplete))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/fail", s.enveloped(s.handleFail))
+	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel-execution", s.enveloped(s.handleCancelExecution))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.enveloped(s.handleCancel))
-	s.mux.HandleFunc("POST /v1/tasks/submit", s.enveloped(s.handleSubmitTask))
 	s.mux.HandleFunc("GET /v1/tasks/{id}/status", s.handleTaskStatusGET)
 	return s
 }
@@ -87,6 +92,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		Status:      "ok",
 		CoreVersion: CoreVersion,
 		GoVersion:   runtime.Version(),
+		StateURL:    s.State.BaseURL,
 	})
 }
 
@@ -111,11 +117,38 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request, cid string,
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_claim_request"})
 		return
 	}
-	task := s.Registry.ClaimTask(req.ExecutorID, req.Capabilities)
+	// P1 修复：未注册的 Executor 不能领取；claim 能力必须与注册声明取交集
+	if !s.Registry.HasExecutor(req.ExecutorID) {
+		writeJSON(w, http.StatusForbidden, cid, map[string]any{"ok": false, "error": "executor_not_registered"})
+		return
+	}
+	declared := s.Registry.DeclaredCapabilities(req.ExecutorID)
+	wanted := Intersect(req.Capabilities, declared)
+	if len(wanted) == 0 {
+		writeJSON(w, http.StatusOK, cid, ClaimResponse{
+			Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:       true,
+			Task:     nil,
+		})
+		return
+	}
+
+	var out struct {
+		Task *Task `json:"task"`
+	}
+	err := s.State.Post("/internal/durable/tasks/claim", map[string]any{
+		"executor_id":  req.ExecutorID,
+		"capabilities": wanted,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	s.Registry.Touch(req.ExecutorID)
 	writeJSON(w, http.StatusOK, cid, ClaimResponse{
 		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
 		OK:       true,
-		Task:     task,
+		Task:     out.Task,
 	})
 }
 
@@ -130,58 +163,111 @@ func (s *Server) taskID(r *http.Request) string {
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
 	var req HeartbeatRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_heartbeat_request"})
 		return
 	}
-	taskID := s.taskID(r)
-	ok, cancelRequested, expires := s.Registry.Heartbeat(req.ExecutorID, taskID, req.AttemptID)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, cid, map[string]any{"ok": false, "error": "task_or_lease_not_found"})
+	var out struct {
+		OK              bool `json:"ok"`
+		CancelRequested bool `json:"cancel_requested"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/heartbeat", map[string]any{
+		"lease_token": req.LeaseToken,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
 		return
 	}
+	if !out.OK {
+		writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "lease_not_renewable"})
+		return
+	}
+	s.Registry.Touch(req.ExecutorID)
 	writeJSON(w, http.StatusOK, cid, HeartbeatResponse{
 		Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
 		OK:              true,
-		CancelRequested: cancelRequested,
-		LeaseExpiresAt:  expires.UTC().Format(time.RFC3339),
+		CancelRequested: out.CancelRequested,
 	})
 }
 
 func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
 	var req CompleteRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_complete_request"})
 		return
 	}
-	ok, status := s.Registry.CompleteTask(req.ExecutorID, req.TaskID, req.AttemptID, req.Result)
-	if !ok {
-		writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "complete_rejected", "status": status})
+	var out struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/complete", map[string]any{
+		"executor_id": req.ExecutorID,
+		"lease_token": req.LeaseToken,
+		"result":      req.Result,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, cid, CompleteResponse{
 		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
 		OK:       true,
-		Status:   status,
+		Status:   out.Status,
 	})
 }
 
 func (s *Server) handleFail(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
 	var req FailRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_fail_request"})
 		return
 	}
-	ok, retry := s.Registry.FailTask(req.ExecutorID, req.TaskID, req.AttemptID)
-	if !ok {
-		writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "fail_rejected"})
+	var out struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/fail", map[string]any{
+		"executor_id": req.ExecutorID,
+		"lease_token": req.LeaseToken,
+		"error_class": req.ErrorClass,
+		"message":     req.Message,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, cid, FailResponse{
 		Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
 		OK:              true,
-		RetryScheduled:  retry,
+		Status:          out.Status,
+		RetryScheduled:  out.Status == TaskQueued,
 		AttemptRecorded: true,
+	})
+}
+
+// handleCancelExecution 处理协作取消回执（Executor 安全点退出后提交）。
+func (s *Server) handleCancelExecution(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req CompleteRequest // executor_id + task_id + lease_token 同形
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_cancel_execution_request"})
+		return
+	}
+	var out struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/cancel-execution", map[string]any{
+		"executor_id": req.ExecutorID,
+		"lease_token": req.LeaseToken,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, CancelResponse{
+		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:       true,
+		Status:   out.Status,
 	})
 }
 
@@ -191,50 +277,102 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, cid string
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_cancel_request"})
 		return
 	}
-	taskID := req.TaskID
-	if taskID == "" {
-		taskID = s.taskID(r)
+	var out struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
 	}
-	ok, status := s.Registry.CancelTask(taskID, req.Reason)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, cid, map[string]any{"ok": false, "error": "task_not_found", "status": status})
+	err := s.State.Post("/internal/durable/tasks/"+req.TaskID+"/cancel", map[string]any{
+		"reason": req.Reason,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, cid, CancelResponse{
 		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
-		OK:       true,
-		Status:   status,
+		OK:       out.OK,
+		Status:   out.Status,
 	})
 }
 
 func (s *Server) handleTaskStatusGET(w http.ResponseWriter, r *http.Request) {
-	taskID := s.taskID(r)
-	t, ok := s.Registry.TaskStatus(taskID)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, "", map[string]any{"ok": false, "error": "task_not_found"})
+	var out struct {
+		Task *struct {
+			TaskID       string         `json:"task_id"`
+			Status       string         `json:"status"`
+			Capability   string         `json:"capability"`
+			AttemptCount int            `json:"attempt_count"`
+			MaxAttempts  int            `json:"max_attempts"`
+			Input        map[string]any `json:"input"`
+			LastError    string         `json:"last_error"`
+		} `json:"task"`
+	}
+	if err := s.State.Get("/internal/durable/tasks/"+s.taskID(r), &out); err != nil {
+		var se *StateError
+		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+			writeJSON(w, http.StatusNotFound, "", map[string]any{"ok": false, "error": "task_not_found"})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, "", map[string]any{"ok": false, "error": "state_unavailable"})
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"schema_version": SchemaVersion,
-		"correlation_id": "",
-		"body": TaskStatusResponse{
-			Envelope:        Envelope{SchemaVersion: SchemaVersion},
-			OK:              true,
-			TaskID:          taskID,
-			Status:          t.Status,
-			Capability:      t.Capability,
-			AttemptCount:    t.AttemptCount,
-			FailCount:       t.FailCount,
-			CancelRequested: t.CancelRequested,
-			Result:          t.Result,
-			LastError:       t.LastError,
-		},
+	t := out.Task
+	writeJSON(w, http.StatusOK, "", TaskStatusResponse{
+		Envelope:     Envelope{SchemaVersion: SchemaVersion},
+		OK:           true,
+		TaskID:       t.TaskID,
+		Status:       t.Status,
+		Capability:   t.Capability,
+		AttemptCount: t.AttemptCount,
+		MaxAttempts:  t.MaxAttempts,
+		Input:        t.Input,
+		LastError:    t.LastError,
 	})
 }
 
+// writeStateError 把 durable-state 的错误映射到 Executor 协议响应。
+// fencing 冲突（409）必须原样传给 Executor——它是「迟到写入被拒绝」的信号。
+func (s *Server) writeStateError(w http.ResponseWriter, cid string, err error) {
+	if se, ok := err.(*StateError); ok {
+		status := http.StatusBadGateway
+		if se.StatusCode == http.StatusConflict {
+			status = http.StatusConflict
+		} else if se.StatusCode == http.StatusNotFound {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, cid, map[string]any{"ok": false, "error": "state_rejected", "detail": se.Body})
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, cid, map[string]any{"ok": false, "error": "state_unavailable"})
+}
 
-// TokenAuthMiddleware 校验 Bearer token（P1 修复：控制面认证）。
+// StartReconciler 周期驱动 durable store 回收过期 lease（权威逻辑在 Python 侧）。
+func (s *Server) StartReconciler(interval time.Duration, backoffS int, stop <-chan struct{}) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				var out struct {
+					Outcomes map[string]string `json:"outcomes"`
+				}
+				if err := s.State.Post("/internal/durable/reclaim", map[string]any{
+					"backoff_s": backoffS,
+				}, &out); err != nil {
+					continue // state API 暂不可用——下轮重试
+				}
+				if len(out.Outcomes) > 0 {
+					log.Printf("reconciler reclaimed %d lease(s): %v", len(out.Outcomes), out.Outcomes)
+				}
+			}
+		}
+	}()
+}
+
+// TokenAuthMiddleware 校验 Bearer token（Executor/控制面认证）。
 func TokenAuthMiddleware(next http.Handler, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
@@ -255,3 +393,5 @@ func TokenAuthMiddleware(next http.Handler, token string) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// errorsAs 已移除——统一使用标准 errors.As。

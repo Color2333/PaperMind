@@ -60,7 +60,12 @@ def test_health_and_register_roundtrip():
 
 def test_full_executor_cycle_with_fake_core():
     """fake core 上的完整执行周期：register → claim → heartbeat → complete"""
-    state = {"task_id": "task_abc", "attempt_id": "att_1", "claimed": False}
+    state = {
+        "task_id": "task_abc",
+        "attempt_id": "att_1",
+        "lease_token": "lease_abc",
+        "claimed": False,
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -79,34 +84,53 @@ def test_full_executor_cycle_with_fake_core():
                         "input": {"prompt": "hello"},
                         "resource_class": "default",
                         "timeout_s": 60,
-                        "cancel_requested": False,
+                        "attempt_no": 1,
+                        "fencing_token": 1,
+                        "lease_token": state["lease_token"],
                     },
                 },
             )
         if path.endswith("/heartbeat"):
+            assert json.loads(request.content)["payload"]["lease_token"] == state["lease_token"]
             return _echo_envelope(request, {"ok": True, "cancel_requested": False})
         if path.endswith("/complete"):
-            return _echo_envelope(request, {"ok": True, "status": "done"})
+            assert json.loads(request.content)["payload"]["lease_token"] == state["lease_token"]
+            return _echo_envelope(request, {"ok": True, "status": "succeeded"})
         return _echo_envelope(request, {"ok": True})
 
     with _fake_core(handler) as client:
         assert client.claim("py-1", ["fake_cap"]) is not None  # 第一次领取到任务
         assert client.claim("py-1", ["fake_cap"]) is None  # 之后为空
-        hb = client.heartbeat("py-1", state["task_id"], state["attempt_id"])
+        hb = client.heartbeat("py-1", state["task_id"], state["lease_token"])
         assert hb["cancel_requested"] is False
-        done = client.complete("py-1", state["task_id"], state["attempt_id"], {"output": "done"})
-        assert done["status"] == "done"
+        done = client.complete("py-1", state["task_id"], state["lease_token"], {"output": "done"})
+        assert done["status"] == "succeeded"
 
 
 def test_fail_requests_retry():
     def handler(request: httpx.Request) -> httpx.Response:
         return _echo_envelope(
-            request, {"ok": True, "retry_scheduled": True, "attempt_recorded": True}
+            request,
+            {"ok": True, "status": "queued", "retry_scheduled": True, "attempt_recorded": True},
         )
 
     with _fake_core(handler) as client:
-        result = client.fail("py-1", "task_1", "att_1", error_class="network", message="boom")
+        result = client.fail("py-1", "task_1", "lease_1", error_class="network", message="boom")
     assert result["retry_scheduled"] is True
+
+
+def test_cancel_execution_roundtrip():
+    """协作取消回执：cancel-execution 携带 lease_token"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)["payload"]
+        assert payload["lease_token"] == "lease_9"
+        assert request.url.path == "/v1/tasks/task_9/cancel-execution"
+        return _echo_envelope(request, {"ok": True, "status": "cancelled"})
+
+    with _fake_core(handler) as client:
+        result = client.cancel_execution("py-1", "task_9", "lease_9")
+    assert result["status"] == "cancelled"
 
 
 def test_schema_mismatch_raises_typed_error():
