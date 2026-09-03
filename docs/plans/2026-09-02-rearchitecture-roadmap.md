@@ -174,6 +174,7 @@
 - [ ] **E4 确定性子命令 + `--json`**：查询面优先（papers/questions/claims/evidence/diff/export），稳定退出码，无 ANSI 污染。
 - [ ] **E5 capability metadata**：HTTP、Pi tools、CLI commands、MCP tools、Local/Full Web adapters 复用同一 schema/scope/risk/async 语义（设计文档 §5.1/§3.3）。
 - 2026-09-03：E10 capability metadata 扩展至 20 条 + E9 device auth 确认覆盖充分。全量 212 passed。
+- 2026-09-03：E3 Python 侧 capability adapter 骨架（commands/adapters.py）+ E5 导出脚本（scripts/export_capabilities.py）+ translate 命令下沉。全量 212 passed。
 - 2026-09-03：完成 F1（inventory 已有设计⑤ §1 权威产出）+ F6 FastAPI 侧 `--web=full|demo|none` 部署 profile。全量 212 passed + Go 10 passed。
 - [ ] **E6 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
 - [ ] **E7 permission profiles**：默认 research profile；`--workspace`/`--coding` 显式开启；destructive 动作需服务端 policy + 终端确认双重把关。
