@@ -37,6 +37,8 @@ func NewServer(reg *Registry) *Server {
 	s.mux.HandleFunc("POST /v1/tasks/{id}/complete", s.enveloped(s.handleComplete))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/fail", s.enveloped(s.handleFail))
 	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.enveloped(s.handleCancel))
+	s.mux.HandleFunc("POST /v1/tasks/submit", s.enveloped(s.handleSubmitTask))
+	s.mux.HandleFunc("GET /v1/tasks/{id}/status", s.handleTaskStatusGET)
 	return s
 }
 
@@ -202,5 +204,31 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, cid string
 		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
 		OK:       true,
 		Status:   status,
+	})
+}
+
+func (s *Server) handleTaskStatusGET(w http.ResponseWriter, r *http.Request) {
+	taskID := s.taskID(r)
+	t, ok := s.Registry.TaskStatus(taskID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, "", map[string]any{"ok": false, "error": "task_not_found"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"schema_version": SchemaVersion,
+		"correlation_id": "",
+		"body": TaskStatusResponse{
+			Envelope:        Envelope{SchemaVersion: SchemaVersion},
+			OK:              true,
+			TaskID:          taskID,
+			Status:          t.Status,
+			Capability:      t.Capability,
+			AttemptCount:    t.AttemptCount,
+			FailCount:       t.FailCount,
+			CancelRequested: t.CancelRequested,
+			Result:          t.Result,
+			LastError:       t.LastError,
+		},
 	})
 }

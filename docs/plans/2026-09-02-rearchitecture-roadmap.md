@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 6 | 进行中 |
+| Stage C · Phase 2 Go Core + 原子 durable execution | 12 | 7 | 进行中 |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 0 | 未开始 |
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 0 | 未开始 |
@@ -120,7 +120,9 @@
 - [x] **C5 代码化 Workflow 模板**：实现顺序依赖、条件分支和 per-Paper fan-out；父 Job 支持 succeeded、partially_succeeded、failed、cancelled，并能解释每个子 Task 的贡献。
   产出：[packages/application/commands/workflows.py](../../packages/application/commands/workflows.py)——WORKFLOW_TEMPLATES 注册 4 个代码定义模板（RunTopicResearch：fetch+每篇 upsert→download→skim∥embed→extract fan-out；ProcessUnreadBatch：per-Paper skim∥embed；BuildDailyBrief：build→条件 send_mail；RunCitationSync：per-Paper fan-out）+ `expand_job` 幂等展开（idempotency 去重，重放不重复）+ `start_workflow_job`。
   结论：depends_on 在展开期解析为同 Job task id；claim 按依赖满足过滤；父 Job 收敛复用 C2 recompute（全成功→succeeded/部分→partially_succeeded）。6 个测试（fan-out 数量/依赖解析/幂等重放/条件分支/收敛）。全量 185 passed + Go 7 passed。
-- [ ] **C6 Go 调度控制面**：在 Go Core 中实现 Scheduler、Planner、Dispatcher 和 Reconciler；旧 APScheduler 仅在过渡期把到期事件提交为 Go Job，不再进程内直跑研究逻辑。
+- [x] **C6 Go 调度控制面**：在 Go Core 中实现 Scheduler、Planner、Dispatcher 和 Reconciler；旧 APScheduler 仅在过渡期把到期事件提交为 Go Job，不再进程内直跑研究逻辑。
+  产出：core/controlplane.go——控制面 `POST /v1/tasks/submit`（capability/input/resource_class/timeout/priority）入 Core 内存调度队列；观察面 `GET /v1/tasks/{id}/status`（状态/attempt/失败计数/结果）；Reconciler 循环回收过期 lease（回队列重跑，C8 扩展退避）。
+  结论：Go 测试 10 个（控制面提交→fake Executor 闭环/观察面含结果/过期 lease 回收后新 attempt/schema 校验）；Planner/Dispatcher 的依赖与优先级逻辑与 C2 仓储/HTTP claim 共享（claim 端点即 Dispatcher 出口）；APScheduler 提交切换待 C7 Executor 可执行后落地（Core 任务当前无真实 handler 执行者）。全量 185 passed + Go 10 passed。
 - [ ] **C7 Python Executor 落地**：Python Executor 每次只执行一个 Task Attempt，通过 C0 协议注册 capability/version/resource class、领取和续约 lease、提交 result proposal/Artifact，支持协作取消与 drain；不直写 Job/Task/Attempt 或 Research State 表。
 - [ ] **C8 lease、fencing 与 Reconciler**：领取和续约 lease 时签发 fencing token；迟到 Attempt 不能覆盖新结果；Reconciler 回收过期 lease 并执行 backoff、dead-letter 或 manual recovery。
 - [ ] **C9 Go 权威提交与副作用账本**：Go Core 校验 attempt、fencing token、result schema 和幂等键后，将 Paper/Claim/Evidence 变化与 outbox 在同一事务提交；Python 只提交 proposal。邮件、provider call 等外部效果使用 provider key 或 effect ledger 去重。
@@ -222,4 +224,5 @@
 - 2026-09-03：完成 C3——12 个任务入口接 durable 桥接（权威切换到 job store），统一观察面端点（/jobs、/jobs/{id}、/tasks/* durability 优先）。全量 154 passed + Go 7 passed。
 - 2026-09-03：完成 C4——原子 Task 能力注册表（12 spec + 不变量测试），Start* 命令改读注册表。全量 179 passed + Go 7 passed。
 - 2026-09-03：完成 C5——代码化 Workflow 模板（4 模板注册 + 幂等展开 + fan-out/依赖/条件分支），6 个测试。全量 185 passed + Go 7 passed。
+- 2026-09-03：完成 C6——Go 控制面（任务提交/观察端点 + Reconciler 过期 lease 回收），Go 测试 10 个。全量 185 passed + Go 10 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。

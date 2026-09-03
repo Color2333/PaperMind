@@ -23,12 +23,15 @@ type Executor struct {
 // internalTask 是 Core 侧的任务记录（内存态）。
 type internalTask struct {
 	Task
-	Status       string
-	ExecutorID   string // 当前 lease 持有者
-	LeaseExpires time.Time
-	Result       map[string]any
-	FailCount    int
-	CreatedAt    time.Time
+	Status          string
+	ExecutorID      string // 当前 lease 持有者
+	LeaseExpires    time.Time
+	Result          map[string]any
+	FailCount       int
+	AttemptCount    int
+	LastError       string
+	CancelRequested bool
+	CreatedAt       time.Time
 }
 
 // Registry 持有 Executor、能力与任务的内存态。所有方法并发安全。
@@ -206,4 +209,34 @@ func (r *Registry) ExecutorCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.executors)
+}
+
+// TaskStatus 返回观察面快照（状态/计数/结果）。
+func (r *Registry) TaskStatus(taskID string) (internalTask, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[taskID]
+	if !ok {
+		return internalTask{}, false
+	}
+	return *t, true
+}
+
+// ReclaimExpiredLeases 回收过期 lease：leased 任务租期已过 → 回队列（C8 扩展退避）。
+func (r *Registry) ReclaimExpiredLeases(now time.Time) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	reclaimed := 0
+	for _, t := range r.tasks {
+		if t.Status == TaskLeased && !t.LeaseExpires.IsZero() && t.LeaseExpires.Before(now) {
+			t.Status = TaskQueued
+			t.ExecutorID = ""
+			t.AttemptID = ""
+			t.FailCount++
+			t.AttemptCount++
+			r.queue = append(r.queue, t.TaskID)
+			reclaimed++
+		}
+	}
+	return reclaimed
 }
