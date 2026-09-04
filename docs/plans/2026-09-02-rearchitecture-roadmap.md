@@ -30,7 +30,7 @@
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 3 | **完成**（G1 Demo 独立实例 + G2 GitHub OAuth 临时身份 + G3 三段式演示旅程测试——匿名可达/Demo JWT/Research Pack 导出/GitHub 端点白名单）|
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
-| Stage I · Phase 8 精简与收敛门 | 8 | 3 | I1–I3 完成（任务系统/能力入口/Executor 路径收敛，守卫测试锁定）；I4–I8 随 E/F/G 完成后收敛 |
+| Stage I · Phase 8 精简与收敛门 | 8 | 8 | **完成**——I1-I3 守卫测试锁定 + I4-I8 收敛（CLI/UI/依赖/部署/审计全部完成，量化对照已记录）。Python 退役待 TS standalone pm 发布后执行 |
 
 主线顺序：A → B → C → D → E → F → G → H → I（对应设计文档 Phase 0–8）。Stage I 不是等到最后才删除代码：I1–I8 的退出动作应随 B–H 同步完成，末期只做统一审计和量化验收。其中设计文档 §11 的**第一个只读垂直切片**（SearchPapers + GetPaper + GetResearchQuestion + ListClaims + GetClaimEvidence，贯穿 application handlers → typed HTTPS client → deterministic CLI → Pi tool + renderer → Local UI/Full Web adapters → MCP adapter）横跨 B3/B4、E4–E6、F4/F5 与 E8，是 Stage B→F 的主线验收样例；六份设计（A5–A10）获确认后即从它开始。
 
