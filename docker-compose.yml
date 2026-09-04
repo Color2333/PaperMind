@@ -183,6 +183,52 @@ services:
           cpus: '0.1'
           memory: 64M
 
+  # ==========================================
+  # Demo 独立实例（Stage G1：独立 DB/文件卷/额度；隔离是实例级的）
+  # 使用：docker compose --profile demo up
+  # ==========================================
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: papermind-demo
+    profiles: ["demo"]
+    ports:
+      - "8003:8000"
+    volumes:
+      - demo_data:/app/data
+      - demo_logs:/app/logs
+    env_file:
+      - ./.env
+    environment:
+      - APP_ENV=production
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DATABASE_URL=sqlite:///app/data/demo.db  # 独立 Demo DB
+      - DEMO_MODE=true  # 写接口 403 + IP 限流
+      - SITE_URL=${DEMO_SITE_URL:-https://demo.pm.vibingu.cn}
+      - DURABLE_STATE_TOKEN=${DEMO_DURABLE_STATE_TOKEN:?required}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - AUTH_PASSWORD=  # Demo 免密（DemoMode 中间件拦截写接口）
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+
 # ==========================================
 # 数据卷定义（持久化存储）
 # ==========================================
@@ -194,3 +240,7 @@ volumes:
   pm_pip_cache:
   papermind_pgdata:
     name: papermind_pgdata
+  demo_data:
+    name: papermind_demo_data
+  demo_logs:
+    name: papermind_demo_logs

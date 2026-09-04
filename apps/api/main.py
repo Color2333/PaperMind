@@ -66,6 +66,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/auth/status",
         "/auth/device/start",
         "/auth/device/poll",
+        "/auth/github/login",
+        "/auth/github/callback",
         "/mcp",
     }
 
@@ -210,6 +212,7 @@ from apps.api.routers import (  # noqa: E402
     auth,
     content,
     cs_feeds,
+    github_auth,
     graph,
     jobs,
     llm_configs,
@@ -247,6 +250,7 @@ app.include_router(settings_router.router)
 app.include_router(writing.router)
 app.include_router(jobs.router)
 app.include_router(auth.router)
+app.include_router(github_auth.router)
 app.include_router(sensemaking.router)
 app.include_router(translate.router)
 app.include_router(llm_configs.router)

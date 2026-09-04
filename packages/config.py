@@ -28,6 +28,10 @@ class Settings(BaseSettings):
 
     # 认证配置
     auth_password: str = ""  # 站点密码，为空则禁用认证
+    # GitHub OAuth（Stage G2：Demo 临时身份）
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    demo_session_ttl_minutes: int = 120  # Demo 临时会话 TTL（分钟）
     auth_secret_key: str = ""  # JWT 密钥，生产环境必须配置，为空时启用认证会报错
 
     database_url: str = "sqlite:////app/data/papermind.db"
