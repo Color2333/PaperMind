@@ -122,6 +122,17 @@ export default function JobMonitor() {
                   {j.status}
                 </span>
                 <span className="font-medium text-sm">{j.kind}</span>
+                {(j as any).authority && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                      (j as any).authority === "go_core"
+                        ? "bg-cyan-100 text-cyan-700"
+                        : "bg-orange-100 text-orange-700"
+                    }`}
+                  >
+                    {(j as any).authority === "go_core" ? "Go" : "Py"}
+                  </span>
+                )}
                 <span className="text-xs text-gray-400 ml-auto">{j.id}</span>
               </div>
               {j.progress.message && (
@@ -179,6 +190,17 @@ export default function JobMonitor() {
             >
               {selected.status}
             </span>
+            {(selected as any).authority && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                  (selected as any).authority === "go_core"
+                    ? "bg-cyan-100 text-cyan-700"
+                    : "bg-orange-100 text-orange-700"
+                }`}
+              >
+                {(selected as any).authority === "go_core" ? "Go Authority" : "Python Durable"}
+              </span>
+            )}
             <button
               className="text-gray-400 text-sm ml-auto hover:text-gray-600"
               onClick={() => setSelected(null)}
@@ -235,6 +257,9 @@ export default function JobMonitor() {
                     <span className="font-mono">#{a.attempt_no}</span>
                     <span>{a.status}</span>
                     <span className="text-gray-400">{a.executor_id}</span>
+                    {a.fencing_token > 0 && (
+                      <span className="text-gray-300">fence:{a.fencing_token}</span>
+                    )}
                     {a.error_message && (
                       <span className="text-red-500 truncate max-w-48">{a.error_message}</span>
                     )}

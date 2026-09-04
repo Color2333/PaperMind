@@ -602,12 +602,14 @@ export interface DurableJobItem {
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
+  authority?: "go_core" | "python_durable";
 }
 
 export interface DurableJobGraph {
   id: string;
   kind: string;
   status: string;
+  authority?: "go_core" | "python_durable";
   payload: Record<string, unknown>;
   progress: { current: number; total: number; message: string };
   created_at: string | null;
