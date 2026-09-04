@@ -48,6 +48,7 @@ func NewServerWithStore(reg *ExecutorRegistry, state *StateClient, store *CoreSt
 	s := &Server{Registry: reg, State: state, Store: store, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
+	s.mux.HandleFunc("POST /mcp", s.ServeMCP)
 	if store != nil {
 		s.RegisterAPIRoutes()
 	}
