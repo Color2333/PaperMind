@@ -133,6 +133,9 @@ class Lab:
                 "RECLAIM_BACKOFF_S": "1",
                 # Go-authority 切片：权威表与领域表同一 SQLite 文件
                 "CORE_DB_PATH": str(self.db),
+                # Phase 2：Go Executor 模式（GO_EXECUTOR=1）——当前用 Python
+                # executor --fake-llm（确定性）因 Go LLM 需真实 endpoint。
+                # GO_EXECUTOR=1 切换后可替代。
             },
         )
         self.wait_http(f"http://127.0.0.1:{self.core_port}/health", "core")
@@ -155,6 +158,7 @@ class Lab:
             "0.5",
             "--heartbeat-interval",
             "1",
+            "--fake-llm",
         ]
         if delay_s:
             cmd += ["--handler-delay-s", str(delay_s)]
