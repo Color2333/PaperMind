@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect } from "react";
-import { Cpu, Plus, Trash2, Pencil, Power, PowerOff, Eye, EyeOff, Server } from "lucide-react";
+import { Cpu, Plus, Trash2, Pencil, Power, PowerOff, Eye, EyeOff, Server, Sparkles } from "lucide-react";
 import { useToast } from "@/contexts/ToastContext";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
-import { llmConfigApi } from "@/services/api";
+import { llmConfigApi, agentApi } from "@/services/api";
 import { getErrorMessage } from "@/lib/errorHandler";
 import { cn } from "@/lib/utils";
 import { ProviderBadge } from "./shared";
@@ -13,6 +13,7 @@ import type {
   LLMProviderUpdate,
   ActiveLLMConfig,
   LLMProvider,
+  AgentEngineStatus,
 } from "@/types";
 
 const PROVIDER_PRESETS: Record<string, { label: string; base_url: string; models: Record<string, string> }> = {
@@ -54,6 +55,7 @@ export function LLMSettingsTab() {
   const { toast } = useToast();
   const [configs, setConfigs] = useState<LLMProviderConfig[]>([]);
   const [activeInfo, setActiveInfo] = useState<ActiveLLMConfig | null>(null);
+  const [engineInfo, setEngineInfo] = useState<AgentEngineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editCfg, setEditCfg] = useState<LLMProviderConfig | null>(null);
@@ -62,9 +64,14 @@ export function LLMSettingsTab() {
 
   const load = useCallback(async () => {
     try {
-      const [listRes, activeRes] = await Promise.all([llmConfigApi.list(), llmConfigApi.active()]);
+      const [listRes, activeRes, engineRes] = await Promise.all([
+        llmConfigApi.list(),
+        llmConfigApi.active(),
+        agentApi.engine().catch(() => null),
+      ]);
       setConfigs(listRes.items || []);
       setActiveInfo(activeRes);
+      setEngineInfo(engineRes);
     } catch {
       toast("error", "加载 LLM 配置失败");
     } finally {
@@ -119,9 +126,33 @@ export function LLMSettingsTab() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-ink">LLM 模型配置</h2>
-        <p className="mt-1 text-sm text-ink-secondary">配置 AI 模型，管理成本</p>
+        <h2 className="text-lg font-semibold text-ink">LLM Gateway</h2>
+        <p className="mt-1 text-sm text-ink-secondary">
+          配置 AI 模型，管理成本。激活配置驱动所有引擎：Web/终端聊天（Pi）、粗读/精读 pipeline。
+        </p>
       </div>
+
+      {/* Pi 引擎状态（聊天 = 终端 pm + Web 聊天共用同一 agent 循环） */}
+      {engineInfo && (
+        <div className="flex items-center gap-3 rounded-xl border border-border bg-page px-4 py-3">
+          <Sparkles className={cn("h-4 w-4 shrink-0", engineInfo.engine === "pi" ? "text-primary" : "text-warning")} />
+          <div className="min-w-0 flex-1 text-sm">
+            <span className="text-ink font-medium">
+              聊天引擎：{engineInfo.engine === "pi" ? "Pi agent core" : "Python（回退）"}
+            </span>
+            {engineInfo.chat_model && (
+              <span className="text-ink-tertiary ml-2 text-xs">
+                模型 {engineInfo.provider}/{engineInfo.chat_model}
+              </span>
+            )}
+            <span className="text-ink-tertiary ml-2 text-xs">
+              {engineInfo.engine === "pi"
+                ? "——与终端 pm 同一循环与工具集；激活配置改动即时生效"
+                : "——服务端未安装 pm（PaperMind-Terminal），已自动回退"}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* 当前激活 */}
       {activeInfo && (

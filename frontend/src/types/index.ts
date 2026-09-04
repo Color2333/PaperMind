@@ -1117,6 +1117,7 @@ export interface DeviceRequestInfo {
 
 export type SSEEventType =
   | "conversation_init"
+  | "engine"
   | "text_delta"
   | "tool_start"
   | "tool_result"
@@ -1125,6 +1126,16 @@ export type SSEEventType =
   | "action_result"
   | "done"
   | "error";
+
+export type AgentEngine = "pi" | "python";
+
+export interface AgentEngineStatus {
+  engine: AgentEngine;
+  pm_available: boolean;
+  forced: string;
+  chat_model: string | null;
+  provider: string | null;
+}
 
 export interface SSEEvent {
   type: SSEEventType;

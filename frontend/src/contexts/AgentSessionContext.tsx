@@ -12,7 +12,7 @@ import {
   useMemo,
 } from "react";
 import { agentApi } from "@/services/api";
-import type { AgentMessage, SSEEvent, SSEEventType } from "@/types";
+import type { AgentEngine, AgentMessage, SSEEvent, SSEEventType } from "@/types";
 import { parseSSEStream } from "@/types";
 import { useConversationCtx } from "@/contexts/ConversationContext";
 import { loadConversation } from "@/hooks/useConversations";
@@ -65,6 +65,8 @@ interface AgentSessionCtx {
   confirmingActions: Set<string>;
   canvas: CanvasData | null;
   hasPendingConfirm: boolean;
+  /* 本次会话的聊天引擎（SSE engine 事件上报：pi=Pi agent core / python=回退） */
+  engine: AgentEngine | null;
   setCanvas: (v: CanvasData | null) => void;
   sendMessage: (text: string) => Promise<void>;
   handleConfirm: (actionId: string) => Promise<void>;
@@ -82,6 +84,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const [pendingActionIds, setPendingActionIds] = useState<string[]>([]);
   const [confirmingActionIds, setConfirmingActionIds] = useState<string[]>([]);
   const [canvas, setCanvas] = useState<CanvasData | null>(null);
+  const [engine, setEngine] = useState<AgentEngine | null>(null);
 
   // 从数组派生 Set，避免每次渲染都创建新对象
   const pendingActions = useMemo(() => new Set(pendingActionIds), [pendingActionIds]);
@@ -273,6 +276,12 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
           if (backendId && backendId !== activeIdRef.current) {
             setActiveId(backendId);
           }
+          break;
+        }
+        case "engine": {
+          // 聊天引擎通告（Pi agent core / Python 回退）——徽标展示
+          const eng = data.engine as AgentEngine;
+          if (eng === "pi" || eng === "python") setEngine(eng);
           break;
         }
         case "text_delta": {
@@ -769,6 +778,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       confirmingActions,
       canvas,
       hasPendingConfirm,
+      engine,
       setCanvas,
       sendMessage,
       handleConfirm,
@@ -782,6 +792,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       confirmingActions,
       canvas,
       hasPendingConfirm,
+      engine,
       sendMessage,
       handleConfirm,
       handleReject,

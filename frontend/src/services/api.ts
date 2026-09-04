@@ -68,6 +68,7 @@ import type {
   MultiSourceSearchResult,
   ChannelSuggestion,
   Tag,
+  AgentEngineStatus,
 } from "@/types";
 
 export type {
@@ -727,6 +728,8 @@ export const agentApi = {
     const url = `${getApiBase().replace(/\/+$/, "")}/agent/reject/${actionId}`;
     return fetchSSE(url, { method: "POST" });
   },
+  /* 聊天引擎状态（Pi agent core / Python 回退）——Settings LLM Gateway 与聊天徽标 */
+  engine: () => get<AgentEngineStatus>("/agent/engine"),
 };
 
 /* ========== 邮箱配置 ========== */
