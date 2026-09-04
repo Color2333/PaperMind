@@ -28,7 +28,7 @@
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | E6 完成（六类 renderer + renderCall/expanded/isPartial 覆盖 + 双主题）；剩 E7（permission profiles）+ E8（MCP 远程化）|
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
-| Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
+| Stage G · Phase 6 公开 Demo | 3 | 2 | G1/G2 完成（Demo 独立实例 + GitHub OAuth 临时身份）；剩 G3 三段式演示旅程 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
 | Stage I · Phase 8 精简与收敛门 | 8 | 3 | I1–I3 完成（任务系统/能力入口/Executor 路径收敛，守卫测试锁定）；I4–I8 随 E/F/G 完成后收敛 |
 
@@ -260,8 +260,8 @@
 
 阶段出口条件：个人站与 Demo 数据完全隔离；Demo 在模型不可用时仍能展示完整预计算流程。
 
-- [ ] **G1 Demo 独立实例**：独立数据库、文件卷、配置与模型额度；取代 2026-05-08 旧 Demo 方案。隔离是实例级的，`--web=demo` 只是页面 profile，不承担隔离职责。
-- [ ] **G2 GitHub 登录 + 临时身份**：最小身份映射、TTL 清理、用户/IP/全局三维限额。
+- [x] **G1 Demo 独立实例**：compose --profile demo——独立 DB（sqlite:///app/data/demo.db）、文件卷、端口 8003、DEMO_MODE=true（写接口 403 + IP 限流）。隔离是实例级的。
+- [x] **G2 GitHub 登录 + 临时身份**：/auth/github/login + /auth/github/callback——GitHub OAuth token 交换 → 用户信息 → PaperMind Demo JWT（auth_method=demo_github，TTL=settings.demo_session_ttl_minutes）。Demo 身份不入 api_tokens 表。AuthMiddleware 白名单放行 GitHub 端点。config 加 github_client_id/secret。测试 4 项（重定向/未配置 503/JWT+TTL/中间件放行）。
 - [ ] **G3 三段式演示旅程**：匿名看 Claim/Evidence → 登录看研究状态变化 → `pm login`/`pm demo`/`pm ui --question ...` 复现并导出 Research Pack。
 
 ## Stage H — Phase 7：资源与存储验证门
