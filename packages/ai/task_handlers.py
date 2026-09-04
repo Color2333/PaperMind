@@ -413,40 +413,38 @@ def upsert_paper_data(
     progress: ProgressFn = None,
     **_: Any,
 ) -> dict:
-    """按元数据 upsert 论文（RunTopicResearch fan-out 的 upsert 节点）。
+    """论文 upsert 纯计算（proposal 模式）：不写领域表。
 
-    返回 {paper_id}——下游节点经输出绑定（${node:paper_id}）引用。
+    领域 apply 在权威面单事务执行：Go authority 走 applyUpsertPaperResult
+    （papers + source_versions v1 + outbox），Python authority 走
+    domain_apply.apply_upsert_proposal。返回 proposal 供下游节点经
+    result_ref（paper_id）引用。
     """
-    from packages.domain.schemas import PaperCreate
-    from packages.storage.db import session_scope
-    from packages.storage.repositories import PaperRepository
-
-    with session_scope() as session:
-        paper = PaperRepository(session).upsert_paper(
-            PaperCreate(
-                arxiv_id=arxiv_id,
-                title=title or f"arXiv:{arxiv_id}",
-                abstract=abstract or "",
-                metadata=metadata or {},
-            )
-        )
-        return {"paper_id": str(paper.id), "arxiv_id": arxiv_id}
+    return {
+        "proposal": {
+            "kind": "upsert_paper",
+            "arxiv_id": arxiv_id,
+            "title": title or f"arXiv:{arxiv_id}",
+            "abstract": abstract or "",
+            "metadata": metadata or {},
+        }
+    }
 
 
 def download_source_data(*, arxiv_id: str, progress: ProgressFn = None, **_: Any) -> dict:
-    """按 arXiv ID 下载 PDF 并回填 paper.pdf_path（download_source 节点）"""
+    """PDF 下载（IO 计算，proposal 模式）：文件落盘由本 handler 承载，
+    papers.pdf_path 回填在权威面单事务执行（Go applyDownloadSourceResult /
+    domain_apply.apply_download_proposal）。"""
     from packages.integrations.arxiv_client import ArxivClient
-    from packages.storage.db import session_scope
-    from packages.storage.repositories import PaperRepository
 
     pdf_path = ArxivClient().download_pdf(arxiv_id)
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        paper = repo.get_by_arxiv(arxiv_id)
-        if paper is None:
-            raise ValueError(f"论文 {arxiv_id} 不在库中（upsert 应先行）")
-        repo.set_pdf_path(paper.id, pdf_path)
-        return {"paper_id": str(paper.id), "pdf_path": pdf_path}
+    return {
+        "proposal": {
+            "kind": "download_source",
+            "arxiv_id": arxiv_id,
+            "pdf_path": pdf_path,
+        }
+    }
 
 
 def send_brief_email_effect(

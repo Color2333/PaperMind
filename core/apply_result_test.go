@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -409,5 +410,121 @@ CREATE TABLE IF NOT EXISTS source_versions (
 	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM claims WHERE statement LIKE '%DER%'`).Scan(&claimCount)
 	if claimCount != 1 {
 		t.Fatalf("re-attempt 不得重复 claim，got %d", claimCount)
+	}
+}
+
+// TestApplyTerminalOnlyResult：B 档通用路径——领域写入由 handler 承载，
+// Go 权威面单事务落 fencing + 终态 + result_ref 原样存储；无领域表写入。
+func TestApplyTerminalOnlyResult(t *testing.T) {
+	s := newTestStore(t)
+	_, taskID, _, err := s.SubmitCoreTask("sync_citations_topic", `{"topic_id":"t1"}`, "cite:t:1", 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := s.ClaimTask("exec-1", []string{"sync_citations_topic"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v / %v", own, err)
+	}
+
+	result := map[string]any{"papers_synced": 5.0, "edges_created": 12.0}
+	status, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, result)
+	if err != nil {
+		t.Fatalf("B 档 complete 不应被拒绝: %v", err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("status=%s", status)
+	}
+
+	// result_ref 原样存储
+	var resultRef string
+	if err := s.DB.QueryRow(`SELECT result_ref FROM core_tasks WHERE id=?`, taskID).Scan(&resultRef); err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal([]byte(resultRef), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored["papers_synced"] != 5.0 {
+		t.Fatalf("result_ref 原样存储失败: %v", stored)
+	}
+
+	// fencing：迟到/重复提交被拒绝
+	if _, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, result); err == nil {
+		t.Fatal("已完成任务的二次 apply 应被 fencing 拒绝")
+	}
+}
+
+// TestApplyDownloadSourcePdfPath：Python handler 真实下载后回传 pdf_path 形态。
+func TestApplyDownloadSourcePdfPath(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.DB.Exec(
+		`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, created_at, updated_at)
+		 VALUES ('p-dl', '下载测试', '2601.00001', '', 'unread', NOW(), NOW())`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	_, taskID, _, _ := s.SubmitCoreTask("download_source", `{"arxiv_id":"2601.00001"}`, "dl:t:1", 600)
+	own, err := s.ClaimTask("exec-1", []string{"download_source"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v / %v", own, err)
+	}
+	proposal := map[string]any{
+		"proposal": map[string]any{
+			"kind": "download_source", "arxiv_id": "2601.00001", "pdf_path": "/data/pdfs/2601.00001.pdf",
+		},
+	}
+	if _, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, proposal); err != nil {
+		t.Fatal(err)
+	}
+	var pdfPath string
+	if err := s.DB.QueryRow(`SELECT pdf_path FROM papers WHERE id='p-dl'`).Scan(&pdfPath); err != nil {
+		t.Fatal(err)
+	}
+	if pdfPath != "/data/pdfs/2601.00001.pdf" {
+		t.Fatalf("pdf_path=%s", pdfPath)
+	}
+}
+
+// TestApplyUpsertPaperMetadataMerge：重复 ingest 不得覆盖 skim 派生字段。
+func TestApplyUpsertPaperMetadataMerge(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.DB.Exec(
+		`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, created_at, updated_at)
+		 VALUES ('p-merge', '旧标题', '2601.00002', '旧摘要', 'skimmed', '{"title_zh":"已有中文标题","keywords":["a"]}', NOW(), NOW())`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	_, taskID, _, _ := s.SubmitCoreTask("upsert_paper", `{"arxiv_id":"2601.00002"}`, "up:t:1", 600)
+	own, err := s.ClaimTask("exec-1", []string{"upsert_paper"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v / %v", own, err)
+	}
+	proposal := map[string]any{
+		"proposal": map[string]any{
+			"kind": "upsert_paper", "arxiv_id": "2601.00002",
+			"title": "新标题", "abstract": "新摘要",
+			"metadata": map[string]any{"categories": []any{"cs.LG"}},
+		},
+	}
+	if _, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, proposal); err != nil {
+		t.Fatal(err)
+	}
+	var metadataJSON string
+	if err := s.DB.QueryRow(`SELECT "metadata" FROM papers WHERE id='p-merge'`).Scan(&metadataJSON); err != nil {
+		t.Fatal(err)
+	}
+	var meta map[string]any
+	_ = json.Unmarshal([]byte(metadataJSON), &meta)
+	if meta["title_zh"] != "已有中文标题" {
+		t.Fatalf("skim 派生字段被覆盖: %v", meta)
+	}
+	if meta["categories"] == nil {
+		t.Fatalf("ingest metadata 未合并: %v", meta)
+	}
+	// result_ref 携带 paper_id（下游节点输出绑定依赖）
+	var resultRef string
+	_ = s.DB.QueryRow(`SELECT result_ref FROM core_tasks WHERE id=?`, taskID).Scan(&resultRef)
+	if !strings.Contains(resultRef, "p-merge") {
+		t.Fatalf("result_ref 缺少 paper_id: %s", resultRef)
 	}
 }

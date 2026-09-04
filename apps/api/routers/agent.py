@@ -402,9 +402,78 @@ def _stream_with_save_for_action(
     return _gen()
 
 
+@router.post("/agent/pending-actions")
+def create_pending_action(body: dict):
+    """Pi 工具（pm 子进程，持用户 JWT）创建破坏性操作确认请求。
+
+    E7：webchat headless 无本地确认 UI——工具建 pending-action 后轮询本
+    端点族的决定；决定落在 conversation_state JSON（免 schema 迁移）。
+    """
+    from uuid import uuid4
+
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import AgentPendingActionRepository
+
+    tool = str(body.get("tool") or "").strip()
+    if not tool:
+        raise HTTPException(status_code=400, detail="tool required")
+    with session_scope() as session:
+        record = AgentPendingActionRepository(session).create(
+            action_id=str(uuid4()),
+            tool_name=tool,
+            tool_args=body.get("args") if isinstance(body.get("args"), dict) else {},
+            conversation_id=body.get("conversation_id"),
+            conversation_state={
+                "engine": "pi",
+                "status": "pending",
+                "description": str(body.get("description") or ""),
+            },
+        )
+        return {"id": record.id, "status": "pending"}
+
+
+@router.get("/agent/pending-actions/{action_id}")
+def get_pending_action(action_id: str):
+    """Pi 工具轮询确认决定（pending/approved/rejected）；不存在=已过期。"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import AgentPendingActionRepository
+
+    with session_scope() as session:
+        record = AgentPendingActionRepository(session).get_by_id(action_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="确认请求不存在或已过期")
+        state = record.conversation_state or {}
+        return {
+            "id": record.id,
+            "status": state.get("status", "pending"),
+            "tool": record.tool_name,
+            "description": state.get("description") or "",
+        }
+
+
+def _resolve_pi_action(action_id: str, decision: str) -> bool:
+    """若该 action 属于 Pi 引擎：持久落决定并返回 True（不走 Python 引擎的
+    "流暂停-续播" SSE——Pi 工具在原 SSE 流内轮询到此决定后自行继续/取消）。"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import AgentPendingActionRepository
+
+    with session_scope() as session:
+        record = AgentPendingActionRepository(session).get_by_id(action_id)
+        if record is None:
+            return False
+        state = dict(record.conversation_state or {})
+        if state.get("engine") != "pi":
+            return False
+        state["status"] = decision
+        record.conversation_state = state  # 整体重赋值以触发 JSON 列更新
+        return True
+
+
 @router.post("/agent/confirm/{action_id}")
 async def agent_confirm(action_id: str):
     """确认执行 Agent 挂起的操作（修⑤：持久化 tool/assistant 消息）"""
+    if _resolve_pi_action(action_id, "approved"):
+        return {"ok": True, "status": "approved"}
     conversation_id = _resolve_conversation_id_from_action(action_id)
     return StreamingResponse(
         _stream_with_save_for_action(conversation_id, lambda: confirm_action(action_id)),
@@ -416,6 +485,8 @@ async def agent_confirm(action_id: str):
 @router.post("/agent/reject/{action_id}")
 async def agent_reject(action_id: str):
     """拒绝 Agent 挂起的操作（修⑤：持久化 tool/assistant 消息）"""
+    if _resolve_pi_action(action_id, "rejected"):
+        return {"ok": True, "status": "rejected"}
     conversation_id = _resolve_conversation_id_from_action(action_id)
     return StreamingResponse(
         _stream_with_save_for_action(conversation_id, lambda: reject_action(action_id)),

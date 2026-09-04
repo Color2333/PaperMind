@@ -32,8 +32,32 @@ func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result ma
 	case "download_source":
 		return s.applyDownloadSourceResult(taskID, executorID, leaseToken, result)
 	default:
-		return "", fmt.Errorf("capability %s 未实现 Go apply-result（迁移清单中）", capability)
+		// B 档通用路径：领域写入由 handler 承载（幂等 upsert + effect ledger
+		// 缓解 P0-1），Go 权威面单事务落 fencing + 终态 + result_ref 原样存储。
+		// A 档升级（proposal 拆分 + Go SQL apply）按需逐项执行。
+		return s.applyTerminalOnlyResult(taskID, executorID, leaseToken, result)
 	}
+}
+
+// applyTerminalOnlyResult：B 档通用 apply——fencing 校验 + Task/Attempt/Job
+// 终态与 result_ref 存储（不写领域表）。
+func (s *CoreStore) applyTerminalOnlyResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+	if err := finalizeTask(tx, taskID, result); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return "succeeded", nil
 }
 
 // fencingGuard 在事务内校验 lease 持有者 + attempt 匹配；返回 attempt fencing token。
@@ -482,23 +506,34 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 		return "", err
 	}
 
-	// papers upsert（幂等：arxiv_id 唯一）
+	// papers upsert（幂等：arxiv_id 唯一；metadata 合并——保留既有 skim 派生字段）
 	paperID := newCoreID()
 	var existingID string
 	err = tx.QueryRow(`SELECT id FROM papers WHERE arxiv_id=$1`, arxivID).Scan(&existingID)
 	if err == nil {
 		paperID = existingID
-		if _, err = tx.Exec(
+		if metaJSON := mergeMetadata(tx, paperID, proposal["metadata"]); metaJSON != "" {
+			if _, err = tx.Exec(
+				`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=NOW() WHERE id=$4`,
+				title, abstract, metaJSON, paperID,
+			); err != nil {
+				return "", err
+			}
+		} else if _, err = tx.Exec(
 			`UPDATE papers SET title=$1, abstract=$2, updated_at=NOW() WHERE id=$3`,
 			title, abstract, paperID,
 		); err != nil {
 			return "", err
 		}
 	} else if err == sql.ErrNoRows {
+		metaJSON := "{}"
+		if m, ok := proposal["metadata"].(map[string]any); ok && len(m) > 0 {
+			metaJSON = mustJSON(m)
+		}
 		if _, err = tx.Exec(
-			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', NOW(), NOW())`,
-			paperID, title, arxivID, abstract,
+			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, 'unread', $5, NOW(), NOW())`,
+			paperID, title, arxivID, abstract, metaJSON,
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
 		}
@@ -551,9 +586,14 @@ func (s *CoreStore) applyDownloadSourceResult(taskID, executorID, leaseToken str
 		return "", fmt.Errorf("result 缺少 proposal")
 	}
 	arxivID, _ := proposal["arxiv_id"].(string)
-	pdfURL, _ := proposal["pdf_url"].(string)
-	if arxivID == "" || pdfURL == "" {
-		return "", fmt.Errorf("proposal 缺少 arxiv_id/pdf_url")
+	// pdf_path：Python handler 真实下载后的本地路径；pdf_url：Go executor 的
+	// URL 形态（未落盘）。二者都写 papers.pdf_path（path 语义）。
+	pdfRef, _ := proposal["pdf_path"].(string)
+	if pdfRef == "" {
+		pdfRef, _ = proposal["pdf_url"].(string)
+	}
+	if arxivID == "" || pdfRef == "" {
+		return "", fmt.Errorf("proposal 缺少 arxiv_id/pdf_path")
 	}
 
 	tx, err := s.DB.Begin()
@@ -568,7 +608,7 @@ func (s *CoreStore) applyDownloadSourceResult(taskID, executorID, leaseToken str
 
 	if _, err = tx.Exec(
 		`UPDATE papers SET pdf_path=$1, updated_at=NOW() WHERE arxiv_id=$2`,
-		pdfURL, arxivID,
+		pdfRef, arxivID,
 	); err != nil {
 		return "", err
 	}
@@ -806,6 +846,28 @@ func sha256Hex(s string) string {
 // OwnsTask 报告 task 是否属于 Go 权威（claim/complete 路由用）
 
 // ---------- helpers ----------
+
+// mergeMetadata 读取既有 papers.metadata 并合并 proposal 携带的 metadata
+// （skim 的 keywords/title_zh/abstract_zh 不被 ingest 元数据覆盖）。
+// 返回合并后的 JSON 串；无新增内容返回空串（调用方跳过 metadata 写入）。
+func mergeMetadata(tx *sql.Tx, paperID string, incoming any) string {
+	incomingMap, ok := incoming.(map[string]any)
+	if !ok || len(incomingMap) == 0 {
+		return ""
+	}
+	var existing sql.NullString
+	if err := tx.QueryRow(`SELECT metadata FROM papers WHERE id=?`, paperID).Scan(&existing); err != nil {
+		return ""
+	}
+	metadata := map[string]any{}
+	if existing.Valid && existing.String != "" {
+		_ = json.Unmarshal([]byte(existing.String), &metadata)
+	}
+	for k, v := range incomingMap {
+		metadata[k] = v
+	}
+	return mustJSON(metadata)
+}
 
 func jobIDOf(tx *sql.Tx, taskID string) string {
 	var jobID string

@@ -65,6 +65,27 @@ def fake_pm_env(tmp_path, monkeypatch):
             "args": {"query": "transformer"},
         },
         {
+            # E7：破坏性工具的确认请求（onUpdate 透传）
+            "type": "tool_execution_update",
+            "toolCallId": "tc2",
+            "toolName": "pm_submit_job",
+            "partialResult": {
+                "action_request": {
+                    "id": "act-9",
+                    "description": "提交 skim_paper 任务处理论文 p1？",
+                    "tool": "pm_submit_job",
+                    "args": {"capability": "skim_paper", "paper_id": "p1"},
+                }
+            },
+        },
+        {
+            # 普通进度更新（无 action_request）→ 不翻译
+            "type": "tool_execution_update",
+            "toolCallId": "tc3",
+            "toolName": "pm_search_papers",
+            "partialResult": {"progress": "50%"},
+        },
+        {
             "type": "tool_execution_end",
             "toolCallId": "tc1",
             "toolName": "pm_search_papers",
@@ -110,13 +131,20 @@ def test_translate_full_event_stream(fake_pm_env, monkeypatch):
 
     (stream,) = events
     kinds = [k for k, _ in stream]
-    assert kinds == ["text_delta", "tool_start", "tool_result", "done"]
+    assert kinds == ["text_delta", "tool_start", "action_confirm", "tool_result", "done"]
 
     _, tool_start = stream[1]
     assert tool_start["name"] == "pm_search_papers"
     assert tool_start["args"] == {"query": "transformer"}
 
-    _, tool_result = stream[2]
+    # E7：确认卡透传（engine=pi 标记 + 描述 + 参数）
+    _, action_confirm = stream[2]
+    assert action_confirm["id"] == "act-9"
+    assert action_confirm["engine"] == "pi"
+    assert action_confirm["tool"] == "pm_submit_job"
+    assert "skim_paper" in action_confirm["description"]
+
+    _, tool_result = stream[3]
     assert tool_result["success"] is True
     assert tool_result["summary"] == "找到 3 篇论文"
     assert tool_result["data"] == {"total": 3}

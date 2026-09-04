@@ -730,6 +730,11 @@ export const agentApi = {
   },
   /* 聊天引擎状态（Pi agent core / Python 回退）——Settings LLM Gateway 与聊天徽标 */
   engine: () => get<AgentEngineStatus>("/agent/engine"),
+  /* Pi 引擎动作的轻量决定（主流保持打开，pm 工具轮询拾取；非 SSE 续播） */
+  resolvePiAction: (actionId: string, decision: "approved" | "rejected") =>
+    post<{ ok: boolean; status: string }>(
+      `/agent/${decision === "approved" ? "confirm" : "reject"}/${actionId}`
+    ),
 };
 
 /* ========== 邮箱配置 ========== */

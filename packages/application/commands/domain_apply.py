@@ -191,6 +191,79 @@ def apply_extract_claims_proposal(session: Session, proposal: dict) -> dict:
     return stats
 
 
+def apply_upsert_proposal(session: Session, proposal: dict) -> dict:
+    """应用论文 upsert proposal：papers 行 upsert（arxiv_id 幂等 + metadata 合并）。
+
+    与 Go applyUpsertPaperResult 语义对齐（source_versions v1 由 Go 侧承载；
+    Python authority 路径保持 handler 时代的 upsert_paper 语义）。
+    """
+    from packages.domain.schemas import PaperCreate
+    from packages.storage.repositories import PaperRepository
+
+    arxiv_id = str(proposal.get("arxiv_id") or "").strip()
+    if not arxiv_id:
+        raise ValueError("upsert proposal 缺少 arxiv_id")
+    paper = PaperRepository(session).upsert_paper(
+        PaperCreate(
+            arxiv_id=arxiv_id,
+            title=str(proposal.get("title") or f"arXiv:{arxiv_id}"),
+            abstract=str(proposal.get("abstract") or ""),
+            metadata=proposal.get("metadata") or {},
+        )
+    )
+    return {"paper_id": str(paper.id), "arxiv_id": arxiv_id}
+
+
+def apply_download_proposal(session: Session, proposal: dict) -> dict:
+    """应用 PDF 下载 proposal：papers.pdf_path 回填（文件下载 IO 在 handler 完成）"""
+    from sqlalchemy import select
+
+    from packages.storage.models import Paper
+    from packages.storage.repositories import PaperRepository
+
+    arxiv_id = str(proposal.get("arxiv_id") or "").strip()
+    pdf_path = str(proposal.get("pdf_path") or proposal.get("pdf_url") or "").strip()
+    if not arxiv_id or not pdf_path:
+        raise ValueError("download proposal 缺少 arxiv_id/pdf_path")
+    paper = session.execute(select(Paper).where(Paper.arxiv_id == arxiv_id)).scalar_one_or_none()
+    if paper is None:
+        raise ValueError(f"论文 {arxiv_id} 不在库中（upsert 应先行）")
+    PaperRepository(session).set_pdf_path(paper.id, pdf_path)
+    return {"arxiv_id": arxiv_id, "pdf_path": pdf_path}
+
+
+def apply_proposal(session: Session, proposal: dict) -> dict | None:
+    """proposal 分派（唯一实现，三条路径共用）：
+    - Go authority：core ApplyResult 按 capability SQL 直写（A 档）；
+    - Python authority：durable-state /complete 在终态同事务调用本函数；
+    - 测试执行器复用同语义（此前分派被复制在测试 helper——收敛到此）。
+
+    返回 stored_ref（/tasks/{id}/result 消费者契约）；未知 kind 返回 None
+    （B 档：领域写入由 handler 承载，result 原样存储）。
+    """
+    kind = proposal.get("kind")
+    if kind == "skim_paper":
+        apply_skim_proposal(session, proposal)
+        apply_prompt_trace(session, proposal)
+        return proposal.get("skim") or {"kind": kind}
+    if kind == "deep_read_paper":
+        apply_deep_read_proposal(session, proposal)
+        apply_prompt_trace(session, proposal)
+        return proposal.get("deep") or {"kind": kind}
+    if kind == "embed_paper":
+        apply_embed_proposal(session, proposal)
+        return {"embedded": True}
+    if kind == "extract_claims":
+        stats = apply_extract_claims_proposal(session, proposal)
+        apply_prompt_trace(session, proposal)
+        return stats or {"kind": kind}
+    if kind == "upsert_paper":
+        return apply_upsert_proposal(session, proposal)
+    if kind == "download_source":
+        return apply_download_proposal(session, proposal)
+    return None
+
+
 def apply_prompt_trace(session: Session, proposal: dict) -> None:
     """应用 prompt trace（成本观测行；随领域变化同事务写入）"""
     from packages.storage.repositories import PromptTraceRepository

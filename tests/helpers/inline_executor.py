@@ -67,43 +67,17 @@ class InlineExecutor:
                 result = handler(input=input_ref, cancel_check=lambda: False, progress=None)
                 json_result = _jsonable(result)
                 with session_scope() as session:
-                    # proposal 模式（skim 等）：领域 apply 与 Task 终态同事务提交
-                    # （与 durable-state /complete 的权威语义一致）
+                    # proposal 模式：领域 apply 与 Task 终态同事务提交——分派
+                    # 收敛到 domain_apply.apply_proposal（与 durable-state
+                    # /complete 的 Python authority 权威语义同一实现）。
                     stored_ref = json_result
                     proposal = (json_result or {}).get("proposal") or {}
-                    kind = proposal.get("kind")
-                    if kind == "skim_paper":
-                        from packages.application.commands.domain_apply import (
-                            apply_prompt_trace,
-                            apply_skim_proposal,
-                        )
+                    if proposal:
+                        from packages.application.commands.domain_apply import apply_proposal
 
-                        apply_skim_proposal(session, proposal)
-                        apply_prompt_trace(session, proposal)
-                        stored_ref = proposal.get("skim") or json_result
-                    elif kind == "deep_read_paper":
-                        from packages.application.commands.domain_apply import (
-                            apply_deep_read_proposal,
-                            apply_prompt_trace,
-                        )
-
-                        apply_deep_read_proposal(session, proposal)
-                        apply_prompt_trace(session, proposal)
-                        stored_ref = proposal.get("deep") or json_result
-                    elif kind == "embed_paper":
-                        from packages.application.commands.domain_apply import apply_embed_proposal
-
-                        apply_embed_proposal(session, proposal)
-                        stored_ref = {"embedded": True}
-                    elif kind == "extract_claims":
-                        from packages.application.commands.domain_apply import (
-                            apply_extract_claims_proposal,
-                            apply_prompt_trace,
-                        )
-
-                        stats = apply_extract_claims_proposal(session, proposal)
-                        apply_prompt_trace(session, proposal)
-                        stored_ref = stats or json_result
+                        applied = apply_proposal(session, proposal)
+                        if applied is not None:
+                            stored_ref = applied
                     TaskRepository(session).complete_task(
                         task_id=task_id,
                         executor_id=self.executor_id,

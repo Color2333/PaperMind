@@ -61,6 +61,16 @@ def session_file_for(conversation_id: str) -> Path:
     return web_agent_dir() / "web-sessions" / f"{conversation_id}.jsonl"
 
 
+def workspace_dir_for(conversation_id: str) -> Path:
+    """每会话独立工作区（E7：工作区文件工具的 cwd 隔离）。
+
+    webchat 由服务端 spawn——若 cwd 是后端进程目录，AI 的 edit/write 会
+    改到服务器文件。research profile 允许查看/修改，但只允许在会话自己的
+    scratch 工作区内（写论文草稿场景），永不触及服务器文件系统。
+    """
+    return web_agent_dir() / "workspaces" / conversation_id
+
+
 def self_base_url() -> str:
     if SELF_URL:
         return SELF_URL.rstrip("/")
@@ -176,6 +186,24 @@ def _translate(event: dict) -> str | None:
                 "args": event.get("args") or {},
             },
         )
+    if etype == "tool_execution_update":
+        # E7：破坏性工具的确认请求（onUpdate 透传）→ 前端确认卡。
+        # 主流不关闭——批准后 tool_result 经同一 SSE 到达（与 Python 引擎的
+        # "流暂停-续播"不同，Pi 工具阻塞等待决定）。
+        partial = event.get("partialResult")
+        request = partial.get("action_request") if isinstance(partial, dict) else None
+        if isinstance(request, dict) and request.get("id"):
+            return make_sse(
+                "action_confirm",
+                {
+                    "id": request.get("id"),
+                    "description": request.get("description") or "",
+                    "tool": request.get("tool") or event.get("toolName"),
+                    "args": request.get("args") or {},
+                    "engine": "pi",
+                },
+            )
+        return None
     if etype == "tool_execution_end":
         result = event.get("result") or {}
         return make_sse(
@@ -227,17 +255,23 @@ def pi_chat_stream(
 
     sfile = session_file_for(conversation_id)
     sfile.parent.mkdir(parents=True, exist_ok=True)
+    workspace = workspace_dir_for(conversation_id)
+    workspace.mkdir(parents=True, exist_ok=True)
 
     env = dict(os.environ)
     env["PAPERMIND_SERVER_URL"] = self_base_url()
     if auth_header:
         env["PAPERMIND_TOKEN"] = auth_header.removeprefix("Bearer ").strip()
     env["PAPERMIND_AGENT_DIR"] = str(web_agent_dir())
+    # E7：headless 确认档——破坏性工具走 pending-action 轮询（前端确认卡）
+    env["PAPERMIND_WEBCHAT"] = "1"
+    env["PAPERMIND_CONVERSATION_ID"] = conversation_id
 
     cmd = [pm, "-p", "--json", "--session", str(sfile), prompt]
     logger.info(
-        "[pi-bridge] spawn pm (session=%s, model=%s/%s)",
+        "[pi-bridge] spawn pm (session=%s, workspace=%s, model=%s/%s)",
         sfile.name,
+        workspace.name,
         model_info["provider"],
         model_info["model"],
     )
@@ -248,6 +282,7 @@ def pi_chat_stream(
         text=True,
         bufsize=1,
         env=env,
+        cwd=str(workspace),
     )
     stderr_tail: list[str] = []
     emitted_error = False

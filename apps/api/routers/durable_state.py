@@ -117,17 +117,17 @@ def _fencing_op(task_id: str, body: dict, op_name: str) -> dict:
                     if isinstance(result_payload, dict)
                     else {}
                 )
-                # result_ref 存裸 skim 字段（/tasks/{id}/result 消费者契约向后兼容）；
-                # proposal 整体仅用于本事务内的领域 apply。
-                stored_ref = proposal.get("skim") or result_payload
-                if proposal.get("kind") == "skim_paper":
-                    from packages.application.commands.domain_apply import (
-                        apply_prompt_trace,
-                        apply_skim_proposal,
-                    )
+                # 领域 apply 唯一分派（domain_apply.apply_proposal）——此前只
+                # apply skim（deep_read/embed/claims 的 proposal 在本路径从未落库，
+                # 分派被复制在测试 helper 里）。未知 kind = B 档：领域写入由
+                # handler 承载，result 原样存储。
+                stored_ref = result_payload
+                if proposal:
+                    from packages.application.commands.domain_apply import apply_proposal
 
-                    apply_skim_proposal(session, proposal)
-                    apply_prompt_trace(session, proposal)
+                    applied = apply_proposal(session, proposal)
+                    if applied is not None:
+                        stored_ref = applied
                 task = repo.complete_task(
                     task_id=task_id,
                     executor_id=executor_id,

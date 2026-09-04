@@ -30,6 +30,8 @@ export interface ChatItem {
   actionId?: string;
   actionDescription?: string;
   actionTool?: string;
+  /* Pi 引擎动作：确认走轻量批准（主流不中断），非 Python 引擎的续播流 */
+  actionEngine?: string;
   toolArgs?: Record<string, unknown>;
   artifactTitle?: string;
   artifactContent?: string;
@@ -415,6 +417,9 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         case "action_confirm": {
           const pending = drainBuffer();
           const actionId = data.id as string;
+          const actionEngine = (data.engine as string) || undefined;
+          // Pi 引擎动作：确认走轻量批准（handleConfirm 分支），主流不取消
+          if (actionEngine === "pi") piActionsRef.current.add(actionId);
           setPendingActionIds((prev) => [...prev, actionId]);
           setItems((prev) => {
             const copy = [...prev];
@@ -428,6 +433,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
                 actionId,
                 actionDescription: data.description as string,
                 actionTool: data.tool as string,
+                actionEngine,
                 toolArgs: data.args as Record<string, unknown>,
                 timestamp: new Date(),
               },
@@ -686,6 +692,8 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   /* ---- 确认/拒绝操作 ---- */
   // 已处理（confirm/reject 过）的 actionId，用于防重复提交
   const handledActionsRef = useRef<Set<string>>(new Set());
+  // Pi 引擎动作（主流保持打开，工具阻塞轮询决定）——确认走轻量批准
+  const piActionsRef = useRef<Set<string>>(new Set());
 
   const handleConfirm = useCallback(
     async (actionId: string) => {
@@ -696,6 +704,30 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
 
       setConfirmingActionIds((prev) => [...prev, actionId]);
       setPendingActionIds((prev) => prev.filter((id) => id !== actionId));
+
+      // Pi 引擎：批准 = 轻量 POST（决定由 pm 工具在主流内轮询拾取），
+      // 不得 cancelStream——那会终止 pm 子进程，批准就无效了
+      if (piActionsRef.current.has(actionId)) {
+        try {
+          await agentApi.resolvePiAction(actionId, "approved");
+          setLoading(true); // 工具继续执行 + 后续文本到达，done 事件收尾
+        } catch (err) {
+          setItems((p) => [
+            ...p,
+            {
+              id: `e_${uid()}`,
+              type: "error" as const,
+              content: err instanceof Error ? err.message : "确认失败",
+              timestamp: new Date(),
+            },
+          ]);
+          setLoading(false);
+        } finally {
+          setConfirmingActionIds((prev) => prev.filter((id) => id !== actionId));
+        }
+        return;
+      }
+
       cancelStream();
       setLoading(true);
       try {
@@ -728,6 +760,27 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       handledActionsRef.current.add(actionId);
 
       setPendingActionIds((prev) => prev.filter((id) => id !== actionId));
+
+      // Pi 引擎：拒绝 = 轻量 POST；工具抛"用户取消"→ 主流 tool_result 显示失败
+      if (piActionsRef.current.has(actionId)) {
+        try {
+          await agentApi.resolvePiAction(actionId, "rejected");
+        } catch (err) {
+          setItems((p) => [
+            ...p,
+            {
+              id: `e_${uid()}`,
+              type: "error" as const,
+              content: err instanceof Error ? err.message : "拒绝操作失败",
+              timestamp: new Date(),
+            },
+          ]);
+        } finally {
+          setConfirmingActionIds((prev) => prev.filter((id) => id !== actionId));
+        }
+        return;
+      }
+
       cancelStream();
       setLoading(true);
       try {
