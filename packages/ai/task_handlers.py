@@ -161,13 +161,35 @@ def skim_papers_batch(
     **_: Any,
 ) -> dict:
     """对选定论文批量粗读（前端批量按钮的单一任务化入口）"""
+    from sqlalchemy import select as _select
+
     from packages.ai.pipelines import PaperPipelines
+    from packages.storage.db import session_scope as _scope
+    from packages.storage.models import AnalysisReport
+
+    # P0-1 幂等卫兵（batch 版）：已有 skim 产物的论文跳过——不重复 LLM 成本
+    with _scope() as session:
+        already = {
+            str(r)
+            for r in session.execute(
+                _select(AnalysisReport.paper_id).where(
+                    AnalysisReport.paper_id.in_([str(p) for p in paper_ids])
+                )
+            )
+            .scalars()
+            .all()
+        }
 
     pipelines = PaperPipelines()
     total = len(paper_ids)
-    ok, failed = 0, 0
+    ok, failed, skipped = 0, 0, 0
     for i, pid in enumerate(paper_ids, 1):
         _checked(cancel_check)
+        if str(pid) in already:
+            skipped += 1
+            if progress:
+                progress(f"跳过已粗读 {i}/{total}", i, total)
+            continue
         if progress:
             progress(f"粗读中 {i}/{total}", i, total)
         try:
@@ -176,7 +198,7 @@ def skim_papers_batch(
         except Exception as exc:
             failed += 1
             logger.warning("batch skim %s failed: %s", str(pid)[:8], exc)
-    return {"skimmed": ok, "failed": failed, "total": total}
+    return {"skimmed": ok, "failed": failed, "skipped": skipped, "total": total}
 
 
 # ---------- 抓取/入库 ----------
