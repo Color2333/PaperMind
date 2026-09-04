@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -50,6 +51,18 @@ func NewServerWithStore(reg *ExecutorRegistry, state *StateClient, store *CoreSt
 	if store != nil {
 		s.RegisterAPIRoutes()
 	}
+	// Auth routes（Phase 1d）：login/github/status
+	authCfg := &AuthConfig{
+		SecretKey:      os.Getenv("AUTH_SECRET_KEY"),
+		GitHubClientID: os.Getenv("GITHUB_CLIENT_ID"),
+		GitHubSecret:   os.Getenv("GITHUB_CLIENT_SECRET"),
+		SiteURL:        os.Getenv("SITE_URL"),
+		AuthPassword:   os.Getenv("AUTH_PASSWORD"),
+	}
+	if authCfg.SecretKey == "" {
+		authCfg.SecretKey = "papermind-dev-secret" // 本地开发 fallback
+	}
+	s.RegisterAuthRoutes(authCfg)
 	s.mux.HandleFunc("POST /v1/jobs", s.enveloped(s.handleSubmitJob))
 	s.mux.HandleFunc("GET /v1/jobs/{id}", s.handleJobGraphGET)
 	s.mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.enveloped(s.handleJobCancel))
