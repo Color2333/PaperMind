@@ -10,14 +10,8 @@ import (
 // newTestStore：临时 SQLite + 领域表最小 schema（与 Python migrations 对齐）
 func newTestStore(t *testing.T) *CoreStore {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	s, err := OpenCoreStore(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	// 领域表最小 schema（列名/类型与 Python models 对齐）
+	s := newPGTestStore(t)
+	// 领域表最小 schema（PG 方言）
 	if _, err := s.DB.Exec(`
 CREATE TABLE IF NOT EXISTS papers (
 	id TEXT PRIMARY KEY,
@@ -25,20 +19,20 @@ CREATE TABLE IF NOT EXISTS papers (
 	abstract TEXT NOT NULL DEFAULT '',
 	arxiv_id TEXT UNIQUE,
 	read_status TEXT NOT NULL DEFAULT 'unread',
-	"metadata" TEXT,
+	metadata JSONB,
 	pdf_path TEXT,
-	embedding_vec TEXT,
-	updated_at TEXT
+	embedding_vec JSONB,
+	updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS analysis_reports (
 	id TEXT PRIMARY KEY,
 	paper_id TEXT NOT NULL UNIQUE REFERENCES papers(id) ON DELETE CASCADE,
 	summary_md TEXT,
 	deep_dive_md TEXT,
-	key_insights TEXT NOT NULL DEFAULT '{}',
+	key_insights JSONB NOT NULL DEFAULT '{}',
 	skim_score REAL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now')),
-	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS prompt_traces (
 	id TEXT PRIMARY KEY,
@@ -52,14 +46,12 @@ CREATE TABLE IF NOT EXISTS prompt_traces (
 	input_cost_usd REAL,
 	output_cost_usd REAL,
 	total_cost_usd REAL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`); err != nil {
 		t.Fatal(err)
 	}
-	// 种论文
 	if _, err := s.DB.Exec(
-		`INSERT INTO papers (id, title, abstract, arxiv_id) VALUES (?, 'Test paper', 'abstract', '2609.09999')`,
-		"paper-1",
+		`INSERT INTO papers (id, title, abstract, arxiv_id) VALUES ('paper-1', 'Test paper', 'abstract', '2609.09999')`,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -289,8 +281,8 @@ CREATE TABLE IF NOT EXISTS claims (
 	status TEXT NOT NULL DEFAULT 'draft',
 	certainty TEXT,
 	run_id TEXT,
-	created_at TEXT NOT NULL DEFAULT (datetime('now')),
-	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TEXT NOT NULL DEFAULT (NOW()),
+	updated_at TEXT NOT NULL DEFAULT (NOW())
 );
 CREATE TABLE IF NOT EXISTS evidence (
 	id TEXT PRIMARY KEY,
@@ -302,7 +294,7 @@ CREATE TABLE IF NOT EXISTS evidence (
 	quote TEXT,
 	fingerprint TEXT NOT NULL UNIQUE,
 	run_id TEXT,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TEXT NOT NULL DEFAULT (NOW())
 );
 CREATE TABLE IF NOT EXISTS research_runs (
 	id TEXT PRIMARY KEY,
@@ -311,7 +303,7 @@ CREATE TABLE IF NOT EXISTS research_runs (
 	paper_ids TEXT NOT NULL DEFAULT '[]',
 	model_policy TEXT NOT NULL DEFAULT '{}',
 	status TEXT NOT NULL DEFAULT 'succeeded',
-	started_at TEXT NOT NULL DEFAULT (datetime('now'))
+	started_at TEXT NOT NULL DEFAULT (NOW())
 );
 CREATE TABLE IF NOT EXISTS research_events (
 	id TEXT PRIMARY KEY,
@@ -321,7 +313,7 @@ CREATE TABLE IF NOT EXISTS research_events (
 	actor TEXT NOT NULL DEFAULT 'system',
 	run_id TEXT,
 	payload TEXT NOT NULL DEFAULT '{}',
-	occurred_at TEXT NOT NULL DEFAULT (datetime('now'))
+	occurred_at TEXT NOT NULL DEFAULT (NOW())
 );
 CREATE TABLE IF NOT EXISTS source_versions (
 	id TEXT PRIMARY KEY,
@@ -330,7 +322,7 @@ CREATE TABLE IF NOT EXISTS source_versions (
 	content_hash TEXT NOT NULL,
 	detected_by TEXT NOT NULL DEFAULT 'ingest',
 	is_current INTEGER NOT NULL DEFAULT 1,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TEXT NOT NULL DEFAULT (NOW())
 );`); err != nil {
 		t.Fatal(err)
 	}

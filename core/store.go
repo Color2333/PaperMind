@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/lib/pq"
 )
 
 // CoreStore 持有权威 Job/Task/Attempt 状态（SQLite，同一 papermind.db）。
@@ -25,18 +25,14 @@ type CoreStore struct {
 	DB *sql.DB
 }
 
-// OpenCoreStore 打开（或创建）权威存储；busy_timeout + WAL 与 Python 并发共存。
-func OpenCoreStore(sqlitePath string) (*CoreStore, error) {
-	dsn := fmt.Sprintf(
-		"file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(0)",
-		sqlitePath,
-	)
-	db, err := sql.Open("sqlite", dsn)
+// OpenCoreStore 打开 PostgreSQL 权威存储（PG 并发安全，无需单连接限制）。
+func OpenCoreStore(pgDSN string) (*CoreStore, error) {
+	db, err := sql.Open("postgres", pgDSN)
 	if err != nil {
 		return nil, err
 	}
-	// SQLite 单写者：Go 侧限 1 连接，配合 busy_timeout 与 Python 进程串行化
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
 	s := &CoreStore{DB: db}
 	if err := s.initSchema(); err != nil {
 		db.Close()
@@ -53,28 +49,28 @@ CREATE TABLE IF NOT EXISTS core_jobs (
 	id TEXT PRIMARY KEY,
 	kind TEXT NOT NULL,
 	capability TEXT NOT NULL,
-	payload TEXT NOT NULL DEFAULT '{}',
+	payload JSONB NOT NULL DEFAULT '{}',
 	idempotency_key TEXT UNIQUE,
 	status TEXT NOT NULL DEFAULT 'queued',
-	created_at TEXT NOT NULL,
-	started_at TEXT,
-	finished_at TEXT
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	started_at TIMESTAMPTZ,
+	finished_at TIMESTAMPTZ
 );
 CREATE TABLE IF NOT EXISTS core_tasks (
 	id TEXT PRIMARY KEY,
 	job_id TEXT NOT NULL REFERENCES core_jobs(id),
 	capability TEXT NOT NULL,
-	input_ref TEXT NOT NULL DEFAULT '{}',
+	input_ref JSONB NOT NULL DEFAULT '{}',
 	status TEXT NOT NULL DEFAULT 'queued',
 	attempt_count INTEGER NOT NULL DEFAULT 0,
 	max_attempts INTEGER NOT NULL DEFAULT 3,
 	timeout_s INTEGER NOT NULL DEFAULT 600,
 	lease_token TEXT,
-	lease_expires_at TEXT,
+	lease_expires_at TIMESTAMPTZ,
 	last_error TEXT,
-	result_ref TEXT,
+	result_ref JSONB,
 	seq INTEGER NOT NULL DEFAULT 0,
-	created_at TEXT NOT NULL
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ix_core_tasks_job ON core_tasks(job_id, status);
 CREATE TABLE IF NOT EXISTS core_attempts (
@@ -86,16 +82,15 @@ CREATE TABLE IF NOT EXISTS core_attempts (
 	status TEXT NOT NULL DEFAULT 'running',
 	error_class TEXT,
 	error_message TEXT,
-	started_at TEXT NOT NULL,
-	finished_at TEXT
-);
-`)
+	started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	finished_at TIMESTAMPTZ
+);`)
 	return err
 }
 
 func nowISO() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-// sqliteTime：SQLite datetime('now') 同格式（ReclaimExpired 的字符串比较依赖一致性）
+// sqliteTime：SQLite NOW() 同格式（ReclaimExpired 的字符串比较依赖一致性）
 func sqliteTime() string { return time.Now().UTC().Format("2006-01-02 15:04:05") }
 
 func sqliteTimePlus(seconds int) string {
