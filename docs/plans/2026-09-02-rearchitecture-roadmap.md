@@ -24,9 +24,9 @@
 | --- | --- | --- | --- |
 | Stage A · Phase 0 基线 + 六份设计 | 10 | 9 | 进行中（仅余 A2 待服务器实测） |
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
-| Stage C · Phase 2 Go Core + 原子 durable execution | 13 | 11 | **Go-authority 全量路由完成**——所有 capability 统一经 Go 调度（SubmitCoreTask 白名单取消）；A 档四项（skim/deep_read/embed/extract_claims）Go SQL 直写；B 档 24 项 Go 落终态 + handler 领域写入（幂等 upsert + effect ledger + batch 卫兵缓解 P0-1）；双权威控制面路由全通。故障注入 6/6 PASS（Go 权威路径）|
+| Stage C · Phase 2 Go Core + 原子 durable execution | 13 | 13 | **完成**——Go-authority 全量路由（所有 capability 统一经 Go 调度）；A 档四项 Go SQL 直写 apply；B 档 Go 落终态 + handler 领域写入；双权威控制面路由（submit/cancel/pause/观察面/attempts）全通；故障注入 6/6 PASS |
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
-| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | E6 完成（六类 renderer + renderCall/expanded/isPartial 覆盖 + 双主题）；剩 E7（permission profiles）+ E8（MCP 远程化）|
+| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 10 | **完成**——E1-E10 全部落地（Terminal fork + @papermind/cli + Go-authority + renderer/主题 + permission profiles + MCP 远程化 + device auth + capability metadata）|
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 3 | **完成**（G1 Demo 独立实例 + G2 GitHub OAuth 临时身份 + G3 三段式演示旅程测试——匿名可达/Demo JWT/Research Pack 导出/GitHub 端点白名单）|
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
