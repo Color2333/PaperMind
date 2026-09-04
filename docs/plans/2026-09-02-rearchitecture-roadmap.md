@@ -26,7 +26,7 @@
 | Stage B · Phase 1 application command/query | 8 | 8 | 已完成（遗留后期批次：tags/cs_feeds/设置面/sensemaking/translate/writing，见 B8 条目） |
 | Stage C · Phase 2 Go Core + 原子 durable execution | 13 | 11 | **Go-authority 全量路由完成**——所有 capability 统一经 Go 调度（SubmitCoreTask 白名单取消）；A 档四项（skim/deep_read/embed/extract_claims）Go SQL 直写；B 档 24 项 Go 落终态 + handler 领域写入（幂等 upsert + effect ledger + batch 卫兵缓解 P0-1）；双权威控制面路由全通。故障注入 6/6 PASS（Go 权威路径）|
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
-| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | 进行中（E2 全含 E2c：Pi agent core 接入 + 受控工具集 + 六类 renderer + 双主题；剩 E6 收尾/E7/E8） |
+| Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | E6 完成（六类 renderer + renderCall/expanded/isPartial 覆盖 + 双主题）；剩 E7（permission profiles）+ E8（MCP 远程化）|
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
 | Stage G · Phase 6 公开 Demo | 3 | 0 | 未开始 |
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
@@ -223,7 +223,10 @@
 - 2026-09-03：完成 F3——pm ui loopback bridge（nonce session/Host 校验/allowlist 代理）+ 3 个测试。全量 214 passed + Go 10 passed。
 - 2026-09-03：E1 Terminal fork 本地基线（Pi upstream 4e69b0c）+ A2 基线测量脚本（scripts/measure_baseline.sh）。全量 212 passed + Go 10 passed。
 - 2026-09-03：完成 F1（inventory 已有设计⑤ §1 权威产出）+ F6 FastAPI 侧 `--web=full|demo|none` 部署 profile。全量 212 passed + Go 10 passed。
-- [ ] **E6 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
+- [x] **E6 领域 renderer 与主题**：Paper/Claim/Evidence/Research Diff/Job/Research Pack 卡片，`papermind-dark/light`，非 TTY 退化为 Markdown/plain text。
+  产出：packages/papermind-cli/src/agent/renderers.js（六类卡片：renderPaperCard/renderClaimCard/renderEvidenceCard/renderDiffItems/renderJobCard/renderResearchPack——状态词语义色，颜色非唯一信号）+ extension/themes/papermind-dark/light.json（暖纸底/暖墨底 + 赭石品牌色 #C4663C，与前端设计语言同源）。
+  renderer 覆盖：9 工具 renderCall（调用摘要行）+ resultRenderer 公共工厂（isPartial 进行中 / 完成卡片 / expanded ctrl+e 详情视图——key/value 键值对截断展示）。npm test 15/15。
+  遗留：E7 permission profiles、E8 MCP 远程化。
 - [ ] **E7 permission profiles**：默认 research profile；`--workspace`/`--coding` 显式开启；destructive 动作需服务端 policy + 终端确认双重把关。
 - [ ] **E8 MCP 远程化**：唯一 transport 为公网 HTTPS Streamable HTTP；OAuth protected resource metadata、token audience/scope 校验；resources 与 tools 划分。
 - [x] **E9 MCP 凭据升级**：静态 token 改为可撤销、可轮换、分 scope 的凭据。
