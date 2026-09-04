@@ -533,9 +533,12 @@ def topic_wiki_save(
     from packages.application.commands.graph import get_topic_wiki
     from packages.storage.db import session_scope
 
-    def _adapted(pct: float, msg: str):
+    # wiki 链路的 progress_callback 约定是 (msg, current, total)——与
+    # packages/ai/graph/wiki.py 的 _progress 对齐（此前误写 (pct, msg)，
+    # executor 调用时 TypeError → 任务 dead_letter）
+    def _adapted(msg: str, current: int = 0, total: int = 100):
         if progress:
-            progress(msg, int(pct * 100), 100)
+            progress(msg, current, total)
 
     result = get_topic_wiki(keyword=keyword, limit=limit, progress_callback=_adapted)
     with session_scope() as session:

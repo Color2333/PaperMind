@@ -548,14 +548,10 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request, cid str
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_job_request"})
 		return
 	}
-	migrated := map[string]bool{"skim_paper": true, "deep_read_paper": true, "embed_paper": true}
-	if !migrated[req.Capability] {
-		writeJSON(w, http.StatusBadRequest, cid, map[string]any{
-			"ok": false, "error": "capability_not_migrated",
-			"detail": "该 capability 尚未迁移到 Go authority（逐项迁移中）",
-		})
-		return
-	}
+	// Go-authority 全量路由：任意 capability 均可提交（领域 apply 按 A/B 档分派——
+	// A 档 Go SQL 直写，B 档 applyTerminalOnlyResult 落终态）。此前的
+	// capability 白门控是 skim 切片时代残留，与全量路由矛盾（Wiki/Brief 等
+	// B 档任务在此 400）。
 	inputJSON, _ := json.Marshal(req.InputRef)
 	jobID, taskID, created, err := s.Store.SubmitCoreTask(req.Capability, string(inputJSON), req.IdempotencyKey, req.TimeoutS)
 	if err != nil {

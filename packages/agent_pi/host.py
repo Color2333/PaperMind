@@ -97,12 +97,28 @@ def _provider_key(provider: str) -> str:
 
 
 def _get_active_llm_config():
-    """DB active LLM 配置（测试注入点）。"""
+    """DB active LLM 配置（测试注入点）。
+
+    返回简单 dict（在 session 内取出字段——ORM 对象随 session 关闭而
+    detached，外部访问属性会 DetachedInstanceError）：
+    {provider, name, api_key, api_base_url, model_skim, model_deep, model_vision}
+    """
     from packages.storage.db import session_scope
     from packages.storage.repositories import LLMConfigRepository
 
     with session_scope() as session:
-        return LLMConfigRepository(session).get_active()
+        cfg = LLMConfigRepository(session).get_active()
+        if cfg is None:
+            return None
+        return {
+            "provider": cfg.provider,
+            "name": cfg.name,
+            "api_key": cfg.api_key,
+            "api_base_url": cfg.api_base_url,
+            "model_skim": cfg.model_skim,
+            "model_deep": cfg.model_deep,
+            "model_vision": cfg.model_vision,
+        }
 
 
 def materialize_model_config() -> dict | None:
@@ -117,30 +133,30 @@ def materialize_model_config() -> dict | None:
 
     agent_dir = web_agent_dir()
     agent_dir.mkdir(parents=True, exist_ok=True)
-    key = _provider_key(cfg.provider)
-    models = [{"id": mid, "name": mid} for mid in (cfg.model_skim, cfg.model_deep) if mid]
-    if cfg.model_vision:
-        models.append({"id": cfg.model_vision, "name": cfg.model_vision})
+    key = _provider_key(cfg["provider"])
+    models = [{"id": mid, "name": mid} for mid in (cfg["model_skim"], cfg["model_deep"]) if mid]
+    if cfg["model_vision"]:
+        models.append({"id": cfg["model_vision"], "name": cfg["model_vision"]})
     entry: dict = {
-        "name": cfg.name,
-        "apiKey": cfg.api_key,
-        "api": _API_MAP.get(cfg.provider, "openai-completions"),
+        "name": cfg["name"],
+        "apiKey": cfg["api_key"],
+        "api": _API_MAP.get(cfg["provider"], "openai-completions"),
         "models": models,
     }
-    if cfg.api_base_url:
-        entry["baseUrl"] = cfg.api_base_url.rstrip("/")
+    if cfg["api_base_url"]:
+        entry["baseUrl"] = cfg["api_base_url"].rstrip("/")
     (agent_dir / "models.json").write_text(
         json.dumps({"providers": {key: entry}}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (agent_dir / "settings.json").write_text(
         json.dumps(
-            {"defaultProvider": key, "defaultModel": cfg.model_skim},
+            {"defaultProvider": key, "defaultModel": cfg["model_skim"]},
             ensure_ascii=False,
         ),
         encoding="utf-8",
     )
-    return {"provider": key, "model": cfg.model_skim}
+    return {"provider": key, "model": cfg["model_skim"]}
 
 
 # ---------- Pi 事件 → PaperMind SSE 翻译 ----------

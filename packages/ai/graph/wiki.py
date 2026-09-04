@@ -76,7 +76,6 @@ class WikiService:
         result = self.llm.complete_json(
             full_prompt,
             stage="rag",
-            model_override=self.settings.llm_model_deep,
             max_tokens=8192,
         )
         self.llm.trace_result(
@@ -166,7 +165,6 @@ class WikiService:
         outline_result = self.llm.complete_json(
             outline_prompt,
             stage="rag",
-            model_override=self.settings.llm_model_deep,
             max_tokens=8192,
         )
         self.llm.trace_result(
@@ -209,7 +207,6 @@ class WikiService:
         overview_result = self.llm.summarize_text(
             overview_prompt,
             stage="wiki_overview",
-            model_override=self.settings.llm_model_deep,
             max_tokens=2048,
         )
         self.llm.trace_result(
@@ -235,7 +232,6 @@ class WikiService:
         summary_result = self.llm.complete_json(
             summary_prompt,
             stage="wiki_summary",
-            model_override=self.settings.llm_model_deep,
             max_tokens=2048,
         )
         self.llm.trace_result(
@@ -321,7 +317,6 @@ class WikiService:
         sec_result = self.llm.summarize_text(
             sec_prompt,
             stage="wiki_section",
-            model_override=self.settings.llm_model_deep,
             max_tokens=4096,
         )
         self.llm.trace_result(

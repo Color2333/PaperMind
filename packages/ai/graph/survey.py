@@ -44,7 +44,6 @@ class SurveyService:
         llm_result = self.llm.complete_json(
             prompt,
             stage="rag",
-            model_override=self.settings.llm_model_skim,
         )
         self.llm.trace_result(
             llm_result, stage="graph_evolution", prompt_digest=f"evolution:{keyword}"
@@ -66,7 +65,6 @@ class SurveyService:
         result = self.llm.complete_json(
             prompt,
             stage="rag",
-            model_override=self.settings.llm_model_skim,
         )
         self.llm.trace_result(result, stage="graph_survey", prompt_digest=f"survey:{keyword}")
         survey_obj = result.parsed_json or {
@@ -138,7 +136,6 @@ class SurveyService:
         result = self.llm.complete_json(
             prompt,
             stage="deep",
-            model_override=self.settings.llm_model_deep,
             max_tokens=8192,
         )
         self.llm.trace_result(result, stage="graph_research_gaps", prompt_digest=f"gaps:{keyword}")

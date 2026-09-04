@@ -28,19 +28,15 @@ FAKE_PM = textwrap.dedent("""\
     """)
 
 
-FAKE_CFG = type(
-    "Cfg",
-    (),
-    {
-        "provider": "openai",
-        "name": "Test Provider",
-        "api_key": "sk-test",
-        "api_base_url": "https://api.test.com/v1/",
-        "model_skim": "gpt-test",
-        "model_deep": "gpt-test-deep",
-        "model_vision": None,
-    },
-)()
+FAKE_CFG = {
+    "provider": "openai",
+    "name": "Test Provider",
+    "api_key": "sk-test",
+    "api_base_url": "https://api.test.com/v1/",
+    "model_skim": "gpt-test",
+    "model_deep": "gpt-test-deep",
+    "model_vision": None,
+}
 
 
 @pytest.fixture()

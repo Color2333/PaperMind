@@ -138,13 +138,13 @@ def agent_engine() -> dict:
     pm_ok = pi_engine_available()
     forced = os.environ.get("PAPERMIND_AGENT_ENGINE", "pi").strip().lower()
     engine = "python" if (not pm_ok or forced == "python") else "pi"
-    cfg = _get_active_llm_config()
+    cfg = _get_active_llm_config() or {}
     return {
         "engine": engine,
         "pm_available": pm_ok,
         "forced": forced,
-        "chat_model": cfg.model_skim if cfg else None,
-        "provider": cfg.provider if cfg else None,
+        "chat_model": cfg.get("model_skim"),
+        "provider": cfg.get("provider"),
     }
 
 

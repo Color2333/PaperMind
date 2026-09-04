@@ -135,7 +135,7 @@ export default function JobMonitor() {
                 )}
                 <span className="text-xs text-gray-400 ml-auto">{j.id}</span>
               </div>
-              {j.progress.message && (
+              {j.progress?.message && (
                 <p className="text-xs text-gray-600 mt-1">{j.progress.message}</p>
               )}
               <div className="flex items-center gap-2 mt-1">
@@ -144,14 +144,14 @@ export default function JobMonitor() {
                     className="bg-blue-500 rounded-full h-1.5"
                     style={{
                       width:
-                        j.progress.total > 0
-                          ? `${Math.min(100, (j.progress.current / j.progress.total) * 100)}%`
+                        j.progress?.total
+                          ? `${Math.min(100, ((j.progress?.current ?? 0) / (j.progress?.total || 1)) * 100)}%`
                           : "0%",
                     }}
                   />
                 </div>
                 <span className="text-xs text-gray-500">
-                  {j.progress.current}/{j.progress.total}
+                  {j.progress?.current ?? 0}/{j.progress?.total ?? 0}
                 </span>
               </div>
               <div className="flex gap-2 mt-2">

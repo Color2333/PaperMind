@@ -415,7 +415,10 @@ func (s *CoreStore) JobGraph(jobID string) (map[string]any, error) {
 
 func (s *CoreStore) JobsList(limit int) ([]map[string]any, error) {
 	rows, err := s.DB.Query(
-		`SELECT id, kind, status, created_at FROM core_jobs ORDER BY created_at DESC LIMIT $1`, limit)
+		`SELECT j.id, j.kind, j.status, j.created_at,
+		        COALESCE(SUM(CASE WHEN t.status='succeeded' THEN 1 ELSE 0 END), 0), COUNT(t.id)
+		 FROM core_jobs j LEFT JOIN core_tasks t ON t.job_id = j.id
+		 GROUP BY j.id ORDER BY j.created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -423,12 +426,15 @@ func (s *CoreStore) JobsList(limit int) ([]map[string]any, error) {
 	items := []map[string]any{}
 	for rows.Next() {
 		var id, kind, status, createdAt string
-		if err = rows.Scan(&id, &kind, &status, &createdAt); err != nil {
+		var current, total int
+		if err = rows.Scan(&id, &kind, &status, &createdAt, &current, &total); err != nil {
 			return nil, err
 		}
 		items = append(items, map[string]any{
 			"id": id, "kind": kind, "status": status,
 			"created_at": createdAt, "authority": "go_core",
+			// 观察面统一契约：与 durable job 的 progress 形态一致（按 task 完成数聚合）
+			"progress": map[string]any{"current": current, "total": total, "message": ""},
 		})
 	}
 	return items, nil
