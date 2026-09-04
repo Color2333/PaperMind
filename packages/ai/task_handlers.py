@@ -18,7 +18,11 @@ import asyncio
 import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from packages.domain.schemas import PaperCreate
 
 from packages.executor_runtime.runner import TaskCancelledError
 
@@ -291,6 +295,149 @@ def fetch_topic_papers(*, topic_id: str, progress: ProgressFn = None, **_: Any) 
     return result
 
 
+def _ingest_papers_proposal(
+    *,
+    query: str,
+    papers: list,
+    topic_id: str | None,
+    topic_name: str | None,
+    action_type: str,
+    action_title: str,
+) -> dict:
+    """入库 proposal 公共封装（ingest_arxiv_query / import_selected 共用）。
+
+    领域写（papers upsert / paper_topics / topic_subscriptions 自动创建 /
+    collection_actions）在权威面单事务执行：Go applyIngestPapersResult（A 档）
+    或 domain_apply.apply_ingest_papers_proposal（Python authority 回退）。
+    """
+    return {
+        "proposal": {
+            "kind": "ingest_papers",
+            "query": query,
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "action_type": action_type,
+            "action_title": action_title,
+            "papers": [p.model_dump(mode="json") for p in papers],
+        }
+    }
+
+
+def ingest_arxiv_query_proposal(
+    *,
+    query: str,
+    max_results: int = 20,
+    topic_id: str | None = None,
+    sort_by: str = "submittedDate",
+    days_back: int = 7,
+    progress: ProgressFn = None,
+    **_: Any,
+) -> dict:
+    """按关键词抓取 arXiv 候选（纯计算 + 只读去重）——入库 proposal 模式。
+
+    保留原"分批递归抓取直到凑够 max_results 篇新论文"语义；DB 访问仅
+    list_existing_arxiv_ids（只读）。领域写全部移入权威面。
+    """
+    import time as _time
+
+    from packages.integrations.arxiv_client import ArxivClient
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import PaperRepository
+
+    arxiv = ArxivClient()
+    selected: list[PaperCreate] = []
+    selected_ids: set[str] = set()
+    batch_size = 20
+    max_pages = 10
+    arxiv_request_delay = 3.0
+
+    with session_scope() as session:
+        existing_all: set[str] = set()
+
+        for page in range(max_pages):
+            if len(selected) >= max_results:
+                break
+            start = page * batch_size
+            needed = max_results - len(selected)
+            this_batch = min(batch_size, needed + 20)
+            if progress:
+                with suppress(Exception):
+                    progress(f"抓取第 {page + 1}/{max_pages} 批", page + 1, max_pages)
+
+            papers = arxiv.fetch_latest(
+                query=query,
+                max_results=this_batch,
+                sort_by=sort_by,
+                start=start,
+                days_back=days_back,
+            )
+            if not papers:
+                break
+            existing = PaperRepository(session).list_existing_arxiv_ids(
+                [p.arxiv_id for p in papers]
+            )
+            existing_all |= existing
+            for paper in papers:
+                if paper.arxiv_id not in existing and paper.arxiv_id not in selected_ids:
+                    selected.append(paper)
+                    selected_ids.add(paper.arxiv_id)
+                    if len(selected) >= max_results:
+                        break
+            if page < max_pages - 1 and papers:
+                _time.sleep(arxiv_request_delay)
+
+    del existing_all
+    if progress:
+        with suppress(Exception):
+            progress(f"抓取完成：{len(selected)} 篇新论文", len(selected), max(max_results, 1))
+    return _ingest_papers_proposal(
+        query=query,
+        papers=selected,
+        topic_id=topic_id,
+        topic_name=None,
+        action_type="manual_collect",
+        action_title=f"收集：{query[:80]}",
+    )
+
+
+def import_selected_proposal(
+    *, arxiv_ids: list[str], query: str, progress: ProgressFn = None, **_: Any
+) -> dict:
+    """按选中 ID 抓取元数据（纯计算）——入库 proposal 模式。
+
+    topic 自动创建 / 论文入库 / 收集记录在权威面单事务执行。此前的内联
+    PDF 下载与自动 embed/skim 线程池随 proposal 模式移除（后续任务编排
+    由 workflow 展开机制承载）。
+    """
+    from packages.integrations.arxiv_client import ArxivClient
+
+    arxiv = ArxivClient()
+    selected_set = set(arxiv_ids)
+    selected = [
+        p for p in arxiv.fetch_latest(query=query, max_results=50) if p.arxiv_id in selected_set
+    ]
+    found_ids = {p.arxiv_id for p in selected}
+    missing_ids = selected_set - found_ids
+    if missing_ids:
+        with suppress(Exception):
+            selected.extend(arxiv.fetch_by_ids(list(missing_ids)))
+    if progress:
+        with suppress(Exception):
+            progress(
+                f"已获取 {len(selected)}/{len(selected_set)} 篇元数据",
+                len(selected),
+                max(len(selected_set), 1),
+            )
+    return _ingest_papers_proposal(
+        query=query,
+        papers=selected,
+        topic_id=None,
+        topic_name=query.strip() or None,
+        action_type="agent_collect",
+        action_title=f"Agent 收集: {query[:80]}",
+    )
+
+
 def ingest_arxiv_query(
     *,
     query: str,
@@ -301,10 +448,8 @@ def ingest_arxiv_query(
     progress: ProgressFn = None,
     **_: Any,
 ) -> dict:
-    """按关键词从 arXiv 搜索并入库（/ingest/arxiv 的任务化入口）"""
-    from packages.application.commands.ingest import import_from_arxiv_query
-
-    total, inserted, _new = import_from_arxiv_query(
+    """[已退役直写路径] 兼容保留：转调 proposal 模式"""
+    return ingest_arxiv_query_proposal(
         query=query,
         max_results=max_results,
         topic_id=topic_id,
@@ -312,16 +457,13 @@ def ingest_arxiv_query(
         days_back=days_back,
         progress=progress,
     )
-    return {"total": total, "inserted_ids": inserted[:20]}
 
 
 def import_selected(
     *, arxiv_ids: list[str], query: str, progress: ProgressFn = None, **_: Any
 ) -> dict:
-    """按选中 ID 从 arXiv 入库（agent/HTTP 共用）"""
-    from packages.application.commands.ingest import import_selected_papers
-
-    return import_selected_papers(arxiv_ids=arxiv_ids, query=query, progress=progress)
+    """[已退役直写路径] 兼容保留：转调 proposal 模式"""
+    return import_selected_proposal(arxiv_ids=arxiv_ids, query=query, progress=progress)
 
 
 def import_references(

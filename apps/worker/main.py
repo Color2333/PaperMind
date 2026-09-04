@@ -196,7 +196,9 @@ def _start_executor_host(core_addr: str) -> None:
         handlers_from_registry,
     )
 
-    capabilities = [name for name, spec in TASK_CAPABILITIES.items() if not spec.manual_recovery]
+    # 领取集合按 trigger 语义（executor=worker 执行）；manual_recovery 只影响
+    # 重试策略（失败不自动重试），不再排除领取——此前邮件/日报三项被误排除成悬空
+    capabilities = [name for name, spec in TASK_CAPABILITIES.items() if spec.trigger == "executor"]
     handlers = handlers_from_registry(capabilities)
     client = CoreClient(
         f"http://{core_addr}",

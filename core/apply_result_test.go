@@ -528,3 +528,108 @@ func TestApplyUpsertPaperMetadataMerge(t *testing.T) {
 		t.Fatalf("result_ref 缺少 paper_id: %s", resultRef)
 	}
 }
+
+// TestApplyIngestPapersResult：批量入库 A 档——papers upsert + topic 自动创建 +
+// paper_topics + collection_actions 单事务；result_ref 携带 inserted_ids。
+func TestApplyIngestPapersResult(t *testing.T) {
+	s := newTestStore(t)
+	// 补 ingest 相关最小 schema（列级增量，幂等）
+	for _, ddl := range []string{
+		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS source TEXT`,
+		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS source_id TEXT`,
+		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS publication_date DATE`,
+		`CREATE TABLE IF NOT EXISTS topic_subscriptions (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, query TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT true,
+			created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`,
+		`CREATE TABLE IF NOT EXISTS paper_topics (
+			id TEXT PRIMARY KEY, paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+			topic_id TEXT NOT NULL, UNIQUE(paper_id, topic_id))`,
+		`CREATE TABLE IF NOT EXISTS collection_actions (
+			id TEXT PRIMARY KEY, action_type TEXT NOT NULL, title TEXT NOT NULL, query TEXT,
+			topic_id TEXT, paper_count INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW())`,
+		`CREATE TABLE IF NOT EXISTS action_papers (
+			id TEXT PRIMARY KEY, action_id TEXT NOT NULL REFERENCES collection_actions(id) ON DELETE CASCADE,
+			paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE, UNIQUE(action_id, paper_id))`,
+	} {
+		if _, err := s.DB.Exec(ddl); err != nil {
+			t.Fatalf("schema: %v", err)
+		}
+	}
+
+	_, taskID, _, err := s.SubmitCoreTask("ingest_arxiv_query", `{"query":"transformer"}`, "ingest:t:1", 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := s.ClaimTask("exec-1", []string{"ingest_arxiv_query"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v / %v", own, err)
+	}
+
+	proposal := map[string]any{
+		"proposal": map[string]any{
+			"kind": "ingest_papers", "query": "transformer",
+			"topic_name": "e2e-topic", "action_type": "manual_collect",
+			"action_title": "收集：transformer",
+			"papers": []any{
+				map[string]any{"arxiv_id": "2601.00011", "title": "Paper A", "abstract": "a", "source": "arxiv"},
+				map[string]any{"arxiv_id": "2601.00012", "title": "Paper B", "abstract": "b", "source": "arxiv"},
+			},
+		},
+	}
+	status, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, proposal)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !strings.Contains(status, "succeeded") {
+		t.Fatalf("status=%s", status)
+	}
+
+	// papers 落库 + topic 自动创建 + 关联
+	var paperCount int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM papers WHERE arxiv_id IN ('2601.00011','2601.00012')`).Scan(&paperCount)
+	if paperCount != 2 {
+		t.Fatalf("papers=%d", paperCount)
+	}
+	var topicID string
+	if err := s.DB.QueryRow(`SELECT id FROM topic_subscriptions WHERE name='e2e-topic'`).Scan(&topicID); err != nil {
+		t.Fatalf("topic 未自动创建: %v", err)
+	}
+	var enabled bool
+	_ = s.DB.QueryRow(`SELECT enabled FROM topic_subscriptions WHERE name='e2e-topic'`).Scan(&enabled)
+	if enabled {
+		t.Fatal("自动创建的 topic 应为 enabled=false")
+	}
+	var linkCount int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM paper_topics WHERE topic_id=$1`, topicID).Scan(&linkCount)
+	if linkCount != 2 {
+		t.Fatalf("paper_topics=%d", linkCount)
+	}
+	// collection_actions + action_papers
+	var actionCount, linkPaperCount int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM collection_actions WHERE action_type='manual_collect'`).Scan(&actionCount)
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM action_papers ap JOIN collection_actions ca ON ca.id=ap.action_id WHERE ca.query='transformer'`).Scan(&linkPaperCount)
+	if actionCount != 1 || linkPaperCount != 2 {
+		t.Fatalf("actions=%d action_papers=%d", actionCount, linkPaperCount)
+	}
+	// result_ref 携带 inserted_ids
+	var resultRef string
+	_ = s.DB.QueryRow(`SELECT result_ref FROM core_tasks WHERE id=?`, taskID).Scan(&resultRef)
+	if !strings.Contains(resultRef, "inserted_ids") {
+		t.Fatalf("result_ref 缺 inserted_ids: %s", resultRef)
+	}
+
+	// 幂等：同 arxiv_id 二次提交不产生重复行
+	_, taskID2, _, _ := s.SubmitCoreTask("ingest_arxiv_query", `{"query":"transformer"}`, "ingest:t:2", 600)
+	own2, err := s.ClaimTask("exec-1", []string{"ingest_arxiv_query"})
+	if err != nil || own2 == nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if _, err = s.ApplyResult(taskID2, "exec-1", own2.LeaseToken, proposal); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM papers WHERE arxiv_id IN ('2601.00011','2601.00012')`).Scan(&paperCount)
+	if paperCount != 2 {
+		t.Fatalf("重复提交产生重复论文: %d", paperCount)
+	}
+}

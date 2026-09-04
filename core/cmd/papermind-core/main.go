@@ -78,14 +78,9 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	// Phase 2：Go Executor 模式（GO_EXECUTOR=1 时在同一进程内启动 claim 循环）。
-	// 仅领取无 LLM 能力（upsert/download/fetch）——LLM 类由 Python Executor 执行。
-	if os.Getenv("GO_EXECUTOR") == "1" && store != nil {
-		executor := core.NewGoExecutor(store, "go-executor")
-		executor.Start()
-		defer executor.Stop()
-		log.Printf("Go Executor started (capabilities: upsert_paper/download_source/fetch_feed)")
-	}
+	// 执行体唯一化：Python worker 是唯一 executor（纯计算，返回 proposal）；
+	// Go core 只做权威调度与 apply。此前的 GO_EXECUTOR 进程内 claim 循环已退役
+	// （upsert/download/fetch 的计算由 Python handler 承载，proposal 契约不变）。
 
 	log.Printf("PaperMind Go Core (%s) listening on %s [state=%s]", core.CoreVersion, addr, stateAddr)
 	log.Fatal(srv.ListenAndServe())

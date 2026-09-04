@@ -227,3 +227,150 @@ def test_durable_complete_upsert_proposal_ref_carries_paper_id(db_session):
     ref = (row.input_ref or {}).get("result_ref") or {}
     assert ref["arxiv_id"] == "2601.00006"
     assert ref["paper_id"]
+
+
+def test_apply_ingest_papers_proposal_full_chain(db_session):
+    """ingest_papers proposal：papers 落库 + topic 自动创建 + 收集记录 + 关联"""
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.models import CollectionAction, Paper, PaperTopic, TopicSubscription
+
+    ref = apply_proposal(
+        db_session,
+        {
+            "kind": "ingest_papers",
+            "query": "neural radiance",
+            "topic_name": "NeRF 主题",
+            "action_type": "agent_collect",
+            "action_title": "Agent 收集: neural radiance",
+            "papers": [
+                {
+                    "arxiv_id": "2602.00001",
+                    "title": "NeRF Paper",
+                    "abstract": "n",
+                    "source": "arxiv",
+                    "publication_date": "2026-02-01",
+                    "metadata": {"categories": ["cs.CV"]},
+                },
+                {
+                    "arxiv_id": "2602.00002",
+                    "title": "NeRF Followup",
+                    "abstract": "m",
+                    "source": "arxiv",
+                },
+            ],
+        },
+    )
+    db_session.flush()
+    assert ref["total"] == 2 and len(ref["inserted_ids"]) == 2
+
+    topic = db_session.query(TopicSubscription).filter_by(name="NeRF 主题").one()
+    assert topic.enabled is False  # 自动创建不启用调度
+    papers = db_session.query(Paper).filter(Paper.arxiv_id.in_(["2602.00001", "2602.00002"])).all()
+    assert len(papers) == 2
+    assert papers[0].metadata_json.get("categories") == ["cs.CV"]
+    assert papers[0].publication_date is not None
+    links = db_session.query(PaperTopic).filter_by(topic_id=topic.id).count()
+    assert links == 2
+    action = db_session.query(CollectionAction).filter_by(action_type="agent_collect").one()
+    assert action.paper_count == 2
+
+
+def test_apply_ingest_papers_proposal_existing_topic_not_disabled(db_session):
+    """修正语义：topic 已存在时不改写 enabled（旧路径会禁用用户订阅）"""
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.models import TopicSubscription
+
+    db_session.add(TopicSubscription(name="existing-topic", query="q", enabled=True))
+    db_session.flush()
+
+    apply_proposal(
+        db_session,
+        {
+            "kind": "ingest_papers",
+            "query": "q",
+            "topic_name": "existing-topic",
+            "action_type": "manual_collect",
+            "action_title": "t",
+            "papers": [{"arxiv_id": "2602.00003", "title": "P", "abstract": "x"}],
+        },
+    )
+    db_session.flush()
+    db_session.expire_all()
+    assert (
+        db_session.query(TopicSubscription).filter_by(name="existing-topic").one().enabled is True
+    )
+
+
+def test_apply_ingest_papers_proposal_idempotent(db_session):
+    """同 arxiv_id 重复入库：不产生重复论文；metadata 合并不覆盖 skim 字段"""
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.models import Paper
+
+    pid = _mk_paper(db_session, "2602.00004")
+    db_session.get(Paper, pid).metadata_json = {"title_zh": "已有", "keywords": ["k"]}
+    db_session.flush()
+
+    proposal = {
+        "kind": "ingest_papers",
+        "query": "dup",
+        "action_type": "manual_collect",
+        "action_title": "dup",
+        "papers": [
+            {
+                "arxiv_id": "2602.00004",
+                "title": "新标题",
+                "abstract": "新摘要",
+                "metadata": {"categories": ["cs.LG"]},
+            }
+        ],
+    }
+    ref = apply_proposal(db_session, proposal)
+    db_session.flush()
+    assert len(ref["inserted_ids"]) == 1
+    assert db_session.query(Paper).filter_by(arxiv_id="2602.00004").count() == 1
+    db_session.expire_all()
+    meta = db_session.get(Paper, pid).metadata_json
+    assert meta["title_zh"] == "已有" and meta["categories"] == ["cs.LG"]
+
+
+def test_ingest_proposal_handlers_return_proposal(monkeypatch):
+    """registry handler（proposal 模式）：不写库，返回 ingest_papers proposal"""
+    from packages.ai import task_handlers as th
+
+    class FakePaper:
+        def __init__(self, arxiv_id):
+            self.arxiv_id = arxiv_id
+
+        def model_dump(self, mode="json"):
+            return {
+                "arxiv_id": self.arxiv_id,
+                "title": f"t-{self.arxiv_id}",
+                "abstract": "",
+                "source": "arxiv",
+                "metadata": {},
+            }
+
+    class FakeArxiv:
+        def fetch_latest(self, **kw):
+            return [FakePaper("2603.00001"), FakePaper("2603.00002")]
+
+    class FakeRepo:
+        def list_existing_arxiv_ids(self, ids):
+            return {"2603.00002"}  # 已存在一篇
+
+    monkeypatch.setattr("packages.integrations.arxiv_client.ArxivClient", lambda: FakeArxiv())
+
+    class _Sess:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr("packages.storage.db.session_scope", lambda: _Sess())
+    monkeypatch.setattr("packages.storage.repositories.PaperRepository", lambda s: FakeRepo())
+
+    out = th.ingest_arxiv_query_proposal(query="test", max_results=5)
+    proposal = out["proposal"]
+    assert proposal["kind"] == "ingest_papers"
+    assert [p["arxiv_id"] for p in proposal["papers"]] == ["2603.00001"]  # 已存在的被过滤

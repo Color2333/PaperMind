@@ -232,6 +232,77 @@ def apply_download_proposal(session: Session, proposal: dict) -> dict:
     return {"arxiv_id": arxiv_id, "pdf_path": pdf_path}
 
 
+def apply_ingest_papers_proposal(session: Session, proposal: dict) -> dict:
+    """应用批量入库 proposal：papers upsert（arxiv_id 幂等 + skim 保护合并）+
+    topic 解析/自动创建 + paper_topics 关联 + collection_actions。
+
+    与 Go applyIngestPapersResult 语义对齐。差异（有意修正）：topic_subscriptions
+    已存在时不再改写 enabled（Python 旧路径会把用户已启用订阅禁掉）。
+    """
+    from datetime import date as _date
+
+    from sqlalchemy import select
+
+    from packages.domain.enums import ActionType
+    from packages.domain.schemas import PaperCreate
+    from packages.storage.models import Paper, TopicSubscription
+    from packages.storage.repositories import ActionRepository, PaperRepository
+
+    query = str(proposal.get("query") or "")
+    papers = proposal.get("papers") or []
+    if not papers:
+        raise ValueError("ingest proposal 缺少 papers")
+
+    # topic 解析：显式 topic_id > topic_name 自动创建（不存在时，enabled=False）
+    topic_id = proposal.get("topic_id") or None
+    topic_name = (proposal.get("topic_name") or "").strip() or None
+    if topic_id is None and topic_name:
+        found = session.execute(
+            select(TopicSubscription).where(TopicSubscription.name == topic_name)
+        ).scalar_one_or_none()
+        if found is None:
+            found = TopicSubscription(name=topic_name, query=topic_name, enabled=False)
+            session.add(found)
+            session.flush()
+        topic_id = str(found.id)
+
+    repo = PaperRepository(session)
+    inserted_ids: list[str] = []
+    for item in papers:
+        pub = item.get("publication_date")
+        repo.upsert_paper(
+            PaperCreate(
+                arxiv_id=str(item.get("arxiv_id") or ""),
+                title=str(item.get("title") or f"arXiv:{item.get('arxiv_id')}"),
+                abstract=str(item.get("abstract") or ""),
+                publication_date=_date.fromisoformat(pub) if isinstance(pub, str) else pub,
+                metadata=item.get("metadata") or {},
+                source=item.get("source") or "arxiv",
+                source_id=item.get("source_id"),
+            )
+        )
+        paper_row = session.execute(
+            select(Paper).where(Paper.arxiv_id == item.get("arxiv_id"))
+        ).scalar_one()
+        inserted_ids.append(str(paper_row.id))
+        if topic_id:
+            repo.link_to_topic(str(paper_row.id), str(topic_id))
+
+    action_type = str(proposal.get("action_type") or "manual_collect")
+    ActionRepository(session).create_action(
+        action_type=ActionType(action_type),
+        title=str(proposal.get("action_title") or query[:80]),
+        paper_ids=inserted_ids,
+        query=query,
+        topic_id=topic_id,
+    )
+    return {
+        "total": len(inserted_ids),
+        "inserted_ids": inserted_ids[:20],
+        "topic_id": topic_id,
+    }
+
+
 def apply_proposal(session: Session, proposal: dict) -> dict | None:
     """proposal 分派（唯一实现，三条路径共用）：
     - Go authority：core ApplyResult 按 capability SQL 直写（A 档）；
@@ -261,6 +332,8 @@ def apply_proposal(session: Session, proposal: dict) -> dict | None:
         return apply_upsert_proposal(session, proposal)
     if kind == "download_source":
         return apply_download_proposal(session, proposal)
+    if kind == "ingest_papers":
+        return apply_ingest_papers_proposal(session, proposal)
     return None
 
 

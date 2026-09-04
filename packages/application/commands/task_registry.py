@@ -23,8 +23,9 @@ class CapabilitySpec:
     timeout_s: int
     max_attempts: int
     resource_class: str  # default / network / llm / embedding
-    manual_recovery: bool = False  # True = 失败不自动重试
+    manual_recovery: bool = False  # True = 失败不自动重试（仅重试语义；不影响领取）
     produces: tuple[str, ...] = field(default_factory=tuple)  # 产出（artifact/事件/领域变化）
+    trigger: str = "executor"  # executor=worker 领取执行；inline=由其他 handler/外部触发器内联执行
     notes: str = ""
 
 
@@ -159,6 +160,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             max_attempts=1,
             resource_class="network",
             manual_recovery=True,  # 不可安全重放：失败进 manual_recovery，不自动重试
+            trigger="executor",  # effect ledger 防重：首次执行合法，人工重放被账本挡住
             produces=(),
             notes="发邮件不可撤回——失败人工介入，禁止自动重试（防重复骚扰）",
         ),
@@ -195,6 +197,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             max_attempts=1,  # 含发邮件步骤，失败不自动重试（人工介入）
             resource_class="llm",
             manual_recovery=True,
+            trigger="executor",  # 每日报告链路（EmailSettings 立即执行）必须可执行；失败不自动重试
             produces=("generated_contents",),
         ),
         CapabilitySpec(
@@ -266,7 +269,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="ingest_arxiv_query",
-            handler="packages.ai.task_handlers:ingest_arxiv_query",
+            handler="packages.ai.task_handlers:ingest_arxiv_query_proposal",
             side_effect="按关键词 arXiv 搜索入库（papers + action）",
             input_keys=("query", "max_results", "topic_id", "sort_by", "days_back"),
             idempotency_template="ingest_query:{query}:{date_hour}",
@@ -277,7 +280,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="import_selected",
-            handler="packages.ai.task_handlers:import_selected",
+            handler="packages.ai.task_handlers:import_selected_proposal",
             side_effect="按选中 ID 批量入库 + embed/skim（papers + action）",
             input_keys=("arxiv_ids", "query"),
             idempotency_template="import_selected:{arxiv_ids_hash}",

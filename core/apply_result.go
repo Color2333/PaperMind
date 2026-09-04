@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ApplyResult 按 capability 分派的 apply-result 入口（单事务）。
@@ -31,6 +32,8 @@ func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result ma
 		return s.applyUpsertPaperResult(taskID, executorID, leaseToken, result)
 	case "download_source":
 		return s.applyDownloadSourceResult(taskID, executorID, leaseToken, result)
+	case "ingest_arxiv_query", "import_selected":
+		return s.applyIngestPapersResult(taskID, executorID, leaseToken, result)
 	default:
 		// B 档通用路径：领域写入由 handler 承载（幂等 upsert + effect ledger
 		// 缓解 P0-1），Go 权威面单事务落 fencing + 终态 + result_ref 原样存储。
@@ -377,6 +380,167 @@ func (s *CoreStore) applyEmbedResult(taskID, executorID, leaseToken string, resu
 		return "", err
 	}
 	return "succeeded", nil
+}
+
+// applyIngestPapersResult：批量入库（A 档升级）——papers upsert（arxiv_id 幂等 +
+// skim 保护合并）+ topic 解析/自动创建 + paper_topics 关联 + collection_actions，
+// 单事务。与 domain_apply.apply_ingest_papers_proposal 语义逐字段对齐。
+// 差异（有意修正）：topic_subscriptions 已存在时不改写 enabled（旧 Python 路径
+// 会把用户已启用订阅禁掉）。
+func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	query, _ := proposal["query"].(string)
+	items, _ := proposal["papers"].([]any)
+	if len(items) == 0 {
+		return "", fmt.Errorf("proposal 缺少 papers")
+	}
+	topicID, _ := proposal["topic_id"].(string)
+	topicName, _ := proposal["topic_name"].(string)
+	actionType, _ := proposal["action_type"].(string)
+	if actionType == "" {
+		actionType = "manual_collect"
+	}
+	actionTitle, _ := proposal["action_title"].(string)
+	if actionTitle == "" && len(query) > 80 {
+		actionTitle = query[:80]
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	// topic 解析：显式 topic_id > topic_name 自动创建（不存在时 enabled=false）
+	if topicID == "" && strings.TrimSpace(topicName) != "" {
+		err = tx.QueryRow(`SELECT id FROM topic_subscriptions WHERE name=$1`, topicName).Scan(&topicID)
+		if err == sql.ErrNoRows {
+			newID := newCoreID()
+			if _, err = tx.Exec(
+				`INSERT INTO topic_subscriptions (id, name, query, enabled, created_at, updated_at)
+				 VALUES ($1, $2, $3, 0, NOW(), NOW())`,
+				newID, topicName, topicName,
+			); err != nil {
+				return "", fmt.Errorf("topic_subscriptions insert: %w", err)
+			}
+			topicID = newID
+		} else if err != nil {
+			return "", err
+		}
+	}
+
+	// 逐篇 papers upsert（幂等）+ paper_topics 关联
+	insertedIDs := []string{}
+	for _, itemAny := range items {
+		item, ok := itemAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		arxivID, _ := item["arxiv_id"].(string)
+		if arxivID == "" {
+			continue
+		}
+		title, _ := item["title"].(string)
+		abstract, _ := item["abstract"].(string)
+		pubDate, _ := item["publication_date"].(string)
+		source, _ := item["source"].(string)
+		if source == "" {
+			source = "arxiv"
+		}
+		metaJSON := mergeMetadataFromItem(item["metadata"])
+
+		paperID := newCoreID()
+		var existingID string
+		err = tx.QueryRow(`SELECT id FROM papers WHERE arxiv_id=$1`, arxivID).Scan(&existingID)
+		if err == nil {
+			paperID = existingID
+			if metaJSON != "" {
+				if _, err = tx.Exec(
+					`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=NOW() WHERE id=$4`,
+					title, abstract, metaJSON, paperID,
+				); err != nil {
+					return "", err
+				}
+			} else if _, err = tx.Exec(
+				`UPDATE papers SET title=$1, abstract=$2, updated_at=NOW() WHERE id=$3`,
+				title, abstract, paperID,
+			); err != nil {
+				return "", err
+			}
+		} else if err == sql.ErrNoRows {
+			if _, err = tx.Exec(
+				`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, NOW(), NOW())`,
+				paperID, title, arxivID, abstract, metaJSON, source, arxivID, pubDate,
+			); err != nil {
+				return "", fmt.Errorf("papers insert: %w", err)
+			}
+		} else {
+			return "", err
+		}
+		insertedIDs = append(insertedIDs, paperID)
+
+		if topicID != "" {
+			var linkID string
+			err = tx.QueryRow(
+				`SELECT id FROM paper_topics WHERE paper_id=$1 AND topic_id=$2`, paperID, topicID,
+			).Scan(&linkID)
+			if err == sql.ErrNoRows {
+				if _, err = tx.Exec(
+					`INSERT INTO paper_topics (id, paper_id, topic_id) VALUES ($1, $2, $3)`,
+					newCoreID(), paperID, topicID,
+				); err != nil {
+					return "", fmt.Errorf("paper_topics insert: %w", err)
+				}
+			} else if err != nil {
+				return "", err
+			}
+		}
+	}
+
+	// collection_actions + action_papers
+	actionID := newCoreID()
+	if _, err = tx.Exec(
+		`INSERT INTO collection_actions (id, action_type, title, query, topic_id, paper_count, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+		actionID, actionType, actionTitle, query, nullIfEmpty(topicID), len(insertedIDs),
+	); err != nil {
+		return "", fmt.Errorf("collection_actions insert: %w", err)
+	}
+	for _, pid := range insertedIDs {
+		if _, err = tx.Exec(
+			`INSERT INTO action_papers (id, action_id, paper_id) VALUES ($1, $2, $3)`,
+			newCoreID(), actionID, pid,
+		); err != nil {
+			return "", fmt.Errorf("action_papers insert: %w", err)
+		}
+	}
+
+	if err = finalizeTaskWithResult(tx, taskID, map[string]any{
+		"total": len(insertedIDs), "inserted_ids": insertedIDs, "topic_id": topicID,
+	}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("succeeded (papers=%d)", len(insertedIDs)), nil
+}
+
+// mergeMetadataFromItem：paper item 携带的 metadata 序列化（空则返回空串跳过写入）
+func mergeMetadataFromItem(incoming any) string {
+	m, ok := incoming.(map[string]any)
+	if !ok || len(m) == 0 {
+		return ""
+	}
+	return mustJSON(m)
 }
 
 // FailTask 失败上报（core 表；重试/dead_letter 语义与 Python durable 一致）
