@@ -232,6 +232,25 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, cid str
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_heartbeat_request"})
 		return
 	}
+	// Go-authority 路由：core 任务 lease 续约在 Go 权威面
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		ok, cancelReq, err := s.Store.HeartbeatTask(s.taskID(r), req.ExecutorID, req.LeaseToken)
+		if err != nil {
+			s.writeStateError(w, cid, err)
+			return
+		}
+		if !ok {
+			writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "lease_not_renewable"})
+			return
+		}
+		s.Registry.Touch(req.ExecutorID)
+		writeJSON(w, http.StatusOK, cid, HeartbeatResponse{
+			Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:              true,
+			CancelRequested: cancelReq,
+		})
+		return
+	}
 	var out struct {
 		OK              bool `json:"ok"`
 		CancelRequested bool `json:"cancel_requested"`

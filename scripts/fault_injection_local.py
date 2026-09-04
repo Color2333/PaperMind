@@ -64,6 +64,9 @@ class Lab:
                 "PAPERMIND_ENV_FILE": str(self.work / "no-env"),
                 "AUTH_PASSWORD": "",
                 "DURABLE_STATE_TOKEN": STATE_TOKEN,
+                # Go-authority 路由开关：skim/deep_read/embed 提交到 Go 权威
+                "PAPERMIND_CORE_URL": f"http://127.0.0.1:{self.core_port}",
+                "PAPERMIND_CORE_TOKEN": CORE_TOKEN,
                 "PYTHONPATH": str(REPO_ROOT),
             }
         )
@@ -128,6 +131,8 @@ class Lab:
                 "STATE_TOKEN": STATE_TOKEN,
                 "RECONCILE_INTERVAL_S": "1",
                 "RECLAIM_BACKOFF_S": "1",
+                # Go-authority 切片：权威表与领域表同一 SQLite 文件
+                "CORE_DB_PATH": str(self.db),
             },
         )
         self.wait_http(f"http://127.0.0.1:{self.core_port}/health", "core")
@@ -145,7 +150,7 @@ class Lab:
             "--executor-id",
             eid,
             "--capabilities",
-            "skim_paper",
+            "skim_paper,deep_read_paper",
             "--poll-interval",
             "0.5",
             "--heartbeat-interval",
@@ -357,7 +362,8 @@ def main() -> int:
             check=True,
             capture_output=True,
         )
-        lab.wait_job(job_id, {"succeeded"})
+        # exec-cancel 带 30s handler delay——wait_job 超时须覆盖 delay+计算
+        lab.wait_job(job_id, {"succeeded"}, timeout=120)
         results["F_pause_resume"] = "PASS（持久化 pause 阻塞跨进程 claim，resume 后完成）"
     finally:
         lab.stop()

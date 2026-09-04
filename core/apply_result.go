@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // ApplyResult 按 capability 分派的 apply-result 入口（单事务）。
@@ -471,6 +472,48 @@ func (s *CoreStore) JobsList(limit int) ([]map[string]any, error) {
 		})
 	}
 	return items, nil
+}
+
+// HeartbeatTask 续约 Go 权威任务的 lease；返回 (ok, cancelRequested, err)
+func (s *CoreStore) HeartbeatTask(taskID, executorID, leaseToken string) (bool, bool, error) {
+	var status string
+	var leaseTokenDB sql.NullString
+	err := s.DB.QueryRow(
+		`SELECT status, lease_token FROM core_tasks WHERE id=?`,
+		taskID,
+	).Scan(&status, &leaseTokenDB)
+	if err == sql.ErrNoRows {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	if status != "leased" || !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
+		return false, false, nil
+	}
+	if _, err = s.DB.Exec(
+		`UPDATE core_tasks SET lease_expires_at=? WHERE id=?`,
+		sqliteTimePlusFromTask(s.DB, taskID), taskID,
+	); err != nil {
+		return false, false, err
+	}
+	var jobStatus string
+	jobID := ""
+	_ = s.DB.QueryRow(`SELECT job_id FROM core_tasks WHERE id=?`, taskID).Scan(&jobID)
+	if jobID != "" {
+		_ = s.DB.QueryRow(`SELECT status FROM core_jobs WHERE id=?`, jobID).Scan(&jobStatus)
+	}
+	return true, jobStatus == "cancelling", nil
+}
+
+// sqliteTimePlusFromTask：按任务 timeout_s 续约（needDB 传入以查询）
+func sqliteTimePlusFromTask(db *sql.DB, taskID string) string {
+	var timeoutS int
+	_ = db.QueryRow(`SELECT timeout_s FROM core_tasks WHERE id=?`, taskID).Scan(&timeoutS)
+	if timeoutS <= 0 {
+		timeoutS = 600
+	}
+	return time.Now().UTC().Add(time.Duration(timeoutS) * time.Second).Format("2006-01-02 15:04:05")
 }
 
 // CancelJob 取消 Job：queued 直接取消，leased 协作取消
