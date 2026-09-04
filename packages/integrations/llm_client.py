@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import socket
 import threading
@@ -187,6 +188,23 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "anthropic": "",
 }
 
+
+def _gateway_base_url_if_enabled() -> str | None:
+    """Pi 网关开关：PAPERMIND_LLM_GATEWAY=1 时确保网关就绪并返回 base_url。"""
+    if os.environ.get("PAPERMIND_LLM_GATEWAY") != "1":
+        return None
+    try:
+        from packages.agent_pi.gateway import ensure_gateway, gateway_token
+
+        global _GATEWAY_API_KEY  # noqa: PLW0603
+        _GATEWAY_API_KEY = gateway_token()
+        return ensure_gateway()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Pi 网关不可用，回退直连: %s", exc)
+        return None
+
+
+_GATEWAY_API_KEY = ""
 
 _LLM_TIMEOUT = 120  # LLM 请求超时秒数
 
@@ -621,6 +639,12 @@ class LLMClient:
         max_tokens: int | None = None,
     ) -> LLMResult:
         """OpenAI 兼容调用（带指数退避重试）"""
+        # Pi 网关优先（PAPERMIND_LLM_GATEWAY=1）：文本补全统一走 Pi LLM 网关
+        # （pi-ai），Python 不再直连 provider——模型凭据链：DB → 物化 models.json
+        # → 网关。embedding 无 pi-ai 实现，继续原直连路径。
+        gw = _gateway_base_url_if_enabled()
+        if gw:
+            return self._call_pi_gateway(gw, prompt, stage, max_tokens=max_tokens)
         import httpx
 
         max_retries = 3
@@ -691,6 +715,41 @@ class LLMClient:
             "OpenAI-compatible call failed after %d retries: %s", max_retries, last_exception
         )
         return self._pseudo_summary(prompt, stage, cfg, model_override)
+
+    def _call_pi_gateway(
+        self,
+        base_url: str,
+        prompt: str,
+        stage: str,
+        max_tokens: int | None = None,
+    ) -> LLMResult:
+        """经 Pi LLM 网关的文本补全（model=skim/deep 语义映射，网关解析真实模型）"""
+
+        model = "skim" if stage in ("skim", "rag") else "deep"
+        client = _get_openai_client(_GATEWAY_API_KEY, base_url)
+        kwargs: dict = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        response = client.chat.completions.create(**kwargs)
+        msg = response.choices[0].message
+        content = msg.content or ""
+        usage = response.usage
+        in_tokens = usage.prompt_tokens if usage else None
+        out_tokens = usage.completion_tokens if usage else None
+        in_cost, out_cost = self._estimate_cost(
+            model=f"pi-gateway/{model}", input_tokens=in_tokens, output_tokens=out_tokens
+        )
+        return LLMResult(
+            content=content,
+            input_tokens=in_tokens,
+            output_tokens=out_tokens,
+            input_cost_usd=in_cost,
+            output_cost_usd=out_cost,
+            total_cost_usd=in_cost + out_cost,
+        )
 
     def _embed_openai_compatible(self, text: str, cfg: LLMConfig) -> list[float] | None:
         if not text:

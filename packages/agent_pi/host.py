@@ -21,6 +21,8 @@ import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -245,6 +247,22 @@ def _translate(event: dict) -> str | None:
     return None
 
 
+# 同会话互斥（第四轮 P1）：双击发送/重试/多标签会让两个 Pi runtime 并发
+# append 同一 session 文件——顺序分叉甚至损坏。按 conversation_id 串行
+# （锁为进程内，单 backend 进程部署形态）。
+_CHAT_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+_CHAT_TIMEOUT_S = float(os.environ.get("PAPERMIND_CHAT_TIMEOUT_S", "300"))
+
+
+def _chat_lock(conversation_id: str) -> threading.Lock:
+    with _LOCKS_GUARD:
+        if conversation_id not in _CHAT_LOCKS:
+            _CHAT_LOCKS[conversation_id] = threading.Lock()
+        return _CHAT_LOCKS[conversation_id]
+
+
 def pi_chat_stream(
     conversation_id: str,
     prompt: str,
@@ -303,9 +321,31 @@ def pi_chat_stream(
     stderr_tail: list[str] = []
     emitted_error = False
     emitted_done = False
+
+    # stderr 独立线程持续排空（第四轮 P1）：PIPE 写满会阻塞子进程，stdout
+    # 循环与请求都无法结束
+    def _drain_stderr() -> None:
+        assert proc.stderr is not None
+        try:
+            for line in proc.stderr:
+                stderr_tail.append(line.rstrip())
+                if len(stderr_tail) > 20:
+                    del stderr_tail[: len(stderr_tail) - 20]
+        except Exception:  # noqa: BLE001 — 排空失败不影响主流程
+            pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    deadline = time.monotonic() + _CHAT_TIMEOUT_S
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
+            if time.monotonic() > deadline:
+                logger.warning("[pi-bridge] 会话超时（%ss）：%s", _CHAT_TIMEOUT_S, conversation_id)
+                yield make_sse("error", {"message": f"会话超时（{_CHAT_TIMEOUT_S:.0f}s 未完成）"})
+                break
+
             line = line.strip()
             if not line:
                 continue

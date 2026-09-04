@@ -662,7 +662,9 @@ func (s *Server) StartReconciler(interval time.Duration, backoffS int, stop <-ch
 // TokenAuthMiddleware 校验 Bearer token（Executor/控制面认证）。
 func TokenAuthMiddleware(next http.Handler, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		// 健康探针（liveness/readiness）在受控网络内免静态 token——否则 Compose
+		// healthcheck 恒 401，Core 被标 unhealthy，worker 永不启动（第四轮 P0）
+		if r.URL.Path == "/health" || r.URL.Path == "/readyz" {
 			next.ServeHTTP(w, r)
 			return
 		}

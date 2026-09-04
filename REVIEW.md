@@ -405,3 +405,143 @@ Compose 把 Core 绑定到 `0.0.0.0:8081`，但 `CORE_TOKEN` 与 `DURABLE_STATE_
 5. Core 配置 fail closed，拆分 liveness/readiness，修 cancel path/payload 一致性。
 6. 完成 Terminal 的 research/workspace/coding 三档语义，修复失败测试的资源清理，并以 npm tarball/standalone 验证主题加载。
 7. 上述完成后重新跑全量 Python、Go、Terminal 定向/构建测试，再做本地故障注入；用户实际实验确认后才 merge `main`。
+
+---
+
+## 第四轮复审（2026-09-04）
+
+> 审查快照：PaperMind 已提交基线 `7dcbf47`（`refactor/papermind-2026`），并观察到当时尚未提交的 capability 白名单移除、Pi Web bridge 与观察面修改；PaperMind-Terminal 已提交基线 `cfed8636`，并观察到 `pm --json --session` 的未提交接线。工作区仍在被另一执行者修改，因此以下结论按“已提交基线 + 明示的未提交差异”分别判断。
+>
+> 结论：**仍禁止合并到 `main`，也不应进入阿里云部署实验。** 第三轮的 Terminal profile 问题已修复，Go 纵向切片也继续推进；但当前生产 Compose、Go authority 开关、PostgreSQL 方言和 capability 路由没有形成一个能启动的整体。最关键的问题已从“有没有代码”转为“各层代码是否真的接在同一条默认路径上”。
+
+### [P0] 生产 Compose 的 Core 健康检查必然被 Core 自己拒绝
+
+- [ ] 状态：未修复。
+
+位置：`docker-compose.yml:23-36`、`core/server.go:666-684`
+
+Compose 强制要求 `CORE_TOKEN`，但 healthcheck 请求 `GET /readyz` 时没有携带 Bearer token；`TokenAuthMiddleware` 又只对白名单 `/health` 放行。因此正常填写 token 后，`/readyz` 恒为 401，Core 会被 Docker 标成 unhealthy，依赖 `condition: service_healthy` 的 worker 也不会启动。
+
+这不是服务器配置问题，而是当前默认部署文件可确定复现的启动阻断。应让 liveness/readiness 在受控网络内免静态用户 token（或 healthcheck 显式带专用 probe credential），并新增 `docker compose config` + 真容器 health smoke。不能再用只调用 `server.Handler()`、绕过生产中间件链的 Go 单测关闭这个出口。
+
+### [P0] “所有 capability 路由 Go”尚未形成安全闭环，B 档重新打开 unfenced 领域写
+
+- [~] 状态：**提交基线仍有白名单冲突；当前未提交差异移除了白名单，但核心原子性问题仍未修复。**
+
+位置：`packages/application/commands/jobs.py:42-53`、`core/server.go:534-558`、`docker-compose.yml:22-29,109-115`
+
+Python 的 `submit_job()` 在配置 `PAPERMIND_CORE_URL` 后会把**所有** capability 发给 Go；`7dcbf47` 的 Go `POST /v1/jobs` 仍只接受 `skim_paper/deep_read_paper/embed_paper`，因此其他能力会收到 `capability_not_migrated`。审查过程中出现的未提交差异移除了这层白名单，但变成“任意字符串都可入队”，并依赖 `applyTerminalOnlyResult` 给 B 档只落任务终态。
+
+B 档 handler 仍在 fencing 校验前直接提交领域写/外部效果，随后才调用 Go complete；这正是第三轮 P0-1 的“领域事务已提交、complete 前崩溃/断网”窗口。terminal-only apply 只保护 Task/Attempt 终态，不能撤销或去重先发生的 Paper/Claim/邮件等效果，因此不能称为 Go 权威提交。
+
+当前 Compose 又没有给 backend/worker 配置 `PAPERMIND_CORE_URL`，也没有给 Core 配置 `CORE_DB_PATH`，所以默认部署实际上继续走 Python durable authority，Go Store、Go Web API、Go MCP 和 Go apply-result 均未启用。换句话说：不开开关时“Go authority”不存在，打开开关时大多数任务提交失败。
+
+必须先定义一个单一 capability manifest，并让 submit/claim/apply/executor/deploy 从同一份清单生成或校验；未迁移能力显式留在 Python authority，或改成纯 proposal 后再进入 Go。Compose 中还要用一条真实任务证明默认路径确实落到 `core_jobs/core_tasks/core_attempts`。在此之前，路线图“Go-authority 全量路由”和 C13 完成声明应撤回。
+
+### [P0] PostgreSQL 已成为生产默认，但 Go Store 仍是 SQLite SQL，且 PG 测试被静默跳过
+
+- [ ] 状态：未修复。
+
+位置：`core/store.go:291-351`、`core/apply_result.go:15-96,387-469`、`core/pg_test_helper.go:10-33`、`docker-compose.yml:70-72,109-112`
+
+Go Store 混用了 `$1` 与 `?` 占位符，并在 Reconciler 中使用 `datetime('now', ?)`。`lib/pq` 不支持 `?`，PostgreSQL 也没有 SQLite 的 `datetime()`；claim、heartbeat、fencing guard、finalize、fail、reclaim 以及多条领域 apply 都会在 PG 路径失败。尤其 claim 的 CAS UPDATE 可能已经成功，随后读取 `job_id/input_ref` 的 `?` 查询失败却被忽略，最终返回缺输入的 leased Task。
+
+现有绿灯没有覆盖这个路径：`newPGTestStore()` 只有 PostgreSQL 可连接时才运行，而且构造 `CoreStore{DB: db}` 时漏设 `isPG: true`；本轮本机没有 PG，相关用例全部 `SKIP`。独立执行 `go test ./...` 虽然退出 0，不代表生产数据库路径通过。
+
+应先建立统一的 dialect/rebind 层（不要在业务 SQL 中混占位符），让 PG 测试成为 CI 必跑服务而不是可选 skip，并至少覆盖 submit→claim→heartbeat→apply/fail→reclaim 的完整状态机。生产默认切 PG 前，还要做真实迁移与回滚演练。
+
+### [P1] 新 Go lease 状态机重新引入了第三轮已经修过的竞态
+
+- [ ] 状态：未修复。
+
+位置：`core/store.go:286-351,447-456`、`core/apply_result.go:39-72`、`core/executor.go:44-149`
+
+当前 Go 自有任务路径存在一组相互关联的问题：
+
+- claim 先独立提交 Task=leased，再另行插入 Attempt、更新 Job；中途失败会留下“有 lease、无 Attempt”的半状态；
+- heartbeat 完全不使用 `executorID`，也不检查租期是否已经过期；SELECT 校验后再无条件 UPDATE，还允许与 reclaim 发生 TOCTOU 竞态；
+- `fencingGuard` 注释声称校验未过期，实际没有读取 `lease_expires_at`；Reconciler 扫描前，过期 Attempt 仍可提交；
+- Go Executor 在长计算期间不发 heartbeat，也没有 cancel safe point；
+- `CancelJob()` 直接把运行中 Task/Attempt 置 cancelled，而 heartbeat 只接受 leased，Executor 因而收不到 `cancel_requested`；单 Task 的 `/v1/tasks/{id}/cancel` 仍只代理 Python state，没有路由 Go-owned Task。
+
+这会造成孤儿 lease、重复计算成本、不可协作取消和迟到提交窗口。claim/Attempt/Job 启动必须同事务；heartbeat/apply/fail 必须用带 executor、lease token、未过期条件的单条 CAS；Go-owned cancel 必须保持 cancelling 过程态直到 Executor 回执或 Reconciler 收敛。需要在 Go Store 路径重跑第三轮已有的四类 fencing/cancel 故障注入，不能只复用 Python durable 路径的测试。
+
+### [P1] Go 提交面丢弃 CapabilitySpec，原子 worker 的资源与恢复语义没有落地
+
+- [ ] 状态：未修复。
+
+位置：`packages/application/commands/jobs.py:21-53,99-123`、`core/store.go:178-236,262-321`、`packages/application/commands/task_registry.py:16-32`
+
+Python 调 Go 时只传了 capability/input/idempotency/timeout，丢掉 `max_attempts`、`resource_class`、`priority`、`manual_recovery` 和 workflow dependency；Go 又把 `max_attempts` 固定为 2、返回的 `resource_class` 固定为 `llm`。这会让邮件等不可自动重试能力错误重试，也让 network/embedding/default 隔离失效。
+
+调度查询还先取全局最早 10 个 queued Task，再在内存按 capability 过滤。如果队头 10 个都是某 Executor 不支持的能力，它即使有可执行任务排在第 11 个以后也会永久拿不到，resource-class worker 会发生饥饿。
+
+应由 Core 存储并校验完整 capability metadata，在 SQL 中按 capability/resource class/依赖/优先级筛选候选；未知 capability fail closed。Workflow DAG 也不能在“全量路由”过程中退化为一 Job 一 Task。
+
+### [P1] 真实邮件 effect ledger 会在“发送后”失败，甚至把未发送记录成已发送
+
+- [ ] 状态：未修复。
+
+位置：`packages/ai/task_handlers.py:452-487`、`packages/application/commands/effect_ledger.py:22-45`、`packages/domain/enums.py:168-171`、`packages/integrations/notifier.py:20-35`
+
+`send_brief_email_effect()` 忽略 `send_email_html()` 的 bool 返回值：SMTP 未配置时 adapter 返回 False，handler 仍登记账本并返回 `sent=True`，之后会永久跳过这封实际未发送的邮件。更严重的是，登记时传入字符串 `"email"`，而领域枚举只允许 `mail_send/provider_call/domain_write`；PostgreSQL enum 会在邮件已经发出后拒绝 flush，导致账本缺失，人工重放再次发送。
+
+此外当前实现仍是“先发送、后登记”，崩溃窗口没有被 manual recovery 消除，只是把重复风险交给人工。至少应检查 adapter 结果、使用正确枚举，并把 effect 状态建模为 prepared/sent/unknown；若 provider 支持 idempotency key，必须贯穿 adapter。还要审计 `brief.py`、`brief_service.py`、`cs_feed_orchestrator.py` 中绕过 ledger 的其他直发路径。
+
+### [P1] Go 的公网认证/MCP 路由当前既没有接入，也不能与浏览器登录共存
+
+- [ ] 状态：未修复。
+
+位置：`core/cmd/papermind-core/main.go:68-79`、`core/auth.go:29-108`、`core/auth_routes.go:34-165`、`core/server.go:666-684`
+
+Core 注册了 GitHub OAuth/JWT 路由，却从未把 `JWTAuthMiddleware` 安装到生产 handler；真正安装的是全局静态 `CORE_TOKEN` 中间件，它只豁免 `/health`，所以浏览器无法匿名进入 `/auth/login`、`/auth/github/login` 或 callback。即使绕过静态 token，Go `/mcp` 在 JWT 白名单中又会完全放行。新增的 Go API/MCP/Auth 与仍在 FastAPI 暴露的同名能力形成两套边界，而 Compose 对外仍只映射 Python backend。
+
+应明确唯一公网入口：浏览器 JWT、可撤销 scoped MCP token、内部 Core/Executor credential 是三种不同 audience，不能共用一个全局 `CORE_TOKEN`。GitHub OAuth 还需要 `state`/PKCE 或等价 CSRF 绑定，并避免把 session JWT 放在回调 query 中。完成前不要把 Go Auth/MCP 计为已迁移。
+
+### [P1] Pi Web bridge 没有同会话互斥、超时与非阻塞 stderr，可能损坏会话或永久挂流
+
+- [ ] 状态：未修复。
+
+位置：`packages/agent_pi/host.py:201-293`
+
+每个请求都会启动一个 `pm` 子进程，并让相同 `conversation_id` 的进程共同读写同一个 JSONL session 文件；路由层没有 per-conversation lock。用户双击发送、网络重试或两个浏览器标签同时发消息时，会有两个 Pi runtime 并发 append 同一会话，产生顺序不确定、上下文分叉或文件损坏。
+
+子进程同时把 stderr 接到 PIPE，却只在 stdout 完全结束、`wait()` 之后读取 stderr；一旦 stderr 管道写满，子进程会阻塞，stdout 循环和请求都无法结束。整条链也没有 wall-clock timeout。应增加按 conversation_id 的互斥/排队、请求与 idle timeout，并用独立消费线程或合并输出持续排空 stderr；断流时还要等待 kill 完成并记录确定终态。相应测试应覆盖同会话双请求、stderr 洪泛和不退出子进程。
+
+### [P2] Terminal expanded renderer 会把卡片显示成 `[object Object]`
+
+- [ ] 状态：未修复。
+
+位置：PaperMind-Terminal `packages/papermind-cli/src/agent/tools.js:18-27`
+
+`cardFn` 返回 Pi TUI 的 `Text` 对象；expanded 分支却用 `card + "\n" + detail` 做字符串拼接，结果卡片被强制转成 `[object Object]`。本轮用 `pm_get_paper` renderer 直接验证，输出首行确为 `[object Object]`。现有 15 个 Terminal 测试没有覆盖 renderer 的 partial/collapsed/expanded 三态。
+
+应让 renderer 工厂统一处理 string/Component（例如卡片正文保持 string，到最外层只构造一次 `Text`），并对 Paper/Claim/Evidence/Job 每种三态增加快照或可见文本断言。
+
+### [P2] 路线图仍把“实现、接线、实验、发布”混成一个完成态
+
+- [ ] 状态：未修复。
+
+位置：`docs/plans/2026-09-02-rearchitecture-roadmap.md:124-161,212-215,263-270`
+
+同一份路线图同时声称“Go-authority 全量路由”“Stage C/C13 完成”“PostgreSQL 默认切换”，又在 H2 写“SQLite 默认 + PG 可选”，并保留 C6/C7/C9/C12 的 `[~]`。多处“全量 291/299 passed + go test 全绿”是历史提交说明，不是当前 checkout、生产中间件或 PG 路径的可重放证据。
+
+建议把每项状态拆成 `implemented / wired-by-default / locally-verified / experiment-verified / released`，并只从 CI artifact/实验记录反向生成绿灯。当前至少应把 Go authority 全量路由、PG production-ready、Go Auth/MCP、H2 和 Stage C 总完成态降级。
+
+### 本轮独立验证
+
+- `GOCACHE=/tmp/papermind-go-cache go test ./...`（允许本地监听后）：通过；但进一步单独运行 apply-result 测试确认 PG 不可达时相关用例全部 skip，所以不把它记作 PG 证据。
+- `.venv/bin/python -m pytest -q tests/test_agent_pi_bridge.py tests/test_agent_pi_confirm.py tests/test_phase3_apply_dispatch.py tests/test_stage_i.py tests/test_workflows.py`：39 passed。
+- `.venv/bin/python -m pytest -q tests/test_p0_closed_loop.py`（允许本地监听后）：13 passed；这些主要验证既有 Python durable/SQLite 本地闭环，未覆盖生产 Compose 中间件和 Go+PG Store。
+- PaperMind-Terminal 定向 `node --test packages/papermind-cli/test/contract.test.js packages/papermind-cli/test/agent-loop.test.js`：15 passed。
+- renderer 直接探针：expanded `pm_get_paper` 的可见文本以 `[object Object]` 开头，复现上述 P2。
+- 未运行 Terminal 全量 `npm test`/build（遵守该仓库 review 约束）；未 merge、push、部署或修改业务代码。
+
+### 第四轮合并门槛（建议按此顺序）
+
+1. 先修 Compose health/auth 链，保证默认 profile 真能 healthy；明确唯一公网入口与三类 credential audience。
+2. 决定生产数据库后，只保留一套受 CI 强制验证的 SQL 路径；若坚持 PG 默认，先清零所有 SQLite-only SQL 并让 PG 测试不可 skip。
+3. 用单一 capability manifest 接通 Python submit → Go store → 对应 Executor/apply；未迁移能力显式留在 Python，而不是“全量发送再 400”。
+4. 修 Go claim/heartbeat/fencing/cancel 的原子性与故障注入，再恢复 resource class、retry/manual recovery、priority、dependency 语义。
+5. 修真实 effect ledger 与所有直发旁路；修 Terminal expanded renderer，并给 Pi Web bridge 增加同会话并发锁、子进程超时和 stderr 非阻塞消费后再计完成。
+6. 将路线图改为多阶段证据状态；本地 Compose + PG + 一条真实 Workflow 稳定后，再由用户在阿里云实验。用户确认实验结果前仍不得 merge 到 `main`。

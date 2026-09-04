@@ -619,11 +619,22 @@ def send_brief_email_effect(
         with _scope() as session:
             content = GeneratedContentRepository(session).get(content_id)
             html = content.markdown or ""
+    from packages.domain.enums import EffectKind
     from packages.integrations.notifier import NotificationService
 
-    NotificationService().send_email_html(recipient=recipient, subject=subject, html=html)
+    # 第四轮 P1 修复：1) 检查 adapter 返回值——SMTP 未配置/发送失败不登记账本
+    # （此前未发送也记 sent=True，之后永久跳过这封实际未发送的邮件）；
+    # 2) kind 用 EffectKind.mail_send 枚举（此前传字符串 "email"，PG enum 会
+    # 在邮件发出后拒绝 flush → 账本缺失 → 人工重放重复发送）。
+    sent = NotificationService().send_email_html(recipient=recipient, subject=subject, html=html)
+    if not sent:
+        return {
+            "sent": False,
+            "error": "SMTP 未配置或发送失败（账本未登记，可重试）",
+            "effect_key": effect_key,
+        }
     with session_scope() as session:
-        register_effect(session, effect_key=effect_key, kind="email")
+        register_effect(session, effect_key=effect_key, kind=EffectKind.mail_send)
     return {"sent": True, "effect_key": effect_key}
 
 
