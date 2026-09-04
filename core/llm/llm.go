@@ -193,6 +193,47 @@ func (c *Client) CompleteJSON(providerName, model, prompt, stage string) (*Compl
 	return resp, nil
 }
 
+// Embed 调用 embedding API 返回向量。
+func (c *Client) Embed(providerName, text string) ([]float64, error) {
+	provider, err := c.GetProvider(providerName)
+	if err != nil {
+		return nil, err
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model": "BAAI/bge-m3", // 默认 embedding 模型
+		"input": text,
+	})
+	req, err := http.NewRequest("POST", provider.BaseURL+"/embeddings", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("embed API %d: %s", resp.StatusCode, string(data[:min(len(data), 200)]))
+	}
+
+	var embedResp struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
+		return nil, err
+	}
+	if len(embedResp.Data) == 0 {
+		return nil, fmt.Errorf("embed API 返回空向量")
+	}
+	return embedResp.Data[0].Embedding, nil
+}
+
 // SSEChunk 是 OpenAI streaming 的一个 SSE data 块。
 type SSEChunk struct {
 	ID      string `json:"id"`

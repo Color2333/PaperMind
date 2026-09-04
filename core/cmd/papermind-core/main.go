@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Color2333/PaperMind/core/llm"
+
 	"github.com/Color2333/PaperMind/core"
 )
 
@@ -78,6 +80,22 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Phase 2：Go Executor 模式（GO_EXECUTOR=1 时在同一进程内启动 claim 循环）
+	if os.Getenv("GO_EXECUTOR") == "1" && store != nil {
+		llmClient := llm.NewClient()
+		llmClient.RegisterProvider(&llm.Provider{
+			Name:      os.Getenv("LLM_PROVIDER"),
+			BaseURL:   os.Getenv("LLM_BASE_URL"),
+			APIKey:    os.Getenv("LLM_API_KEY"),
+			Model:     os.Getenv("LLM_MODEL"),
+			ModelDeep: os.Getenv("LLM_MODEL_DEEP"),
+		})
+		executor := core.NewGoExecutor(store, llmClient, os.Getenv("LLM_PROVIDER"), "go-executor")
+		executor.Start()
+		defer executor.Stop()
+		log.Printf("Go Executor started (provider=%s)", os.Getenv("LLM_PROVIDER"))
+	}
+
 	log.Printf("PaperMind Go Core (%s) listening on %s [state=%s]", core.CoreVersion, addr, stateAddr)
 	log.Fatal(srv.ListenAndServe())
 }
