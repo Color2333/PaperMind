@@ -222,7 +222,7 @@ class Harness:
     def submit_job(
         self,
         *,
-        capability: str = "deep_read_paper",
+        capability: str = "skim_paper",
         paper_id: str = "",
         timeout_s: int = 1800,
         max_attempts: int = 3,
@@ -230,7 +230,7 @@ class Harness:
         resp = self.api().post(
             "/jobs/durable",
             json={
-                "kind": "StartDeepRead",
+                "kind": "SkimPaper",
                 "capability": capability,
                 "title": "P0 closed-loop",
                 "input_ref": {"paper_id": paper_id},

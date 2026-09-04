@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"time"
 )
 
 // ApplyResult 按 capability 分派的 apply-result 入口（单事务）。
@@ -74,7 +73,7 @@ func fencingGuard(tx *sql.Tx, taskID, executorID, leaseToken string) (int, error
 
 // finalizeTask 终态：Task succeeded + Attempt succeeded + Job 收敛（与领域变化同事务）
 func finalizeTask(tx *sql.Tx, taskID string, result map[string]any) error {
-	now := nowISO()
+	now := nowParam()
 	if _, err := tx.Exec(
 		`UPDATE core_tasks SET status='succeeded', lease_token=NULL, lease_expires_at=NULL,
 		 result_ref=? WHERE id=?`,
@@ -152,7 +151,7 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 	case err == sql.ErrNoRows:
 		if _, err = tx.Exec(
 			`INSERT INTO analysis_reports (id, paper_id, summary_md, key_insights, skim_score, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+			 VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
 			newCoreID(), paperID, summaryMD, keyInsights, relevanceScore,
 		); err != nil {
 			return "", fmt.Errorf("analysis_reports insert: %w", err)
@@ -161,7 +160,7 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 		return "", err
 	default:
 		if _, err = tx.Exec(
-			`UPDATE analysis_reports SET summary_md=?, key_insights=?, skim_score=?, updated_at=NOW()
+			`UPDATE analysis_reports SET summary_md=?, key_insights=?, skim_score=?, updated_at=$1
 			 WHERE paper_id=?`,
 			summaryMD, keyInsights, relevanceScore, paperID,
 		); err != nil {
@@ -200,7 +199,7 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 		if _, err = tx.Exec(
 			`INSERT INTO prompt_traces (id, paper_id, stage, provider, model, prompt_digest,
 			 input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, $1)`,
 			newCoreID(), nullIfEmpty(stringOr(trace["paper_id"])),
 			stringOr(trace["stage"]), stringOr(trace["provider"]), stringOr(trace["model"]),
 			stringOr(trace["prompt_digest"]),
@@ -263,7 +262,7 @@ func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, r
 	case err == sql.ErrNoRows:
 		if _, err = tx.Exec(
 			`INSERT INTO analysis_reports (id, paper_id, deep_dive_md, key_insights, created_at, updated_at)
-			 VALUES (?, ?, ?, '{}', NOW(), NOW())`,
+			 VALUES (?, ?, ?, '{}', $1, $2)`,
 			newCoreID(), paperID, deepMD,
 		); err != nil {
 			return "", fmt.Errorf("analysis_reports insert: %w", err)
@@ -273,7 +272,7 @@ func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, r
 	default:
 		// key_insights 保留既有 skim 内容（Python 语义：合并而非覆盖）
 		if _, err = tx.Exec(
-			`UPDATE analysis_reports SET deep_dive_md=?, updated_at=NOW() WHERE paper_id=?`,
+			`UPDATE analysis_reports SET deep_dive_md=?, updated_at=$1 WHERE paper_id=?`,
 			deepMD, paperID,
 		); err != nil {
 			return "", fmt.Errorf("analysis_reports update: %w", err)
@@ -293,7 +292,7 @@ func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, r
 		if _, err = tx.Exec(
 			`INSERT INTO prompt_traces (id, paper_id, stage, provider, model, prompt_digest,
 			 input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, $1)`,
 			newCoreID(), nullIfEmpty(stringOr(trace["paper_id"])),
 			stringOr(trace["stage"]), stringOr(trace["provider"]), stringOr(trace["model"]),
 			stringOr(trace["prompt_digest"]),
@@ -337,7 +336,7 @@ func (s *CoreStore) applyEmbedResult(taskID, executorID, leaseToken string, resu
 	}
 
 	if _, err = tx.Exec(
-		`UPDATE papers SET embedding_vec=?, updated_at=NOW() WHERE id=?`,
+		`UPDATE papers SET embedding_vec=?, updated_at=$1 WHERE id=?`,
 		mustJSON(vector), paperID,
 	); err != nil {
 		return "", fmt.Errorf("papers embedding: %w", err)
@@ -376,7 +375,7 @@ func (s *CoreStore) FailTask(taskID, executorID, leaseToken, errorClass, message
 	if attemptCount >= maxAttempts {
 		newStatus = "dead_letter"
 	}
-	now := nowISO()
+	now := nowParam()
 	if _, err = tx.Exec(
 		`UPDATE core_tasks SET status=?, lease_token=NULL, lease_expires_at=NULL, last_error=? WHERE id=?`,
 		newStatus, errorClass+": "+message, taskID,
@@ -409,7 +408,7 @@ func (s *CoreStore) FailTask(taskID, executorID, leaseToken, errorClass, message
 func (s *CoreStore) ReclaimExpired(backoffS int) (map[string]string, error) {
 	rows, err := s.DB.Query(
 		`SELECT id, attempt_count, max_attempts FROM core_tasks
-		 WHERE status='leased' AND lease_expires_at < NOW() - make_interval(secs => ?)`,
+		 WHERE status='leased' AND lease_expires_at < detime('now') - make_interval(secs => ?)`,
 		fmt.Sprintf("-%d seconds", backoffS),
 	)
 	if err != nil {
@@ -446,7 +445,7 @@ func (s *CoreStore) ReclaimExpired(backoffS int) (map[string]string, error) {
 		if _, err = s.DB.Exec(
 			`UPDATE core_attempts SET status='failed', error_class='lease_expired', finished_at=?
 			 WHERE task_id=? AND fencing_token=? AND status='running'`,
-			nowISO(), e.id, e.attemptCount,
+			nowParam(), e.id, e.attemptCount,
 		); err != nil {
 			return nil, err
 		}
@@ -494,7 +493,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 	}
 	if _, err = tx.Exec(
 		`INSERT INTO research_runs (id, kind, trigger, paper_ids, model_policy, status, started_at)
-		 VALUES (?, 'claim_extraction', 'api', ?, ?, 'succeeded', NOW())`,
+		 VALUES (?, 'claim_extraction', 'api', ?, ?, 'succeeded', $1)`,
 		runID, mustJSON([]string{paperID}), modelPolicy,
 	); err != nil {
 		return "", fmt.Errorf("research_runs insert: %w", err)
@@ -529,7 +528,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		}
 		if _, err = tx.Exec(
 			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, is_current, created_at)
-			 VALUES (?, ?, ?, ?, 'ingest', 1, NOW())`,
+			 VALUES (?, ?, ?, ?, 'ingest', 1, $1)`,
 			svID, paperID, maxLabel+1, contentHash,
 		); err != nil {
 			return "", fmt.Errorf("source_versions insert: %w", err)
@@ -537,7 +536,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		// outbox: source_version_detected
 		if _, err = tx.Exec(
 			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, payload, occurred_at)
-			 VALUES (?, 'source_version_detected', 'source_version', ?, 'system', ?, NOW())`,
+			 VALUES (?, 'source_version_detected', 'source_version', ?, 'system', ?, $1)`,
 			newCoreID(), svID, mustJSON(map[string]any{"paper_id": paperID, "version_label": maxLabel + 1}),
 		); err != nil {
 			return "", err
@@ -581,7 +580,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 
 		if _, err = tx.Exec(
 			`INSERT INTO claims (id, statement, statement_zh, origin, status, certainty, run_id, created_at, updated_at)
-			 VALUES (?, ?, ?, 'papermind', 'draft', ?, ?, NOW(), NOW())`,
+			 VALUES (?, ?, ?, 'papermind', 'draft', ?, ?, $1, $2)`,
 			claimID, statement, statementZh, certainty, runID,
 		); err != nil {
 			return "", fmt.Errorf("claims insert: %w", err)
@@ -593,7 +592,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		})
 		if _, err = tx.Exec(
 			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, run_id, payload, occurred_at)
-			 VALUES (?, 'claim_proposed', 'claim', ?, 'papermind', ?, ?, NOW())`,
+			 VALUES (?, 'claim_proposed', 'claim', ?, 'papermind', ?, ?, $1)`,
 			newCoreID(), claimID, runID, claimPayload,
 		); err != nil {
 			return "", err
@@ -605,7 +604,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 			evID := newCoreID()
 			if _, err = tx.Exec(
 				`INSERT INTO evidence (id, claim_id, source_version_id, kind, stance, locator, quote, fingerprint, run_id, created_at)
-				 VALUES (?, ?, ?, 'text_passage', 'supports', ?, ?, ?, ?, NOW())`,
+				 VALUES (?, ?, ?, 'text_passage', 'supports', ?, ?, ?, ?, $1)`,
 				evID, claimID, svID, locator, quote, fingerprint, runID,
 			); err != nil {
 				return "", fmt.Errorf("evidence insert: %w", err)
@@ -614,7 +613,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 			evPayload := mustJSON(map[string]any{"claim_id": claimID, "source_version_id": svID, "quote": quote})
 			if _, err = tx.Exec(
 				`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, run_id, payload, occurred_at)
-				 VALUES (?, 'evidence_extracted', 'evidence', ?, 'system', ?, ?, NOW())`,
+				 VALUES (?, 'evidence_extracted', 'evidence', ?, 'system', ?, ?, $1)`,
 				newCoreID(), evID, runID, evPayload,
 			); err != nil {
 				return "", err
@@ -628,7 +627,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		if _, err = tx.Exec(
 			`INSERT INTO prompt_traces (id, paper_id, stage, provider, model, prompt_digest,
 			 input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, $1)`,
 			newCoreID(), nullIfEmpty(stringOr(trace["paper_id"])),
 			stringOr(trace["stage"]), stringOr(trace["provider"]), stringOr(trace["model"]),
 			stringOr(trace["prompt_digest"]),
@@ -667,116 +666,16 @@ func sha256Hex(s string) string {
 }
 
 // JobsList 返回最近的 core Job 列表（观察面合并用）
-func (s *CoreStore) JobsList(limit int) ([]map[string]any, error) {
-	rows, err := s.DB.Query(
-		`SELECT id, kind, status, created_at FROM core_jobs ORDER BY created_at DESC LIMIT ?`, limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var id, kind, status, createdAt string
-		if err = rows.Scan(&id, &kind, &status, &createdAt); err != nil {
-			return nil, err
-		}
-		items = append(items, map[string]any{
-			"id": id, "kind": kind, "status": status, "created_at": createdAt,
-			"authority": "go_core",
-		})
-	}
-	return items, nil
-}
 
 // HeartbeatTask 续约 Go 权威任务的 lease；返回 (ok, cancelRequested, err)
-func (s *CoreStore) HeartbeatTask(taskID, executorID, leaseToken string) (bool, bool, error) {
-	var status string
-	var leaseTokenDB sql.NullString
-	err := s.DB.QueryRow(
-		`SELECT status, lease_token FROM core_tasks WHERE id=?`,
-		taskID,
-	).Scan(&status, &leaseTokenDB)
-	if err == sql.ErrNoRows {
-		return false, false, nil
-	}
-	if err != nil {
-		return false, false, err
-	}
-	if status != "leased" || !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
-		return false, false, nil
-	}
-	if _, err = s.DB.Exec(
-		`UPDATE core_tasks SET lease_expires_at=? WHERE id=?`,
-		sqliteTimePlusFromTask(s.DB, taskID), taskID,
-	); err != nil {
-		return false, false, err
-	}
-	var jobStatus string
-	jobID := ""
-	_ = s.DB.QueryRow(`SELECT job_id FROM core_tasks WHERE id=?`, taskID).Scan(&jobID)
-	if jobID != "" {
-		_ = s.DB.QueryRow(`SELECT status FROM core_jobs WHERE id=?`, jobID).Scan(&jobStatus)
-	}
-	return true, jobStatus == "cancelling", nil
-}
 
 // sqliteTimePlusFromTask：按任务 timeout_s 续约（needDB 传入以查询）
-func sqliteTimePlusFromTask(db *sql.DB, taskID string) string {
-	var timeoutS int
-	_ = db.QueryRow(`SELECT timeout_s FROM core_tasks WHERE id=?`, taskID).Scan(&timeoutS)
-	if timeoutS <= 0 {
-		timeoutS = 600
-	}
-	return time.Now().UTC().Add(time.Duration(timeoutS) * time.Second).Format("2006-01-02 15:04:05")
-}
 
 // CancelJob 取消 Job：queued 直接取消，leased 协作取消
-func (s *CoreStore) CancelJob(jobID string) (map[string]int, error) {
-	now := nowISO()
-	counts := map[string]int{"cancelled": 0, "cancel_requested": 0}
-	if _, err := s.DB.Exec(
-		`UPDATE core_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL
-		 WHERE job_id=? AND status='queued'`, jobID,
-	); err != nil {
-		return nil, err
-	}
-	r1, _ := s.DB.Exec(
-		`UPDATE core_tasks SET status='cancelled', last_error='cancelled by user'
-		 WHERE job_id=? AND status IN ('leased','running')`, jobID,
-	)
-	if n, err := r1.RowsAffected(); err == nil {
-		counts["cancel_requested"] = int(n)
-	}
-	r2, _ := s.DB.Exec(
-		`UPDATE core_jobs SET status='cancelled', finished_at=? WHERE id=? AND status IN ('running','queued')`,
-		now, jobID,
-	)
-	if n, err := r2.RowsAffected(); err == nil && n > 0 {
-		if _, err = s.DB.Exec(
-			`UPDATE core_attempts SET status='cancelled', finished_at=?
-			 WHERE task_id IN (SELECT id FROM core_tasks WHERE job_id=?) AND status='running'`,
-			now, jobID,
-		); err != nil {
-			return nil, err
-		}
-	}
-	return counts, nil
-}
 
 // OwnsJob 报告 job 是否属于 Go 权威
-func (s *CoreStore) OwnsJob(jobID string) bool {
-	var one string
-	err := s.DB.QueryRow(`SELECT id FROM core_jobs WHERE id=?`, jobID).Scan(&one)
-	return err == nil
-}
 
 // OwnsTask 报告 task 是否属于 Go 权威（claim/complete 路由用）
-func (s *CoreStore) OwnsTask(taskID string) bool {
-	var one string
-	err := s.DB.QueryRow(`SELECT id FROM core_tasks WHERE id=?`, taskID).Scan(&one)
-	return err == nil
-}
 
 // ---------- helpers ----------
 
@@ -784,46 +683,4 @@ func jobIDOf(tx *sql.Tx, taskID string) string {
 	var jobID string
 	_ = tx.QueryRow(`SELECT job_id FROM core_tasks WHERE id=?`, taskID).Scan(&jobID)
 	return jobID
-}
-
-func stringOr(v any) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return ""
-}
-
-func jsonInt(v any) any {
-	if f, ok := v.(float64); ok {
-		return int(f)
-	}
-	return v
-}
-
-func jsonFloat(v any) any {
-	if f, ok := v.(float64); ok {
-		return f
-	}
-	return nil
-}
-
-func jsonStringList(v any) []string {
-	if list, ok := v.([]any); ok {
-		out := make([]string, 0, len(list))
-		for _, item := range list {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	return nil
-}
-
-func bulletList(items []string) string {
-	out := ""
-	for _, item := range items {
-		out += fmt.Sprintf("  - %s\n", item)
-	}
-	return out
 }
