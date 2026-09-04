@@ -17,8 +17,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Color2333/PaperMind/core/llm"
-
 	"github.com/Color2333/PaperMind/core"
 )
 
@@ -80,42 +78,13 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	// Phase 2：Go Executor 模式（GO_EXECUTOR=1 时在同一进程内启动 claim 循环）
+	// Phase 2：Go Executor 模式（GO_EXECUTOR=1 时在同一进程内启动 claim 循环）。
+	// 仅领取无 LLM 能力（upsert/download/fetch）——LLM 类由 Python Executor 执行。
 	if os.Getenv("GO_EXECUTOR") == "1" && store != nil {
-		// LLM 配置优先从 DB 读取（前端 Settings 管理的），env 为 fallback
-		var providerName, baseURL, apiKey, model, modelDeep string
-		cfg, cfgErr := store.GetActiveLLMConfig()
-		if cfgErr == nil && cfg != nil {
-			providerName = cfg.Provider
-			baseURL = cfg.APIBaseURL
-			apiKey = cfg.APIKey
-			model = cfg.ModelSkim
-			modelDeep = cfg.ModelDeep
-			log.Printf("Go Executor LLM config from DB: provider=%s model=%s", providerName, model)
-		} else {
-			providerName = os.Getenv("LLM_PROVIDER")
-			baseURL = os.Getenv("LLM_BASE_URL")
-			apiKey = os.Getenv("LLM_API_KEY")
-			model = os.Getenv("LLM_MODEL")
-			modelDeep = os.Getenv("LLM_MODEL_DEEP")
-			log.Printf("Go Executor LLM config from env: provider=%s model=%s", providerName, model)
-		}
-		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
-		}
-
-		llmClient := llm.NewClient()
-		llmClient.RegisterProvider(&llm.Provider{
-			Name:      providerName,
-			BaseURL:   baseURL,
-			APIKey:    apiKey,
-			Model:     model,
-			ModelDeep: modelDeep,
-		})
-		executor := core.NewGoExecutor(store, llmClient, providerName, "go-executor")
+		executor := core.NewGoExecutor(store, "go-executor")
 		executor.Start()
 		defer executor.Stop()
-		log.Printf("Go Executor started (provider=%s)", providerName)
+		log.Printf("Go Executor started (capabilities: upsert_paper/download_source/fetch_feed)")
 	}
 
 	log.Printf("PaperMind Go Core (%s) listening on %s [state=%s]", core.CoreVersion, addr, stateAddr)

@@ -1,16 +1,15 @@
-// Go Executor 循环（Phase 2）：claim → pipeline compute → proposal → apply-result。
-// 与 Python Executor 同语义（claim → handler → complete），但全在 Go 进程内。
+// Go Executor 循环：claim → 无 LLM 纯计算 → proposal → apply-result 单事务。
+// LLM 类能力（skim/deep_read/embed/extract_claims）由 Python Executor（AI 栈）领取，
+// LLM 网关统一走 Pi（packages/ai）——Go 侧不复刻 provider 协议。
 package core
 
 import (
 	"fmt"
 	"log"
 	"time"
-
-	"github.com/Color2333/PaperMind/core/llm"
 )
 
-// GoExecutor 循环：从 CoreStore 领取任务并执行 A 档 proposal。
+// GoExecutor 循环：从 CoreStore 领取任务并执行 proposal。
 type GoExecutor struct {
 	Store      *CoreStore
 	Pipeline   *PipelineExecutor
@@ -20,10 +19,10 @@ type GoExecutor struct {
 }
 
 // NewGoExecutor 创建 Go Executor。
-func NewGoExecutor(store *CoreStore, llmClient *llm.Client, provider, executorID string) *GoExecutor {
+func NewGoExecutor(store *CoreStore, executorID string) *GoExecutor {
 	return &GoExecutor{
 		Store:      store,
-		Pipeline:   NewPipelineExecutor(llmClient, provider),
+		Pipeline:   NewPipelineExecutor(),
 		ExecutorID: executorID,
 		stop:       make(chan struct{}),
 		done:       make(chan struct{}),
@@ -71,45 +70,6 @@ func (e *GoExecutor) pollOnce() {
 	var computeErr error
 
 	switch task.Capability {
-	case "skim_paper":
-		title, _ := task.Input["title"].(string)
-		abstract, _ := task.Input["abstract"].(string)
-		if title == "" {
-			// 从 DB 读论文 title/abstract
-			paper, _ := e.Store.GetPaper(task.Input["paper_id"].(string))
-			if paper != nil {
-				title, _ = paper["title"].(string)
-				abstract, _ = paper["abstract"].(string)
-			}
-		}
-		proposal, computeErr = e.Pipeline.SkimProposal(
-			task.Input["paper_id"].(string), title, abstract)
-
-	case "deep_read_paper":
-		pid, _ := task.Input["paper_id"].(string)
-		title, _ := task.Input["title"].(string)
-		sourceText := task.Input["source_text"].(string)
-		if title == "" {
-			paper, _ := e.Store.GetPaper(pid)
-			if paper != nil {
-				title, _ = paper["title"].(string)
-			}
-		}
-		proposal, computeErr = e.Pipeline.DeepDiveProposal(pid, title, sourceText)
-
-	case "embed_paper":
-		pid, _ := task.Input["paper_id"].(string)
-		title, _ := task.Input["title"].(string)
-		abstract, _ := task.Input["abstract"].(string)
-		if title == "" {
-			paper, _ := e.Store.GetPaper(pid)
-			if paper != nil {
-				title, _ = paper["title"].(string)
-				abstract, _ = paper["abstract"].(string)
-			}
-		}
-		proposal, computeErr = e.Pipeline.EmbedProposal(pid, title, abstract)
-
 	case "upsert_paper":
 		arxivID, _ := task.Input["arxiv_id"].(string)
 		title, _ := task.Input["title"].(string)
@@ -129,7 +89,7 @@ func (e *GoExecutor) pollOnce() {
 		proposal, computeErr = e.Pipeline.FetchProposal(query, maxResults)
 
 	default:
-		computeErr = fmt.Errorf("capability %s 无 Go executor handler", task.Capability)
+		computeErr = fmt.Errorf("capability %s 无 Go executor handler（LLM 类能力归 Python Executor）", task.Capability)
 	}
 
 	if computeErr != nil {
@@ -148,6 +108,7 @@ func (e *GoExecutor) pollOnce() {
 	log.Printf("[go-executor] task %s → %s", task.TaskID[:8], status)
 }
 
+// claimCapabilities：仅无 LLM 的 A 档能力（LLM 类统一回流 Python Executor）。
 func (e *GoExecutor) claimCapabilities() []string {
-	return []string{"skim_paper", "deep_read_paper", "embed_paper", "upsert_paper", "download_source", "fetch_feed"}
+	return []string{"upsert_paper", "download_source", "fetch_feed"}
 }
