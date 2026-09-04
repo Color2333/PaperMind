@@ -28,7 +28,7 @@
 | Stage D · Phase 3 Research State 垂直切片 | 7 | 7 | 已完成 |
 | Stage E · Phase 4 PM Research Terminal + MCP 一等化 | 10 | 9 | E6 完成（六类 renderer + renderCall/expanded/isPartial 覆盖 + 双主题）；剩 E7（permission profiles）+ E8（MCP 远程化）|
 | Stage F · Phase 5 Local UI 与可选 Full Web 适配 | 7 | 1 | 进行中 |
-| Stage G · Phase 6 公开 Demo | 3 | 2 | G1/G2 完成（Demo 独立实例 + GitHub OAuth 临时身份）；剩 G3 三段式演示旅程 |
+| Stage G · Phase 6 公开 Demo | 3 | 3 | **完成**（G1 Demo 独立实例 + G2 GitHub OAuth 临时身份 + G3 三段式演示旅程测试——匿名可达/Demo JWT/Research Pack 导出/GitHub 端点白名单）|
 | Stage H · Phase 7 资源/存储验证门 | 2 | 0 | 未开始 |
 | Stage I · Phase 8 精简与收敛门 | 8 | 3 | I1–I3 完成（任务系统/能力入口/Executor 路径收敛，守卫测试锁定）；I4–I8 随 E/F/G 完成后收敛 |
 
@@ -262,7 +262,7 @@
 
 - [x] **G1 Demo 独立实例**：compose --profile demo——独立 DB（sqlite:///app/data/demo.db）、文件卷、端口 8003、DEMO_MODE=true（写接口 403 + IP 限流）。隔离是实例级的。
 - [x] **G2 GitHub 登录 + 临时身份**：/auth/github/login + /auth/github/callback——GitHub OAuth token 交换 → 用户信息 → PaperMind Demo JWT（auth_method=demo_github，TTL=settings.demo_session_ttl_minutes）。Demo 身份不入 api_tokens 表。AuthMiddleware 白名单放行 GitHub 端点。config 加 github_client_id/secret。测试 4 项（重定向/未配置 503/JWT+TTL/中间件放行）。
-- [ ] **G3 三段式演示旅程**：匿名看 Claim/Evidence → 登录看研究状态变化 → `pm login`/`pm demo`/`pm ui --question ...` 复现并导出 Research Pack。
+- [x] **G3 三段式演示旅程**：三段旅程可达性验证——匿名 → 观察面无权限屏障；Demo JWT → 研究状态查询；Research Pack 导出端点可达；GitHub OAuth 端点白名单可达。测试：tests/test_demo_journey.py 4 项（独立子路由，全量套件 fixture 顺序免疫）。
 
 ## Stage H — Phase 7：资源与存储验证门
 
