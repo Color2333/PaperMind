@@ -14,7 +14,8 @@ from __future__ import annotations
 from typing import Any
 
 # 已迁移到 Go 权威的 capability（切片：skim → deep_read → embed；逐项迁移中）
-GO_OWNED_CAPABILITIES = {"skim_paper", "deep_read_paper", "embed_paper", "extract_claims"}
+# A 档 capability（Go apply-result SQL 直写）；其余为 B 档（Go 落终态，领域 apply 留 Python）
+A_TIER_CAPABILITIES = {"skim_paper", "deep_read_paper", "embed_paper", "extract_claims"}
 
 
 def submit_job(
@@ -38,9 +39,10 @@ def submit_job(
     调用方（API/CLI/agent）不得在此启动线程或 fn——见设计③「API 只负责提交、
     查询和控制」。input_ref 是 handler 的输入契约（见 C4 注册表 input_keys）。
     """
-    # Go-authority 路由：已迁移的 capability 且部署配置了 Core → 提交 Go 权威。
-    # 未配置 PAPERMIND_CORE_URL = 本地单进程模式（全 Python durable store）。
-    if capability in GO_OWNED_CAPABILITIES and _core_api_enabled():
+    # Go-authority 全量路由：配置了 PAPERMIND_CORE_URL → 所有 capability 提交
+    # Go 权威（调度/fencing/终态）。领域 apply 按 A/B 档分派（设计④ §2.3）。
+    # 未配置 = 本地单进程模式（全 Python durable store）。
+    if _core_api_enabled():
         return _submit_via_go_core(
             kind=kind,
             capability=capability,
