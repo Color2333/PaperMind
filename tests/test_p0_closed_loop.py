@@ -137,7 +137,7 @@ class Harness:
             "--executor-id",
             executor_id,
             "--capabilities",
-            "skim_paper,deep_read_paper",
+            "skim_paper,deep_read_paper,extract_claims",
             "--poll-interval",
             "0.5",
             "--heartbeat-interval",

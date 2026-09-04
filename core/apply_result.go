@@ -4,7 +4,9 @@
 package core
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -24,6 +26,8 @@ func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result ma
 		return s.applyDeepReadResult(taskID, executorID, leaseToken, result)
 	case "embed_paper":
 		return s.applyEmbedResult(taskID, executorID, leaseToken, result)
+	case "extract_claims":
+		return s.applyExtractClaimsResult(taskID, executorID, leaseToken, result)
 	default:
 		return "", fmt.Errorf("capability %s 未实现 Go apply-result（迁移清单中）", capability)
 	}
@@ -449,6 +453,217 @@ func (s *CoreStore) ReclaimExpired(backoffS int) (map[string]string, error) {
 		out[e.id] = map[bool]string{true: "requeued", false: "dead_letter"}[newStatus == "queued"]
 	}
 	return out, nil
+}
+
+// applyExtractClaimsResult：claims SQL 直写（A 档升级——第三轮 P0-2 选 a 迁移清单）
+//
+// 同一事务内：ResearchRun 创建 + SourceVersion 幂等回补 + Claim 创建（papermind
+// draft，provenance 硬规则）+ Evidence 创建（quote 幂等 + fingerprint SHA256）
+// + research_events outbox（claim_proposed/evidence_extracted）+ prompt_traces
+// + Task/Attempt 终态。
+func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	paperID, _ := proposal["paper_id"].(string)
+	items, _ := proposal["items"].([]any)
+	trace, _ := proposal["trace"].(map[string]any)
+	runMeta, _ := proposal["run_meta"].(map[string]any)
+	if paperID == "" {
+		return "", fmt.Errorf("proposal 缺少 paper_id")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	// ---- ResearchRun ----
+	runID := newCoreID()
+	modelPolicy := "{}"
+	if runMeta != nil {
+		if mp, ok := runMeta["model_policy"].(map[string]any); ok {
+			modelPolicy = mustJSON(mp)
+		}
+	}
+	if _, err = tx.Exec(
+		`INSERT INTO research_runs (id, kind, trigger, paper_ids, model_policy, status, started_at)
+		 VALUES (?, 'claim_extraction', 'api', ?, ?, 'succeeded', datetime('now'))`,
+		runID, mustJSON([]string{paperID}), modelPolicy,
+	); err != nil {
+		return "", fmt.Errorf("research_runs insert: %w", err)
+	}
+
+	// ---- SourceVersion 幂等回补（get_current → 无则 create v1）----
+	svID := ""
+	err = tx.QueryRow(
+		`SELECT id FROM source_versions WHERE paper_id=? AND is_current=1 LIMIT 1`, paperID,
+	).Scan(&svID)
+	if err == sql.ErrNoRows {
+		svID = newCoreID()
+		// identity_hash: sha256(json({abstract, arxiv_id, title}, sort_keys))
+		var abstract, arxivID, title string
+		_ = tx.QueryRow(
+			`SELECT abstract, arxiv_id, title FROM papers WHERE id=?`, paperID,
+		).Scan(&abstract, &arxivID, &title)
+		identityJSON := mustJSON(map[string]string{
+			"abstract": abstract, "arxiv_id": arxivID, "title": title,
+		})
+		contentHash := sha256Hex(identityJSON)
+		// version_label = max+1
+		var maxLabel int
+		_ = tx.QueryRow(
+			`SELECT COALESCE(MAX(version_label), 0) FROM source_versions WHERE paper_id=?`, paperID,
+		).Scan(&maxLabel)
+		// 降级旧 current
+		if _, err = tx.Exec(
+			`UPDATE source_versions SET is_current=0 WHERE paper_id=? AND is_current=1`, paperID,
+		); err != nil {
+			return "", err
+		}
+		if _, err = tx.Exec(
+			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, is_current, created_at)
+			 VALUES (?, ?, ?, ?, 'ingest', 1, datetime('now'))`,
+			svID, paperID, maxLabel+1, contentHash,
+		); err != nil {
+			return "", fmt.Errorf("source_versions insert: %w", err)
+		}
+		// outbox: source_version_detected
+		if _, err = tx.Exec(
+			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, payload, occurred_at)
+			 VALUES (?, 'source_version_detected', 'source_version', ?, 'system', ?, datetime('now'))`,
+			newCoreID(), svID, mustJSON(map[string]any{"paper_id": paperID, "version_label": maxLabel + 1}),
+		); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+
+	// ---- Claims + Evidence（quote 幂等 + fingerprint SHA256）----
+	created := 0
+	skipped := 0
+	for _, itemAny := range items {
+		item, ok := itemAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		statement := stringOr(item["statement"])
+		if statement == "" {
+			continue
+		}
+		quote := stringOr(item["quote"])
+		locator := mustJSON(item["locator"])
+
+		// quote 幂等：同版本+同引用 → 已抽取过
+		var evidenceCount int
+		_ = tx.QueryRow(
+			`SELECT COUNT(*) FROM evidence WHERE source_version_id=? AND quote=?`,
+			svID, quote,
+		).Scan(&evidenceCount)
+		if quote != "" && evidenceCount > 0 {
+			skipped++
+			continue
+		}
+
+		claimID := newCoreID()
+		certainty := stringOr(item["certainty"])
+		if certainty == "" {
+			certainty = "insufficient_evidence" // papermind 默认保守
+		}
+		statementZh := nullIfEmpty(stringOr(item["statement_zh"]))
+
+		if _, err = tx.Exec(
+			`INSERT INTO claims (id, statement, statement_zh, origin, status, certainty, run_id, created_at, updated_at)
+			 VALUES (?, ?, ?, 'papermind', 'draft', ?, ?, datetime('now'), datetime('now'))`,
+			claimID, statement, statementZh, certainty, runID,
+		); err != nil {
+			return "", fmt.Errorf("claims insert: %w", err)
+		}
+
+		// outbox: claim_proposed
+		claimPayload := mustJSON(map[string]any{
+			"statement": statement, "origin": "papermind", "status": "draft", "certainty": certainty,
+		})
+		if _, err = tx.Exec(
+			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, run_id, payload, occurred_at)
+			 VALUES (?, 'claim_proposed', 'claim', ?, 'papermind', ?, ?, datetime('now'))`,
+			newCoreID(), claimID, runID, claimPayload,
+		); err != nil {
+			return "", err
+		}
+
+		// Evidence（quote+locator 存在时创建，fingerprint 去重）
+		if quote != "" {
+			fingerprint := evidenceFingerprint(claimID, svID, "text_passage", locator, quote)
+			evID := newCoreID()
+			if _, err = tx.Exec(
+				`INSERT INTO evidence (id, claim_id, source_version_id, kind, stance, locator, quote, fingerprint, run_id, created_at)
+				 VALUES (?, ?, ?, 'text_passage', 'supports', ?, ?, ?, ?, datetime('now'))`,
+				evID, claimID, svID, locator, quote, fingerprint, runID,
+			); err != nil {
+				return "", fmt.Errorf("evidence insert: %w", err)
+			}
+			// outbox: evidence_extracted
+			evPayload := mustJSON(map[string]any{"claim_id": claimID, "source_version_id": svID, "quote": quote})
+			if _, err = tx.Exec(
+				`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, run_id, payload, occurred_at)
+				 VALUES (?, 'evidence_extracted', 'evidence', ?, 'system', ?, ?, datetime('now'))`,
+				newCoreID(), evID, runID, evPayload,
+			); err != nil {
+				return "", err
+			}
+		}
+		created++
+	}
+
+	// ---- prompt_traces ----
+	if trace != nil {
+		if _, err = tx.Exec(
+			`INSERT INTO prompt_traces (id, paper_id, stage, provider, model, prompt_digest,
+			 input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+			newCoreID(), nullIfEmpty(stringOr(trace["paper_id"])),
+			stringOr(trace["stage"]), stringOr(trace["provider"]), stringOr(trace["model"]),
+			stringOr(trace["prompt_digest"]),
+			jsonInt(trace["input_tokens"]), jsonInt(trace["output_tokens"]),
+			jsonFloat(trace["input_cost_usd"]), jsonFloat(trace["output_cost_usd"]),
+			jsonFloat(trace["total_cost_usd"]),
+		); err != nil {
+			return "", fmt.Errorf("prompt_traces insert: %w", err)
+		}
+	}
+
+	// ---- 终态 ----
+	if err = finalizeTask(tx, taskID, map[string]any{
+		"claims_created": created, "claims_skipped": skipped,
+	}); err != nil {
+		return "", err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("succeeded (claims=%d skipped=%d)", created, skipped), nil
+}
+
+// evidenceFingerprint：SHA256(claim_id+sv_id+kind+locator+quote, sort_keys)——与 Python 逐字段对齐
+func evidenceFingerprint(claimID, sourceVersionID, kind string, locatorJSON string, quote string) string {
+	_ = locatorJSON
+	raw := fmt.Sprintf(`{"claim_id": %q, "kind": %q, "locator": %s, "quote": %q, "source_version_id": %q}`,
+		claimID, kind, locatorJSON, quote, sourceVersionID)
+	return sha256Hex(raw)
+}
+
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
 // JobsList 返回最近的 core Job 列表（观察面合并用）

@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 # 已迁移到 Go 权威的 capability（切片：skim → deep_read → embed；逐项迁移中）
-GO_OWNED_CAPABILITIES = {"skim_paper", "deep_read_paper", "embed_paper"}
+GO_OWNED_CAPABILITIES = {"skim_paper", "deep_read_paper", "embed_paper", "extract_claims"}
 
 
 def submit_job(

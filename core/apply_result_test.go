@@ -266,3 +266,156 @@ func TestApplyEmbedResult(t *testing.T) {
 		t.Fatalf("embedding 内容异常: %v", vec)
 	}
 }
+
+func runIDOfClaim(t *testing.T, s *CoreStore, claimID string) string {
+	t.Helper()
+	var runID string
+	if err := s.DB.QueryRow(`SELECT run_id FROM claims WHERE id=?`, claimID).Scan(&runID); err != nil {
+		t.Fatal(err)
+	}
+	return runID
+}
+
+func TestApplyExtractClaimsResult(t *testing.T) {
+	s := newTestStore(t)
+	// 补 claims/evidence/research_events/source_versions/research_runs schema
+	if _, err := s.DB.Exec(`
+CREATE TABLE IF NOT EXISTS claims (
+	id TEXT PRIMARY KEY,
+	research_question_id TEXT,
+	statement TEXT NOT NULL,
+	statement_zh TEXT,
+	origin TEXT NOT NULL DEFAULT 'papermind',
+	status TEXT NOT NULL DEFAULT 'draft',
+	certainty TEXT,
+	run_id TEXT,
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS evidence (
+	id TEXT PRIMARY KEY,
+	claim_id TEXT NOT NULL REFERENCES claims(id),
+	source_version_id TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	stance TEXT NOT NULL,
+	locator TEXT NOT NULL DEFAULT '{}',
+	quote TEXT,
+	fingerprint TEXT NOT NULL UNIQUE,
+	run_id TEXT,
+	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS research_runs (
+	id TEXT PRIMARY KEY,
+	kind TEXT NOT NULL,
+	trigger TEXT NOT NULL DEFAULT 'manual',
+	paper_ids TEXT NOT NULL DEFAULT '[]',
+	model_policy TEXT NOT NULL DEFAULT '{}',
+	status TEXT NOT NULL DEFAULT 'succeeded',
+	started_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS research_events (
+	id TEXT PRIMARY KEY,
+	type TEXT NOT NULL,
+	aggregate_type TEXT NOT NULL,
+	aggregate_id TEXT NOT NULL,
+	actor TEXT NOT NULL DEFAULT 'system',
+	run_id TEXT,
+	payload TEXT NOT NULL DEFAULT '{}',
+	occurred_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS source_versions (
+	id TEXT PRIMARY KEY,
+	paper_id TEXT NOT NULL,
+	version_label INTEGER NOT NULL,
+	content_hash TEXT NOT NULL,
+	detected_by TEXT NOT NULL DEFAULT 'ingest',
+	is_current INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, taskID, _, _ := s.SubmitCoreTask("extract_claims", `{"paper_id":"paper-1"}`, "claims:t:1", 600)
+	own, err := s.ClaimTask("exec-1", []string{"extract_claims"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if own.Capability != "extract_claims" {
+		t.Fatalf("capability=%s", own.Capability)
+	}
+
+	proposal := map[string]any{
+		"proposal": map[string]any{
+			"kind":     "extract_claims",
+			"paper_id": "paper-1",
+			"items": []any{
+				map[string]any{
+					"statement":    "The method X reduces DER by 12%",
+					"quote":        "reduces DER by 12%",
+					"locator":      map[string]any{"section": "1"},
+					"certainty":    "conditional",
+					"statement_zh": "方法 X 减少 DER 12%",
+				},
+			},
+			"trace": map[string]any{
+				"stage": "claim_extraction", "paper_id": "paper-1",
+				"provider": "test", "model": "mock", "prompt_digest": "d",
+			},
+			"run_meta": map[string]any{
+				"model_policy": map[string]any{"provider": "test", "model": "mock"},
+			},
+		},
+	}
+	status, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status == "" {
+		t.Fatal("status 为空")
+	}
+
+	// claim 写入验证
+	var claimID, claimStatus string
+	if err = s.DB.QueryRow(
+		`SELECT id, status FROM claims WHERE statement LIKE '%DER%'`,
+	).Scan(&claimID, &claimStatus); err != nil {
+		t.Fatalf("claim 未写入: %v", err)
+	}
+	if claimStatus != "draft" {
+		t.Fatalf("papermind claim 应 draft，got %s", claimStatus)
+	}
+	// evidence 写入 + fingerprint 非空
+	var fingerprint string
+	if err = s.DB.QueryRow(
+		`SELECT fingerprint FROM evidence WHERE claim_id=?`, claimID,
+	).Scan(&fingerprint); err != nil {
+		t.Fatalf("evidence 未写入: %v", err)
+	}
+	if len(fingerprint) != 64 {
+		t.Fatalf("fingerprint 长度异常: %d", len(fingerprint))
+	}
+	// research_events outbox：claim_proposed + evidence_extracted + source_version_detected
+	var eventCount int
+	_ = s.DB.QueryRow(
+		`SELECT COUNT(*) FROM research_events WHERE aggregate_id = ? OR run_id = ?`,
+		claimID, runIDOfClaim(t, s, claimID),
+	).Scan(&eventCount)
+	if eventCount < 2 {
+		t.Fatalf("outbox 事件不足: %d", eventCount)
+	}
+
+	// 二次提交（re-attempt）：quote 幂等——不重复写入
+	_, taskID2, _, _ := s.SubmitCoreTask("extract_claims", `{"paper_id":"paper-1"}`, "claims:t:2", 600)
+	own2, err := s.ClaimTask("exec-1", []string{"extract_claims"})
+	if err != nil || own2 == nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if _, err = s.ApplyResult(taskID2, "exec-1", own2.LeaseToken, proposal); err != nil {
+		t.Fatal(err)
+	}
+	var claimCount int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM claims WHERE statement LIKE '%DER%'`).Scan(&claimCount)
+	if claimCount != 1 {
+		t.Fatalf("re-attempt 不得重复 claim，got %d", claimCount)
+	}
+}

@@ -150,7 +150,7 @@ class Lab:
             "--executor-id",
             eid,
             "--capabilities",
-            "skim_paper,deep_read_paper",
+            "skim_paper,deep_read_paper,extract_claims",
             "--poll-interval",
             "0.5",
             "--heartbeat-interval",
