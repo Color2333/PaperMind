@@ -636,3 +636,33 @@ func (s *CoreStore) GetResearchDiff(questionID string) ([]map[string]any, error)
 	}
 	return items, nil
 }
+
+// ActiveLLMConfig 从 llm_provider_configs 表读取激活的 LLM 配置。
+type ActiveLLMConfig struct {
+	Name           string `json:"name"`
+	Provider       string `json:"provider"`
+	APIKey         string `json:"api_key"`
+	APIBaseURL     string `json:"api_base_url"`
+	ModelSkim      string `json:"model_skim"`
+	ModelDeep      string `json:"model_deep"`
+	ModelEmbedding string `json:"model_embedding"`
+	ModelFallback  string `json:"model_fallback"`
+}
+
+// GetActiveLLMConfig 查询激活的 LLM 配置（Go Executor 启动时用）。
+func (s *CoreStore) GetActiveLLMConfig() (*ActiveLLMConfig, error) {
+	row := s.DB.QueryRow(
+		`SELECT name, provider, api_key, COALESCE(api_base_url, ''),
+		        model_skim, model_deep, model_embedding, model_fallback
+		 FROM llm_provider_configs WHERE is_active = 1 LIMIT 1`)
+	cfg := &ActiveLLMConfig{}
+	err := row.Scan(&cfg.Name, &cfg.Provider, &cfg.APIKey, &cfg.APIBaseURL,
+		&cfg.ModelSkim, &cfg.ModelDeep, &cfg.ModelEmbedding, &cfg.ModelFallback)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}

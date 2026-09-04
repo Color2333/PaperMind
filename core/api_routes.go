@@ -19,6 +19,7 @@ func (s *Server) RegisterAPIRoutes() {
 	s.mux.HandleFunc("GET /api/research/questions/{id}/diff", s.apiGetDiff)
 	s.mux.HandleFunc("GET /api/jobs", s.apiListJobs)
 	s.mux.HandleFunc("GET /api/jobs/{id}", s.apiGetJob)
+	s.mux.HandleFunc("GET /api/settings/llm/active", s.apiGetActiveLLM)
 }
 
 // ---------- papers ----------
@@ -161,6 +162,27 @@ func (s *Server) apiListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAPIJSON(w, map[string]any{"items": items})
+}
+
+func (s *Server) apiGetActiveLLM(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		s.apiUnavailable(w)
+		return
+	}
+	cfg, err := s.Store.GetActiveLLMConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if cfg == nil {
+		writeAPIJSON(w, map[string]any{"active": false})
+		return
+	}
+	writeAPIJSON(w, map[string]any{
+		"active": true, "name": cfg.Name, "provider": cfg.Provider,
+		"model_skim": cfg.ModelSkim, "model_deep": cfg.ModelDeep,
+		"model_embedding": cfg.ModelEmbedding,
+	})
 }
 
 func (s *Server) apiGetJob(w http.ResponseWriter, r *http.Request) {
