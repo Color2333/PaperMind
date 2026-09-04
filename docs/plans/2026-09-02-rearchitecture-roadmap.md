@@ -266,8 +266,8 @@
 
 ## Stage H — Phase 7：资源与存储验证门
 
-- [ ] **H1 重测资源基线**：对照 A2 记录，验证 Go Core/Python Executor 拆分后的空闲 RSS、冷启动、镜像大小、任务峰值与故障恢复表现。
-- [ ] **H2 存储与容量决策记录**：根据单写者约束、并发领取和恢复测试决定个人服务用 SQLite 还是 PostgreSQL，并确定 Executor 资源分组。出口条件：配置有测量证据和独立回滚路径。
+- [x] **H1 重测资源基线**（2026-09-04 macOS arm64 实测）：裸解释器 14 MB / Executor AI 栈满载 76 MB / API app 满载 160 MB / Go Core 16 MB（binary 15 MB）/ 常驻合计 ~252 MB。冷启动 1.6s。调度延迟 3.7ms 中位。故障恢复 SIGKILL <10s（6/6 PASS）。
+- [x] **H2 存储与容量决策记录**：SQLite（WAL + busy_timeout 10s）满足个人服务单写者约束。Go Core 与 Python 共用同一 DB 文件（Go MaxOpenConns(1) 串行化写入）。并发 claim CAS + fencing 行锁内校验。容量：论文 <10k / 任务 <100/day → SQLite 充裕。PG 迁移：alembic 已含 PG 语法，切 DATABASE_URL 即可。回滚：SQLite 文件备份 + alembic downgrade。Executor 资源分组：resource_class=llm/network/default（Go claim 隔离并发）。
 
 ## Stage I — Phase 8：精简与收敛门
 
