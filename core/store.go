@@ -348,3 +348,190 @@ func (s *CoreStore) JobGraph(jobID string) (map[string]any, error) {
 		"payload": payloadAny, "tasks": tasks, "attempts": attempts, "authority": "go_core",
 	}, nil
 }
+
+// ---------- 领域查询（Web API 路由用——database/sql 直查 PG）----------
+
+// GetPaper 查询单篇论文。
+func (s *CoreStore) GetPaper(paperID string) (map[string]any, error) {
+	row := s.DB.QueryRow(
+		`SELECT id, title, arxiv_id, abstract, read_status, metadata, pdf_path, created_at
+		 FROM papers WHERE id=$1`, paperID)
+	var id, title, readStatus string
+	var arxivID, abstract, pdfPath sql.NullString
+	var metadata []byte
+	var createdAt time.Time
+	if err := row.Scan(&id, &title, &arxivID, &abstract, &readStatus, &metadata, &pdfPath, &createdAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	meta := map[string]any{}
+	_ = json.Unmarshal(metadata, &meta)
+	return map[string]any{
+		"id": id, "title": title, "arxiv_id": arxivID.String,
+		"abstract": abstract.String, "read_status": readStatus,
+		"metadata_json": meta, "pdf_path": pdfPath.String,
+		"created_at": createdAt.Format(time.RFC3339),
+	}, nil
+}
+
+// ListPapers 查询论文列表。
+func (s *CoreStore) ListPapers(limit, offset int) ([]map[string]any, error) {
+	rows, err := s.DB.Query(
+		`SELECT id, title, arxiv_id, abstract, read_status, created_at
+		 FROM papers ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, title, readStatus string
+		var arxivID, abstract sql.NullString
+		var createdAt time.Time
+		if err = rows.Scan(&id, &title, &arxivID, &abstract, &readStatus, &createdAt); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{
+			"id": id, "title": title, "arxiv_id": arxivID.String,
+			"abstract": abstract.String, "read_status": readStatus,
+			"created_at": createdAt.Format(time.RFC3339),
+		})
+	}
+	return items, nil
+}
+
+// SearchPapers 按关键词搜索论文。
+func (s *CoreStore) SearchPapers(query string, limit int) ([]map[string]any, error) {
+	pattern := "%" + query + "%"
+	rows, err := s.DB.Query(
+		`SELECT id, title, arxiv_id, abstract, read_status, created_at
+		 FROM papers WHERE LOWER(title) LIKE LOWER($1) OR LOWER(abstract) LIKE LOWER($1)
+		 ORDER BY created_at DESC LIMIT $2`, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, title, readStatus string
+		var arxivID, abstract sql.NullString
+		var createdAt time.Time
+		if err = rows.Scan(&id, &title, &arxivID, &abstract, &readStatus, &createdAt); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{
+			"id": id, "title": title, "arxiv_id": arxivID.String,
+			"abstract": abstract.String, "read_status": readStatus,
+			"created_at": createdAt.Format(time.RFC3339),
+		})
+	}
+	return items, nil
+}
+
+// GetResearchQuestion 查询研究问题。
+func (s *CoreStore) GetResearchQuestion(qID string) (map[string]any, error) {
+	row := s.DB.QueryRow(
+		`SELECT id, title, question, status, created_at, updated_at
+		 FROM research_questions WHERE id=$1`, qID)
+	var id, title, question, status string
+	var createdAt, updatedAt time.Time
+	if err := row.Scan(&id, &title, &question, &status, &createdAt, &updatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return map[string]any{
+		"id": id, "title": title, "question": question,
+		"status": status, "created_at": createdAt.Format(time.RFC3339),
+		"updated_at": updatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// ListClaims 查询研究问题下的 claims。
+func (s *CoreStore) ListClaims(questionID string, statuses []string) ([]map[string]any, error) {
+	query := `SELECT id, statement, statement_zh, origin, status, certainty, run_id
+	          FROM claims WHERE research_question_id=$1`
+	args := []any{questionID}
+	if len(statuses) > 0 {
+		query += ` AND status = ANY($2)`
+		args = append(args, statuses)
+	}
+	query += ` ORDER BY created_at DESC`
+	rows, err := s.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, statement, origin, status string
+		var statementZh, certainty, runID sql.NullString
+		if err = rows.Scan(&id, &statement, &statementZh, &origin, &status, &certainty, &runID); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{
+			"id": id, "statement": statement, "statement_zh": statementZh.String,
+			"origin": origin, "status": status,
+			"certainty": certainty.String, "run_id": runID.String,
+		})
+	}
+	return items, nil
+}
+
+// GetClaimEvidence 查询单条 claim 的全部证据。
+func (s *CoreStore) GetClaimEvidence(claimID string) ([]map[string]any, error) {
+	rows, err := s.DB.Query(
+		`SELECT id, source_version_id, kind, stance, locator, quote, fingerprint
+		 FROM evidence WHERE claim_id=$1`, claimID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, svID, kind, stance, fingerprint string
+		var locator json.RawMessage
+		var quote sql.NullString
+		if err = rows.Scan(&id, &svID, &kind, &stance, &locator, &quote, &fingerprint); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{
+			"id": id, "source_version_id": svID, "kind": kind, "stance": stance,
+			"locator": json.RawMessage(locator), "quote": quote.String, "fingerprint": fingerprint,
+		})
+	}
+	return items, nil
+}
+
+// GetResearchDiff 查询研究状态变更时间线。
+func (s *CoreStore) GetResearchDiff(questionID string) ([]map[string]any, error) {
+	rows, err := s.DB.Query(
+		`SELECT re.id, re.type, re.aggregate_id, re.actor, re.payload, re.occurred_at
+		 FROM research_events re
+		 JOIN claims c ON c.id = re.aggregate_id
+		 WHERE c.research_question_id = $1 AND re.type IN (
+		   'claim_proposed','claim_confirmed','claim_revised',
+		   'claim_invalidated','evidence_extracted')
+		 ORDER BY re.occurred_at DESC`, questionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, evType, aggID, actor, occurredAt string
+		var payload json.RawMessage
+		if err = rows.Scan(&id, &evType, &aggID, &actor, &payload, &occurredAt); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{
+			"id": id, "diff_kind": evType, "aggregate_id": aggID,
+			"actor": actor, "payload": json.RawMessage(payload),
+			"occurred_at": occurredAt,
+		})
+	}
+	return items, nil
+}
