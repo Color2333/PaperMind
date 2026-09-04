@@ -408,7 +408,7 @@ func (s *CoreStore) FailTask(taskID, executorID, leaseToken, errorClass, message
 func (s *CoreStore) ReclaimExpired(backoffS int) (map[string]string, error) {
 	rows, err := s.DB.Query(
 		`SELECT id, attempt_count, max_attempts FROM core_tasks
-		 WHERE status='leased' AND lease_expires_at < detime('now') - make_interval(secs => ?)`,
+		 WHERE status='leased' AND lease_expires_at < datetime('now', ?)`,
 		fmt.Sprintf("-%d seconds", backoffS),
 	)
 	if err != nil {
