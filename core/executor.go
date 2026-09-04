@@ -110,6 +110,24 @@ func (e *GoExecutor) pollOnce() {
 		}
 		proposal, computeErr = e.Pipeline.EmbedProposal(pid, title, abstract)
 
+	case "upsert_paper":
+		arxivID, _ := task.Input["arxiv_id"].(string)
+		title, _ := task.Input["title"].(string)
+		abstract, _ := task.Input["abstract"].(string)
+		proposal, computeErr = e.Pipeline.UpsertProposal(arxivID, title, abstract)
+
+	case "download_source":
+		arxivID, _ := task.Input["arxiv_id"].(string)
+		proposal, computeErr = e.Pipeline.DownloadProposal(arxivID)
+
+	case "fetch_feed":
+		query, _ := task.Input["query"].(string)
+		maxResults := 20
+		if v, ok := task.Input["max_results"].(float64); ok {
+			maxResults = int(v)
+		}
+		proposal, computeErr = e.Pipeline.FetchProposal(query, maxResults)
+
 	default:
 		computeErr = fmt.Errorf("capability %s 无 Go executor handler", task.Capability)
 	}
@@ -131,5 +149,5 @@ func (e *GoExecutor) pollOnce() {
 }
 
 func (e *GoExecutor) claimCapabilities() []string {
-	return []string{"skim_paper", "deep_read_paper", "embed_paper"}
+	return []string{"skim_paper", "deep_read_paper", "embed_paper", "upsert_paper", "download_source", "fetch_feed"}
 }

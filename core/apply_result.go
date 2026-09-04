@@ -27,6 +27,10 @@ func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result ma
 		return s.applyEmbedResult(taskID, executorID, leaseToken, result)
 	case "extract_claims":
 		return s.applyExtractClaimsResult(taskID, executorID, leaseToken, result)
+	case "upsert_paper":
+		return s.applyUpsertPaperResult(taskID, executorID, leaseToken, result)
+	case "download_source":
+		return s.applyDownloadSourceResult(taskID, executorID, leaseToken, result)
 	default:
 		return "", fmt.Errorf("capability %s 未实现 Go apply-result（迁移清单中）", capability)
 	}
@@ -454,6 +458,130 @@ func (s *CoreStore) ReclaimExpired(backoffS int) (map[string]string, error) {
 	return out, nil
 }
 
+// applyUpsertPaperResult：papers 行 upsert + source_versions v1 + outbox（单事务）
+func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	arxivID, _ := proposal["arxiv_id"].(string)
+	title, _ := proposal["title"].(string)
+	abstract, _ := proposal["abstract"].(string)
+	if arxivID == "" {
+		return "", fmt.Errorf("proposal 缺少 arxiv_id")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	attemptCount, err := fencingGuard(tx, taskID, executorID, leaseToken)
+	if err != nil {
+		return "", err
+	}
+
+	// papers upsert（幂等：arxiv_id 唯一）
+	paperID := newCoreID()
+	var existingID string
+	err = tx.QueryRow(`SELECT id FROM papers WHERE arxiv_id=$1`, arxivID).Scan(&existingID)
+	if err == nil {
+		paperID = existingID
+		if _, err = tx.Exec(
+			`UPDATE papers SET title=$1, abstract=$2, updated_at=NOW() WHERE id=$3`,
+			title, abstract, paperID,
+		); err != nil {
+			return "", err
+		}
+	} else if err == sql.ErrNoRows {
+		if _, err = tx.Exec(
+			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, 'unread', NOW(), NOW())`,
+			paperID, title, arxivID, abstract,
+		); err != nil {
+			return "", fmt.Errorf("papers insert: %w", err)
+		}
+	} else {
+		return "", err
+	}
+
+	// SourceVersion v1
+	var svID string
+	err = tx.QueryRow(
+		`SELECT id FROM source_versions WHERE paper_id=$1 AND is_current=1`, paperID,
+	).Scan(&svID)
+	if err == sql.ErrNoRows {
+		svID = newCoreID()
+		identityJSON := fmt.Sprintf(`{"abstract":%q,"arxiv_id":%q,"title":%q}`, abstract, arxivID, title)
+		if _, err = tx.Exec(
+			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, is_current, created_at)
+			 VALUES ($1, $2, 1, $3, 'ingest', true, NOW())`,
+			svID, paperID, sha256Hex(identityJSON),
+		); err != nil {
+			return "", err
+		}
+		if _, err = tx.Exec(
+			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, payload, occurred_at)
+			 VALUES ($1, 'source_version_detected', 'source_version', $2, $3, NOW())`,
+			newCoreID(), svID, mustJSON(map[string]any{"paper_id": paperID}),
+		); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+
+	if err = finalizeTaskWithResult(tx, taskID, map[string]any{
+		"paper_id": paperID, "arxiv_id": arxivID,
+	}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	_ = attemptCount
+	return "succeeded", nil
+}
+
+// applyDownloadSourceResult：PDF 下载 + papers.pdf_path 更新（单事务终态）
+func (s *CoreStore) applyDownloadSourceResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	arxivID, _ := proposal["arxiv_id"].(string)
+	pdfURL, _ := proposal["pdf_url"].(string)
+	if arxivID == "" || pdfURL == "" {
+		return "", fmt.Errorf("proposal 缺少 arxiv_id/pdf_url")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	if _, err = tx.Exec(
+		`UPDATE papers SET pdf_path=$1, updated_at=NOW() WHERE arxiv_id=$2`,
+		pdfURL, arxivID,
+	); err != nil {
+		return "", err
+	}
+
+	if err = finalizeTask(tx, taskID, result); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return "succeeded", nil
+}
+
 // applyExtractClaimsResult：claims SQL 直写（A 档升级——第三轮 P0-2 选 a 迁移清单）
 //
 // 同一事务内：ResearchRun 创建 + SourceVersion 幂等回补 + Claim 创建（papermind
@@ -683,4 +811,34 @@ func jobIDOf(tx *sql.Tx, taskID string) string {
 	var jobID string
 	_ = tx.QueryRow(`SELECT job_id FROM core_tasks WHERE id=?`, taskID).Scan(&jobID)
 	return jobID
+}
+
+// finalizeTaskWithResult：终态 + result_ref
+func finalizeTaskWithResult(tx *sql.Tx, taskID string, result map[string]any) error {
+	now := nowParam()
+	if _, err := tx.Exec(
+		`UPDATE core_tasks SET status='succeeded', lease_token=NULL, lease_expires_at=NULL,
+		 result_ref=$1 WHERE id=?`,
+		mustJSON(result), taskID,
+	); err != nil {
+		return err
+	}
+	var attemptCount int
+	if err := tx.QueryRow(`SELECT attempt_count FROM core_tasks WHERE id=?`, taskID).Scan(&attemptCount); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE core_attempts SET status='succeeded', finished_at=$1
+		 WHERE task_id=? AND fencing_token=? AND status='running'`,
+		now, taskID, attemptCount,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE core_jobs SET status='succeeded', finished_at=$1 WHERE id=? AND status='running'`,
+		now, jobIDOf(tx, taskID),
+	); err != nil {
+		return err
+	}
+	return nil
 }
