@@ -500,6 +500,28 @@ func (s *Server) handleDomainResultGET(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTaskStatusGET(w http.ResponseWriter, r *http.Request) {
+	// Go-owned 任务：状态/result 直接读权威面（第四轮——此前 result 观察面
+	// 只查 Python durable store，Go 任务 /tasks/{id}/result 拿不到）
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		task, err := s.Store.TaskStatus(s.taskID(r))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, "", map[string]any{"ok": false, "error": "task_not_found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, "", TaskStatusResponse{
+			Envelope:     Envelope{SchemaVersion: SchemaVersion},
+			OK:           true,
+			TaskID:       task.ID,
+			Status:       task.Status,
+			Capability:   task.Capability,
+			AttemptCount: task.AttemptCount,
+			MaxAttempts:  task.MaxAttempts,
+			Input:        task.Input,
+			ResultRef:    task.ResultRef,
+			LastError:    task.LastError,
+		})
+		return
+	}
 	var out struct {
 		Task *struct {
 			TaskID       string         `json:"task_id"`

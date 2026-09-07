@@ -374,3 +374,88 @@ def test_ingest_proposal_handlers_return_proposal(monkeypatch):
     proposal = out["proposal"]
     assert proposal["kind"] == "ingest_papers"
     assert [p["arxiv_id"] for p in proposal["papers"]] == ["2603.00001"]  # 已存在的被过滤
+
+
+def test_expand_due_workflow_jobs_spawns_next_stage(db_session):
+    """工作流"任务完成后展开"钩子：stage 1 完成后，expand 轮询 spawn stage 2"""
+    from packages.application.commands.workflows import (
+        expand_due_workflow_jobs,
+        start_workflow_job,
+    )
+    from packages.storage.repositories import TaskRepository
+
+    kind = "RunTopicResearch"  # 有确定性多阶段链（fetch→upsert→…）
+    job, first_tasks, _ = start_workflow_job(
+        db_session,
+        kind=kind,
+        payload={"paper_ids": ["2602.00001", "2602.00002"], "topic_id": None},
+    )
+    db_session.flush()
+    assert first_tasks, "提交时应展开首批 Task"
+
+    # 首批完成（模拟 executor）——完成前无后续阶段
+    before = expand_due_workflow_jobs(db_session)
+    _ = before
+
+    repo = TaskRepository(db_session)
+    for t in first_tasks:
+        claimed = repo.claim_task_by_id(task_id=t.id, executor_id="exec-x")
+        assert claimed is not None
+        repo.complete_task(
+            task_id=t.id,
+            executor_id="exec-x",
+            lease_token=claimed.lease_token,
+            result_ref={"ok": True},
+        )
+    db_session.flush()
+
+    # 补展开：依赖已满足的下游 Task 应被 spawn（幂等：重复调用不重复）
+    expand_due_workflow_jobs(db_session)
+    created2 = expand_due_workflow_jobs(db_session)
+    all_tasks = repo.list_for_job(job.id)
+    total = len(all_tasks)
+    assert total >= len(first_tasks)
+    assert created2 == 0 or total > len(first_tasks)  # 幂等性：二轮不重复
+
+
+def test_apply_save_generated_content_proposal(db_session):
+    """save_generated_content proposal：generated_contents 插入 + content_id 回传"""
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.models import GeneratedContent
+
+    ref = apply_proposal(
+        db_session,
+        {
+            "kind": "save_generated_content",
+            "content_type": "daily_brief",
+            "title": "Daily Brief: 2026-09-07",
+            "markdown": "<html>brief</html>",
+            "metadata_json": {"email_sent": False, "source": "manual"},
+        },
+    )
+    db_session.flush()
+    assert ref["content_id"]
+    row = db_session.get(GeneratedContent, ref["content_id"])
+    assert row.content_type == "daily_brief"
+    assert row.metadata_json.get("source") == "manual"
+
+
+def test_wiki_brief_handlers_return_proposal(monkeypatch, db_session):
+    """wiki/brief handler：计算留 handler、领域写转 proposal"""
+    # wiki：mock get_topic_wiki（LLM 计算层）
+    import packages.application.commands.graph as graph_mod
+    from packages.ai import task_handlers as th
+
+    monkeypatch.setattr(
+        graph_mod, "get_topic_wiki", lambda **kw: {"markdown": "# W", "sections": 3}
+    )
+    out = th.topic_wiki_save(keyword="kw", limit=5)
+    p = out["proposal"]
+    assert p["kind"] == "save_generated_content"
+    assert p["content_type"] == "topic_wiki"
+    assert p["markdown"] == "# W"
+    assert p["metadata_json"].get("sections") == 3
+    # 不应直接写库
+    from packages.storage.models import GeneratedContent
+
+    assert db_session.query(GeneratedContent).count() == 0

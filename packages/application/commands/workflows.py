@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 from collections.abc import Callable  # noqa: TC003 —— WORKFLOW_TEMPLATES 注解运行期引用
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -320,6 +321,8 @@ def plan_citation_sync(job: Job, existing: list[DurableTask]) -> list[TaskSpec]:
     return specs
 
 
+logger = logging.getLogger(__name__)
+
 WORKFLOW_TEMPLATES: dict[str, Callable[[Job, list[DurableTask]], list[TaskSpec]]] = {
     "RunTopicResearch": plan_topic_research,
     "ProcessUnreadBatch": plan_batch,
@@ -329,6 +332,46 @@ WORKFLOW_TEMPLATES: dict[str, Callable[[Job, list[DurableTask]], list[TaskSpec]]
 
 
 # ---------- 展开入口 ----------
+
+
+def expand_due_workflow_jobs(session: Any, limit: int = 50) -> int:
+    """对活跃工作流 Job 补展开（"任务完成后展开"调度钩子）。
+
+    此前 expand_job 只在提交时执行一次——多阶段工作流（RunTopicResearch 的
+    fetch→upsert→download→skim 链）后续阶段永远不 spawn。由 worker 调度
+    循环周期性调用：对模板注册过的、处于 queued/running/partially_succeeded
+    的 Job 逐个 expand（幂等，去重由 idempotency_key 保证）。
+
+    返回本轮新展开的 Task 数。
+    """
+    from sqlalchemy import select
+
+    from packages.storage.models import Job as DurableJob
+
+    active = (
+        JobStatus.running,
+        JobStatus.queued,
+        JobStatus.partially_succeeded,
+    )
+    jobs = (
+        session.execute(
+            select(DurableJob)
+            .where(DurableJob.kind.in_(list(WORKFLOW_TEMPLATES)))
+            .where(DurableJob.status.in_([j.value for j in active]))
+            .order_by(DurableJob.created_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    created_total = 0
+    for job in jobs:
+        try:
+            created = expand_job(session, job.id)
+            created_total += len(created)
+        except Exception:  # noqa: BLE001 — 单个 Job 展开失败不阻断其余
+            logger.warning("expand_due_workflow_jobs: job %s 展开失败", job.id, exc_info=True)
+    return created_total
 
 
 def expand_job(session: Any, job_id: str) -> list[DurableTask]:

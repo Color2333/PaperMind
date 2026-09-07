@@ -167,6 +167,7 @@ type TaskStatusResponse struct {
 	AttemptCount int            `json:"attempt_count"`
 	MaxAttempts  int            `json:"max_attempts"`
 	Input        map[string]any `json:"input,omitempty"`
+	ResultRef    map[string]any `json:"result_ref,omitempty"`
 	LastError    string         `json:"last_error,omitempty"`
 }
 

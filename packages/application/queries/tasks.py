@@ -115,11 +115,36 @@ def _result_of(session, task_ref: str) -> dict | None:  # noqa: ANN001
 
 
 def get_task_result(task_id: str) -> dict | None:
-    """已完成任务的结果摘要；未完成/不存在返回 None"""
+    """已完成任务的结果摘要；未完成/不存在返回 None。
+
+    观察面合并：Python durable store 优先，Go 权威任务（manifest 内 A 档）
+    回退经 Core 读 result_ref——此前 Go 任务在此永远拿不到结果。
+    """
     from packages.storage.db import session_scope
 
     with session_scope() as session:
-        return _result_of(session, task_id)
+        result = _result_of(session, task_id)
+    if result is not None:
+        return result
+
+    import os
+
+    if not os.environ.get("PAPERMIND_CORE_URL"):
+        return None
+    from packages.core_client.client import CoreClient
+
+    client = CoreClient(
+        os.environ["PAPERMIND_CORE_URL"], token=os.environ.get("PAPERMIND_CORE_TOKEN", "")
+    )
+    try:
+        status = client.task_status(task_id)
+    except Exception:  # noqa: BLE001 — Go 不可达时按未完成处理
+        return None
+    finally:
+        client.close()
+    if not status or status.get("status") != "succeeded":
+        return None
+    return status.get("result_ref") or {}
 
 
 def find_fetch_task_by_topic(topic_id: str) -> dict | None:

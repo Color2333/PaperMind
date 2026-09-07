@@ -586,7 +586,7 @@ class DailyBriefService:
                 logger.warning("AI summary generation failed: %s", exc)
                 return f"今日新增 {len(papers)} 篇论文，涵盖多个研究方向"
 
-    def publish(self, recipient: str | None = None) -> dict:
+    def publish(self, recipient: str | None = None, *, persist: bool = True) -> dict:
         """生成并发布日报：存 HTML 文件 + 写入 generated_content 表 + 可选发邮件"""
         from packages.storage.repositories import GeneratedContentRepository
 
@@ -610,6 +610,21 @@ class DailyBriefService:
             sent = self.notifier.send_email_html(recipient, "PaperMind Daily Brief", html)
 
         # 写入 generated_content 表，确保研究简报页面能查到
+        # persist=False（proposal 模式）：不写库，把领域写所需字段带回——
+        # generated_contents 的插入由权威面单事务执行（Go applySaveGeneratedContent /
+        # domain_apply.apply_save_generated_content）
+        if not persist:
+            return {
+                "saved_path": saved,
+                "email_sent": sent,
+                "content_id": None,
+                "brief_markdown": html,
+                "brief_metadata": {
+                    "saved_path": saved or "",
+                    "email_sent": sent,
+                    "source": "auto" if not recipient else "manual",
+                },
+            }
         content_id = None
         try:
             with session_scope() as session:

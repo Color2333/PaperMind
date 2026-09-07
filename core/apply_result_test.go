@@ -633,3 +633,48 @@ func TestApplyIngestPapersResult(t *testing.T) {
 		t.Fatalf("重复提交产生重复论文: %d", paperCount)
 	}
 }
+
+// TestApplySaveGeneratedContentResult：wiki/brief 的 A 档——generated_contents
+// 插入 + result_ref 携带 content_id（前端历史记录契约）。
+func TestApplySaveGeneratedContentResult(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.DB.Exec(`
+CREATE TABLE IF NOT EXISTS generated_contents (
+	id TEXT PRIMARY KEY, content_type TEXT NOT NULL, title TEXT NOT NULL,
+	keyword TEXT, paper_id TEXT, markdown TEXT NOT NULL,
+	metadata_json JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`); err != nil {
+		t.Fatal(err)
+	}
+	_, taskID, _, err := s.SubmitCoreTaskMeta("generate_topic_wiki", `{"keyword":"test"}`, "wiki:t:1", 600, 3, "llm", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := s.ClaimTask("exec-1", []string{"generate_topic_wiki"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v / %v", own, err)
+	}
+	proposal := map[string]any{
+		"proposal": map[string]any{
+			"kind": "save_generated_content", "content_type": "topic_wiki",
+			"title": "Topic Wiki: test", "markdown": "# Wiki", "keyword": "test",
+			"metadata_json": map[string]any{"sections": 5.0},
+		},
+	}
+	status, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("status=%s", status)
+	}
+	var count int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM generated_contents WHERE content_type='topic_wiki'`).Scan(&count)
+	if count != 1 {
+		t.Fatalf("generated_contents=%d", count)
+	}
+	var resultRef string
+	_ = s.DB.QueryRow(`SELECT result_ref FROM core_tasks WHERE id=?`, taskID).Scan(&resultRef)
+	if !strings.Contains(resultRef, "content_id") {
+		t.Fatalf("result_ref 缺 content_id: %s", resultRef)
+	}
+}

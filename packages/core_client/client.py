@@ -163,6 +163,16 @@ class CoreClient:
             },
         )
 
+    def task_status(self, task_id: str) -> dict[str, Any] | None:
+        """Go 权威任务状态（含 result_ref）；404/不可达返回 None"""
+        try:
+            resp = self._client.get(f"{self._base}/v1/tasks/{task_id}/status")
+        except Exception:
+            return None
+        if resp.status_code != 200:
+            return None
+        return resp.json()
+
     def jobs_graph(self, job_id: str) -> dict[str, Any] | None:
         """Go 权威 Job graph（观察面代理）；404 返回 None"""
         try:

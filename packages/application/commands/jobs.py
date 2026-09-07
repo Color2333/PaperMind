@@ -33,6 +33,8 @@ GO_APPLY_CAPABILITIES: frozenset[str] = frozenset(
         "download_source",
         "ingest_arxiv_query",
         "import_selected",
+        "generate_topic_wiki",
+        "build_daily_brief",
     }
 )
 

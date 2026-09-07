@@ -408,6 +408,46 @@ func (s *CoreStore) HeartbeatTask(taskID, executorID, leaseToken string) (bool, 
 	return true, status == "cancelling", nil
 }
 
+// CoreTaskStatus：TaskStatus 的强类型返回（观察面 + result 消费者）
+type CoreTaskStatus struct {
+	ID           string
+	Status       string
+	Capability   string
+	AttemptCount int
+	MaxAttempts  int
+	Input        map[string]any
+	ResultRef    map[string]any
+	LastError    string
+}
+
+// TaskStatus：单任务权威快照（观察面 + result 消费者；Go-owned 任务）
+func (s *CoreStore) TaskStatus(taskID string) (*CoreTaskStatus, error) {
+	var id, capability, status, inputRef, createdAt string
+	var attemptCount, maxAttempts int
+	var lastError sql.NullString
+	var resultRef sql.NullString
+	err := s.DB.QueryRow(
+		`SELECT id, capability, status, input_ref, attempt_count, max_attempts,
+		        COALESCE(last_error, ''), COALESCE(result_ref, ''), created_at
+		 FROM core_tasks WHERE id=$1`, taskID,
+	).Scan(&id, &capability, &status, &inputRef, &attemptCount, &maxAttempts,
+		&lastError, &resultRef, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	input := map[string]any{}
+	_ = json.Unmarshal([]byte(inputRef), &input)
+	result := map[string]any{}
+	if resultRef.Valid && resultRef.String != "" {
+		_ = json.Unmarshal([]byte(resultRef.String), &result)
+	}
+	return &CoreTaskStatus{
+		ID: id, Capability: capability, Status: status,
+		AttemptCount: attemptCount, MaxAttempts: maxAttempts,
+		Input: input, ResultRef: result, LastError: lastError.String,
+	}, nil
+}
+
 // ---------- Job graph / list ----------
 
 func (s *CoreStore) JobGraph(jobID string) (map[string]any, error) {

@@ -682,9 +682,7 @@ def topic_wiki_save(
     *, keyword: str, limit: int = 120, progress: ProgressFn = None, **_: Any
 ) -> dict:
     """主题 Wiki 生成并写入 generated_contents（HTTP 语义）"""
-    from packages.application.commands.generated import save_generated_content
     from packages.application.commands.graph import get_topic_wiki
-    from packages.storage.db import session_scope
 
     # wiki 链路的 progress_callback 约定是 (msg, current, total)——与
     # packages/ai/graph/wiki.py 的 _progress 对齐（此前误写 (pct, msg)，
@@ -694,16 +692,27 @@ def topic_wiki_save(
             progress(msg, current, total)
 
     result = get_topic_wiki(keyword=keyword, limit=limit, progress_callback=_adapted)
-    with session_scope() as session:
-        result["content_id"] = save_generated_content(
-            session,
-            content_type="topic_wiki",
-            title=f"Topic Wiki: {keyword}",
-            markdown=result.get("markdown", ""),
-            keyword=keyword,
-            metadata_json={k: v for k, v in result.items() if k != "markdown"},
-        )
-    return result
+
+    # proposal 模式（A 档升级）：markdown 计算留在 handler（LLM 调用），
+    # generated_contents 插入在权威面单事务执行
+    markdown = result.pop("markdown", "")
+    metadata = {k: v for k, v in result.items() if k != "content_id"}
+    return {
+        "proposal": {
+            "kind": "save_generated_content",
+            "content_type": "topic_wiki",
+            "title": f"Topic Wiki: {keyword}",
+            "markdown": markdown,
+            "keyword": keyword,
+            "metadata_json": metadata,
+        }
+    }
+
+
+def _brief_date_str() -> str:
+    from packages.ai.brief_service import user_date_str
+
+    return user_date_str()
 
 
 def daily_brief_publish(
@@ -714,10 +723,22 @@ def daily_brief_publish(
 
     if progress:
         progress("正在生成每日简报...", 20, 100)
-    result = DailyBriefService().publish(recipient=recipient)
+    result = DailyBriefService().publish(recipient=recipient, persist=False)
     if progress:
         progress("简报生成完成", 95, 100)
-    return result
+    # proposal 模式（A 档升级）：邮件发送留 handler（外部副作用 + effect ledger
+    # 语义归 send_brief_email），generated_contents 插入在权威面单事务执行
+    return {
+        "proposal": {
+            "kind": "save_generated_content",
+            "content_type": "daily_brief",
+            "title": f"Daily Brief: {_brief_date_str()}",
+            "markdown": result.get("brief_markdown", ""),
+            "metadata_json": result.get("brief_metadata") or {},
+        },
+        "saved_path": result.get("saved_path"),
+        "email_sent": result.get("email_sent"),
+    }
 
 
 # ---------- 分析 / 翻译 ----------

@@ -77,7 +77,12 @@ class InlineExecutor:
 
                         applied = apply_proposal(session, proposal)
                         if applied is not None:
-                            stored_ref = applied
+                            # 权威字段优先 + 保留 handler 顶层契约字段（与
+                            # durable_state complete 同语义）
+                            stored_ref = {
+                                **{k: v for k, v in (json_result or {}).items() if k != "proposal"},
+                                **applied,
+                            }
                     TaskRepository(session).complete_task(
                         task_id=task_id,
                         executor_id=self.executor_id,

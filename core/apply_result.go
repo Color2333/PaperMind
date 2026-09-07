@@ -35,6 +35,8 @@ func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result ma
 		return s.applyDownloadSourceResult(taskID, executorID, leaseToken, result)
 	case "ingest_arxiv_query", "import_selected":
 		return s.applyIngestPapersResult(taskID, executorID, leaseToken, result)
+	case "generate_topic_wiki", "build_daily_brief":
+		return s.applySaveGeneratedContentResult(taskID, executorID, leaseToken, result)
 	default:
 		// B 档通用路径：领域写入由 handler 承载（幂等 upsert + effect ledger
 		// 缓解 P0-1），Go 权威面单事务落 fencing + 终态 + result_ref 原样存储。
@@ -551,6 +553,62 @@ func mergeMetadataFromItem(incoming any) string {
 		return ""
 	}
 	return mustJSON(m)
+}
+
+// applySaveGeneratedContentResult：generated_contents 插入（A 档升级）——
+// topic_wiki / daily_brief 共用；result_ref 携带 content_id（前端历史记录契约）。
+func (s *CoreStore) applySaveGeneratedContentResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	contentType, _ := proposal["content_type"].(string)
+	title, _ := proposal["title"].(string)
+	markdown, _ := proposal["markdown"].(string)
+	keyword := nullIfEmpty(stringOr(proposal["keyword"]))
+	paperID := nullIfEmpty(stringOr(proposal["paper_id"]))
+	metaJSON := "{}"
+	if m, ok := proposal["metadata_json"].(map[string]any); ok && len(m) > 0 {
+		metaJSON = mustJSON(m)
+	}
+	if contentType == "" || title == "" {
+		return "", fmt.Errorf("proposal 缺少 content_type/title")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	contentID := newCoreID()
+	if _, err = tx.Exec(
+		`INSERT INTO generated_contents (id, content_type, title, keyword, paper_id, markdown, metadata_json, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		contentID, contentType, title, keyword, paperID, markdown, metaJSON, nowParam(),
+	); err != nil {
+		return "", fmt.Errorf("generated_contents insert: %w", err)
+	}
+
+	// result_ref：content_id 权威 + 保留 handler 顶层字段（email_sent/saved_path
+	// 等消费者契约——/tasks/{id}/result）
+	ref := map[string]any{"content_id": contentID, "content_type": contentType}
+	for k, v := range result {
+		if k != "proposal" {
+			ref[k] = v
+		}
+	}
+	if err = finalizeTaskWithResult(tx, taskID, ref); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return "succeeded", nil
 }
 
 // FailTask 失败上报（core 表；重试/dead_letter 语义与 Python durable 一致）

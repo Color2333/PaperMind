@@ -303,6 +303,25 @@ def apply_ingest_papers_proposal(session: Session, proposal: dict) -> dict:
     }
 
 
+def apply_save_generated_content_proposal(session: Session, proposal: dict) -> dict:
+    """应用生成内容 proposal：generated_contents 插入（与 Go 语义对齐）"""
+    from packages.storage.repositories import GeneratedContentRepository
+
+    content_type = str(proposal.get("content_type") or "")
+    title = str(proposal.get("title") or "")
+    if not content_type or not title:
+        raise ValueError("save_generated_content proposal 缺少 content_type/title")
+    gc = GeneratedContentRepository(session).create(
+        content_type=content_type,
+        title=title,
+        markdown=str(proposal.get("markdown") or ""),
+        keyword=proposal.get("keyword"),
+        paper_id=proposal.get("paper_id"),
+        metadata_json=proposal.get("metadata_json") or {},
+    )
+    return {"content_id": str(gc.id), "content_type": content_type}
+
+
 def apply_proposal(session: Session, proposal: dict) -> dict | None:
     """proposal 分派（唯一实现，三条路径共用）：
     - Go authority：core ApplyResult 按 capability SQL 直写（A 档）；
@@ -334,6 +353,8 @@ def apply_proposal(session: Session, proposal: dict) -> dict | None:
         return apply_download_proposal(session, proposal)
     if kind == "ingest_papers":
         return apply_ingest_papers_proposal(session, proposal)
+    if kind == "save_generated_content":
+        return apply_save_generated_content_proposal(session, proposal)
     return None
 
 

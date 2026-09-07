@@ -314,6 +314,28 @@ def run_worker() -> None:
     )
     logger.info("✅ 已添加：每周图谱维护任务（UTC 周日 22:00）")
 
+    # 工作流"任务完成后展开"轮询（此前 expand_job 只在提交时执行一次——
+    # 多阶段工作流后续阶段永远不 spawn）
+    def _expand_workflows() -> None:
+        from packages.application.commands.workflows import expand_due_workflow_jobs
+
+        try:
+            with session_scope() as session:
+                created = expand_due_workflow_jobs(session)
+            if created:
+                logger.info("🔁 工作流补展开：%d 个新 Task", created)
+        except Exception:
+            logger.exception("工作流补展开失败")
+
+    scheduler.add_job(
+        _expand_workflows,
+        trigger="interval",
+        seconds=15,
+        id="expand_workflows",
+        **_job_kwargs,
+    )
+    logger.info("✅ 已添加：工作流补展开轮询（每 15s）")
+
     # 优雅关闭（High 3f：等待进行中任务跑完，避免已下载 PDF 未 set_pdf_path
     # 的中间态丢失；wait=True + 60s 超时兜底）
     def _graceful_stop(*_: object) -> None:
