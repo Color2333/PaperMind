@@ -39,6 +39,7 @@ import {
   ArrowDown,
 } from "lucide-react";
 import { useAgentSession, type ChatItem, type StepItem } from "@/contexts/AgentSessionContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { todayApi } from "@/services/api";
 import type { TodaySummary } from "@/types";
 import { ActionConfirmCard } from "./AgentSteps";
@@ -177,6 +178,9 @@ export default function Agent() {
     handleReject,
     stopGeneration,
   } = useAgentSession();
+  const { activePaperId, activePaperTitle, contextHint } = useWorkspace();
+  const contextChip = activePaperId ? { id: activePaperId, title: activePaperTitle } : null;
+  const chipTitle = activePaperTitle || activePaperId?.slice(0, 8);
 
   const [input, setInput] = useState("");
   const [activeAbility, setActiveAbility] = useState<Ability | null>(null);
@@ -237,11 +241,12 @@ export default function Agent() {
   const handleSend = useCallback(
     async (text: string) => {
       const savedInput = text;
+      const outgoing = contextHint ? `${text}\n${contextHint}` : text;
       isAtBottomRef.current = true;
       setInput("");
       setActiveAbility(null);
       try {
-        await sendMessage(text);
+        await sendMessage(outgoing);
       } catch {
         setInput(savedInput);
         toast("error", "发送失败，请重试");
@@ -373,6 +378,16 @@ export default function Agent() {
               <div className="bg-warning-light text-warning flex items-center gap-2 rounded-lg px-3 py-2 text-xs">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                 <span>请先处理上方的确认请求，再继续对话</span>
+              </div>
+            )}
+
+            {/* 当前主区上下文（用户→agent 跟随） */}
+            {contextChip && (
+              <div className="flex justify-start">
+                <span className="border-border bg-page text-ink-secondary inline-flex max-w-full items-center gap-1.5 truncate rounded-full border px-2.5 py-1 text-[11px]">
+                  <FileText className="text-primary h-3 w-3 shrink-0" />
+                  <span className="truncate">正在查看：{chipTitle}</span>
+                </span>
               </div>
             )}
 

@@ -15,6 +15,7 @@ import { agentApi } from "@/services/api";
 import type { AgentEngine, AgentMessage, SSEEvent, SSEEventType } from "@/types";
 import { parseSSEStream } from "@/types";
 import { useConversationCtx } from "@/contexts/ConversationContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { loadConversation } from "@/hooks/useConversations";
 import type { ConversationMessage } from "@/hooks/useConversations";
 import { uid } from "@/lib/utils";
@@ -93,6 +94,9 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const confirmingActions = useMemo(() => new Set(confirmingActionIds), [confirmingActionIds]);
 
   const { activeId, createConversation, saveMessages, setActiveId } = useConversationCtx();
+  const workspace = useWorkspace();
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
   const justCreatedRef = useRef(false);
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
@@ -293,6 +297,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         }
         case "tool_start": {
           const pending = drainBuffer();
+          lastToolArgsRef.current = (data.args as Record<string, unknown>) || null;
           setItems((prev) => {
             const copy = [...prev];
             applyPendingText(copy, pending);
@@ -351,6 +356,13 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         case "tool_result": {
           const toolId = (data.id as string) || "";
           const toolName = data.name as string;
+          // 工作区联动：agent 查看论文 → 主区切到该论文工作桌（agent→主区）
+          if (toolName === "pm_get_paper") {
+            const pid = lastToolArgsRef.current?.paper_id as string | undefined;
+            const detail = data.data as Record<string, unknown> | undefined;
+            const title = (detail?.title as string) || null;
+            if (pid) workspaceRef.current?.openPaper(pid, title, "agent");
+          }
           setItems((prev) => {
             const copy = [...prev];
             for (let i = copy.length - 1; i >= 0; i--) {
@@ -692,6 +704,8 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   /* ---- 确认/拒绝操作 ---- */
   // 已处理（confirm/reject 过）的 actionId，用于防重复提交
   const handledActionsRef = useRef<Set<string>>(new Set());
+  // 工作区联动：最近一次 tool_start 的 args（pm_get_paper 的 paper_id）
+  const lastToolArgsRef = useRef<Record<string, unknown> | null>(null);
   // Pi 引擎动作（主流保持打开，工具阻塞轮询决定）——确认走轻量批准
   const piActionsRef = useRef<Set<string>>(new Set());
 

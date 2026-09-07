@@ -1,12 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import ChatPane from "./ChatPane";
 import TaskRail from "./TaskRail";
+import { WorkspaceProvider, useWorkspace } from "@/contexts/WorkspaceContext";
 import { ConversationProvider } from "@/contexts/ConversationContext";
 import { AgentSessionProvider } from "@/contexts/AgentSessionContext";
 import { GlobalTaskProvider } from "@/contexts/GlobalTaskContext";
 import GlobalTaskBar from "./GlobalTaskBar";
+
+
+function CenterPane() {
+  const { setView } = useWorkspace();
+  const { pathname } = useLocation();
+  useEffect(() => {
+    setView(pathname.replace(/^\//, "").split("/")[0] || "papers");
+  }, [pathname, setView]);
+  return <Outlet />;
+}
+
 
 export default function Layout() {
   const { pathname } = useLocation();
@@ -29,20 +41,22 @@ export default function Layout() {
   }
 
   return (
-    <ConversationProvider>
-      <AgentSessionProvider>
+    <WorkspaceProvider>
+      <ConversationProvider>
+        <AgentSessionProvider>
         <GlobalTaskProvider>
           <div className="bg-page flex h-screen overflow-hidden">
             <Sidebar />
             {chatOpen && <ChatPane onCollapse={() => setChatOpen(false)} />}
             <main className="min-w-0 flex-1 overflow-y-auto">
-              <Outlet />
+              <CenterPane />
             </main>
             {railOpen && <TaskRail onClose={() => setRailOpen(false)} />}
           </div>
           <GlobalTaskBar />
         </GlobalTaskProvider>
       </AgentSessionProvider>
-    </ConversationProvider>
+      </ConversationProvider>
+    </WorkspaceProvider>
   );
 }
