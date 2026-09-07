@@ -190,40 +190,37 @@ class CSFeedOrchestrator:
             self._notify_digest(digest)
 
     def _process_cs_papers(self, paper_ids: list[str]) -> None:
-        """对 cs_feed 抓取的论文触发 embed + skim（High 3b，抓取即处理）。
+        """对 cs_feed 抓取的论文触发 embed + skim（双系统去重：改提交任务链）。
 
-        复用 PaperPipelines 的 embed_paper / skim，使 cs_feed 论文不再只入库后
-        处于 unread 无 embedding 状态。失败不抛（仅记录日志），不阻断抓取主流程。
+        此前内联调 PaperPipelines.embed/skim（直写领域 + pipeline_runs）——与
+        A 档任务链双轨。现改为提交 embed_paper/skim_paper 任务（manifest 内，
+        经 Go 权威调度 + 单事务 apply）；失败不抛，不阻断抓取主流程。
         """
         if not paper_ids:
             return
-        from packages.ai.pipelines import PaperPipelines
-        from packages.ai.rate_limiter import acquire_api, get_rate_limiter
+        from packages.application.commands.jobs import submit_job
 
-        pipelines = PaperPipelines()
-        limiter = get_rate_limiter()
+        submitted = 0
         for pid in paper_ids:
-            if not limiter.start_task():
-                logger.debug("[CSFeed] 并发满，跳过处理 %s", pid)
-                break
             try:
-                if not acquire_api("embedding", timeout=30.0):
-                    logger.warning("[CSFeed] Embedding 限流，跳过 %s", pid)
-                    continue
-                try:
-                    pipelines.embed_paper(pid)
-                except Exception as e:
-                    logger.warning("[CSFeed] embed %s 失败: %s", pid, e)
-                    continue
-                if not acquire_api("llm", timeout=30.0):
-                    logger.warning("[CSFeed] LLM 限流，跳过 skim %s", pid)
-                    continue
-                try:
-                    pipelines.skim(pid)
-                except Exception as e:
-                    logger.warning("[CSFeed] skim %s 失败: %s", pid, e)
-            finally:
-                limiter.end_task()
+                submit_job(
+                    kind="CoreTask",
+                    capability="embed_paper",
+                    title=f"CSFeed embed: {pid[:8]}",
+                    input_ref={"paper_id": str(pid)},
+                    created_by="cs_feed",
+                )
+                submit_job(
+                    kind="CoreTask",
+                    capability="skim_paper",
+                    title=f"CSFeed skim: {pid[:8]}",
+                    input_ref={"paper_id": str(pid)},
+                    created_by="cs_feed",
+                )
+                submitted += 1
+            except Exception as e:  # noqa: BLE001 — 单篇提交失败不阻断抓取主流程
+                logger.warning("[CSFeed] 提交处理任务失败 %s: %s", pid[:8], e)
+        logger.info("[CSFeed] 已提交 %d/%d 篇的处理任务（embed+skim）", submitted, len(paper_ids))
 
     @staticmethod
     def _link_cs_papers_to_topic(session, category_code: str, paper_ids: list[str]) -> None:
