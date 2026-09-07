@@ -25,7 +25,7 @@ func newPGTestStore(t *testing.T) *CoreStore {
 	for _, table := range []string{"core_attempts", "core_tasks", "core_jobs"} {
 		db.Exec(`DROP TABLE IF EXISTS ` + table)
 	}
-	s := &CoreStore{DB: db}
+	s := &CoreStore{DB: db, isPG: true} // 第四轮 P0-3：此前漏设——PG 方言路径从未被测试覆盖
 	if err := s.initSchema(); err != nil {
 		db.Close()
 		t.Skipf("PG schema init: %v", err)

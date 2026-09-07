@@ -408,6 +408,23 @@ Compose 把 Core 绑定到 `0.0.0.0:8081`，但 `CORE_TOKEN` 与 `DURABLE_STATE_
 
 ---
 
+## 第四轮复审（2026-09-04）——修复状态更新（2026-09-07）
+
+> 逐项状态（修复提交见 git log 6d7fce0..HEAD）：
+>
+> - **[P0-1] Compose healthcheck 401**：✅ 已修——TokenAuthMiddleware 豁免 /readyz（健康探针免静态 token）。
+> - **[P0-2] capability 路由闭环**：✅ 已修——Python `GO_APPLY_CAPABILITIES` manifest（8 个 A 档）→ 提交 Go；其余显式留 Python authority（worker 经 Go 代理领取、complete 代理回 Python 同事务 apply，工作流 DAG 在 Python store 内保持）；Go `/v1/jobs` fail-closed 校验与清单一致。剩余 11 个领域写入型 B 档按"逐批升 A 档"推进（ingest/import 已完成）。
+> - **[P0-3] 方言统一**：✅ 已修——全部 SQL `$N` 化（SQLite 命名参数连续性已验证）、`datetime('now')` 清零（跨方言 UTC 字符串比较）、initSchema 幂等 ALTER、pg_test_helper 补 `isPG:true`。**待办：PG 测试进 CI 必跑（本机无 docker，PG 路径仍需真容器验证）**。
+> - **[P1-1] lease 状态机**：✅ 已修——claim 单事务（CAS+RETURNING+Attempt+Job 同事务）；heartbeat 单条 CAS（token+未过期，cancelling 返回 ok=true+cancel_requested）；fencingGuard 补过期校验；CancelJob→cancelling 过程态；cancel-execution 补 Go-owned 回执路由；finalizeTask 收敛 cancelling Job。闭环测试 13/13（含协作取消）。
+> - **[P1-2] 提交面元数据**：✅ 已修——max_attempts/resource_class/priority 从 CapabilitySpec 端到端传递；claim 按 capability IN + priority 下推 SQL（防饥饿）。
+> - **[P1-3] 邮件 effect ledger**：✅ 已修（见 0ccba9a）。
+> - **[P1-4] Go Auth 收缩**：✅ 已修——Auth 路由默认不注册（PAPERMIND_GO_AUTH=1 显式开启）；唯一公网入口是 Python backend；Core 端口不在 compose 发布到宿主。
+> - **[P1-5] bridge 并发/stderr/超时**：✅ 已修（见 0ccba9a）。
+> - **[P2-1] renderer [object Object]**：✅ 已修（见 0ccba9a）。
+> - **[P2-2] 路线图完成态**：本次同步降级（见 docs/plans 更新）。
+>
+> 仍阻 merge：PG 路径需真容器 smoke（compose 默认路径已接线）；本地实验确认。
+
 ## 第四轮复审（2026-09-04）
 
 > 审查快照：PaperMind 已提交基线 `7dcbf47`（`refactor/papermind-2026`），并观察到当时尚未提交的 capability 白名单移除、Pi Web bridge 与观察面修改；PaperMind-Terminal 已提交基线 `cfed8636`，并观察到 `pm --json --session` 的未提交接线。工作区仍在被另一执行者修改，因此以下结论按“已提交基线 + 明示的未提交差异”分别判断。

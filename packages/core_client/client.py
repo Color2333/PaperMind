@@ -144,8 +144,11 @@ class CoreClient:
         input_ref: dict[str, Any],
         idempotency_key: str | None = None,
         timeout_s: int = 1800,
+        max_attempts: int = 3,
+        resource_class: str = "default",
+        priority: int = 0,
     ) -> dict[str, Any]:
-        """Go-authority 任务提交（skim 切片）"""
+        """Go-authority 任务提交（A 档 manifest 内）"""
         return self._call(
             "/v1/jobs",
             {
@@ -154,6 +157,9 @@ class CoreClient:
                 "input_ref": input_ref,
                 "idempotency_key": idempotency_key or "",
                 "timeout_s": timeout_s,
+                "max_attempts": max_attempts,
+                "resource_class": resource_class,
+                "priority": priority,
             },
         )
 

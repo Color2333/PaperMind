@@ -325,3 +325,14 @@
 - 2026-09-03：B8 遗留批次——tags×8 路由全部经 application/commands/tags.py。全量 207 passed。
 - 2026-09-03：B8 遗留——cs_feeds×6 + settings×12 + llm_configs×6 全部下沉 application/commands（settings.py/cs_feeds.py），llm_configs 瘦身为 repo 直调（纯 CRUD 无业务编排）。全量 207 passed。
 - 2026-09-02（第二十三次）：确认 **Go Core + Python research executors** 为目标架构，不再把 Go 留到 Stage H 决策；Stage C 新增 C0 并改为由 Go 承接任务与领域权威状态，Python 只通过协议执行原子 Attempt，Stage H 改为资源/存储验证门。
+
+
+## 状态口径修正（2026-09-07，第四轮复审后）
+
+按"实现 / 默认接线 / 本地验证 / 实验验证 / 发布"五级口径重新标注：
+
+- **Go-authority 路由**：`implemented + wired`（manifest 路由落地）——`experiment-verified` **未达成**（需 compose 真容器证明默认路径落 core_* 表）；
+- **PostgreSQL 生产默认**：`implemented`——SQL 方言已统一、isPG 测试修复，但 **PG 路径未在真容器验证，CI 未强制 PG 必跑**，`wired-by-default` 降级为 `pending-verification`；
+- **Stage C / C13 总完成态**：降级为 `implemented（A 档切片）/ partially-wired`——B 档 11 项领域写入未全部 proposal 化；工作流 DAG 的"任务完成后展开"调度钩子缺失（expand_job 仅提交时执行一次）；
+- **Go Auth/MCP**：`not-migrated`（Auth 路由默认关闭，公网入口唯一为 Python backend）；
+- 历史条目中的"全量 N passed + go test 全绿"为**当时 checkout 的记录**，非当前基线的可重放证据；当前证据以最近一次全量回归 + REVIEW.md 状态更新为准。

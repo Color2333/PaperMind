@@ -18,6 +18,25 @@ from typing import Any
 A_TIER_CAPABILITIES = {"skim_paper", "deep_read_paper", "embed_paper", "extract_claims"}
 
 
+# A 档 manifest（第四轮 P0-2 闭环）：领域 apply 已在 Go 单事务实现的 capability。
+# submit/claim/apply 路由的唯一判据——清单内的任务提交 Go 权威；清单外显式留在
+# Python authority（durable store，worker 经 Go 代理领取、complete 代理回
+# Python 同事务 apply），不再"全量发送再 400"。工作流 DAG（依赖展开）任务
+# 由 expand_job 在 Python store 内创建，天然留在 Python authority。
+GO_APPLY_CAPABILITIES: frozenset[str] = frozenset(
+    {
+        "skim_paper",
+        "deep_read_paper",
+        "embed_paper",
+        "extract_claims",
+        "upsert_paper",
+        "download_source",
+        "ingest_arxiv_query",
+        "import_selected",
+    }
+)
+
+
 def submit_job(
     *,
     kind: str,
@@ -39,10 +58,19 @@ def submit_job(
     调用方（API/CLI/agent）不得在此启动线程或 fn——见设计③「API 只负责提交、
     查询和控制」。input_ref 是 handler 的输入契约（见 C4 注册表 input_keys）。
     """
-    # Go-authority 全量路由：配置了 PAPERMIND_CORE_URL → 所有 capability 提交
-    # Go 权威（调度/fencing/终态）。领域 apply 按 A/B 档分派（设计④ §2.3）。
-    # 未配置 = 本地单进程模式（全 Python durable store）。
-    if _core_api_enabled():
+    # manifest 路由（第四轮 P0-2）：A 档（Go apply 已实现）提交 Go 权威；
+    # 其余 capability 显式留在 Python authority（worker 经 Go 代理领取，
+    # complete 代理回 Python 同事务 apply）——不再"全量发送再 400"，
+    # 工作流 DAG 依赖展开也在 Python store 内保持。
+    if _core_api_enabled() and capability in GO_APPLY_CAPABILITIES:
+        from packages.application.commands.task_registry import TASK_CAPABILITIES
+
+        # 第四轮 P1：CapabilitySpec 元数据随提交传递（此前 max_attempts 被固定
+        # 为 2、resource_class 固定 llm——邮件误重试、资源隔离失效）
+        spec = TASK_CAPABILITIES.get(capability)
+        max_attempts = spec.max_attempts if spec else 3
+        resource_class = spec.resource_class if spec else "default"
+        priority = max(priority, 0)
         return _submit_via_go_core(
             kind=kind,
             capability=capability,
@@ -50,6 +78,9 @@ def submit_job(
             input_ref=input_ref or {},
             idempotency_key=idempotency_key,
             timeout_s=timeout_s,
+            max_attempts=max_attempts,
+            resource_class=resource_class,
+            priority=priority,
         )
 
     from packages.storage.db import session_scope
@@ -104,6 +135,9 @@ def _submit_via_go_core(
     input_ref: dict,
     idempotency_key: str | None,
     timeout_s: int = 1800,
+    max_attempts: int = 3,
+    resource_class: str = "default",
+    priority: int = 0,
 ) -> dict:
     """经 Go Core 提交（权威 Job/Task/Attempt 在 Go）。Core 不可达 → 抛错（fail closed）。"""
     import os
@@ -120,6 +154,9 @@ def _submit_via_go_core(
             input_ref=input_ref,
             idempotency_key=idempotency_key,
             timeout_s=timeout_s,
+            max_attempts=max_attempts,
+            resource_class=resource_class,
+            priority=priority,
         )
     finally:
         client.close()

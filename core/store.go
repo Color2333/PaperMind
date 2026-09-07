@@ -58,14 +58,6 @@ func isPGDSN(dsn string) bool {
 		strings.Contains(dsn, "host=")
 }
 
-// nowExpr 方言感知的当前时间 SQL 表达式
-func (s *CoreStore) nowExpr() string {
-	if s.isPG {
-		return "NOW()"
-	}
-	return "datetime('now')"
-}
-
 // nowParam Go 侧时间参数（字符串格式，跨方言可比）
 func nowParam() string { return time.Now().UTC().Format("2006-01-02 15:04:05.000000") }
 
@@ -183,15 +175,54 @@ CREATE TABLE IF NOT EXISTS core_attempts (
 	error_class TEXT, error_message TEXT,
 	started_at TEXT NOT NULL, finished_at TEXT);`
 	}
-	_, err := s.DB.Exec(ddl)
-	return err
+	if _, err := s.DB.Exec(ddl); err != nil {
+		return err
+	}
+	// 列级增量（幂等）：PG 用 IF NOT EXISTS；SQLite 不支持——重复添加的
+	// "duplicate column" 错误容忍（列已存在即目标状态）
+	alters := []string{
+		`ALTER TABLE core_tasks ADD COLUMN ` + func() string {
+			if s.isPG {
+				return "IF NOT EXISTS "
+			}
+			return ""
+		}() + `resource_class TEXT NOT NULL DEFAULT 'default'`,
+		`ALTER TABLE core_tasks ADD COLUMN ` + func() string {
+			if s.isPG {
+				return "IF NOT EXISTS "
+			}
+			return ""
+		}() + `priority INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, a := range alters {
+		if _, err := s.DB.Exec(a); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") &&
+				!strings.Contains(err.Error(), "already exists") {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ---------- Submit（通用）----------
 
 func (s *CoreStore) SubmitCoreTask(capability, inputRefJSON, idempotencyKey string, timeoutS int) (jobID, taskID string, created bool, err error) {
+	return s.SubmitCoreTaskMeta(capability, inputRefJSON, idempotencyKey, timeoutS, 0, "", 0)
+}
+
+// SubmitCoreTaskMeta：带 CapabilitySpec 元数据的提交（第四轮 P1-2）——
+// max_attempts/resource_class/priority 不再被固定值覆盖（邮件不可重试、
+// 资源类隔离由真实值承载）。
+func (s *CoreStore) SubmitCoreTaskMeta(capability, inputRefJSON, idempotencyKey string, timeoutS, maxAttempts int, resourceClass string, priority int) (jobID, taskID string, created bool, err error) {
 	if timeoutS <= 0 {
 		timeoutS = 1800
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	if resourceClass == "" {
+		resourceClass = "default"
 	}
 	if idempotencyKey != "" {
 		var ej, et string
@@ -230,9 +261,9 @@ func (s *CoreStore) SubmitCoreTask(capability, inputRefJSON, idempotencyKey stri
 		return "", "", false, err
 	}
 	if _, err = tx.Exec(
-		`INSERT INTO core_tasks (id, job_id, capability, input_ref, status, max_attempts, timeout_s, created_at)
-		 VALUES ($1, $2, $3, $4, 'queued', 2, $5, $6)`,
-		taskID, jobID, capability, inputRefJSON, timeoutS, now,
+		`INSERT INTO core_tasks (id, job_id, capability, input_ref, status, max_attempts, timeout_s, resource_class, priority, created_at)
+		 VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9)`,
+		taskID, jobID, capability, inputRefJSON, maxAttempts, timeoutS, resourceClass, priority, now,
 	); err != nil {
 		return "", "", false, err
 	}
@@ -252,71 +283,98 @@ func stringOrJSON(raw string) string {
 // ---------- Claim（CAS + pause 检查）----------
 
 func (s *CoreStore) ClaimTask(executorID string, capabilities []string) (*Task, error) {
-	want := map[string]bool{}
-	for _, c := range capabilities {
-		want[c] = true
+	if len(capabilities) == 0 {
+		return nil, nil
 	}
 	// 跨进程 pause
 	var paused string
 	if err := s.DB.QueryRow(`SELECT value FROM system_flags WHERE key='queue_paused'`).Scan(&paused); err == nil && paused == "1" {
 		return nil, nil
 	}
+	// 防饥饿（第四轮 P1）：capability 过滤下推 SQL（此前取全局最早 10 个再内存
+	// 过滤——队头被其他 executor 的能力占满时永久饥饿）；priority 优先。
+	placeholders := make([]string, len(capabilities))
+	args := make([]any, 0, len(capabilities)+10)
+	for i, c := range capabilities {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, c)
+	}
 	rows, err := s.DB.Query(
-		`SELECT id, capability, timeout_s FROM core_tasks WHERE status='queued' ORDER BY created_at LIMIT 10`)
+		`SELECT id, capability, timeout_s, resource_class FROM core_tasks
+		 WHERE status='queued' AND capability IN (`+strings.Join(placeholders, ",")+`)
+		 ORDER BY priority DESC, created_at LIMIT 10`, args...)
 	if err != nil {
 		return nil, err
 	}
 	type cand struct {
-		id, capability string
-		timeoutS       int
+		id, capability, resourceClass string
+		timeoutS                      int
 	}
 	var cands []cand
 	for rows.Next() {
 		var c cand
-		if err = rows.Scan(&c.id, &c.capability, &c.timeoutS); err != nil {
+		if err = rows.Scan(&c.id, &c.capability, &c.timeoutS, &c.resourceClass); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if want[c.capability] {
-			cands = append(cands, c)
-		}
+		cands = append(cands, c)
 	}
 	rows.Close()
 
 	for _, c := range cands {
 		leaseToken := newCoreID()
-		var fencing int
 		now := nowParam()
 		expires := plusParam(c.timeoutS)
-		err = s.DB.QueryRow(
-			`UPDATE core_tasks SET status='leased', attempt_count=attempt_count+1,
-			 lease_token=$1, lease_expires_at=$2
-			 WHERE id=$3 AND status='queued' RETURNING attempt_count`,
-			leaseToken, expires, c.id,
-		).Scan(&fencing)
-		if err != nil {
-			continue
+		if c.resourceClass == "" {
+			c.resourceClass = "default"
 		}
-		var jobID string
-		s.DB.QueryRow(`SELECT job_id FROM core_tasks WHERE id=?`, c.id).Scan(&jobID)
-		attemptID := newCoreID()
-		if _, err = s.DB.Exec(
-			`INSERT INTO core_attempts (id, task_id, attempt_no, executor_id, fencing_token, status, started_at)
-			 VALUES ($1, $2, $3, $4, $5, 'running', $6)`,
-			attemptID, c.id, fencing, executorID, fencing, now,
-		); err != nil {
+
+		// claim 同事务（第四轮 P1）：CAS 领取 + Attempt 插入 + Job 运行态
+		// 一次提交——中途失败不再留下"有 lease 无 Attempt"半状态。
+		// RETURNING 直接带回 job_id/input_ref（消除 ? 占位符与被忽略的错误）。
+		tx, err := s.DB.Begin()
+		if err != nil {
 			return nil, err
 		}
-		s.DB.Exec(`UPDATE core_jobs SET status='running', started_at=COALESCE(started_at, $1) WHERE id=$2 AND status='queued'`, now, jobID)
+		var fencing int
+		var jobID, inputJSON string
+		// SQLite 的 $N 是命名参数——每条语句内必须从 $1 连续编号
+		err = tx.QueryRow(
+			`UPDATE core_tasks SET status='leased', attempt_count=attempt_count+1,
+			 lease_token=$1, lease_expires_at=$2
+			 WHERE id=$3 AND status='queued'
+			 RETURNING attempt_count, job_id, input_ref`,
+			leaseToken, expires, c.id,
+		).Scan(&fencing, &jobID, &inputJSON)
+		if err != nil {
+			tx.Rollback()
+			continue // 被并发 executor 抢走——尝试下一个候选
+		}
+		if _, err = tx.Exec(
+			`INSERT INTO core_attempts (id, task_id, attempt_no, executor_id, fencing_token, status, started_at)
+			 VALUES ($1, $2, $3, $4, $5, 'running', $6)`,
+			newCoreID(), c.id, fencing, executorID, fencing, now,
+		); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if _, err = tx.Exec(
+			`UPDATE core_jobs SET status='running', started_at=COALESCE(started_at, $1) WHERE id=$2 AND status='queued'`,
+			now, jobID,
+		); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
 
-		var inputJSON string
-		s.DB.QueryRow(`SELECT input_ref FROM core_tasks WHERE id=?`, c.id).Scan(&inputJSON)
 		var input map[string]any
 		_ = json.Unmarshal([]byte(inputJSON), &input)
 		return &Task{
 			TaskID: c.id, AttemptID: fmt.Sprintf("%s:%d", c.id, fencing),
 			Capability: c.capability, Input: input,
-			ResourceClass: "llm", TimeoutS: c.timeoutS,
+			ResourceClass: c.resourceClass, TimeoutS: c.timeoutS,
 			AttemptNo: fencing, FencingToken: fencing, LeaseToken: leaseToken,
 		}, nil
 	}
@@ -326,29 +384,28 @@ func (s *CoreStore) ClaimTask(executorID string, capabilities []string) (*Task, 
 // ---------- Heartbeat ----------
 
 func (s *CoreStore) HeartbeatTask(taskID, executorID, leaseToken string) (bool, bool, error) {
+	// 第四轮 P1：单条 CAS——token 匹配 + 未过期才续约；cancelling 态续约无效
+	// 但返回 cancel_requested=true（Executor 安全点退出）；SELECT-then-UPDATE
+	// 的 TOCTOU 与 reclaim 竞态消除。
+	now := nowParam()
 	var status string
-	var leaseTokenDB sql.NullString
-	err := s.DB.QueryRow(`SELECT status, lease_token FROM core_tasks WHERE id=?`, taskID).Scan(&status, &leaseTokenDB)
+	err := s.DB.QueryRow(
+		`UPDATE core_tasks
+		 SET lease_expires_at = CASE WHEN status='leased' THEN $1 ELSE lease_expires_at END
+		 WHERE id=$2 AND lease_token=$3 AND status IN ('leased','cancelling')
+		   AND (lease_expires_at IS NULL OR lease_expires_at > $4)
+		 RETURNING status`,
+		plusParam(600), taskID, leaseToken, now,
+	).Scan(&status)
+	if err == sql.ErrNoRows {
+		return false, false, nil
+	}
 	if err != nil {
 		return false, false, err
 	}
-	if status != "leased" || !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
-		return false, false, nil
-	}
-	var timeoutS int
-	s.DB.QueryRow(`SELECT timeout_s FROM core_tasks WHERE id=?`, taskID).Scan(&timeoutS)
-	if _, err = s.DB.Exec(
-		`UPDATE core_tasks SET lease_expires_at=$1 WHERE id=?`, plusParam(timeoutS), taskID,
-	); err != nil {
-		return false, false, err
-	}
-	var jobStatus string
-	jobID := ""
-	s.DB.QueryRow(`SELECT job_id FROM core_tasks WHERE id=?`, taskID).Scan(&jobID)
-	if jobID != "" {
-		s.DB.QueryRow(`SELECT status FROM core_jobs WHERE id=?`, jobID).Scan(&jobStatus)
-	}
-	return true, jobStatus == "cancelling", nil
+	// ok=true 表示 lease 仍有效（executor 仍是持有者）——cancelling 亦然，
+	// 只是不再续期；false 会让 runner 误判 lease 丢失而收不到取消信号
+	return true, status == "cancelling", nil
 }
 
 // ---------- Job graph / list ----------
@@ -442,25 +499,78 @@ func (s *CoreStore) JobsList(limit int) ([]map[string]any, error) {
 
 func (s *CoreStore) OwnsTask(taskID string) bool {
 	var one string
-	return s.DB.QueryRow(`SELECT id FROM core_tasks WHERE id=?`, taskID).Scan(&one) == nil
+	return s.DB.QueryRow(`SELECT id FROM core_tasks WHERE id=$1`, taskID).Scan(&one) == nil
 }
 
 func (s *CoreStore) OwnsJob(jobID string) bool {
 	var one string
-	return s.DB.QueryRow(`SELECT id FROM core_jobs WHERE id=?`, jobID).Scan(&one) == nil
+	return s.DB.QueryRow(`SELECT id FROM core_jobs WHERE id=$1`, jobID).Scan(&one) == nil
 }
 
 func (s *CoreStore) CancelJob(jobID string) (map[string]int, error) {
 	now := nowParam()
 	counts := map[string]int{"cancelled": 0, "cancel_requested": 0}
-	s.DB.Exec(`UPDATE core_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL WHERE job_id=$1 AND status='queued'`, jobID)
-	r1, _ := s.DB.Exec(`UPDATE core_tasks SET status='cancelled', last_error='cancelled by user' WHERE job_id=$1 AND status IN ('leased','running')`, jobID)
+	// queued 直接取消
+	r0, _ := s.DB.Exec(`UPDATE core_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL WHERE job_id=$1 AND status='queued'`, jobID)
+	if n, err := r0.RowsAffected(); err == nil {
+		counts["cancelled"] = int(n)
+	}
+	// 运行中 → cancelling 过程态（第四轮 P1）：保留 lease，Executor 在心跳
+	// 探测到 cancel_requested 后于安全点退出；Attempt 终态由 complete/fail/
+	// reclaim 收敛——不再直接抹掉（Executor 永远收不到取消信号的老问题）。
+	r1, _ := s.DB.Exec(`UPDATE core_tasks SET status='cancelling', last_error='cancel requested' WHERE job_id=$1 AND status='leased'`, jobID)
 	if n, err := r1.RowsAffected(); err == nil {
 		counts["cancel_requested"] = int(n)
 	}
-	s.DB.Exec(`UPDATE core_jobs SET status='cancelled', finished_at=$1 WHERE id=$2 AND status IN ('running','queued')`, now, jobID)
-	s.DB.Exec(`UPDATE core_attempts SET status='cancelled', finished_at=$1 WHERE task_id IN (SELECT id FROM core_tasks WHERE job_id=$2) AND status='running'`, now, jobID)
+	// Job：仍有 running attempt → cancelling；否则直接 cancelled
+	s.DB.Exec(`UPDATE core_jobs SET status='cancelling' WHERE id=$1 AND status='running' AND EXISTS (
+		SELECT 1 FROM core_tasks WHERE job_id=$1 AND status='cancelling')`, jobID)
+	s.DB.Exec(`UPDATE core_jobs SET status='cancelled', finished_at=$1 WHERE id=$2 AND status IN ('running','queued')
+		AND NOT EXISTS (SELECT 1 FROM core_tasks WHERE job_id=$2 AND status IN ('leased','cancelling'))`, now, jobID)
 	return counts, nil
+}
+
+// CancelExecution：Executor 协作取消回执（第四轮 P1——此前 Go-owned 任务的
+// cancel-execution 永远代理 Python state，回执丢失导致永久 cancelling）。
+func (s *CoreStore) CancelExecution(taskID, executorID, leaseToken string) (string, error) {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var status string
+	err = tx.QueryRow(
+		`UPDATE core_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL, last_error='cancelled at safe point'
+		 WHERE id=$1 AND lease_token=$2 AND status IN ('leased','cancelling')
+		 RETURNING status`, taskID, leaseToken,
+	).Scan(&status)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("task %s cancel-execution 被拒绝（状态/lease 不匹配）", taskID)
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err = tx.Exec(
+		`UPDATE core_attempts SET status='cancelled', finished_at=$1
+		 WHERE task_id=$2 AND fencing_token=(SELECT attempt_count FROM core_tasks WHERE id=$2) AND status='running'`,
+		nowParam(), taskID,
+	); err != nil {
+		return "", err
+	}
+	var jobID string
+	_ = tx.QueryRow(`SELECT job_id FROM core_tasks WHERE id=$1`, taskID).Scan(&jobID)
+	if jobID != "" {
+		s2 := tx
+		_, _ = s2.Exec(
+			`UPDATE core_jobs SET status='cancelled', finished_at=$1 WHERE id=$2
+			 AND NOT EXISTS (SELECT 1 FROM core_tasks WHERE job_id=$2 AND status IN ('leased','cancelling'))`,
+			nowParam(), jobID,
+		)
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return "cancelled", nil
 }
 
 // ---------- 领域查询 ----------

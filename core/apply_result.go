@@ -10,12 +10,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ApplyResult 按 capability 分派的 apply-result 入口（单事务）。
 func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
 	var capability string
-	err := s.DB.QueryRow(`SELECT capability FROM core_tasks WHERE id=?`, taskID).Scan(&capability)
+	err := s.DB.QueryRow(`SELECT capability FROM core_tasks WHERE id=$1`, taskID).Scan(&capability)
 	if err != nil {
 		return "", fmt.Errorf("task %s not found", taskID)
 	}
@@ -69,7 +70,7 @@ func fencingGuard(tx *sql.Tx, taskID, executorID, leaseToken string) (int, error
 	var attemptCount int
 	var leaseTokenDB sql.NullString
 	err := tx.QueryRow(
-		`SELECT status, attempt_count, lease_token FROM core_tasks WHERE id=?`,
+		`SELECT status, attempt_count, lease_token FROM core_tasks WHERE id=$1`,
 		taskID,
 	).Scan(&status, &attemptCount, &leaseTokenDB)
 	if err == sql.ErrNoRows {
@@ -78,16 +79,24 @@ func fencingGuard(tx *sql.Tx, taskID, executorID, leaseToken string) (int, error
 	if err != nil {
 		return 0, err
 	}
-	if status != "leased" {
+	if status != "leased" && status != "cancelling" {
 		return 0, fmt.Errorf("task %s 状态 %s 不可提交", taskID, status)
 	}
 	if !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
 		return 0, fmt.Errorf("task %s lease token 不匹配（迟到写入被拒绝）", taskID)
 	}
+	// 第四轮 P1：校验 lease 未过期（此前注释声称校验但未读取）——Reconciler
+	// 扫描前，过期 Attempt 不再能提交
+	var expiresAt sql.NullString
+	if err := tx.QueryRow(`SELECT lease_expires_at FROM core_tasks WHERE id=$1`, taskID).Scan(&expiresAt); err == nil {
+		if !expiresAt.Valid || expiresAt.String == "" || expiresAt.String <= nowParam() {
+			return 0, fmt.Errorf("task %s lease 已过期（迟到提交被拒绝）", taskID)
+		}
+	}
 	var attemptExecutor string
 	err = tx.QueryRow(
 		`SELECT executor_id FROM core_attempts
-		 WHERE task_id=? AND fencing_token=? AND status='running'`,
+		 WHERE task_id=$1 AND fencing_token=$2 AND status='running'`,
 		taskID, attemptCount,
 	).Scan(&attemptExecutor)
 	if err == sql.ErrNoRows {
@@ -105,26 +114,27 @@ func fencingGuard(tx *sql.Tx, taskID, executorID, leaseToken string) (int, error
 // finalizeTask 终态：Task succeeded + Attempt succeeded + Job 收敛（与领域变化同事务）
 func finalizeTask(tx *sql.Tx, taskID string, result map[string]any) error {
 	now := nowParam()
+	// cancelling 任务的"成功完成"实为协作取消——终态 cancelled
 	if _, err := tx.Exec(
-		`UPDATE core_tasks SET status='succeeded', lease_token=NULL, lease_expires_at=NULL,
-		 result_ref=? WHERE id=?`,
+		`UPDATE core_tasks SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'succeeded' END,
+		 lease_token=NULL, lease_expires_at=NULL, result_ref=$1 WHERE id=$2`,
 		mustJSON(result), taskID,
 	); err != nil {
 		return err
 	}
 	var attemptCount int
-	if err := tx.QueryRow(`SELECT attempt_count FROM core_tasks WHERE id=?`, taskID).Scan(&attemptCount); err != nil {
+	if err := tx.QueryRow(`SELECT attempt_count FROM core_tasks WHERE id=$1`, taskID).Scan(&attemptCount); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(
-		`UPDATE core_attempts SET status='succeeded', finished_at=?
-		 WHERE task_id=? AND fencing_token=? AND status='running'`,
+		`UPDATE core_attempts SET status='succeeded', finished_at=$1
+		 WHERE task_id=$2 AND fencing_token=$3 AND status='running'`,
 		now, taskID, attemptCount,
 	); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(
-		`UPDATE core_jobs SET status='succeeded', finished_at=? WHERE id=? AND status='running'`,
+		`UPDATE core_jobs SET status='succeeded', finished_at=$1 WHERE id=$2 AND status='running'`,
 		now, jobIDOf(tx, taskID),
 	); err != nil {
 		return err
@@ -177,13 +187,13 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 		"skim_one_liner":   oneLiner,
 	})
 	var existingReport string
-	err = tx.QueryRow(`SELECT id FROM analysis_reports WHERE paper_id=?`, paperID).Scan(&existingReport)
+	err = tx.QueryRow(`SELECT id FROM analysis_reports WHERE paper_id=$1`, paperID).Scan(&existingReport)
 	switch {
 	case err == sql.ErrNoRows:
 		if _, err = tx.Exec(
 			`INSERT INTO analysis_reports (id, paper_id, summary_md, key_insights, skim_score, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-			newCoreID(), paperID, summaryMD, keyInsights, relevanceScore,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			newCoreID(), paperID, summaryMD, keyInsights, relevanceScore, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("analysis_reports insert: %w", err)
 		}
@@ -191,8 +201,8 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 		return "", err
 	default:
 		if _, err = tx.Exec(
-			`UPDATE analysis_reports SET summary_md=?, key_insights=?, skim_score=?, updated_at=$1
-			 WHERE paper_id=?`,
+			`UPDATE analysis_reports SET summary_md=$1, key_insights=$2, skim_score=$3, updated_at=$4
+			 WHERE paper_id=$5`,
 			summaryMD, keyInsights, relevanceScore, paperID,
 		); err != nil {
 			return "", fmt.Errorf("analysis_reports update: %w", err)
@@ -202,7 +212,7 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 	// 2b. papers：read_status='skimmed' + metadata 列合并（keywords/title_zh/abstract_zh）
 	// （注意：SQLAlchemy 属性名 metadata_json，实际列名是 "metadata"——保留字转义）
 	var metadataJSON sql.NullString
-	if err = tx.QueryRow(`SELECT metadata FROM papers WHERE id=?`, paperID).Scan(&metadataJSON); err != nil {
+	if err = tx.QueryRow(`SELECT metadata FROM papers WHERE id=$1`, paperID).Scan(&metadataJSON); err != nil {
 		return "", fmt.Errorf("paper %s 不存在: %w", paperID, err)
 	}
 	metadata := map[string]any{}
@@ -219,7 +229,7 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 		metadata["abstract_zh"] = abstractZh
 	}
 	if _, err = tx.Exec(
-		`UPDATE papers SET read_status='skimmed', metadata=? WHERE id=?`,
+		`UPDATE papers SET read_status='skimmed', metadata=$1 WHERE id=$2`,
 		mustJSON(metadata), paperID,
 	); err != nil {
 		return "", fmt.Errorf("papers update: %w", err)
@@ -230,13 +240,13 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 		if _, err = tx.Exec(
 			`INSERT INTO prompt_traces (id, paper_id, stage, provider, model, prompt_digest,
 			 input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, $1)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			newCoreID(), nullIfEmpty(stringOr(trace["paper_id"])),
 			stringOr(trace["stage"]), stringOr(trace["provider"]), stringOr(trace["model"]),
 			stringOr(trace["prompt_digest"]),
 			jsonInt(trace["input_tokens"]), jsonInt(trace["output_tokens"]),
 			jsonFloat(trace["input_cost_usd"]), jsonFloat(trace["output_cost_usd"]),
-			jsonFloat(trace["total_cost_usd"]),
+			jsonFloat(trace["total_cost_usd"]), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("prompt_traces insert: %w", err)
 		}
@@ -288,13 +298,13 @@ func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, r
 	)
 
 	var existingReport string
-	err = tx.QueryRow(`SELECT id FROM analysis_reports WHERE paper_id=?`, paperID).Scan(&existingReport)
+	err = tx.QueryRow(`SELECT id FROM analysis_reports WHERE paper_id=$1`, paperID).Scan(&existingReport)
 	switch {
 	case err == sql.ErrNoRows:
 		if _, err = tx.Exec(
 			`INSERT INTO analysis_reports (id, paper_id, deep_dive_md, key_insights, created_at, updated_at)
-			 VALUES (?, ?, ?, '{}', $1, $2)`,
-			newCoreID(), paperID, deepMD,
+			 VALUES ($1, $2, $3, '{}', $4, $5)`,
+			newCoreID(), paperID, deepMD, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("analysis_reports insert: %w", err)
 		}
@@ -303,8 +313,8 @@ func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, r
 	default:
 		// key_insights 保留既有 skim 内容（Python 语义：合并而非覆盖）
 		if _, err = tx.Exec(
-			`UPDATE analysis_reports SET deep_dive_md=?, updated_at=$1 WHERE paper_id=?`,
-			deepMD, paperID,
+			`UPDATE analysis_reports SET deep_dive_md=$1, updated_at=$2 WHERE paper_id=$3`,
+			deepMD, nowParam(), paperID,
 		); err != nil {
 			return "", fmt.Errorf("analysis_reports update: %w", err)
 		}
@@ -313,7 +323,7 @@ func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, r
 	// read_status 只升不降（unread→skimmed→deep_read）
 	if _, err = tx.Exec(
 		`UPDATE papers SET read_status='deep_read'
-		 WHERE id=? AND (read_status='unread' OR read_status='skimmed')`,
+		 WHERE id=$1 AND (read_status='unread' OR read_status='skimmed')`,
 		paperID,
 	); err != nil {
 		return "", fmt.Errorf("papers read_status: %w", err)
@@ -323,13 +333,13 @@ func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, r
 		if _, err = tx.Exec(
 			`INSERT INTO prompt_traces (id, paper_id, stage, provider, model, prompt_digest,
 			 input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, $1)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			newCoreID(), nullIfEmpty(stringOr(trace["paper_id"])),
 			stringOr(trace["stage"]), stringOr(trace["provider"]), stringOr(trace["model"]),
 			stringOr(trace["prompt_digest"]),
 			jsonInt(trace["input_tokens"]), jsonInt(trace["output_tokens"]),
 			jsonFloat(trace["input_cost_usd"]), jsonFloat(trace["output_cost_usd"]),
-			jsonFloat(trace["total_cost_usd"]),
+			jsonFloat(trace["total_cost_usd"]), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("prompt_traces insert: %w", err)
 		}
@@ -367,8 +377,8 @@ func (s *CoreStore) applyEmbedResult(taskID, executorID, leaseToken string, resu
 	}
 
 	if _, err = tx.Exec(
-		`UPDATE papers SET embedding_vec=?, updated_at=$1 WHERE id=?`,
-		mustJSON(vector), paperID,
+		`UPDATE papers SET embedding_vec=$1, updated_at=$2 WHERE id=$3`,
+		mustJSON(vector), nowParam(), paperID,
 	); err != nil {
 		return "", fmt.Errorf("papers embedding: %w", err)
 	}
@@ -549,13 +559,13 @@ func (s *CoreStore) FailTask(taskID, executorID, leaseToken, errorClass, message
 	var attemptCount, maxAttempts int
 	var leaseTokenDB sql.NullString
 	err := s.DB.QueryRow(
-		`SELECT status, attempt_count, max_attempts, lease_token FROM core_tasks WHERE id=?`,
+		`SELECT status, attempt_count, max_attempts, lease_token FROM core_tasks WHERE id=$1`,
 		taskID,
 	).Scan(&status, &attemptCount, &maxAttempts, &leaseTokenDB)
 	if err != nil {
 		return "", err
 	}
-	if status != "leased" || !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
+	if (status != "leased" && status != "cancelling") || !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
 		return "", fmt.Errorf("task %s fail 被拒绝（状态 %s / lease 不匹配）", taskID, status)
 	}
 	tx, err := s.DB.Begin()
@@ -567,16 +577,19 @@ func (s *CoreStore) FailTask(taskID, executorID, leaseToken, errorClass, message
 	if attemptCount >= maxAttempts {
 		newStatus = "dead_letter"
 	}
+	if status == "cancelling" {
+		newStatus = "cancelled" // 协作取消：不再重新入队
+	}
 	now := nowParam()
 	if _, err = tx.Exec(
-		`UPDATE core_tasks SET status=?, lease_token=NULL, lease_expires_at=NULL, last_error=? WHERE id=?`,
+		`UPDATE core_tasks SET status=$1, lease_token=NULL, lease_expires_at=NULL, last_error=$2 WHERE id=$3`,
 		newStatus, errorClass+": "+message, taskID,
 	); err != nil {
 		return "", err
 	}
 	if _, err = tx.Exec(
-		`UPDATE core_attempts SET status='failed', error_class=?, finished_at=?
-		 WHERE task_id=? AND fencing_token=? AND status='running'`,
+		`UPDATE core_attempts SET status='failed', error_class=$1, finished_at=$2
+		 WHERE task_id=$3 AND fencing_token=$4 AND status='running'`,
 		errorClass, now, taskID, attemptCount,
 	); err != nil {
 		return "", err
@@ -584,7 +597,7 @@ func (s *CoreStore) FailTask(taskID, executorID, leaseToken, errorClass, message
 	// Job 收敛：全部终态 → failed/partially（单任务切片：失败 → failed）
 	if newStatus == "dead_letter" {
 		if _, err = tx.Exec(
-			`UPDATE core_jobs SET status='failed', finished_at=? WHERE id=? AND status='running'`,
+			`UPDATE core_jobs SET status='failed', finished_at=$1 WHERE id=$2 AND status='running'`,
 			now, jobIDOf(tx, taskID),
 		); err != nil {
 			return "", err
@@ -598,23 +611,26 @@ func (s *CoreStore) FailTask(taskID, executorID, leaseToken, errorClass, message
 
 // ReclaimExpired 回收过期 lease（Reconciler 权威逻辑，Go 侧）
 func (s *CoreStore) ReclaimExpired(backoffS int) (map[string]string, error) {
+	// 第四轮 P0-3：datetime('now', ?) 是 SQLite-only——用跨方言字符串比较
+	// （lease_expires_at/nowParam 统一 UTC 字符串格式）
+	cutoff := time.Now().UTC().Add(-time.Duration(backoffS) * time.Second).Format("2006-01-02 15:04:05.000000")
 	rows, err := s.DB.Query(
-		`SELECT id, attempt_count, max_attempts FROM core_tasks
-		 WHERE status='leased' AND lease_expires_at < datetime('now', ?)`,
-		fmt.Sprintf("-%d seconds", backoffS),
+		`SELECT id, attempt_count, max_attempts, status FROM core_tasks
+		 WHERE status IN ('leased','cancelling') AND lease_expires_at < $1`,
+		cutoff,
 	)
 	if err != nil {
 		return nil, err
 	}
 	type expired struct {
-		id           string
+		id, status   string
 		attemptCount int
 		maxAttempts  int
 	}
 	var list []expired
 	for rows.Next() {
 		var e expired
-		if err = rows.Scan(&e.id, &e.attemptCount, &e.maxAttempts); err != nil {
+		if err = rows.Scan(&e.id, &e.attemptCount, &e.maxAttempts, &e.status); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -628,20 +644,24 @@ func (s *CoreStore) ReclaimExpired(backoffS int) (map[string]string, error) {
 		if e.attemptCount >= e.maxAttempts {
 			newStatus = "dead_letter"
 		}
+		finalStatus := newStatus
+		if e.status == "cancelling" {
+			finalStatus = "cancelled" // 取消中的过期 lease → cancelled（不重排）
+		}
 		if _, err = s.DB.Exec(
-			`UPDATE core_tasks SET status=?, lease_token=NULL, lease_expires_at=NULL WHERE id=?`,
-			newStatus, e.id,
+			`UPDATE core_tasks SET status=$1, lease_token=NULL, lease_expires_at=NULL WHERE id=$2`,
+			finalStatus, e.id,
 		); err != nil {
 			return nil, err
 		}
 		if _, err = s.DB.Exec(
-			`UPDATE core_attempts SET status='failed', error_class='lease_expired', finished_at=?
-			 WHERE task_id=? AND fencing_token=? AND status='running'`,
+			`UPDATE core_attempts SET status='failed', error_class='lease_expired', finished_at=$1
+			 WHERE task_id=$2 AND fencing_token=$3 AND status='running'`,
 			nowParam(), e.id, e.attemptCount,
 		); err != nil {
 			return nil, err
 		}
-		out[e.id] = map[bool]string{true: "requeued", false: "dead_letter"}[newStatus == "queued"]
+		out[e.id] = map[bool]string{true: "requeued", false: "dead_letter"}[finalStatus == "queued"]
 	}
 	return out, nil
 }
@@ -825,8 +845,8 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 	}
 	if _, err = tx.Exec(
 		`INSERT INTO research_runs (id, kind, trigger, paper_ids, model_policy, status, started_at)
-		 VALUES (?, 'claim_extraction', 'api', ?, ?, 'succeeded', $1)`,
-		runID, mustJSON([]string{paperID}), modelPolicy,
+		 VALUES ($1, 'claim_extraction', 'api', $2, $3, 'succeeded', $4)`,
+		runID, mustJSON([]string{paperID}), modelPolicy, nowParam(),
 	); err != nil {
 		return "", fmt.Errorf("research_runs insert: %w", err)
 	}
@@ -834,14 +854,14 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 	// ---- SourceVersion 幂等回补（get_current → 无则 create v1）----
 	svID := ""
 	err = tx.QueryRow(
-		`SELECT id FROM source_versions WHERE paper_id=? AND is_current=1 LIMIT 1`, paperID,
+		`SELECT id FROM source_versions WHERE paper_id=$1 AND is_current=1 LIMIT 1`, paperID,
 	).Scan(&svID)
 	if err == sql.ErrNoRows {
 		svID = newCoreID()
 		// identity_hash: sha256(json({abstract, arxiv_id, title}, sort_keys))
 		var abstract, arxivID, title string
 		_ = tx.QueryRow(
-			`SELECT abstract, arxiv_id, title FROM papers WHERE id=?`, paperID,
+			`SELECT abstract, arxiv_id, title FROM papers WHERE id=$1`, paperID,
 		).Scan(&abstract, &arxivID, &title)
 		identityJSON := mustJSON(map[string]string{
 			"abstract": abstract, "arxiv_id": arxivID, "title": title,
@@ -850,26 +870,26 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		// version_label = max+1
 		var maxLabel int
 		_ = tx.QueryRow(
-			`SELECT COALESCE(MAX(version_label), 0) FROM source_versions WHERE paper_id=?`, paperID,
+			`SELECT COALESCE(MAX(version_label), 0) FROM source_versions WHERE paper_id=$1`, paperID,
 		).Scan(&maxLabel)
 		// 降级旧 current
 		if _, err = tx.Exec(
-			`UPDATE source_versions SET is_current=0 WHERE paper_id=? AND is_current=1`, paperID,
+			`UPDATE source_versions SET is_current=0 WHERE paper_id=$1 AND is_current=1`, paperID,
 		); err != nil {
 			return "", err
 		}
 		if _, err = tx.Exec(
 			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, is_current, created_at)
-			 VALUES (?, ?, ?, ?, 'ingest', 1, $1)`,
-			svID, paperID, maxLabel+1, contentHash,
+			 VALUES ($1, $2, $3, $4, 'ingest', 1, $5)`,
+			svID, paperID, maxLabel+1, contentHash, nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("source_versions insert: %w", err)
 		}
 		// outbox: source_version_detected
 		if _, err = tx.Exec(
 			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, payload, occurred_at)
-			 VALUES (?, 'source_version_detected', 'source_version', ?, 'system', ?, $1)`,
-			newCoreID(), svID, mustJSON(map[string]any{"paper_id": paperID, "version_label": maxLabel + 1}),
+			 VALUES ($1, 'source_version_detected', 'source_version', $2, 'system', $3, $4)`,
+			newCoreID(), svID, mustJSON(map[string]any{"paper_id": paperID, "version_label": maxLabel + 1}), nowParam(),
 		); err != nil {
 			return "", err
 		}
@@ -895,7 +915,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		// quote 幂等：同版本+同引用 → 已抽取过
 		var evidenceCount int
 		_ = tx.QueryRow(
-			`SELECT COUNT(*) FROM evidence WHERE source_version_id=? AND quote=?`,
+			`SELECT COUNT(*) FROM evidence WHERE source_version_id=$1 AND quote=$2`,
 			svID, quote,
 		).Scan(&evidenceCount)
 		if quote != "" && evidenceCount > 0 {
@@ -912,8 +932,8 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 
 		if _, err = tx.Exec(
 			`INSERT INTO claims (id, statement, statement_zh, origin, status, certainty, run_id, created_at, updated_at)
-			 VALUES (?, ?, ?, 'papermind', 'draft', ?, ?, $1, $2)`,
-			claimID, statement, statementZh, certainty, runID,
+			 VALUES ($1, $2, $3, 'papermind', 'draft', $4, $5, $6, $7)`,
+			claimID, statement, statementZh, certainty, runID, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("claims insert: %w", err)
 		}
@@ -924,8 +944,8 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		})
 		if _, err = tx.Exec(
 			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, run_id, payload, occurred_at)
-			 VALUES (?, 'claim_proposed', 'claim', ?, 'papermind', ?, ?, $1)`,
-			newCoreID(), claimID, runID, claimPayload,
+			 VALUES ($1, 'claim_proposed', 'claim', $2, 'papermind', $3, $4, $5, $6)`,
+			newCoreID(), claimID, runID, claimPayload, nowParam(), nowParam(),
 		); err != nil {
 			return "", err
 		}
@@ -936,8 +956,8 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 			evID := newCoreID()
 			if _, err = tx.Exec(
 				`INSERT INTO evidence (id, claim_id, source_version_id, kind, stance, locator, quote, fingerprint, run_id, created_at)
-				 VALUES (?, ?, ?, 'text_passage', 'supports', ?, ?, ?, ?, $1)`,
-				evID, claimID, svID, locator, quote, fingerprint, runID,
+				 VALUES ($1, $2, $3, 'text_passage', 'supports', $4, $5, $6, $7, $8)`,
+				evID, claimID, svID, locator, quote, fingerprint, runID, nowParam(),
 			); err != nil {
 				return "", fmt.Errorf("evidence insert: %w", err)
 			}
@@ -945,8 +965,8 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 			evPayload := mustJSON(map[string]any{"claim_id": claimID, "source_version_id": svID, "quote": quote})
 			if _, err = tx.Exec(
 				`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, run_id, payload, occurred_at)
-				 VALUES (?, 'evidence_extracted', 'evidence', ?, 'system', ?, ?, $1)`,
-				newCoreID(), evID, runID, evPayload,
+				 VALUES ($1, 'evidence_extracted', 'evidence', $2, 'system', $3, $4, $5, $6)`,
+				newCoreID(), evID, runID, evPayload, nowParam(), nowParam(),
 			); err != nil {
 				return "", err
 			}
@@ -959,13 +979,13 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		if _, err = tx.Exec(
 			`INSERT INTO prompt_traces (id, paper_id, stage, provider, model, prompt_digest,
 			 input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, $1)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			newCoreID(), nullIfEmpty(stringOr(trace["paper_id"])),
 			stringOr(trace["stage"]), stringOr(trace["provider"]), stringOr(trace["model"]),
 			stringOr(trace["prompt_digest"]),
 			jsonInt(trace["input_tokens"]), jsonInt(trace["output_tokens"]),
 			jsonFloat(trace["input_cost_usd"]), jsonFloat(trace["output_cost_usd"]),
-			jsonFloat(trace["total_cost_usd"]),
+			jsonFloat(trace["total_cost_usd"]), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("prompt_traces insert: %w", err)
 		}
@@ -1020,7 +1040,7 @@ func mergeMetadata(tx *sql.Tx, paperID string, incoming any) string {
 		return ""
 	}
 	var existing sql.NullString
-	if err := tx.QueryRow(`SELECT metadata FROM papers WHERE id=?`, paperID).Scan(&existing); err != nil {
+	if err := tx.QueryRow(`SELECT metadata FROM papers WHERE id=$1`, paperID).Scan(&existing); err != nil {
 		return ""
 	}
 	metadata := map[string]any{}
@@ -1035,7 +1055,7 @@ func mergeMetadata(tx *sql.Tx, paperID string, incoming any) string {
 
 func jobIDOf(tx *sql.Tx, taskID string) string {
 	var jobID string
-	_ = tx.QueryRow(`SELECT job_id FROM core_tasks WHERE id=?`, taskID).Scan(&jobID)
+	_ = tx.QueryRow(`SELECT job_id FROM core_tasks WHERE id=$1`, taskID).Scan(&jobID)
 	return jobID
 }
 
@@ -1050,7 +1070,7 @@ func finalizeTaskWithResult(tx *sql.Tx, taskID string, result map[string]any) er
 		return err
 	}
 	var attemptCount int
-	if err := tx.QueryRow(`SELECT attempt_count FROM core_tasks WHERE id=?`, taskID).Scan(&attemptCount); err != nil {
+	if err := tx.QueryRow(`SELECT attempt_count FROM core_tasks WHERE id=$1`, taskID).Scan(&attemptCount); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(
@@ -1063,6 +1083,17 @@ func finalizeTaskWithResult(tx *sql.Tx, taskID string, result map[string]any) er
 	if _, err := tx.Exec(
 		`UPDATE core_jobs SET status='succeeded', finished_at=$1 WHERE id=? AND status='running'`,
 		now, jobIDOf(tx, taskID),
+	); err != nil {
+		return err
+	}
+	// Job 收敛（第四轮 P1）：cancelling Job 的 Task 全部终态后 → cancelled
+	// （协作取消链路的最后一环——此前 Job 永远停在 cancelling）
+	if _, err := tx.Exec(
+		`UPDATE core_jobs SET status='cancelled', finished_at=COALESCE(finished_at, $1)
+		 WHERE status='cancelling'
+		   AND id=(SELECT job_id FROM core_tasks WHERE id=$2)
+		   AND NOT EXISTS (SELECT 1 FROM core_tasks WHERE job_id=(SELECT job_id FROM core_tasks WHERE id=$3) AND status IN ('leased','cancelling'))`,
+		now, taskID, taskID,
 	); err != nil {
 		return err
 	}

@@ -27,6 +27,9 @@ services:
       - STATE_TOKEN=${DURABLE_STATE_TOKEN:?DURABLE_STATE_TOKEN required}
       - RECONCILE_INTERVAL_S=15
       - RECLAIM_BACKOFF_S=60
+      # Go authority（第四轮 P0-2/P0-3）：权威 core_* 表与领域表同库（PG），
+      # 与 Python 侧 DATABASE_URL 指向同一 postgres
+      - CORE_DB_PATH=${CORE_PG_DSN:-postgresql://papermind:papermind@postgres:5432/papermind}
     restart: unless-stopped
     depends_on:
       backend:
@@ -71,6 +74,9 @@ services:
       - DATABASE_URL=postgresql://papermind:papermind@postgres:5432/papermind
       # durable-state 内部 API（P0）：非空才挂载 /internal/durable/*，Core 凭此访问权威状态
       - DURABLE_STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
+      # Go authority（manifest 路由）：A 档 capability 提交 Go 权威，其余留 Python
+      - PAPERMIND_CORE_URL=http://core:8081
+      - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -112,6 +118,7 @@ services:
       # Executor 宿主（C7）：经 Go Core 领取执行；未配置则仅调度提交
       - CORE_ADDR=core:8081
       - CORE_TOKEN=${CORE_TOKEN:-}
+      - PAPERMIND_CORE_URL=http://core:8081
       - WORKER_EXECUTOR_ID=worker-1
     restart: unless-stopped
     depends_on:

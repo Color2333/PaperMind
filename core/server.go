@@ -52,18 +52,23 @@ func NewServerWithStore(reg *ExecutorRegistry, state *StateClient, store *CoreSt
 	if store != nil {
 		s.RegisterAPIRoutes()
 	}
-	// Auth routes（Phase 1d）：login/github/status
-	authCfg := &AuthConfig{
-		SecretKey:      os.Getenv("AUTH_SECRET_KEY"),
-		GitHubClientID: os.Getenv("GITHUB_CLIENT_ID"),
-		GitHubSecret:   os.Getenv("GITHUB_CLIENT_SECRET"),
-		SiteURL:        os.Getenv("SITE_URL"),
-		AuthPassword:   os.Getenv("AUTH_PASSWORD"),
+	// Auth 路由默认不注册（第四轮 P1-4 收缩）：Go Auth/MCP 是内网执行面，
+	// 公网浏览器认证的唯一入口是 Python backend（ FastAPI auth + JWT）。
+	// Go 侧的 JWTAuthMiddleware 与 CORE_TOKEN 静态凭证属不同 audience，
+	// 混用会造成双边界。需要 Go Auth 实验时显式 PAPERMIND_GO_AUTH=1。
+	if os.Getenv("PAPERMIND_GO_AUTH") == "1" {
+		authCfg := &AuthConfig{
+			SecretKey:      os.Getenv("AUTH_SECRET_KEY"),
+			GitHubClientID: os.Getenv("GITHUB_CLIENT_ID"),
+			GitHubSecret:   os.Getenv("GITHUB_CLIENT_SECRET"),
+			SiteURL:        os.Getenv("SITE_URL"),
+			AuthPassword:   os.Getenv("AUTH_PASSWORD"),
+		}
+		if authCfg.SecretKey == "" {
+			authCfg.SecretKey = "papermind-dev-secret" // 本地开发 fallback
+		}
+		s.RegisterAuthRoutes(authCfg)
 	}
-	if authCfg.SecretKey == "" {
-		authCfg.SecretKey = "papermind-dev-secret" // 本地开发 fallback
-	}
-	s.RegisterAuthRoutes(authCfg)
 	s.mux.HandleFunc("POST /v1/jobs", s.enveloped(s.handleSubmitJob))
 	s.mux.HandleFunc("GET /v1/jobs/{id}", s.handleJobGraphGET)
 	s.mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.enveloped(s.handleJobCancel))
@@ -414,6 +419,20 @@ func (s *Server) handleCancelExecution(w http.ResponseWriter, r *http.Request, c
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_cancel_execution_request"})
 		return
 	}
+	// Go-owned 任务：回执落 Go store（第四轮 P1——此前永远代理 Python state，
+	// cancelling 态无法收敛）
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		status, err := s.Store.CancelExecution(s.taskID(r), req.ExecutorID, req.LeaseToken)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "cancel_rejected", "detail": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, cid, CancelResponse{
+			Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:       true, Status: status,
+		})
+		return
+	}
 	var out struct {
 		OK     bool   `json:"ok"`
 		Status string `json:"status"`
@@ -543,17 +562,34 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request, cid str
 		InputRef       map[string]any `json:"input_ref"`
 		IdempotencyKey string         `json:"idempotency_key"`
 		TimeoutS       int            `json:"timeout_s"`
+		MaxAttempts    int            `json:"max_attempts"`
+		ResourceClass  string         `json:"resource_class"`
+		Priority       int            `json:"priority"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_job_request"})
 		return
 	}
-	// Go-authority 全量路由：任意 capability 均可提交（领域 apply 按 A/B 档分派——
-	// A 档 Go SQL 直写，B 档 applyTerminalOnlyResult 落终态）。此前的
-	// capability 白门控是 skim 切片时代残留，与全量路由矛盾（Wiki/Brief 等
-	// B 档任务在此 400）。
+	// manifest 校验（第四轮 P0-2 fail closed）：Go 只接受 apply 已实现的
+	// A 档 capability——与 Python 侧 GO_APPLY_CAPABILITIES 清单一致；
+	// 清单外任务由 Python 留在自身 authority，不应到达这里。
+	goApply := map[string]bool{
+		"skim_paper": true, "deep_read_paper": true, "embed_paper": true,
+		"extract_claims": true, "upsert_paper": true, "download_source": true,
+		"ingest_arxiv_query": true, "import_selected": true,
+	}
+	if !goApply[req.Capability] {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{
+			"ok": false, "error": "capability_not_in_manifest",
+			"detail": "capability 不在 Go-apply manifest 内（应留在 Python authority）",
+		})
+		return
+	}
 	inputJSON, _ := json.Marshal(req.InputRef)
-	jobID, taskID, created, err := s.Store.SubmitCoreTask(req.Capability, string(inputJSON), req.IdempotencyKey, req.TimeoutS)
+	jobID, taskID, created, err := s.Store.SubmitCoreTaskMeta(
+		req.Capability, string(inputJSON), req.IdempotencyKey, req.TimeoutS,
+		req.MaxAttempts, req.ResourceClass, req.Priority,
+	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, cid, map[string]any{"ok": false, "error": "submit_failed", "detail": err.Error()})
 		return
