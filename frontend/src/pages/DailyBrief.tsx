@@ -383,7 +383,7 @@ export default function DailyBrief() {
               <div className="bg-page rounded-2xl p-6">
                 <Sparkles className="text-ink-tertiary/20 h-10 w-10" />
               </div>
-              <p className="mt-4 text-sm">点击「生成新简报」或从左侧选择查看</p>
+              <p className="mt-4 text-sm">点击「生成新简报」开始；历史简报见右上角面板</p>
             </div>
           )}
         </div>
