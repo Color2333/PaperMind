@@ -10,7 +10,7 @@ import DOMPurify from "dompurify";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { briefApi, generatedApi, tasksApi } from "@/services/api";
 import type { GeneratedContentListItem, GeneratedContent } from "@/types";
-import {
+import { PanelLeft,
   Newspaper,
   Send,
   CheckCircle2,
@@ -23,9 +23,10 @@ import {
   Plus,
   RefreshCw,
   X,
-} from "lucide-react";
+ } from "lucide-react";
 
 export default function DailyBrief() {
+  const [briefDrawerOpen, setBriefDrawerOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
   const briefRef = useRef<HTMLDivElement>(null);
@@ -203,6 +204,13 @@ export default function DailyBrief() {
             <p className="text-ink-tertiary text-xs">自动汇总最新研究进展</p>
           </div>
         </div>
+        <button
+          onClick={() => setBriefDrawerOpen((v) => !v)}
+          className="border-border text-ink-secondary hover:bg-hover hover:text-ink rounded-lg border p-2 transition-colors"
+          aria-label="历史简报"
+        >
+          <PanelLeft className="h-4 w-4" />
+        </button>
         <Button
           size="sm"
           icon={showGenPanel ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
@@ -270,8 +278,9 @@ export default function DailyBrief() {
       )}
 
       {/* 主体：左侧列表 + 右侧内容 */}
-      <div className="flex min-h-0 flex-1">
-        {/* 左侧历史列表 */}
+      <div className="relative flex min-h-0 flex-1">
+        {/* 左侧历史列表（抽屉——默认收起） */}
+        {briefDrawerOpen && (
         <div className="border-border bg-page/30 w-56 shrink-0 overflow-y-auto border-r lg:w-64">
           <div className="px-3 pt-3 pb-2">
             <p className="text-ink-tertiary text-[10px] font-semibold tracking-wider uppercase">
@@ -332,6 +341,7 @@ export default function DailyBrief() {
           )}
         </div>
 
+        )}
         {/* 右侧内容 */}
         <div className="min-w-0 flex-1 overflow-y-auto">
           {detailLoading && (
