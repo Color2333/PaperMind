@@ -357,6 +357,10 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
           const toolId = (data.id as string) || "";
           const toolName = data.name as string;
           // 工作区联动：agent 查看论文 → 主区切到该论文工作桌（agent→主区）
+          if (toolName === "pm_list_claims") {
+            const qid = lastToolArgsRef.current?.question_id as string | undefined;
+            if (qid) workspaceRef.current?.openQuestion(qid);
+          }
           if (toolName === "pm_get_paper") {
             const pid = lastToolArgsRef.current?.paper_id as string | undefined;
             const detail = data.data as Record<string, unknown> | undefined;

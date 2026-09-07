@@ -15,6 +15,9 @@ export interface WorkspaceState {
   activePaperTitle: string | null;
   /** 来源：user=用户手动浏览；agent=agent 工具联动 */
   source: "user" | "agent";
+  /** agent 联动的研究问题（claims 板跟随） */
+  activeQuestionId: string | null;
+  openQuestion: (id: string) => void;
   setView: (view: string) => void;
   openPaper: (id: string, title: string | null, source: "user" | "agent") => void;
   /** 发消息时附带的上下文提示（无上下文返回 null） */
@@ -28,6 +31,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [activePaperId, setActivePaperId] = useState<string | null>(null);
   const [activePaperTitle, setActivePaperTitle] = useState<string | null>(null);
   const [source, setSource] = useState<"user" | "agent">("user");
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
 
   const value = useMemo<WorkspaceState>(
     () => ({
@@ -41,6 +45,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           setActivePaperId(null);
           setActivePaperTitle(null);
         }
+        if (v !== "research") {
+          setActiveQuestionId(null);
+        }
       },
       openPaper: (id, title, src) => {
         setActivePaperId(id);
@@ -48,12 +55,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         setSource(src);
         setView("paper");
       },
+      activeQuestionId,
+      openQuestion: (id) => {
+        setActiveQuestionId(id);
+        setView("research");
+      },
       contextHint:
         activePaperId && source === "user"
           ? `（用户当前正在查看论文 ${activePaperTitle ?? ""} [${activePaperId}]，相关操作可直接对该论文执行）`
           : null,
     }),
-    [view, activePaperId, activePaperTitle, source],
+    [view, activePaperId, activePaperTitle, source, activeQuestionId],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

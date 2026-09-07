@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { researchApi, type ClaimItem, type DiffEntry, type EvidenceItem } from "@/services/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 interface QuestionInfo {
   id: string;
@@ -49,6 +50,8 @@ export default function ResearchState() {
   const [loading, setLoading] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
 
+  const { activeQuestionId } = useWorkspace();
+
   const loadQuestion = async (qid: string) => {
     setLoading(true);
     setError("");
@@ -65,6 +68,12 @@ export default function ResearchState() {
       setLoading(false);
     }
   };
+
+  // agent→主区跟随：agent 联动的 research question 自动加载
+  useEffect(() => {
+    if (activeQuestionId) loadQuestion(activeQuestionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeQuestionId]);
 
   const loadEvidence = async (claimId: string) => {
     const selected = claims.find((c) => c.id === claimId);
