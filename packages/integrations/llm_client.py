@@ -324,7 +324,7 @@ class LLMClient:
                 model_override,
                 max_tokens=max_tokens,
             )
-        return self._pseudo_summary(prompt, stage, cfg, model_override)
+        return self._pseudo_or_raise(prompt, stage, cfg, model_override)
 
     def complete_json(
         self,
@@ -708,13 +708,13 @@ class LLMClient:
                 time.sleep(delay)
             except Exception as exc:
                 logger.warning("OpenAI-compatible call failed: %s", exc)
-                return self._pseudo_summary(prompt, stage, cfg, model_override)
+                return self._pseudo_or_raise(prompt, stage, cfg, model_override)
 
         # 所有重试失败，返回伪结果
         logger.error(
             "OpenAI-compatible call failed after %d retries: %s", max_retries, last_exception
         )
-        return self._pseudo_summary(prompt, stage, cfg, model_override)
+        return self._pseudo_or_raise(prompt, stage, cfg, model_override)
 
     def _call_pi_gateway(
         self,
@@ -829,7 +829,7 @@ class LLMClient:
                 total_cost_usd=in_cost + out_cost,
             )
         except Exception:
-            return self._pseudo_summary(prompt, stage, cfg, model_override)
+            return self._pseudo_or_raise(prompt, stage, cfg, model_override)
 
     # ---------- Pseudo（无 API Key 回退）----------
 
