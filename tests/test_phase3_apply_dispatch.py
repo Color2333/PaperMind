@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
@@ -459,3 +461,148 @@ def test_wiki_brief_handlers_return_proposal(monkeypatch, db_session):
     from packages.storage.models import GeneratedContent
 
     assert db_session.query(GeneratedContent).count() == 0
+
+
+def test_apply_citation_edges_proposal(db_session):
+    """citation_edges proposal：papers 双侧 upsert + 边幂等"""
+    from packages.ai.graph._common import _title_to_id
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.models import Citation, Paper
+
+    sid = _title_to_id("Edge Src")
+    did = _title_to_id("Edge Dst")
+    proposal = {
+        "kind": "citation_edges",
+        "edges": [
+            {
+                "source": {
+                    "arxiv_id": sid,
+                    "title": "Edge Src",
+                    "abstract": "",
+                    "metadata": {"source": "semantic_scholar"},
+                },
+                "target": {
+                    "arxiv_id": did,
+                    "title": "Edge Dst",
+                    "abstract": "",
+                    "metadata": {"source": "semantic_scholar"},
+                },
+                "context": "reference",
+            }
+        ],
+    }
+    ref = apply_proposal(db_session, proposal)
+    db_session.flush()
+    assert ref["edges_inserted"] == 1
+    # 幂等重放
+    ref2 = apply_proposal(db_session, proposal)
+    db_session.flush()
+    assert ref2["edges_inserted"] == 0
+    assert db_session.query(Citation).count() == 1
+    assert (
+        db_session.query(Paper).filter(Paper.arxiv_id == sid).one().metadata_json["source"]
+        == "semantic_scholar"
+    )
+
+
+def test_apply_figure_and_translation_proposals(db_session):
+    """figure_analyses 删重建 + paper_translation upsert"""
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.models import ImageAnalysis, PaperTranslation
+
+    pid = _mk_paper(db_session, "2606.00001")
+    fig = {
+        "kind": "figure_analyses",
+        "paper_id": pid,
+        "analyses": [
+            {
+                "page_number": 1,
+                "image_index": 0,
+                "image_type": "figure",
+                "caption": "c",
+                "description": "d",
+                "image_path": "/f/1.png",
+            }
+        ],
+    }
+    apply_proposal(db_session, fig)
+    apply_proposal(db_session, fig)
+    db_session.flush()
+    assert db_session.query(ImageAnalysis).filter_by(paper_id=pid).count() == 1
+
+    tr = {
+        "kind": "paper_translation",
+        "paper_id": pid,
+        "target_lang": "zh",
+        "mode": "fast",
+        "segments": [{"id": "p-1", "translation": "x"}],
+    }
+    apply_proposal(db_session, tr)
+    apply_proposal(db_session, tr)
+    db_session.flush()
+    rows = db_session.query(PaperTranslation).filter_by(paper_id=pid).all()
+    assert len(rows) == 1 and rows[0].segments[0]["translation"] == "x"
+
+
+def test_apply_reference_import_proposal(db_session):
+    """reference_import proposal：papers + 引用边 + topic 关联 + 收集记录"""
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.models import (
+        Citation,
+        CollectionAction,
+        PaperTopic,
+        TopicSubscription,
+    )
+
+    src = _mk_paper(db_session, "2606.00002")
+    db_session.add(TopicSubscription(name="ref-topic", query="q", enabled=False))
+    db_session.flush()
+    topic = db_session.query(TopicSubscription).filter_by(name="ref-topic").one()
+
+    ref = apply_proposal(
+        db_session,
+        {
+            "kind": "reference_import",
+            "source_paper_id": src,
+            "source_paper_title": "Source Paper",
+            "papers": [
+                {
+                    "paper": {"arxiv_id": "2606.00003", "title": "Ref A", "abstract": "a"},
+                    "topics": [str(topic.id)],
+                    "direction": "reference",
+                },
+                {
+                    "paper": {
+                        "arxiv_id": "",
+                        "title": "SS Only Paper",
+                        "abstract": "",
+                        "metadata": {"source": "semantic_scholar"},
+                    },
+                    "topics": [],
+                    "direction": "cited_by",
+                },
+            ],
+        },
+    )
+    db_session.flush()
+    assert ref["total"] == 2
+    assert db_session.query(Citation).filter_by(source_paper_id=src).count() == 1
+    assert db_session.query(Citation).filter_by(target_paper_id=src).count() == 1
+    assert db_session.query(PaperTopic).filter_by(topic_id=topic.id).count() == 1
+    action = db_session.query(CollectionAction).filter_by(action_type="reference_import").one()
+    assert action.paper_count == 2
+
+
+def test_go_manifest_in_sync_with_python():
+    """双源漂移防线：Go 侧生成清单（capabilities_gen.go）必须与 Python
+    GO_APPLY_CAPABILITIES 一致——漂移会让提交在 Go 侧 400（fail closed）。"""
+    import re
+
+    from packages.application.commands.jobs import GO_APPLY_CAPABILITIES
+
+    gen = (Path(__file__).resolve().parents[1] / "core" / "capabilities_gen.go").read_text()
+    go_caps = set(re.findall(r'"([a-z_]+)":\s+true', gen))
+    assert go_caps == set(GO_APPLY_CAPABILITIES), (
+        f"manifest 漂移：Go 缺 {set(GO_APPLY_CAPABILITIES) - go_caps}，"
+        f"Go 多 {go_caps - set(GO_APPLY_CAPABILITIES)}——运行 python scripts/export_go_manifest.py"
+    )

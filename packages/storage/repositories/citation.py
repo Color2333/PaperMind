@@ -33,7 +33,7 @@ class CitationRepository:
         if found:
             if context:
                 found.context = context
-            return
+            return False
         self.session.add(
             Citation(
                 source_paper_id=source_paper_id,
@@ -41,6 +41,7 @@ class CitationRepository:
                 context=context,
             )
         )
+        return True
 
     def list_all(self, limit: int = 10000) -> list[Citation]:
         """

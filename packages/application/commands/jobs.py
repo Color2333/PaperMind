@@ -35,6 +35,12 @@ GO_APPLY_CAPABILITIES: frozenset[str] = frozenset(
         "import_selected",
         "generate_topic_wiki",
         "build_daily_brief",
+        "sync_citations_paper",
+        "sync_citations_incremental",
+        "sync_citations_topic",
+        "analyze_figures",
+        "translate_bilingual_pdf",
+        "import_references",
     }
 )
 

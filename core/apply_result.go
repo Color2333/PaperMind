@@ -37,6 +37,14 @@ func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result ma
 		return s.applyIngestPapersResult(taskID, executorID, leaseToken, result)
 	case "generate_topic_wiki", "build_daily_brief":
 		return s.applySaveGeneratedContentResult(taskID, executorID, leaseToken, result)
+	case "sync_citations_paper", "sync_citations_incremental", "sync_citations_topic":
+		return s.applyCitationEdgesResult(taskID, executorID, leaseToken, result)
+	case "analyze_figures":
+		return s.applyFigureAnalysesResult(taskID, executorID, leaseToken, result)
+	case "translate_bilingual_pdf":
+		return s.applyPaperTranslationResult(taskID, executorID, leaseToken, result)
+	case "import_references":
+		return s.applyReferenceImportResult(taskID, executorID, leaseToken, result)
 	default:
 		// B 档通用路径：领域写入由 handler 承载（幂等 upsert + effect ledger
 		// 缓解 P0-1），Go 权威面单事务落 fencing + 终态 + result_ref 原样存储。
@@ -609,6 +617,365 @@ func (s *CoreStore) applySaveGeneratedContentResult(taskID, executorID, leaseTok
 		return "", err
 	}
 	return "succeeded", nil
+}
+
+// upsertPaperWithMeta：papers upsert（PaperCreate 形态 dict）——citation_edges /
+// reference_import 共用；返回 paper_id。
+func upsertPaperWithMeta(tx *sql.Tx, paper map[string]any) (string, error) {
+	arxivID, _ := paper["arxiv_id"].(string)
+	title, _ := paper["title"].(string)
+	abstract, _ := paper["abstract"].(string)
+	if arxivID == "" {
+		// SS-only 论文：标题归一化 id（与 Python _title_to_id 语义一致，此处由
+		// proposal 已算好传入 arxiv_id=ss-...；空值兜底）
+		arxivID = "ss-" + fmt.Sprintf("%x", sha256Hex(title))[:40]
+	}
+	metaJSON := "{}"
+	if m, ok := paper["metadata"].(map[string]any); ok && len(m) > 0 {
+		metaJSON = mustJSON(m)
+	}
+	pubDate, _ := paper["publication_date"].(string)
+	source, _ := paper["source"].(string)
+	if source == "" {
+		source = "arxiv"
+	}
+	paperID := newCoreID()
+	var existingID string
+	err := tx.QueryRow(`SELECT id FROM papers WHERE arxiv_id=$1`, arxivID).Scan(&existingID)
+	if err == nil {
+		paperID = existingID
+		if _, err = tx.Exec(
+			`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=NOW() WHERE id=$4`,
+			title, abstract, metaJSON, paperID,
+		); err != nil {
+			return "", err
+		}
+	} else if err == sql.ErrNoRows {
+		if _, err = tx.Exec(
+			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, NOW(), NOW())`,
+			paperID, title, arxivID, abstract, metaJSON, source, arxivID, pubDate,
+		); err != nil {
+			return "", fmt.Errorf("papers insert: %w", err)
+		}
+	} else {
+		return "", err
+	}
+	return paperID, nil
+}
+
+// applyCitationEdgesResult：引用边批量入库（A 档）——papers upsert（双侧，
+// arxiv_id 幂等）+ citation 边 upsert（幂等 + context 更新），单事务。
+func (s *CoreStore) applyCitationEdgesResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	edges, _ := proposal["edges"].([]any)
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	inserted := 0
+	for _, eAny := range edges {
+		e, ok := eAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		srcPaper, _ := e["source"].(map[string]any)
+		dstPaper, _ := e["target"].(map[string]any)
+		if srcPaper == nil || dstPaper == nil {
+			continue
+		}
+		srcID, err := upsertPaperWithMeta(tx, srcPaper)
+		if err != nil {
+			return "", err
+		}
+		dstID, err := upsertPaperWithMeta(tx, dstPaper)
+		if err != nil {
+			return "", err
+		}
+		context, _ := e["context"].(string)
+		var existing string
+		err = tx.QueryRow(
+			`SELECT id FROM citations WHERE source_paper_id=$1 AND target_paper_id=$2`, srcID, dstID,
+		).Scan(&existing)
+		if err == sql.ErrNoRows {
+			if _, err = tx.Exec(
+				`INSERT INTO citations (id, source_paper_id, target_paper_id, context, created_at)
+				 VALUES ($1, $2, $3, $4, NOW())`,
+				newCoreID(), srcID, dstID, nullIfEmpty(context),
+			); err != nil {
+				return "", fmt.Errorf("citations insert: %w", err)
+			}
+			inserted++
+		} else if err != nil {
+			return "", err
+		} else if context != "" {
+			if _, err = tx.Exec(`UPDATE citations SET context=$1 WHERE id=$2`, context, existing); err != nil {
+				return "", err
+			}
+		}
+	}
+
+	if err = finalizeTaskWithResult(tx, taskID, map[string]any{"edges_inserted": inserted}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("succeeded (edges=%d)", inserted), nil
+}
+
+// applyFigureAnalysesResult：image_analyses 删重建（A 档；幂等语义与 Python
+// _save_analyses 一致——图片文件已由 handler 落盘，路径随 proposal 传入）。
+func (s *CoreStore) applyFigureAnalysesResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	paperID, _ := proposal["paper_id"].(string)
+	analyses, _ := proposal["analyses"].([]any)
+	if paperID == "" {
+		return "", fmt.Errorf("proposal 缺少 paper_id")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	if _, err = tx.Exec(`DELETE FROM image_analyses WHERE paper_id=$1`, paperID); err != nil {
+		return "", err
+	}
+	for _, aAny := range analyses {
+		a, ok := aAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		pageNumber := int(jsonFloat(a["page_number"]).(float64))
+		imageIndex := int(jsonFloat(a["image_index"]).(float64))
+		imageType, _ := a["image_type"].(string)
+		caption := nullIfEmpty(stringOr(a["caption"]))
+		description, _ := a["description"].(string)
+		imagePath := nullIfEmpty(stringOr(a["image_path"]))
+		bbox := "{}"
+		if b, ok := a["bbox_json"].(map[string]any); ok && len(b) > 0 {
+			bbox = mustJSON(b)
+		}
+		if _, err = tx.Exec(
+			`INSERT INTO image_analyses (id, paper_id, page_number, image_index, image_type, caption, description, image_path, bbox_json, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+			newCoreID(), paperID, pageNumber, imageIndex, imageType, caption, description, imagePath, bbox,
+		); err != nil {
+			return "", fmt.Errorf("image_analyses insert: %w", err)
+		}
+	}
+
+	if err = finalizeTaskWithResult(tx, taskID, map[string]any{"count": len(analyses)}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("succeeded (figures=%d)", len(analyses)), nil
+}
+
+// applyPaperTranslationResult：paper_translations upsert（A 档；paper_id+
+// target_lang+mode 唯一——存在则更新 segments/bilingual_pdf_path）。
+func (s *CoreStore) applyPaperTranslationResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	paperID, _ := proposal["paper_id"].(string)
+	targetLang, _ := proposal["target_lang"].(string)
+	mode, _ := proposal["mode"].(string)
+	if paperID == "" || targetLang == "" || mode == "" {
+		return "", fmt.Errorf("proposal 缺少 paper_id/target_lang/mode")
+	}
+	segments := "{}"
+	if segs, ok := proposal["segments"].([]any); ok {
+		segments = mustJSON(segs)
+	}
+	bilingualPath := nullIfEmpty(stringOr(proposal["bilingual_pdf_path"]))
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	var existing string
+	err = tx.QueryRow(
+		`SELECT id FROM paper_translations WHERE paper_id=$1 AND target_lang=$2 AND mode=$3`,
+		paperID, targetLang, mode,
+	).Scan(&existing)
+	switch {
+	case err == sql.ErrNoRows:
+		if _, err = tx.Exec(
+			`INSERT INTO paper_translations (id, paper_id, target_lang, mode, segments, bilingual_pdf_path, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+			newCoreID(), paperID, targetLang, mode, segments, bilingualPath,
+		); err != nil {
+			return "", fmt.Errorf("paper_translations insert: %w", err)
+		}
+	case err != nil:
+		return "", err
+	default:
+		if _, err = tx.Exec(
+			`UPDATE paper_translations SET segments=$1, bilingual_pdf_path=$2, updated_at=NOW() WHERE id=$3`,
+			segments, bilingualPath, existing,
+		); err != nil {
+			return "", err
+		}
+	}
+
+	if err = finalizeTaskWithResult(tx, taskID, map[string]any{
+		"paper_id": paperID, "target_lang": targetLang, "mode": mode,
+	}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return "succeeded", nil
+}
+
+// applyReferenceImportResult：参考文献导入（A 档）——papers upsert（完整元数据）
+// + topic 关联 + citation 边（source_paper 固定一侧）+ collection action，单事务。
+func (s *CoreStore) applyReferenceImportResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	sourcePaperID, _ := proposal["source_paper_id"].(string)
+	sourceTitle, _ := proposal["source_paper_title"].(string)
+	items, _ := proposal["papers"].([]any)
+	if sourcePaperID == "" || len(items) == 0 {
+		return "", fmt.Errorf("proposal 缺少 source_paper_id/papers")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	insertedIDs := []string{}
+	for _, itemAny := range items {
+		item, ok := itemAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		paper, _ := item["paper"].(map[string]any)
+		if paper == nil {
+			continue
+		}
+		paperID, err := upsertPaperWithMeta(tx, paper)
+		if err != nil {
+			return "", err
+		}
+		insertedIDs = append(insertedIDs, paperID)
+
+		if topics, ok := item["topics"].([]any); ok {
+			for _, tAny := range topics {
+				tid, _ := tAny.(string)
+				if tid == "" {
+					continue
+				}
+				var linkID string
+				err = tx.QueryRow(
+					`SELECT id FROM paper_topics WHERE paper_id=$1 AND topic_id=$2`, paperID, tid,
+				).Scan(&linkID)
+				if err == sql.ErrNoRows {
+					if _, err = tx.Exec(
+						`INSERT INTO paper_topics (id, paper_id, topic_id) VALUES ($1, $2, $3)`,
+						newCoreID(), paperID, tid,
+					); err != nil {
+						return "", fmt.Errorf("paper_topics insert: %w", err)
+					}
+				} else if err != nil {
+					return "", err
+				}
+			}
+		}
+
+		direction, _ := item["direction"].(string)
+		if direction == "" {
+			direction = "reference"
+		}
+		context := "reference"
+		var srcID, dstID string
+		if direction == "reference" {
+			srcID, dstID = sourcePaperID, paperID
+		} else {
+			srcID, dstID = paperID, sourcePaperID
+			context = "citation"
+		}
+		var edgeExists string
+		err = tx.QueryRow(
+			`SELECT id FROM citations WHERE source_paper_id=$1 AND target_paper_id=$2`, srcID, dstID,
+		).Scan(&edgeExists)
+		if err == sql.ErrNoRows {
+			if _, err = tx.Exec(
+				`INSERT INTO citations (id, source_paper_id, target_paper_id, context, created_at)
+				 VALUES ($1, $2, $3, $4, NOW())`,
+				newCoreID(), srcID, dstID, context,
+			); err != nil {
+				return "", fmt.Errorf("citations insert: %w", err)
+			}
+		} else if err != nil {
+			return "", err
+		}
+	}
+
+	actionID := newCoreID()
+	if _, err = tx.Exec(
+		`INSERT INTO collection_actions (id, action_type, title, query, paper_count, created_at)
+		 VALUES ($1, 'reference_import', $2, $3, $4, NOW())`,
+		actionID, ("参考文献导入：" + sourceTitle)[:min(len("参考文献导入："+sourceTitle), 512)], sourcePaperID, len(insertedIDs),
+	); err != nil {
+		return "", fmt.Errorf("collection_actions insert: %w", err)
+	}
+	for _, pid := range insertedIDs {
+		if _, err = tx.Exec(
+			`INSERT INTO action_papers (id, action_id, paper_id) VALUES ($1, $2, $3)`,
+			newCoreID(), actionID, pid,
+		); err != nil {
+			return "", fmt.Errorf("action_papers insert: %w", err)
+		}
+	}
+
+	if err = finalizeTaskWithResult(tx, taskID, map[string]any{
+		"inserted_ids": insertedIDs, "total": len(insertedIDs),
+	}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("succeeded (papers=%d)", len(insertedIDs)), nil
 }
 
 // FailTask 失败上报（core 表；重试/dead_letter 语义与 Python durable 一致）

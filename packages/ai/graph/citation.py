@@ -25,6 +25,28 @@ class CitationService:
         self.citations = citations
         self.scholar = scholar
 
+    def fetch_edges_for_paper(self, paper_id: str, limit: int = 8) -> dict:
+        """纯计算（proposal 模式）：抓取引用边候选，不写库。
+
+        papers upsert（SemanticScholar 元数据）与 citation 边 upsert 由权威面
+        单事务承载（Go applyCitationEdgesResult / domain_apply 回退）。
+        """
+        with session_scope() as session:
+            source = PaperRepository(session).get_by_id(paper_id)
+            edges = self.scholar.fetch_edges_by_title(source.title, limit=limit)
+            return {
+                "paper_id": str(source.id),
+                "source_title": source.title or "",
+                "edges": [
+                    {
+                        "source_title": e.source_title,
+                        "target_title": e.target_title,
+                        "context": e.context,
+                    }
+                    for e in edges
+                ],
+            }
+
     def sync_citations_for_paper(self, paper_id: str, limit: int = 8) -> dict:
         with session_scope() as session:
             paper_repo = PaperRepository(session)

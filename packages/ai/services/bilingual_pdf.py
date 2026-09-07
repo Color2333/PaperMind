@@ -57,7 +57,7 @@ def save_translation(
 
 
 def process_fast_translation(
-    paper_id: str, pdf_path: str, target_lang: str, progress_callback=None
+    paper_id: str, pdf_path: str, target_lang: str, progress_callback=None, *, persist: bool = True
 ) -> dict:
     """快速翻译：提取分段 → 并发翻译 → 落库 → 返回 segments"""
     from packages.ai.services.translate import extract_segments_from_pdf
@@ -93,12 +93,13 @@ def process_fast_translation(
 
     results.sort(key=_sort_key)
 
-    save_translation(paper_id, target_lang, "fast", segments=results)
+    if persist:
+        save_translation(paper_id, target_lang, "fast", segments=results)
     return {"segments": results}
 
 
 def process_layout_translation(
-    paper_id: str, pdf_path: str, target_lang: str, progress_callback=None
+    paper_id: str, pdf_path: str, target_lang: str, progress_callback=None, *, persist: bool = True
 ) -> dict:
     """布局保留翻译：pdf2zh CLI → 移动产物 → 落库 → 返回 pdf_url"""
     import shutil
@@ -135,7 +136,8 @@ def process_layout_translation(
     if src != dest:
         src.replace(dest)
 
-    save_translation(paper_id, target_lang, "layout", bilingual_pdf_path=str(dest))
+    if persist:
+        save_translation(paper_id, target_lang, "layout", bilingual_pdf_path=str(dest))
     if progress_callback:
         progress_callback("完成", 1, 1)
     return {

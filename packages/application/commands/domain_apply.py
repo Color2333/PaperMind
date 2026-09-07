@@ -322,6 +322,151 @@ def apply_save_generated_content_proposal(session: Session, proposal: dict) -> d
     return {"content_id": str(gc.id), "content_type": content_type}
 
 
+def apply_citation_edges_proposal(session: Session, proposal: dict) -> dict:
+    """引用边批量入库（与 Go applyCitationEdgesResult 语义对齐）"""
+    from packages.ai.graph._common import _title_to_id
+    from packages.domain.schemas import PaperCreate
+    from packages.storage.repositories import CitationRepository, PaperRepository
+
+    repo = PaperRepository(session)
+    cit_repo = CitationRepository(session)
+    inserted = 0
+    for e in proposal.get("edges") or []:
+        src = repo.upsert_paper(
+            PaperCreate(
+                arxiv_id=e["source"].get("arxiv_id") or _title_to_id(e["source"].get("title", "")),
+                title=e["source"].get("title") or "",
+                abstract=e["source"].get("abstract") or "",
+                metadata=e["source"].get("metadata") or {},
+            )
+        )
+        dst = repo.upsert_paper(
+            PaperCreate(
+                arxiv_id=e["target"].get("arxiv_id") or _title_to_id(e["target"].get("title", "")),
+                title=e["target"].get("title") or "",
+                abstract=e["target"].get("abstract") or "",
+                metadata=e["target"].get("metadata") or {},
+            )
+        )
+        if cit_repo.upsert_edge(str(src.id), str(dst.id), context=e.get("context")):
+            inserted += 1
+    return {"edges_inserted": inserted}
+
+
+def apply_figure_analyses_proposal(session: Session, proposal: dict) -> dict:
+    """image_analyses 删重建（与 Go/Python _save_analyses 语义一致）"""
+    from sqlalchemy import delete
+
+    from packages.storage.models import ImageAnalysis
+
+    paper_id = str(proposal.get("paper_id") or "")
+    if not paper_id:
+        raise ValueError("figure_analyses proposal 缺少 paper_id")
+    # 先 flush（把同 session 内 pending 的前批写入），再删重建——bulk delete 用
+    # fetch 同步从 identity map 移除，避免会话内新旧两批叠加
+    session.flush()
+    session.execute(
+        delete(ImageAnalysis)
+        .where(ImageAnalysis.paper_id == paper_id)
+        .execution_options(synchronize_session="fetch")
+    )
+    for a in proposal.get("analyses") or []:
+        session.add(
+            ImageAnalysis(
+                paper_id=paper_id,
+                page_number=int(a.get("page_number") or 0),
+                image_index=int(a.get("image_index") or 0),
+                image_type=str(a.get("image_type") or "figure"),
+                caption=a.get("caption"),
+                description=str(a.get("description") or ""),
+                image_path=a.get("image_path"),
+                bbox_json=a.get("bbox_json") or {},
+            )
+        )
+    return {"count": len(proposal.get("analyses") or [])}
+
+
+def apply_paper_translation_proposal(session: Session, proposal: dict) -> dict:
+    """paper_translations upsert（paper_id+lang+mode 唯一）"""
+    from sqlalchemy import select
+
+    from packages.storage.models import PaperTranslation
+
+    paper_id = str(proposal.get("paper_id") or "")
+    target_lang = str(proposal.get("target_lang") or "")
+    mode = str(proposal.get("mode") or "")
+    if not paper_id or not target_lang or not mode:
+        raise ValueError("paper_translation proposal 缺少键")
+    session.flush()  # 同 session 内 pending 的前批先落库，保证 upsert 查得到
+    existing = session.execute(
+        select(PaperTranslation).where(
+            PaperTranslation.paper_id == paper_id,
+            PaperTranslation.target_lang == target_lang,
+            PaperTranslation.mode == mode,
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        existing = PaperTranslation(paper_id=paper_id, target_lang=target_lang, mode=mode)
+        session.add(existing)
+    if proposal.get("segments") is not None:
+        existing.segments = proposal["segments"]
+    if proposal.get("bilingual_pdf_path"):
+        existing.bilingual_pdf_path = proposal["bilingual_pdf_path"]
+    return {"paper_id": paper_id, "target_lang": target_lang, "mode": mode}
+
+
+def apply_reference_import_proposal(session: Session, proposal: dict) -> dict:
+    """参考文献导入（与 Go applyReferenceImportResult 语义对齐）"""
+    from sqlalchemy import select
+
+    from packages.domain.enums import ActionType
+    from packages.domain.schemas import PaperCreate
+    from packages.storage.models import Paper
+    from packages.storage.repositories import (
+        ActionRepository,
+        CitationRepository,
+        PaperRepository,
+    )
+
+    source_paper_id = str(proposal.get("source_paper_id") or "")
+    source_title = str(proposal.get("source_paper_title") or "")
+    if not source_paper_id:
+        raise ValueError("reference_import proposal 缺少 source_paper_id")
+
+    repo = PaperRepository(session)
+    cit_repo = CitationRepository(session)
+    inserted_ids: list[str] = []
+    for item in proposal.get("papers") or []:
+        pd = item.get("paper") or {}
+        paper = repo.upsert_paper(
+            PaperCreate(
+                arxiv_id=pd.get("arxiv_id") or None,
+                title=pd.get("title") or "",
+                abstract=pd.get("abstract") or "",
+                metadata=pd.get("metadata") or {},
+            )
+        )
+        inserted_ids.append(str(paper.id))
+        for tid in item.get("topics") or []:
+            repo.link_to_topic(str(paper.id), str(tid))
+        direction = item.get("direction") or "reference"
+        if direction == "reference":
+            cit_repo.upsert_edge(source_paper_id, str(paper.id), context="reference")
+        else:
+            cit_repo.upsert_edge(str(paper.id), source_paper_id, context="citation")
+        # 修正 upsert 后的 arxiv_id 精确性（PaperCreate 空 arxiv_id 时合成 id）
+        _ = session.execute(select(Paper).where(Paper.id == paper.id)).scalar_one()
+
+    if inserted_ids:
+        ActionRepository(session).create_action(
+            action_type=ActionType.reference_import,
+            title=f"参考文献导入：{source_title[:60]}",
+            paper_ids=inserted_ids,
+            query=source_paper_id,
+        )
+    return {"inserted_ids": inserted_ids[:20], "total": len(inserted_ids)}
+
+
 def apply_proposal(session: Session, proposal: dict) -> dict | None:
     """proposal 分派（唯一实现，三条路径共用）：
     - Go authority：core ApplyResult 按 capability SQL 直写（A 档）；
@@ -355,6 +500,14 @@ def apply_proposal(session: Session, proposal: dict) -> dict | None:
         return apply_ingest_papers_proposal(session, proposal)
     if kind == "save_generated_content":
         return apply_save_generated_content_proposal(session, proposal)
+    if kind == "citation_edges":
+        return apply_citation_edges_proposal(session, proposal)
+    if kind == "figure_analyses":
+        return apply_figure_analyses_proposal(session, proposal)
+    if kind == "paper_translation":
+        return apply_paper_translation_proposal(session, proposal)
+    if kind == "reference_import":
+        return apply_reference_import_proposal(session, proposal)
     return None
 
 

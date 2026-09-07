@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
@@ -475,16 +476,77 @@ def import_references(
     progress: ProgressFn = None,
     **_: Any,
 ) -> dict:
-    """一键导入参考文献"""
-    from packages.ai.pipelines.reference_import import ReferenceImporter
+    """一键导入参考文献（proposal 模式）：元数据补全（arXiv/S2 网络 IO）留
+    handler，papers upsert + 引用边 + topic 关联 + 收集记录在权威面单事务
+    执行（Go applyReferenceImportResult）。此前的内联 PDF 下载与后台
+    skim/embed 线程移除（后续以任务链承载）。"""
+    from packages.integrations.arxiv_client import ArxivClient
+    from packages.integrations.semantic_scholar_client import SemanticScholarClient
 
-    return ReferenceImporter()._run_import(  # noqa: SLF001 — handler 即执行体
-        source_paper_id=source_paper_id,
-        source_paper_title=source_paper_title,
-        entries=entries,
-        topic_ids=topic_ids or [],
-        progress_callback=progress,
-    )
+    topics = topic_ids or []
+    arxiv_entries = [e for e in entries if e.get("arxiv_id")]
+    ss_entries = [e for e in entries if not e.get("arxiv_id")]
+
+    papers: list[dict] = []
+    skipped = 0
+
+    if arxiv_entries:
+        ids = [e["arxiv_id"] for e in arxiv_entries]
+        fetched: dict[str, PaperCreate] = {}
+        with suppress(Exception):
+            for paper in ArxivClient().fetch_by_ids(ids):
+                fetched[paper.arxiv_id] = paper
+        for e in arxiv_entries:
+            paper = fetched.get(e["arxiv_id"])
+            if paper is None:
+                skipped += 1
+                continue
+            papers.append(
+                {
+                    "paper": paper.model_dump(mode="json"),
+                    "topics": topics,
+                    "direction": e.get("direction", "reference"),
+                }
+            )
+
+    scholar = None
+    for e in ss_entries:
+        paper_dict: dict | None = None
+        if e.get("scholar_id"):
+            if scholar is None:
+                scholar = SemanticScholarClient()
+            with suppress(Exception):
+                detail = scholar.fetch_paper_by_scholar_id(e["scholar_id"])
+                if detail:
+                    time.sleep(0.5)
+                    paper_dict = {
+                        "arxiv_id": detail.get("arxiv_id") or "",
+                        "title": detail.get("title") or e.get("title", "Unknown"),
+                        "abstract": detail.get("abstract") or "",
+                        "metadata": {"source": "semantic_scholar"},
+                    }
+        if paper_dict is None:
+            paper_dict = {
+                "arxiv_id": "",
+                "title": e.get("title", "Unknown"),
+                "abstract": "",
+                "metadata": {"source": "semantic_scholar"},
+            }
+        papers.append(
+            {"paper": paper_dict, "topics": topics, "direction": e.get("direction", "reference")}
+        )
+
+    if progress:
+        progress(f"元数据就绪 {len(papers)}/{len(entries)}（跳过 {skipped}）", 80, 100)
+
+    return {
+        "proposal": {
+            "kind": "reference_import",
+            "source_paper_id": source_paper_id,
+            "source_paper_title": source_paper_title,
+            "papers": papers,
+        }
+    }
 
 
 def cs_feed_fetch_category(*, category_code: str, progress: ProgressFn = None, **_: Any) -> dict:
@@ -641,20 +703,96 @@ def send_brief_email_effect(
 # ---------- 引用图谱 / 生成 ----------
 
 
+def _citation_edges_proposal(paper_id: str, edges: list[dict]) -> dict:
+    """citation_edges proposal 公共封装：标题 → 归一化 arxiv_id（与旧路径
+    _title_to_id 一致），papers 元数据 + 边由权威面单事务 upsert。"""
+    from packages.ai.graph._common import _title_to_id
+
+    def _paper_ref(title: str) -> dict:
+        return {
+            "arxiv_id": _title_to_id(title),
+            "title": title,
+            "abstract": "",
+            "metadata": {"source": "semantic_scholar"},
+        }
+
+    return {
+        "proposal": {
+            "kind": "citation_edges",
+            "paper_id": paper_id,
+            "edges": [
+                {
+                    "source": _paper_ref(e["source_title"]),
+                    "target": _paper_ref(e["target_title"]),
+                    "context": e.get("context"),
+                }
+                for e in edges
+            ],
+        }
+    }
+
+
+def sync_citations_paper(
+    *, paper_id: str, limit: int = 8, progress: ProgressFn = None, **_: Any
+) -> dict:
+    """单篇引用同步（proposal 模式）：抓取候选边，papers upsert + 边 upsert
+    在权威面单事务执行。"""
+    from packages.ai.graph.citation import CitationService
+
+    if progress:
+        progress("正在抓取引用候选...", 30, 100)
+    fetched = CitationService().fetch_edges_for_paper(paper_id, limit=limit)
+    if progress:
+        progress(f"抓取到 {len(fetched['edges'])} 条候选边", 70, 100)
+    return _citation_edges_proposal(fetched["paper_id"], fetched["edges"])
+
+
 def sync_citations_incremental(
     *, paper_limit: int = 40, edge_limit_per_paper: int = 6, progress: ProgressFn = None, **_: Any
 ) -> dict:
-    """增量引用同步"""
-    from packages.application.queries.graph import _graph_service
+    """增量引用同步（proposal 模式）：选取无引用边的最新论文并抓取候选边，
+    papers upsert + 边 upsert 在权威面单事务执行。"""
+    from sqlalchemy import select
+
+    from packages.ai.graph.citation import CitationService
+    from packages.storage.db import session_scope
+    from packages.storage.models import Citation, Paper
 
     if progress:
-        progress("正在同步增量引用...", 20, 100)
-    result = _graph_service().sync_incremental(
-        paper_limit=paper_limit, edge_limit_per_paper=edge_limit_per_paper
-    )
+        progress("正在筛选目标论文...", 15, 100)
+    titles: list[tuple[str, str]] = []
+    with session_scope() as session:
+        rows = session.execute(
+            select(Paper).order_by(Paper.created_at.desc()).limit(paper_limit * 3)
+        ).scalars()
+        touched: set[str] = set()
+        for e in session.execute(select(Citation)).scalars():
+            touched.add(e.source_paper_id)
+            touched.add(e.target_paper_id)
+        for p_ in rows:
+            if str(p_.id) not in touched:
+                titles.append((str(p_.id), p_.title or ""))
+                if len(titles) >= paper_limit:
+                    break
+
+    service = CitationService()
+    edges: list[dict] = []
+    for idx, (pid, _title) in enumerate(titles):
+        if progress:
+            progress(
+                f"抓取引用候选 ({idx + 1}/{len(titles)})...",
+                15 + int(idx / max(len(titles), 1) * 60),
+                100,
+            )
+        try:
+            edges.extend(service.fetch_edges_for_paper(pid, limit=edge_limit_per_paper)["edges"])
+        except Exception as exc:  # noqa: BLE001 — 单篇失败不阻断
+            logging.warning("incremental skip %s: %s", pid[:8], exc)
     if progress:
-        progress("增量引用同步完成", 90, 100)
-    return result
+        progress(f"抓取到 {len(edges)} 条候选边", 85, 100)
+    out = _citation_edges_proposal("", edges)
+    out["proposal"]["paper_ids"] = [pid for pid, _ in titles]
+    return out
 
 
 def sync_citations_topic(
@@ -665,17 +803,41 @@ def sync_citations_topic(
     progress: ProgressFn = None,
     **_: Any,
 ) -> dict:
-    """主题引用同步"""
-    from packages.application.queries.graph import _graph_service
+    """主题引用同步（proposal 模式）：主题内论文逐篇抓取候选边，领域写在
+    权威面单事务执行。"""
+    from packages.ai.graph.citation import CitationService
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import PaperRepository, TopicRepository
 
     if progress:
-        progress("正在同步主题引用...", 20, 100)
-    result = _graph_service().sync_citations_for_topic(
-        topic_id=topic_id, paper_limit=paper_limit, edge_limit_per_paper=edge_limit_per_paper
-    )
+        progress("正在筛选主题论文...", 15, 100)
+    paper_ids: list[str] = []
+    with session_scope() as session:
+        topic = TopicRepository(session).get_by_id(topic_id)
+        if topic is None:
+            raise ValueError(f"topic {topic_id} not found")
+        paper_ids = [
+            str(p.id) for p in PaperRepository(session).list_by_topic(topic_id, limit=paper_limit)
+        ]
+
+    service = CitationService()
+    edges: list[dict] = []
+    for idx, pid in enumerate(paper_ids):
+        if progress:
+            progress(
+                f"抓取引用候选 ({idx + 1}/{len(paper_ids)})...",
+                15 + int(idx / max(len(paper_ids), 1) * 60),
+                100,
+            )
+        try:
+            edges.extend(service.fetch_edges_for_paper(pid, limit=edge_limit_per_paper)["edges"])
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("topic sync skip %s: %s", pid[:8], exc)
     if progress:
-        progress("主题引用同步完成", 90, 100)
-    return result
+        progress(f"抓取到 {len(edges)} 条候选边", 85, 100)
+    out = _citation_edges_proposal(topic_id, edges)
+    out["proposal"]["topic_id"] = topic_id
+    return out
 
 
 def topic_wiki_save(
@@ -760,7 +922,7 @@ def analyze_figures(
 
     if progress:
         progress("正在提取图表...", 10, 100)
-    results = FigureService().analyze_paper_figures(pid, pdf_path, max_figures)
+    results = FigureService().analyze_paper_figures(pid, pdf_path, max_figures, persist=False)
 
     total_figures = len(results)
     if progress and total_figures > 0:
@@ -779,7 +941,29 @@ def analyze_figures(
 
     if progress:
         progress("图表分析完成", 95, 100)
-    return {"paper_id": str(pid), "count": len(items), "items": items, "title": paper_title}
+    # proposal 模式（A 档升级）：解读计算 + 图片文件落盘留 handler，
+    # image_analyses 的删重建在权威面单事务执行
+    return {
+        "proposal": {
+            "kind": "figure_analyses",
+            "paper_id": str(pid),
+            "analyses": [
+                {
+                    "page_number": item.get("page_number"),
+                    "image_index": item.get("image_index"),
+                    "image_type": item.get("image_type"),
+                    "caption": item.get("caption"),
+                    "description": item.get("description"),
+                    "image_path": item.get("image_path"),
+                    "bbox_json": item.get("bbox_json"),
+                }
+                for item in items
+            ],
+        },
+        "paper_id": str(pid),
+        "count": len(items),
+        "title": paper_title,
+    }
 
 
 def translate_bilingual_pdf(
@@ -805,4 +989,17 @@ def translate_bilingual_pdf(
         raise ValueError(f"论文 {paper_id[:8]} 没有 PDF 文件")
 
     fn = process_fast_translation if mode == "fast" else process_layout_translation
-    return fn(paper_id, pdf_path, target_lang, progress_callback=progress)
+    result = fn(paper_id, pdf_path, target_lang, progress_callback=progress, persist=False)
+    # proposal 模式（A 档升级）：翻译计算/双语文档落盘留 handler，
+    # paper_translations 缓存在权威面单事务 upsert
+    return {
+        "proposal": {
+            "kind": "paper_translation",
+            "paper_id": paper_id,
+            "target_lang": target_lang,
+            "mode": mode,
+            "segments": result.get("segments"),
+            "bilingual_pdf_path": result.get("bilingual_pdf_path"),
+        },
+        "pdf_url": result.get("pdf_url"),
+    }

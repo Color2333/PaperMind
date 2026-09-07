@@ -678,3 +678,130 @@ CREATE TABLE IF NOT EXISTS generated_contents (
 		t.Fatalf("result_ref 缺 content_id: %s", resultRef)
 	}
 }
+
+// TestApplyCitationEdgesResult：引用边 A 档——papers 双侧 upsert + 边幂等。
+func TestApplyCitationEdgesResult(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.DB.Exec(`
+CREATE TABLE IF NOT EXISTS citations (
+	id TEXT PRIMARY KEY, source_paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+	target_paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+	context TEXT, created_at TIMESTAMPTZ DEFAULT NOW(),
+	UNIQUE(source_paper_id, target_paper_id))`); err != nil {
+		t.Fatal(err)
+	}
+	_, taskID, _, _ := s.SubmitCoreTaskMeta("sync_citations_paper", `{"paper_id":"p0"}`, "cite:t:9", 600, 3, "network", 0)
+	own, err := s.ClaimTask("exec-1", []string{"sync_citations_paper"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v / %v", own, err)
+	}
+	proposal := map[string]any{
+		"proposal": map[string]any{
+			"kind": "citation_edges", "paper_id": "p0",
+			"edges": []any{
+				map[string]any{
+					"source":  map[string]any{"arxiv_id": "ss-edge-src", "title": "Edge Src", "abstract": "", "metadata": map[string]any{"source": "semantic_scholar"}},
+					"target":  map[string]any{"arxiv_id": "ss-edge-dst", "title": "Edge Dst", "abstract": "", "metadata": map[string]any{"source": "semantic_scholar"}},
+					"context": "reference",
+				},
+			},
+		},
+	}
+	status, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status, "edges=1") {
+		t.Fatalf("status=%s", status)
+	}
+	var edgeCount int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM citations`).Scan(&edgeCount)
+	if edgeCount != 1 {
+		t.Fatalf("citations=%d", edgeCount)
+	}
+	// 幂等：同边重放不重复
+	_, taskID2, _, _ := s.SubmitCoreTaskMeta("sync_citations_paper", `{"paper_id":"p0"}`, "cite:t:10", 600, 3, "network", 0)
+	own2, _ := s.ClaimTask("exec-1", []string{"sync_citations_paper"})
+	if _, err = s.ApplyResult(taskID2, "exec-1", own2.LeaseToken, proposal); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM citations`).Scan(&edgeCount)
+	if edgeCount != 1 {
+		t.Fatalf("重放产生重复边: %d", edgeCount)
+	}
+}
+
+// TestApplyFigureAndTranslationResults：figures 删重建 + translation upsert。
+func TestApplyFigureAndTranslationResults(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.DB.Exec(`
+CREATE TABLE IF NOT EXISTS image_analyses (
+	id TEXT PRIMARY KEY, paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+	page_number INTEGER NOT NULL, image_index INTEGER NOT NULL DEFAULT 0,
+	image_type TEXT NOT NULL DEFAULT 'figure', caption TEXT,
+	description TEXT NOT NULL DEFAULT '', image_path TEXT, bbox_json JSONB,
+	created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS paper_translations (
+	id TEXT PRIMARY KEY, paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+	target_lang VARCHAR(16) NOT NULL, mode VARCHAR(16) NOT NULL DEFAULT 'fast',
+	segments JSON, bilingual_pdf_path VARCHAR(512), created_at TIMESTAMPTZ DEFAULT NOW(),
+	updated_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(paper_id, target_lang, mode))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.Exec(
+		`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, created_at, updated_at)
+		 VALUES ('p-fig', 'Fig Paper', '2605.00001', '', 'unread', NOW(), NOW())`); err != nil {
+		t.Fatal(err)
+	}
+
+	// figures：两次分析 → 删重建只有最新一批
+	_, t1, _, _ := s.SubmitCoreTaskMeta("analyze_figures", `{"paper_id":"p-fig"}`, "fig:t:1", 600, 3, "llm", 0)
+	own1, _ := s.ClaimTask("exec-1", []string{"analyze_figures"})
+	figProposal := map[string]any{
+		"proposal": map[string]any{"kind": "figure_analyses", "paper_id": "p-fig",
+			"analyses": []any{
+				map[string]any{"page_number": 1.0, "image_index": 0.0, "image_type": "figure",
+					"caption": "Fig 1", "description": "d", "image_path": "/f/1.png"},
+			}},
+	}
+	if _, err := s.ApplyResult(t1, "exec-1", own1.LeaseToken, figProposal); err != nil {
+		t.Fatal(err)
+	}
+	_, t2, _, _ := s.SubmitCoreTaskMeta("analyze_figures", `{"paper_id":"p-fig"}`, "fig:t:2", 600, 3, "llm", 0)
+	own2, err := s.ClaimTask("exec-1", []string{"analyze_figures"})
+	if err != nil || own2 == nil {
+		t.Fatalf("claim2: %v / %v", own2, err)
+	}
+	if _, err = s.ApplyResult(t2, "exec-1", own2.LeaseToken, figProposal); err != nil {
+		t.Fatal(err)
+	}
+	var figCount int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM image_analyses WHERE paper_id='p-fig'`).Scan(&figCount)
+	if figCount != 1 {
+		t.Fatalf("删重建失败: %d", figCount)
+	}
+
+	// translation：同 paper+lang+mode 二次 → upsert 不重复
+	_, t3, _, _ := s.SubmitCoreTaskMeta("translate_bilingual_pdf", `{"paper_id":"p-fig"}`, "tr:t:1", 600, 3, "llm", 0)
+	own3, _ := s.ClaimTask("exec-1", []string{"translate_bilingual_pdf"})
+	trProposal := map[string]any{
+		"proposal": map[string]any{"kind": "paper_translation", "paper_id": "p-fig",
+			"target_lang": "zh", "mode": "fast", "segments": []any{map[string]any{"id": "p-1"}}},
+	}
+	if _, err = s.ApplyResult(t3, "exec-1", own3.LeaseToken, trProposal); err != nil {
+		t.Fatal(err)
+	}
+	_, t4, _, _ := s.SubmitCoreTaskMeta("translate_bilingual_pdf", `{"paper_id":"p-fig"}`, "tr:t:2", 600, 3, "llm", 0)
+	own4, err := s.ClaimTask("exec-1", []string{"translate_bilingual_pdf"})
+	if err != nil || own4 == nil {
+		t.Fatalf("claim4: %v / %v", own4, err)
+	}
+	if _, err = s.ApplyResult(t4, "exec-1", own4.LeaseToken, trProposal); err != nil {
+		t.Fatal(err)
+	}
+	var trCount int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM paper_translations WHERE paper_id='p-fig'`).Scan(&trCount)
+	if trCount != 1 {
+		t.Fatalf("translation upsert 失败: %d", trCount)
+	}
+}

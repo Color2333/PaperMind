@@ -595,12 +595,7 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request, cid str
 	// manifest 校验（第四轮 P0-2 fail closed）：Go 只接受 apply 已实现的
 	// A 档 capability——与 Python 侧 GO_APPLY_CAPABILITIES 清单一致；
 	// 清单外任务由 Python 留在自身 authority，不应到达这里。
-	goApply := map[string]bool{
-		"skim_paper": true, "deep_read_paper": true, "embed_paper": true,
-		"extract_claims": true, "upsert_paper": true, "download_source": true,
-		"ingest_arxiv_query": true, "import_selected": true,
-	}
-	if !goApply[req.Capability] {
+	if !GoApplyManifest[req.Capability] {
 		writeJSON(w, http.StatusBadRequest, cid, map[string]any{
 			"ok": false, "error": "capability_not_in_manifest",
 			"detail": "capability 不在 Go-apply manifest 内（应留在 Python authority）",
