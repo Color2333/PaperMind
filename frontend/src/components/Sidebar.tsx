@@ -157,8 +157,8 @@ export default function Sidebar() {
       )}
 
       <aside className={cn(
-        "fixed left-0 top-0 z-50 flex h-screen w-[240px] flex-col border-r border-border bg-sidebar transition-transform duration-200",
-        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        "border-border bg-sidebar relative flex h-screen w-[240px] shrink-0 flex-col border-r",
+        mobileOpen && "fixed left-0 top-0 z-50 h-screen translate-x-0"
       )}>
         {/* 移动端关闭按钮 */}
         <button
@@ -235,51 +235,7 @@ export default function Sidebar() {
           ))}
         </div>
 
-        {/* 对话历史 */}
-        <div className="flex-1 overflow-y-auto px-3 pt-2">
-          <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
-            对话历史
-          </p>
-          {groups.length === 0 ? (
-            <p className="px-2 py-4 text-center text-xs text-ink-tertiary">
-              还没有对话记录
-            </p>
-          ) : (
-            groups.map((group) => (
-              <div key={group.label} className="mb-3">
-                <p className="mb-0.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
-                  {group.label}
-                </p>
-                <div className="space-y-0.5">
-                  {group.items.map((meta) => (
-                    <button
-                      key={meta.id}
-                      onClick={() => handleSelectChat(meta.id)}
-                      className={cn(
-                        "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-all",
-                        activeId === meta.id
-                          ? "bg-primary-light text-primary font-medium"
-                          : "text-ink-secondary hover:bg-hover hover:text-ink",
-                      )}
-                    >
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                      <span className="flex-1 truncate">{meta.title}</span>
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteId(meta.id);
-                        }}
-                        className="hidden shrink-0 rounded p-0.5 text-ink-tertiary hover:bg-error-light hover:text-error group-hover:block"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+        {/* 会话列表已迁至对话窄栏（ChatPane）——侧栏只保留工具导航 */}
 
         {/* 底部：设置 + 暗色 */}
         <div className="border-t border-border px-3 py-2">
