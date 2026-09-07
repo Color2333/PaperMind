@@ -462,7 +462,6 @@ export const pipelineApi = {
   deep: (paperId: string) => post<{ task_id: string; status: string }>(`/pipelines/deep/${paperId}`),
   embed: (paperId: string) =>
     post<{ task_id: string; status: string }>(`/pipelines/embed/${paperId}`),
-  runs: (limit = 30) => get<{ items: PipelineRun[] }>(`/pipelines/runs?limit=${limit}`),
 };
 
 /* ========== RAG ========== */

@@ -26,23 +26,40 @@ import {
   Menu,
   X,
   BarChart3,
+  ListTodo,
   PenTool,
   Loader2,
   LogOut,
 } from "lucide-react";
 import { paperApi, clearAuth } from "@/services/api";
 
-/* 工具网格定义 */
-const TOOLS = [
-  { to: "/collect", icon: Search, label: "论文收集", accent: true },
-  { to: "/papers", icon: FileText, label: "论文库", accent: false },
-  { to: "/graph", icon: Network, label: "引用图谱", accent: false },
-  { to: "/writing", icon: PenTool, label: "写作助手", accent: true },
-  { to: "/wiki", icon: BookOpen, label: "Wiki", accent: false },
-  { to: "/brief", icon: Newspaper, label: "研究简报", accent: false },
-  { to: "/dashboard", icon: LayoutDashboard, label: "看板", accent: false },
-  { to: "/statistics", icon: BarChart3, label: "主题统计", accent: false },
-  { to: "/research", icon: BookOpen, label: "Research", accent: false },
+/* 工具网格定义——研究主线分组：收集→沉淀→产出→观测 */
+const TOOL_GROUPS: { label: string; items: { to: string; icon: typeof Search; label: string }[] }[] = [
+  {
+    label: "研究",
+    items: [
+      { to: "/collect", icon: Search, label: "论文收集" },
+      { to: "/papers", icon: FileText, label: "论文库" },
+      { to: "/graph", icon: Network, label: "引用图谱" },
+      { to: "/research", icon: BookOpen, label: "Research" },
+    ],
+  },
+  {
+    label: "产出",
+    items: [
+      { to: "/writing", icon: PenTool, label: "写作助手" },
+      { to: "/wiki", icon: BookOpen, label: "Wiki" },
+      { to: "/brief", icon: Newspaper, label: "研究简报" },
+    ],
+  },
+  {
+    label: "系统",
+    items: [
+      { to: "/dashboard", icon: LayoutDashboard, label: "看板" },
+      { to: "/jobs", icon: ListTodo, label: "任务监控" },
+      { to: "/statistics", icon: BarChart3, label: "主题统计" },
+    ],
+  },
 ];
 
 function useDarkMode() {
@@ -188,39 +205,34 @@ export default function Sidebar() {
           </div>
         )}
 
-        {/* 工具网格 */}
+        {/* 工具网格——研究主线分组 */}
         <div className="border-b border-border px-3 pb-3">
-          <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
-            工具
-          </p>
-          <div className="grid grid-cols-3 gap-1.5">
-            {TOOLS.map((tool) => (
-              <NavLink
-                key={tool.to}
-                to={tool.to}
-                className={({ isActive }) =>
-                  cn(
-                    "relative flex flex-col items-center gap-1 rounded-xl px-1 py-2.5 text-center transition-all",
-                    isActive
-                      ? "bg-primary-light text-primary shadow-sm"
-                      : tool.accent
-                        ? "bg-page text-ink-secondary hover:bg-hover hover:text-ink"
-                        : "text-ink-tertiary hover:bg-hover hover:text-ink-secondary",
-                  )
-                }
-              >
-                <tool.icon className="h-4.5 w-4.5" />
-                <span className="text-[10px] font-medium leading-tight">
-                  {tool.label}
-                </span>
-                {tool.to === "/papers" && unreadCount > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-white">
-                    {unreadCount > 99 ? "99+" : unreadCount}
-                  </span>
-                )}
-              </NavLink>
-            ))}
-          </div>
+          {TOOL_GROUPS.map((group) => (
+            <div key={group.label} className="mb-2.5 last:mb-0">
+              <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
+                {group.label}
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {group.items.map((tool) => (
+                  <NavLink
+                    key={tool.to}
+                    to={tool.to}
+                    className={({ isActive }) =>
+                      cn(
+                        "relative flex flex-col items-center gap-1 rounded-xl px-1 py-2.5 text-center transition-all",
+                        isActive
+                          ? "bg-primary-light text-primary shadow-sm"
+                          : "text-ink-secondary hover:bg-hover hover:text-ink",
+                      )
+                    }
+                  >
+                    <tool.icon className="h-[18px] w-[18px]" />
+                    <span className="text-[10px] leading-tight">{tool.label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* 对话历史 */}

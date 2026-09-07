@@ -8,9 +8,10 @@ import { Button } from "@/components/ui";
 import { StatCardSkeleton } from "@/components/Skeleton";
 import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
 import { useToast } from "@/contexts/ToastContext";
-import { systemApi, metricsApi, pipelineApi, todayApi, paperApi } from "@/services/api";
-import { formatDuration, timeAgo } from "@/lib/utils";
-import type { SystemStatus, CostMetrics, PipelineRun, TodaySummary, RecommendedResponse } from "@/types";
+import { systemApi, metricsApi, jobApi, todayApi, paperApi } from "@/services/api";
+import { cn, formatDuration, timeAgo } from "@/lib/utils";
+import type { SystemStatus, CostMetrics, TodaySummary, RecommendedResponse } from "@/types";
+import type { DurableJobItem } from "@/services/api";
 import {
   Activity,
   FileText,
@@ -75,7 +76,7 @@ export default function Dashboard() {
   const { activeTasks, hasRunning } = useGlobalTasks();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [costs, setCosts] = useState<CostMetrics | null>(null);
-  const [runs, setRuns] = useState<PipelineRun[]>([]);
+  const [runs, setRuns] = useState<DurableJobItem[]>([]);
   const [today, setToday] = useState<TodaySummary | null>(null);
   const [recommended, setRecommended] = useState<RecommendedResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -102,7 +103,7 @@ export default function Dashboard() {
       const [s, c, r, t, rec] = await Promise.all([
         systemApi.status(),
         metricsApi.costs(costDays),
-        pipelineApi.runs(10),
+        jobApi.list({ limit: 10 }).catch(() => ({ items: [] })),
         todayApi.summary().catch(() => null),
         paperApi.recommended(10).catch(() => null),
       ]);
@@ -337,38 +338,42 @@ export default function Dashboard() {
             )}
           </SectionCard>
 
-          {/* 最近活动 */}
-          <SectionCard title="最近活动" icon={<Activity className="text-primary h-4 w-4" />}>
+          {/* 最近活动（Go 权威任务） */}
+          <SectionCard title="最近任务" icon={<Activity className="text-primary h-4 w-4" />}>
             {runs.length > 0 ? (
               <div className="space-y-2">
-                {runs.map((run, index) => (
+                {runs.map((run) => (
                   <div
                     key={run.id}
                     className="group bg-page hover:bg-hover flex cursor-pointer items-center gap-3 rounded-xl p-3 transition-all"
-                    onClick={() => navigate("/pipelines")}
+                    onClick={() => navigate("/jobs")}
                   >
                     <span className="text-ink-tertiary bg-border-light flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium">
-                      {index + 1}
+                      <Activity className="h-3 w-3" />
                     </span>
-                    <RunStatusDot status={run.status} />
                     <div className="min-w-0 flex-1">
                       <div className="mb-0.5 flex items-center gap-2">
                         <p className="text-ink truncate text-sm font-medium">
-                          {PIPELINE_LABELS[run.pipeline_name] || run.pipeline_name}
+                          {run.kind}
                         </p>
-                        {run.elapsed_ms != null && (
-                          <span className="text-ink-tertiary shrink-0 text-[10px]">
-                            {formatDuration(run.elapsed_ms)}
-                          </span>
-                        )}
+                        <span className="text-ink-tertiary shrink-0 text-[10px]">
+                          {run.authority === "go_core" ? "Go" : "Py"}
+                        </span>
                       </div>
                       <div className="text-ink-tertiary flex items-center gap-2 text-[10px]">
-                        <span>{timeAgo(run.created_at)}</span>
-                        {run.error_message && (
-                          <span className="text-error truncate">{run.error_message}</span>
-                        )}
+                        <span>{timeAgo(run.created_at ?? "")}</span>
                       </div>
                     </div>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                        run.status === "succeeded" && "bg-success-light text-success",
+                        run.status === "failed" && "bg-error-light text-error",
+                        run.status !== "succeeded" && run.status !== "failed" && "bg-hover text-ink-tertiary",
+                      )}
+                    >
+                      {run.status}
+                    </span>
                   </div>
                 ))}
               </div>

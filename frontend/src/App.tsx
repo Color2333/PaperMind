@@ -22,9 +22,6 @@ const PaperDetail = lazy(() => import("@/pages/PaperDetail"));
 const GraphExplorer = lazy(() => import("@/pages/GraphExplorer"));
 const Wiki = lazy(() => import("@/pages/Wiki"));
 const DailyBrief = lazy(() => import("@/pages/DailyBrief"));
-const Pipelines = lazy(() => import("@/pages/Pipelines"));
-const Operations = lazy(() => import("@/pages/Operations"));
-const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
 const ResearchState = lazy(() => import("@/pages/ResearchState"));
@@ -115,9 +112,6 @@ export default function App() {
           <Route path="/graph" element={<Suspense fallback={<PageFallback />}><GraphExplorer /></Suspense>} />
           <Route path="/wiki" element={<Suspense fallback={<PageFallback />}><Wiki /></Suspense>} />
           <Route path="/brief" element={<Suspense fallback={<PageFallback />}><DailyBrief /></Suspense>} />
-          <Route path="/pipelines" element={<Suspense fallback={<PageFallback />}><Pipelines /></Suspense>} />
-          <Route path="/operations" element={<Suspense fallback={<PageFallback />}><Operations /></Suspense>} />
-          <Route path="/email-settings" element={<Suspense fallback={<PageFallback />}><EmailSettings /></Suspense>} />
           <Route path="/writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
           <Route path="/statistics" element={<Suspense fallback={<PageFallback />}><Statistics /></Suspense>} />
           <Route path="/research" element={<Suspense fallback={<PageFallback />}><ResearchState /></Suspense>} />
