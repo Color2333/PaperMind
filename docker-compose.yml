@@ -76,6 +76,10 @@ services:
       - DURABLE_STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
       # Go authority（manifest 路由）：A 档 capability 提交 Go 权威，其余留 Python
       - PAPERMIND_CORE_URL=http://core:8081
+      # 管线 LLM 统一走 Pi 网关（pm gateway——OpenAI 兼容面，pi-ai 底座）：
+      # 需要 backend/worker 镜像内安装 PaperMind-Terminal 的 pm（未装则自动回退直连）
+      - PAPERMIND_LLM_GATEWAY=1
+      - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
       - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
     restart: unless-stopped
     depends_on:
