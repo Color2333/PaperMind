@@ -12,6 +12,8 @@ import type {
 type Toast = (type: ToastType, message: string) => void;
 
 interface UsePaperCoreParams {
+  /** 用户→agent 跟随：论文加载完成后上报工作区 */
+  onPaperView?: (id: string, title: string | null) => void;
   id: string | undefined;
   toast: Toast;
   paper: Paper | null;
@@ -36,6 +38,7 @@ interface UsePaperCoreParams {
 }
 
 export function usePaperCore({
+  onPaperView,
   id,
   toast,
   paper,
@@ -60,6 +63,8 @@ export function usePaperCore({
     ])
       .then(([p, figRes, tagRes]) => {
         setPaper(p);
+        // 用户→agent 跟随：主区正在浏览的论文上报工作区（对话 chip + agent 感知）
+        onPaperView?.(id, p.title ?? null);
         setEmbedDone(p.has_embedding ?? false);
         if (p.skim_report) setSavedSkim(p.skim_report);
         if (p.deep_report) setSavedDeep(p.deep_report);

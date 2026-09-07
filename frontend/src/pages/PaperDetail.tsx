@@ -4,6 +4,7 @@
  */
 import { useState, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { Card, CardHeader, Button, Badge, Empty } from "@/components/ui";
 import { Tabs } from "@/components/ui/Tabs";
 import { PaperDetailSkeleton } from "@/components/Skeleton";
@@ -73,6 +74,7 @@ import {
 
 export default function PaperDetail() {
   const { id } = useParams<{ id: string }>();
+  const { openPaper } = useWorkspace();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -149,6 +151,7 @@ export default function PaperDetail() {
     handleToggleFavorite,
     handleToggleRejected,
   } = usePaperCore({
+    onPaperView: (pid: string, title: string | null) => openPaper(pid, title, "user"),
     id,
     toast,
     paper,
