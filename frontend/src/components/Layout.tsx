@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
+import ChatPane from "./ChatPane";
+import TaskRail from "./TaskRail";
 import { ConversationProvider } from "@/contexts/ConversationContext";
 import { AgentSessionProvider } from "@/contexts/AgentSessionContext";
 import { GlobalTaskProvider } from "@/contexts/GlobalTaskContext";
@@ -7,27 +10,37 @@ import GlobalTaskBar from "./GlobalTaskBar";
 
 export default function Layout() {
   const { pathname } = useLocation();
-  const isFullscreen = pathname === "/";
+  // 知识工作台（选项 A）：[侧栏][对话窄栏][知识工作区][任务右栏]
+  const [chatOpen, setChatOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(true);
+  const isDevice = pathname === "/device";
+  if (isDevice) {
+    return (
+      <ConversationProvider>
+        <AgentSessionProvider>
+          <GlobalTaskProvider>
+            <div className="min-h-screen bg-page">
+              <Outlet />
+            </div>
+          </GlobalTaskProvider>
+        </AgentSessionProvider>
+      </ConversationProvider>
+    );
+  }
 
   return (
     <ConversationProvider>
       <AgentSessionProvider>
         <GlobalTaskProvider>
-          <div className="min-h-screen bg-page">
+          <div className="bg-page flex h-screen overflow-hidden">
             <Sidebar />
-            {isFullscreen ? (
-              <main className="flex h-screen flex-col lg:ml-[240px]">
-                <Outlet />
-              </main>
-            ) : (
-              <main className="min-h-screen pt-14 lg:ml-[240px] lg:pt-0">
-                <div className="mx-auto max-w-6xl px-4 py-6 lg:px-8 lg:py-8">
-                  <Outlet />
-                </div>
-              </main>
-            )}
-            <GlobalTaskBar />
+            {chatOpen && <ChatPane onCollapse={() => setChatOpen(false)} />}
+            <main className="min-w-0 flex-1 overflow-y-auto">
+              <Outlet />
+            </main>
+            {railOpen && <TaskRail onClose={() => setRailOpen(false)} />}
           </div>
+          <GlobalTaskBar />
         </GlobalTaskProvider>
       </AgentSessionProvider>
     </ConversationProvider>

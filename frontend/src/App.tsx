@@ -12,7 +12,6 @@ import ToastContainer from "@/components/Toast";
 import { Loader2, FileQuestion } from "lucide-react";
 
 /* Agent 作为首页，不做懒加载，保证首屏速度 */
-import AgentPage from "@/pages/Agent";
 
 /* 其余页面全部懒加载，按需拆 chunk */
 const Collect = lazy(() => import("@/pages/Collect"));
@@ -104,7 +103,7 @@ export default function App() {
         {/* 设备码授权页：独立布局（pm login 打开的 verification_url） */}
         <Route path="/device" element={<Suspense fallback={<PageFallback />}><DeviceAuthorize /></Suspense>} />
         <Route element={<Layout />}>
-          <Route path="/" element={<AgentPage />} />
+          <Route index element={<Navigate to="/papers" replace />} />
           <Route path="/collect" element={<Suspense fallback={<PageFallback />}><Collect /></Suspense>} />
           <Route path="/dashboard" element={<Suspense fallback={<PageFallback />}><Dashboard /></Suspense>} />
           <Route path="/papers" element={<Suspense fallback={<PageFallback />}><Papers /></Suspense>} />
