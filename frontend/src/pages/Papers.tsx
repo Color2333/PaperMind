@@ -2,6 +2,7 @@
  * Papers - 论文库（分页 + 文件夹/日期分类导航）
  * @author Color2333
  */
+import { PanelLeft } from "lucide-react";
 import { useEffect, useState, useCallback, useMemo, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Badge, Empty, Spinner } from "@/components/ui";
@@ -109,6 +110,8 @@ export default function Papers() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [loading, setLoading] = useState(true);
   const [ingestOpen, setIngestOpen] = useState(false);
+  /* 工作台协议：内部边栏以抽屉承载（默认收起，禁嵌套常驻） */
+  const [folderDrawerOpen, setFolderDrawerOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState("");
@@ -559,9 +562,10 @@ export default function Papers() {
   );
 
   return (
-    <div className="animate-fade-in flex h-full gap-0">
-      {/* ========== 左侧文件夹面板 ========== */}
-      <aside className="border-border bg-page/50 hidden w-60 shrink-0 flex-col border-r lg:flex">
+    <div className="animate-fade-in relative flex h-full gap-0">
+      {/* ========== 文件夹面板（抽屉——工作台内禁嵌套常驻边栏） ========== */}
+      {folderDrawerOpen && (
+      <aside className="border-border bg-page/50 absolute inset-y-0 left-0 z-20 flex w-60 shrink-0 flex-col border-r shadow-xl lg:relative lg:z-auto lg:shadow-none">
         {/* 标题 */}
         <div className="flex items-center justify-between p-4 pb-2">
           <h2 className="text-ink text-sm font-semibold">文件夹</h2>
@@ -858,12 +862,20 @@ export default function Papers() {
           </Button>
         </div>
       </aside>
+      )}
 
       {/* ========== 右侧论文列表 ========== */}
       <main className="flex flex-1 flex-col overflow-hidden">
         {/* 头部 */}
         <div className="border-border flex items-center justify-between border-b px-5 py-4">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setFolderDrawerOpen((v) => !v)}
+              className="border-border text-ink-secondary hover:bg-hover hover:text-ink rounded-lg border p-1.5 transition-colors"
+              aria-label="文件夹面板"
+            >
+              <PanelLeft className="h-4 w-4" />
+            </button>
             <h1 className="text-ink text-lg font-bold">{activeFolderName}</h1>
             <span className="bg-page text-ink-secondary rounded-full px-2.5 py-0.5 text-xs font-medium">
               {total} 篇

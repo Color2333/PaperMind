@@ -24,7 +24,7 @@ export default function Layout() {
   const { pathname } = useLocation();
   // 知识工作台（选项 A）：[侧栏][对话窄栏][知识工作区][任务右栏]
   const [chatOpen, setChatOpen] = useState(true);
-  const [railOpen, setRailOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(false); // 默认收起（VS Code 协议：面板按需展开）
   const isDevice = pathname === "/device";
   if (isDevice) {
     return (

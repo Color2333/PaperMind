@@ -78,7 +78,7 @@ export default function ChatPane({ onCollapse }: { onCollapse: () => void }) {
         )}
       </div>
       {/* 主体：Agent 对话（自包含组件，受全局上下文驱动） */}
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 [&_.mx-auto]:max-w-none [&_.mx-auto]:px-3">
         <AgentPage />
       </div>
     </aside>
