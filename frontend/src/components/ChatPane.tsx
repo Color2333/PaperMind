@@ -10,12 +10,16 @@ import { useConversationCtx } from "@/contexts/ConversationContext";
 import AgentPage from "@/pages/Agent";
 
 export default function ChatPane({ onCollapse }: { onCollapse: () => void }) {
+  const [wide, setWide] = useState(false);
   const { metas, activeId, createConversation, switchConversation, deleteConversation } =
     useConversationCtx();
   const [listOpen, setListOpen] = useState(false);
 
   return (
-    <aside className="border-border bg-surface flex h-full w-[400px] shrink-0 flex-col border-r">
+    <aside className={cn(
+      "border-border bg-surface flex h-full shrink-0 flex-col border-r transition-[width] duration-150",
+      wide ? "w-[560px]" : "w-[400px]",
+    )}>
       {/* 头部：会话管理 */}
       <div className="border-border relative flex items-center gap-1.5 border-b px-2.5 py-2">
         <MessageSquare className="text-primary h-3.5 w-3.5" />
@@ -34,6 +38,13 @@ export default function ChatPane({ onCollapse }: { onCollapse: () => void }) {
             className="text-ink-secondary hover:bg-hover hover:text-ink rounded p-1.5"
           >
             <Plus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            aria-label={wide ? "缩窄对话栏" : "加宽对话栏"}
+            onClick={() => setWide((v) => !v)}
+            className="text-ink-secondary hover:bg-hover hover:text-ink rounded p-1.5"
+          >
+            <ChevronDown className={cn("h-3.5 w-3.5", wide ? "-rotate-90" : "rotate-90")} />
           </button>
           <button
             aria-label="收起对话"

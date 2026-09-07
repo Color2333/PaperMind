@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
+import { Activity } from "lucide-react";
 import Sidebar from "./Sidebar";
 import ChatPane from "./ChatPane";
 import TaskRail from "./TaskRail";
@@ -51,7 +52,17 @@ export default function Layout() {
             <main className="min-w-0 flex-1 overflow-y-auto">
               <CenterPane />
             </main>
-            {railOpen && <TaskRail onClose={() => setRailOpen(false)} />}
+            {railOpen ? (
+              <TaskRail onClose={() => setRailOpen(false)} />
+            ) : (
+              <button
+                onClick={() => setRailOpen(true)}
+                aria-label="展开任务流"
+                className="border-border bg-surface text-ink-secondary hover:text-ink hidden h-full w-9 shrink-0 items-center justify-center border-l xl:flex"
+              >
+                <Activity className="h-4 w-4" />
+              </button>
+            )}
           </div>
           <GlobalTaskBar />
         </GlobalTaskProvider>

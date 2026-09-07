@@ -27,6 +27,7 @@ import {
   X,
   BarChart3,
   ListTodo,
+  PanelLeft,
   PenTool,
   Loader2,
   LogOut,
@@ -83,6 +84,7 @@ function useDarkMode() {
 export default function Sidebar() {
   const [dark, toggleDark] = useDarkMode();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const navigate = useNavigate();
@@ -157,7 +159,8 @@ export default function Sidebar() {
       )}
 
       <aside className={cn(
-        "border-border bg-sidebar relative flex h-screen w-[240px] shrink-0 flex-col border-r",
+        "border-border bg-sidebar relative flex h-screen shrink-0 flex-col border-r",
+        collapsed ? "w-[60px]" : "w-[240px]",
         mobileOpen && "fixed left-0 top-0 z-50 h-screen translate-x-0"
       )}>
         {/* 移动端关闭按钮 */}
@@ -181,7 +184,7 @@ export default function Sidebar() {
             className="flex w-full items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-sm font-medium text-ink transition-all hover:bg-hover hover:shadow-sm"
           >
             <Plus className="h-4 w-4" />
-            新对话
+            {!collapsed && "新对话"}
           </button>
         </div>
 
@@ -205,11 +208,21 @@ export default function Sidebar() {
           </div>
         )}
 
+        <div className="border-border flex items-center justify-end border-b px-2 pb-1.5">
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
+            className="text-ink-secondary hover:bg-hover hover:text-ink rounded p-1.5"
+          >
+            <PanelLeft className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
         {/* 工具网格——研究主线分组 */}
         <div className="border-b border-border px-3 pb-3">
           {TOOL_GROUPS.map((group) => (
             <div key={group.label} className="mb-2.5 last:mb-0">
-              <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
+              <p className={cn("mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary", collapsed && "hidden")}>
                 {group.label}
               </p>
               <div className="grid grid-cols-3 gap-1.5">
@@ -227,7 +240,7 @@ export default function Sidebar() {
                     }
                   >
                     <tool.icon className="h-[18px] w-[18px]" />
-                    <span className="text-[10px] leading-tight">{tool.label}</span>
+                    {!collapsed && <span className="text-[10px] leading-tight">{tool.label}</span>}
                   </NavLink>
                 ))}
               </div>
