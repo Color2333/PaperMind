@@ -307,6 +307,11 @@ class LLMClient:
         model_override: str | None = None,
         max_tokens: int | None = None,
     ) -> LLMResult:
+        # Pi 网关前置（第四轮审计补漏）：覆盖全部 provider（含 anthropic）——
+        # 文本补全统一走 Pi，不再按 provider 分支直连
+        gw = _gateway_base_url_if_enabled()
+        if gw:
+            return self._call_pi_gateway(gw, prompt, stage, max_tokens=max_tokens)
         cfg = self._config()
         if cfg.provider in ("openai", "zhipu", "xiaomi") and cfg.api_key:
             return self._call_openai_compatible(
@@ -392,6 +397,42 @@ class LLMClient:
         max_tokens: int = 1024,
     ) -> LLMResult:
         """发送图片 + 文本给 Vision 模型（GLM-4.6V 等）"""
+        # Pi 网关优先（审计补漏）：视觉调用统一走网关（网关映射 image_url →
+        # pi-ai image content；model=vision 语义映射）
+        gw = _gateway_base_url_if_enabled()
+        if gw:
+            client = _get_openai_client(_GATEWAY_API_KEY, gw)
+            response = client.chat.completions.create(
+                model="vision",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content or ""
+            usage = response.usage
+            in_cost, out_cost = self._estimate_cost(
+                model="pi-gateway/vision",
+                input_tokens=usage.prompt_tokens if usage else None,
+                output_tokens=usage.completion_tokens if usage else None,
+            )
+            return LLMResult(
+                content=content,
+                input_tokens=usage.prompt_tokens if usage else None,
+                output_tokens=usage.completion_tokens if usage else None,
+                input_cost_usd=in_cost,
+                output_cost_usd=out_cost,
+                total_cost_usd=in_cost + out_cost,
+            )
         cfg = self._config()
         model = cfg.model_vision or cfg.model_deep
         if cfg.provider in ("openai", "zhipu", "xiaomi") and cfg.api_key:
@@ -832,6 +873,20 @@ class LLMClient:
             return self._pseudo_or_raise(prompt, stage, cfg, model_override)
 
     # ---------- Pseudo（无 API Key 回退）----------
+
+    def _pseudo_or_raise(
+        self, prompt: str, stage: str, cfg: LLMConfig, model_override: str | None = None
+    ) -> LLMResult:
+        """LLM 失败/未配置的降级：仅 demo 模式允许伪结果——生产必须显式失败
+        （伪结果伪装成功会污染领域数据，真机 E2E 实证）。"""
+        from packages.config import get_settings
+
+        if get_settings().demo_mode:
+            return self._pseudo_summary(prompt, stage, cfg, model_override)
+        raise RuntimeError(
+            f"LLM 调用失败（stage={stage}, provider={cfg.provider}）：无可用结果——"
+            "检查 API Key/网络；任务按失败处理"
+        )
 
     def _pseudo_summary(
         self,
