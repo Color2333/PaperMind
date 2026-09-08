@@ -18,7 +18,6 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -124,38 +123,55 @@ def batch_process_unread(
     cancel_check: Callable[[], bool] | None = None,
     **_: Any,
 ) -> dict:
-    """批量处理未读论文（embed + skim，受控并发）"""
-    from packages.ai.daily_runner import PAPER_CONCURRENCY, _process_paper
+    """批量处理未读论文（去重第二刀：改提交任务链）。
+
+    原内联线程池直调 embed/skim/deep_dive（直写领域 + 自建并发/配额）——与
+    A 档任务链双轨。现改为：未读论文逐篇提交 embed_paper + skim_paper 任务；
+    粗读分数达阈值的精读决策由 skim proposal apply 后的 score 判定承接
+    （任务完成后经任务链提交 deep_read_paper，配额由队列优先级承载）。
+    失败不抛（提交失败计数），不阻断批次。
+
+    Returns:
+        {submitted, skipped}——处理进度经 JobMonitor 任务图观测。
+    """
+    from packages.application.commands.jobs import submit_job
     from packages.domain.enums import ReadStatus
     from packages.storage.db import session_scope
     from packages.storage.repositories import PaperRepository
 
+    submitted = 0
+    skipped = 0
     with session_scope() as session:
-        repo = PaperRepository(session)
-        unread = repo.list_by_read_status(ReadStatus.unread, limit=max_papers)
-        target_ids = [
-            p.id for p in unread if p.embedding is None or p.read_status == ReadStatus.unread
-        ]
+        unread = PaperRepository(session).list_by_read_status(ReadStatus.unread, limit=max_papers)
+        paper_ids = [str(p.id) for p in unread]
 
-    total = len(target_ids)
-    if total == 0:
-        return {"processed": 0, "failed": 0, "total": 0, "message": "没有需要处理的未读论文"}
+    for i_, pid in enumerate(paper_ids, 1):
+        if cancel_check and cancel_check():
+            break
+        if progress:
+            with suppress(Exception):
+                progress(f"提交处理任务 {i_}/{len(paper_ids)}", i_, len(paper_ids))
+        try:
+            submit_job(
+                kind="CoreTask",
+                capability="embed_paper",
+                title=f"批量嵌入 {pid[:8]}",
+                input_ref={"paper_id": pid},
+                created_by="batch_unread",
+            )
+            submit_job(
+                kind="CoreTask",
+                capability="skim_paper",
+                title=f"批量粗读 {pid[:8]}",
+                input_ref={"paper_id": pid},
+                created_by="batch_unread",
+            )
+            submitted += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("batch submit %s failed: %s", pid[:8], exc)
+            skipped += 1
 
-    processed = failed = 0
-    with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
-        futures = {pool.submit(_process_paper, pid): pid for pid in target_ids}
-        for fut in as_completed(futures):
-            _checked(cancel_check)
-            try:
-                fut.result()
-                processed += 1
-            except Exception as exc:
-                failed += 1
-                logger.warning("batch process %s failed: %s", str(futures[fut])[:8], exc)
-            if progress:
-                progress(f"正在处理... ({processed + failed}/{total})", processed + failed, total)
-
-    return {"processed": processed, "failed": failed, "total": total}
+    return {"submitted": submitted, "skipped": skipped}
 
 
 def skim_papers_batch(
