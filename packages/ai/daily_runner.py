@@ -34,6 +34,18 @@ logger = logging.getLogger(__name__)
 PAPER_CONCURRENCY = 3
 
 
+def _proposal_apply(proposal_result: dict) -> dict:
+    """proposal 纯计算结果的领域应用（Python authority 同源路径）"""
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.db import session_scope
+
+    proposal = (proposal_result or {}).get("proposal") or {}
+    if not proposal:
+        return {}
+    with session_scope() as session:
+        return apply_proposal(session, proposal) or {}
+
+
 def _process_paper(paper_id, force_deep: bool = False, deep_read_quota: int | None = None) -> dict:
     """
     单篇论文：embed ∥ skim 并行，智能精读
@@ -57,10 +69,13 @@ def _process_paper(paper_id, force_deep: bool = False, deep_read_quota: int | No
         "error": None,
     }
 
+    # 去重第四刀：proposal 纯计算 + domain_apply（与任务链同一实现——
+    # 消除"旧直写全路径 vs 任务链"双轨；同步语义保留：简报构建需要分数）
+
     skim_result = None
     with ThreadPoolExecutor(max_workers=2) as inner:
-        fe = inner.submit(pipelines.embed_paper, paper_id)
-        fs = inner.submit(pipelines.skim, paper_id)
+        fe = inner.submit(lambda: _proposal_apply(pipelines.embed_paper_proposal(paper_id)))
+        fs = inner.submit(lambda: _proposal_apply(pipelines.skim_proposal(paper_id)))
         for fut in as_completed([fe, fs]):
             try:
                 r = fut.result()
@@ -77,8 +92,8 @@ def _process_paper(paper_id, force_deep: bool = False, deep_read_quota: int | No
                 result["error"] = f"{label}: {exc}"
 
     # 检查粗读结果
-    if skim_result and skim_result.relevance_score is not None:
-        result["skim_score"] = skim_result.relevance_score
+    if skim_result and skim_result.get("relevance_score") is not None:
+        result["skim_score"] = skim_result["relevance_score"]
         result["success"] = True
 
     # 判断是否精读
@@ -101,7 +116,7 @@ def _process_paper(paper_id, force_deep: bool = False, deep_read_quota: int | No
         try:
             # 获取 API 许可
             if acquire_api("llm", timeout=30.0):
-                pipelines.deep_dive(UUID(paper_id))
+                _proposal_apply(pipelines.deep_dive_proposal(UUID(paper_id)))
                 result["deep_read"] = True
                 logger.info("🎯 %s 精读完成 - %s", str(paper_id)[:8], deep_reason)
             else:
