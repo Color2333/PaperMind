@@ -181,48 +181,33 @@ def skim_papers_batch(
     cancel_check: Callable[[], bool] | None = None,
     **_: Any,
 ) -> dict:
-    """对选定论文批量粗读（前端批量按钮的单一任务化入口）"""
-    from sqlalchemy import select as _select
+    """批量粗读（去重第五刀：改提交 skim_paper 任务链，原内联直写退役）。
 
-    from packages.ai.pipelines import PaperPipelines
-    from packages.storage.db import session_scope as _scope
-    from packages.storage.models import AnalysisReport
+    逐篇提交 skim_paper 任务（manifest A 档，Go 权威调度 + 单事务 apply）；
+    单篇提交失败不阻断批次。
+    """
+    from packages.application.commands.jobs import submit_job
 
-    # P0-1 幂等卫兵（batch 版）：已有 skim 产物的论文跳过——不重复 LLM 成本
-    with _scope() as session:
-        already = {
-            str(r)
-            for r in session.execute(
-                _select(AnalysisReport.paper_id).where(
-                    AnalysisReport.paper_id.in_([str(p) for p in paper_ids])
-                )
-            )
-            .scalars()
-            .all()
-        }
-
-    pipelines = PaperPipelines()
-    total = len(paper_ids)
-    ok, failed, skipped = 0, 0, 0
-    for i, pid in enumerate(paper_ids, 1):
-        _checked(cancel_check)
-        if str(pid) in already:
-            skipped += 1
-            if progress:
-                progress(f"跳过已粗读 {i}/{total}", i, total)
-            continue
+    ok, failed = 0, 0
+    for i_, pid in enumerate(paper_ids, 1):
+        if cancel_check and cancel_check():
+            break
         if progress:
-            progress(f"粗读中 {i}/{total}", i, total)
+            with suppress(Exception):
+                progress(f"提交粗读 {i_}/{len(paper_ids)}", i_, len(paper_ids))
         try:
-            pipelines.skim(pid)
+            submit_job(
+                kind="CoreTask",
+                capability="skim_paper",
+                title=f"批量粗读 {str(pid)[:8]}",
+                input_ref={"paper_id": str(pid)},
+                created_by="skim_batch",
+            )
             ok += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             failed += 1
-            logger.warning("batch skim %s failed: %s", str(pid)[:8], exc)
-    return {"skimmed": ok, "failed": failed, "skipped": skipped, "total": total}
-
-
-# ---------- 抓取/入库 ----------
+            logger.warning("batch skim submit %s failed: %s", str(pid)[:8], exc)
+    return {"skimmed": ok, "failed": failed, "skipped": 0, "total": len(paper_ids)}
 
 
 def topic_dispatch(*, progress: ProgressFn = None, **_: Any) -> dict:
