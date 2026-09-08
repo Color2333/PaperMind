@@ -64,3 +64,12 @@ def db_session(isolated_db):
     finally:
         session.rollback()
         session.close()
+
+
+@pytest.fixture(autouse=True)
+def _demo_llm_gate(monkeypatch):
+    """测试内伪 LLM 降级显式允许（gate 生产抛错——测试需确定性）"""
+    from packages.config import get_settings
+
+    monkeypatch.setattr(type(get_settings()), "demo_mode", True, raising=False)
+    yield

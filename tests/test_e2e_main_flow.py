@@ -50,9 +50,9 @@ from packages.storage.db import Base, session_scope
 from packages.storage.models import (
     AnalysisReport,
     Claim,
+    CollectionAction,
     Evidence,
     Paper,
-    PipelineRun,
     PromptTrace,
 )
 from packages.storage.repositories import ResearchEventRepository, SourceVersionRepository
@@ -277,10 +277,18 @@ def _wait_task(client: TestClient, task_id: str, timeout: float = 60.0) -> dict:
 def _ingest_two_papers(client: TestClient) -> list[dict]:
     resp = client.post("/ingest/arxiv", params={"query": "speaker diarization", "max_results": 2})
     assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["ingested"] == 2
-    assert len(data["papers"]) == 2
-    return data["papers"]
+    task_id = resp.json()["task_id"]
+    _wait_task(client, task_id)
+    data = client.get(f"/tasks/{task_id}/result").json()
+    assert data["total"] == 2
+    # 任务结果携带 inserted_ids（paper uuid）；arxiv_id 从库读（mock 源固定）
+    with session_scope() as session:
+        rows = (
+            session.execute(select(Paper).where(Paper.arxiv_id.in_(["2608.10001", "2608.10002"])))
+            .scalars()
+            .all()
+        )
+        return [{"id": r.id, "arxiv_id": r.arxiv_id, "title": r.title} for r in rows]
 
 
 # ---------- 测试 ----------
@@ -296,14 +304,14 @@ def test_ingest_arxiv_creates_papers_records_and_dedupes(e2e_env):
         rows = list(session.execute(select(Paper)).scalars())
         assert len(rows) == 2
         assert all(p.read_status == ReadStatus.unread for p in rows)
-        # 入库行动记录与 pipeline_runs 均已落库
-        runs = list(
+        # 入库行动记录已落库（pipeline_runs 观测双轨随 A 档退役——
+        # 执行观测唯一权威是 durable task / Go 任务图）
+        actions = list(
             session.execute(
-                select(PipelineRun).where(PipelineRun.pipeline_name == "ingest_arxiv")
+                select(CollectionAction).where(CollectionAction.query == "speaker diarization")
             ).scalars()
         )
-        assert len(runs) == 1
-        assert runs[0].error_message is None
+        assert len(actions) == 1
         # D2：入库同事务建 v1 SourceVersion + SourceAdded 事件
         for row in rows:
             versions = SourceVersionRepository(session).list_for_paper(row.id)
@@ -313,10 +321,13 @@ def test_ingest_arxiv_creates_papers_records_and_dedupes(e2e_env):
             )
             assert [e.type for e in added].count(EventType.source_added) == 1
 
-    # 同批再导一次：upsert 去重，不产生新论文
+    # 同批再导一次：upsert 去重，不产生新论文（任务语义：提交 → 驱动 → 验库）
     resp = client.post("/ingest/arxiv", params={"query": "speaker diarization", "max_results": 2})
     assert resp.status_code == 200
-    assert resp.json()["ingested"] == 0
+    dedupe_task = resp.json()["task_id"]
+    _wait_task(client, dedupe_task)
+    dedupe_data = client.get(f"/tasks/{dedupe_task}/result").json()
+    assert dedupe_data["total"] == 0  # handler 预过滤已存在论文 → 空 proposal 为合法 no-op
     with session_scope() as session:
         rows = list(session.execute(select(Paper)).scalars())
         assert len(rows) == 2
@@ -623,8 +634,11 @@ def test_b7_query_endpoints(e2e_env):
     assert client.get("/actions/no-such-action").status_code == 404
 
     # pipelines runs + tasks（过渡观测）
+    # 观测双轨已退役：/pipelines/runs 保持 200 空列表；权威观测是 /jobs
     runs = client.get("/pipelines/runs")
-    assert runs.status_code == 200 and runs.json()["items"]
+    assert runs.status_code == 200
+    jobs = client.get("/jobs")
+    assert jobs.status_code == 200 and jobs.json()["items"]
     active = client.get("/tasks/active")
     assert active.status_code == 200 and "tasks" in active.json()
 

@@ -169,27 +169,33 @@ def ingest_arxiv(
         description="只检索最近 N 天提交的论文，默认 0 = 不限日期（历史关键词搜索）；订阅可传 7/30",
     ),
 ) -> dict:
-    from packages.application.commands.ingest import (
-        describe_ingested_papers,
-        import_from_arxiv_query,
-    )
+    from packages.application.commands.jobs import submit_job
 
     logger.info(
-        "ArXiv ingest: query=%r max_results=%d sort=%s days_back=%d",
+        "ArXiv ingest(task): query=%r max_results=%d sort=%s days_back=%d",
         query,
         max_results,
         sort_by,
         days_back,
     )
-    count, inserted_ids, _ = import_from_arxiv_query(
-        query=query,
-        max_results=max_results,
-        topic_id=topic_id,
-        sort_by=sort_by,
-        days_back=days_back,
+    # 去重第三刀：同步直调 → 提交 ingest_arxiv_query 任务（manifest A 档，
+    # Go 权威调度 + 单事务 apply）；前端经 /tasks/{id}/result 轮询结果
+    submitted = submit_job(
+        kind="ArxivIngest",
+        capability="ingest_arxiv_query",
+        title=f"ArXiv 摄入: {query[:60]}",
+        input_ref={
+            "query": query,
+            "max_results": max_results,
+            "topic_id": topic_id,
+            "sort_by": sort_by,
+            "days_back": days_back,
+        },
+        idempotency_key=None,
+        timeout_s=900,
+        created_by="api",
     )
-    papers_info = describe_ingested_papers(inserted_ids) if inserted_ids else []
-    return {"ingested": count, "papers": papers_info}
+    return {"task_id": submitted["task_id"], "job_id": submitted["job_id"]}
 
 
 @router.post("/ingest/references")

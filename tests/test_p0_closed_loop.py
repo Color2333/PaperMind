@@ -145,6 +145,8 @@ class Harness:
         ]
         if delay_s:
             cmd += ["--handler-delay-s", str(delay_s)]
+        # 伪 LLM：闭环测试无真实 key——gate 生产抛错，测试用确定性 fake
+        cmd += ["--fake-llm"]
         self._spawn(f"executor-{executor_id}", cmd)
 
     def kill(self, name: str) -> None:

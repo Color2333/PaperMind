@@ -251,7 +251,8 @@ def apply_ingest_papers_proposal(session: Session, proposal: dict) -> dict:
     query = str(proposal.get("query") or "")
     papers = proposal.get("papers") or []
     if not papers:
-        raise ValueError("ingest proposal 缺少 papers")
+        # 空 = 合法 no-op（重复摄入全部命中已存在）
+        return {"total": 0, "inserted_ids": [], "topic_id": proposal.get("topic_id")}
 
     # topic 解析：显式 topic_id > topic_name 自动创建（不存在时，enabled=False）
     topic_id = proposal.get("topic_id") or None

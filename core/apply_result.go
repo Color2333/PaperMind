@@ -414,9 +414,7 @@ func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken strin
 	}
 	query, _ := proposal["query"].(string)
 	items, _ := proposal["papers"].([]any)
-	if len(items) == 0 {
-		return "", fmt.Errorf("proposal 缺少 papers")
-	}
+	// 空 papers = 合法 no-op（重复摄入全部命中已存在）——成功 total=0
 	topicID, _ := proposal["topic_id"].(string)
 	topicName, _ := proposal["topic_name"].(string)
 	actionType, _ := proposal["action_type"].(string)
