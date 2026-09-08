@@ -15,9 +15,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _RETRY_CODES = {429, 500, 502, 503}
-_MAX_RETRIES = 8
-_BASE_DELAY = 3.0
-_MAX_DELAY = 30.0
+_MAX_RETRIES = 3
+_BASE_DELAY = 1.5
+_MAX_DELAY = 8.0
 
 
 @dataclass

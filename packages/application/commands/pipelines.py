@@ -18,22 +18,53 @@ if TYPE_CHECKING:
 
 
 def run_skim(paper_id) -> SkimReport:
-    """同步执行粗读；失败抛异常（协议层决定如何呈现）"""
+    """同步执行粗读（去重：proposal 计算 + domain_apply，与任务链同源）；
+    失败抛异常（协议层决定如何呈现）"""
     from packages.ai.pipelines import PaperPipelines
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.db import session_scope
 
-    return PaperPipelines().skim(paper_id)
+    proposal_result = PaperPipelines().skim_proposal(_to_uuid(paper_id))
+    proposal = (proposal_result or {}).get("proposal") or {}
+    with session_scope() as session:
+        apply_proposal(session, proposal)
+    return _skim_report_of(proposal)
 
 
 def run_deep_read(paper_id) -> DeepDiveReport:
     from packages.ai.pipelines import PaperPipelines
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.db import session_scope
 
-    return PaperPipelines().deep_dive(paper_id)
+    proposal_result = PaperPipelines().deep_dive_proposal(_to_uuid(paper_id))
+    proposal = (proposal_result or {}).get("proposal") or {}
+    with session_scope() as session:
+        apply_proposal(session, proposal)
+    from packages.domain.schemas import DeepDiveReport
+
+    return DeepDiveReport.model_validate(proposal.get("deep") or {})
 
 
 def run_embed(paper_id) -> None:
     from packages.ai.pipelines import PaperPipelines
+    from packages.application.commands.domain_apply import apply_proposal
+    from packages.storage.db import session_scope
 
-    PaperPipelines().embed_paper(paper_id)
+    proposal_result = PaperPipelines().embed_paper_proposal(_to_uuid(paper_id))
+    with session_scope() as session:
+        apply_proposal(session, (proposal_result or {}).get("proposal") or {})
+
+
+def _to_uuid(paper_id):
+    from uuid import UUID
+
+    return paper_id if isinstance(paper_id, UUID) else UUID(str(paper_id))
+
+
+def _skim_report_of(proposal: dict) -> SkimReport:
+    from packages.domain.schemas import SkimReport
+
+    return SkimReport.model_validate(proposal.get("skim") or {})
 
 
 # ---------- Start* 任务命令（C3 退出门：只写 durable Job/Task，Executor 执行）----------
