@@ -516,16 +516,17 @@ def _ingest_from_arxiv(pipelines, topic, session) -> dict:
 
 def _ingest_from_ieee(pipelines, topic, session) -> dict:
     """
-    IEEE 渠道抓取 - 独立配额控制
+    IEEE 渠道抓取 - 独立配额控制（任务化：提交 ingest_ieee 任务，不直写）
 
     Args:
-        pipelines: PaperPipelines 实例
+        pipelines: PaperPipelines 实例（保留签名兼容，任务化后不再使用）
         topic: TopicSubscription 对象
         session: SQLAlchemy Session
 
     Returns:
-        dict: 抓取结果统计
+        dict: 提交结果（task_id/job_id）或配额/密钥跳过原因
     """
+    from packages.application.commands.jobs import submit_job
     from packages.config import get_settings
 
     settings = get_settings()
@@ -542,25 +543,28 @@ def _ingest_from_ieee(pipelines, topic, session) -> dict:
         logger.warning("主题 [%s] IEEE API Key 未配置，跳过", topic.name)
         return {"status": "no_api_key", "inserted": 0}
 
-    try:
-        # 使用 IEEE 渠道抓取
-        total, inserted_ids, new_count = pipelines.ingest_ieee(
-            query=topic.query,
-            max_results=min(ieee_quota, topic.max_results_per_run),
-            topic_id=topic.id,
-            action_type=ActionType.auto_collect,
-        )
-
-        return {
-            "status": "ok",
-            "inserted": len(inserted_ids),
-            "new_count": new_count,
-            "quota_used": 1,
-        }
-
-    except Exception as exc:
-        logger.error("IEEE 抓取失败：%s", exc)
-        return {"status": "failed", "error": str(exc), "inserted": 0}
+    # 提交 ingest_ieee 任务（proposal 模式：网络抓取留 handler，领域写在权威面
+    # 单事务 apply）；抓取结果由任务观察面（/tasks/{id}/result）承载
+    submitted = submit_job(
+        kind="IeeeIngest",
+        capability="ingest_ieee",
+        title=f"IEEE 摄入: {topic.query[:60]}",
+        input_ref={
+            "query": topic.query,
+            "max_results": min(ieee_quota, topic.max_results_per_run),
+            "topic_id": str(topic.id),
+            "action_type": "auto_collect",
+        },
+        idempotency_key=None,
+        timeout_s=600,
+        created_by="daily_runner",
+    )
+    return {
+        "status": "submitted",
+        "task_id": submitted["task_id"],
+        "job_id": submitted["job_id"],
+        "inserted": 0,
+    }
 
 
 def _check_and_consume_ieee_quota(session, topic_id: str, date: date) -> bool:

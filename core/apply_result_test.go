@@ -538,6 +538,7 @@ func TestApplyIngestPapersResult(t *testing.T) {
 		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS source TEXT`,
 		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS source_id TEXT`,
 		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS publication_date DATE`,
+		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS doi TEXT`,
 		`CREATE TABLE IF NOT EXISTS topic_subscriptions (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, query TEXT NOT NULL,
 			enabled BOOLEAN NOT NULL DEFAULT true,
@@ -631,6 +632,81 @@ func TestApplyIngestPapersResult(t *testing.T) {
 	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM papers WHERE arxiv_id IN ('2601.00011','2601.00012')`).Scan(&paperCount)
 	if paperCount != 2 {
 		t.Fatalf("重复提交产生重复论文: %d", paperCount)
+	}
+}
+
+// TestApplyIngestPapersResultIEEE：多源（IEEE）——合成键 arxiv_id="ieee:<doc_id>"
+// + doi/source_id 透传；与 PaperRepository.upsert_paper 合成键约定对齐。
+func TestApplyIngestPapersResultIEEE(t *testing.T) {
+	s := newTestStore(t)
+	for _, ddl := range []string{
+		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS source TEXT`,
+		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS source_id TEXT`,
+		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS publication_date DATE`,
+		`ALTER TABLE papers ADD COLUMN IF NOT EXISTS doi TEXT`,
+		`CREATE TABLE IF NOT EXISTS topic_subscriptions (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, query TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT true,
+			created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`,
+		`CREATE TABLE IF NOT EXISTS paper_topics (
+			id TEXT PRIMARY KEY, paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+			topic_id TEXT NOT NULL, UNIQUE(paper_id, topic_id))`,
+		`CREATE TABLE IF NOT EXISTS collection_actions (
+			id TEXT PRIMARY KEY, action_type TEXT NOT NULL, title TEXT NOT NULL, query TEXT,
+			topic_id TEXT, paper_count INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW())`,
+		`CREATE TABLE IF NOT EXISTS action_papers (
+			id TEXT PRIMARY KEY, action_id TEXT NOT NULL REFERENCES collection_actions(id) ON DELETE CASCADE,
+			paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE, UNIQUE(action_id, paper_id))`,
+	} {
+		if _, err := s.DB.Exec(ddl); err != nil {
+			t.Fatalf("schema: %v", err)
+		}
+	}
+
+	_, taskID, _, err := s.SubmitCoreTask("ingest_ieee", `{"query":"federated learning"}`, "ingest:ieee:1", 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := s.ClaimTask("exec-1", []string{"ingest_ieee"})
+	if err != nil || own == nil {
+		t.Fatalf("claim: %v / %v", own, err)
+	}
+	proposal := map[string]any{
+		"proposal": map[string]any{
+			"kind": "ingest_papers", "query": "federated learning",
+			"topic_id": "", "action_type": "auto_collect",
+			"action_title": "IEEE 收集：federated learning",
+			"papers": []any{
+				map[string]any{
+					"arxiv_id": "ieee:10185093", "title": "FedPaper", "abstract": "a",
+					"source": "ieee", "source_id": "10185093", "doi": "10.1109/x.2024.1",
+					"publication_date": "2024-06-01",
+				},
+			},
+		},
+	}
+	status, err := s.ApplyResult(taskID, "exec-1", own.LeaseToken, proposal)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !strings.Contains(status, "succeeded") {
+		t.Fatalf("status=%s", status)
+	}
+
+	var id, sourceID, doi string
+	if err := s.DB.QueryRow(
+		`SELECT id, source_id, doi FROM papers WHERE arxiv_id='ieee:10185093'`,
+	).Scan(&id, &sourceID, &doi); err != nil {
+		t.Fatalf("IEEE 合成键论文未落库: %v", err)
+	}
+	if sourceID != "10185093" || doi != "10.1109/x.2024.1" {
+		t.Fatalf("source_id=%q doi=%q", sourceID, doi)
+	}
+	// 幂等：同合成键重复 apply 不产生重复行
+	var count int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM papers WHERE arxiv_id='ieee:10185093'`).Scan(&count)
+	if count != 1 {
+		t.Fatalf("重复 apply 产生重复论文: %d", count)
 	}
 }
 

@@ -15,6 +15,7 @@ var GoApplyManifest = map[string]bool{
 	"import_references":          true,
 	"import_selected":            true,
 	"ingest_arxiv_query":         true,
+	"ingest_ieee":                true,
 	"skim_paper":                 true,
 	"sync_citations_incremental": true,
 	"sync_citations_paper":       true,

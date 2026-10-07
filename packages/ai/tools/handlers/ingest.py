@@ -1,10 +1,9 @@
-"""arXiv 搜索与入库（业务在 application/commands/ingest.py；本文件只桥接进度到工具事件）"""
+"""arXiv 搜索与入库（业务在 application/commands；本文件只桥接进度到工具事件）"""
 
 from __future__ import annotations
 
 import logging
-import queue
-from concurrent.futures import ThreadPoolExecutor
+import time
 from typing import TYPE_CHECKING
 
 from packages.ai.tools.types import ToolProgress, ToolResult
@@ -14,11 +13,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# REVIEW P2：有界执行器替代裸 daemon 线程（同批最多 1 个 agent 入库任务，
-# 防止并发放大写库与 PDF 下载）；C3 起由 durable Job 取代。
-_INGEST_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-ingest")
-# 单次 events.get 的等待上限；入库长流程靠 progress 事件持续喂入即不会触发
-EVENT_TIMEOUT_S = 300
+# 任务观察轮询间隔与总等待（import_selected 注册表 timeout_s=3600）
+_POLL_INTERVAL_S = 3.0
+_POLL_DEADLINE_S = 3600.0
 
 
 def _search_arxiv(
@@ -60,12 +57,13 @@ def _ingest_arxiv(
     query: str,
     arxiv_ids: list[str] | None = None,
 ) -> Iterator[ToolProgress | ToolResult]:
-    """将用户选定的论文入库 → 自动分配主题 → 自动向量化 → 自动粗读
+    """将用户选定的论文入库（任务语义：提交 import_selected 任务 + 轮询进度）
 
-    业务在 application/commands/ingest.import_selected_papers（含 tracker 与
-    PDF 后台池）；此处把 progress 回调桥接为 ToolProgress 流。
+    入库领域写在权威面单事务 apply（Go applyIngestPapersResult / Python
+    domain_apply）；本工具只提交任务并桥接 durable 观察面进度——不再直写。
     """
-    from packages.application.commands.ingest import import_selected_papers
+    from packages.application.commands.jobs import submit_job
+    from packages.application.queries.tasks import get_task_info, get_task_result
 
     if not arxiv_ids:
         yield ToolResult(
@@ -74,64 +72,71 @@ def _ingest_arxiv(
         )
         return
 
-    yield ToolProgress(message="正在准备入库...", current=0, total=0)
+    yield ToolProgress(message="正在提交入库任务...", current=0, total=10)
 
-    events: queue.Queue = queue.Queue()
-    # REVIEW P2：有界线程池（见模块头）替代裸 daemon 线程；入库一旦开始会完成到
-    # 幂等终态，客户端断连只是停止进度流，不会造成半写状态。
+    submitted = submit_job(
+        kind="ImportSelected",
+        capability="import_selected",
+        title=f"Agent 收集: {query[:60]}",
+        input_ref={"arxiv_ids": list(arxiv_ids), "query": query},
+        idempotency_key=None,
+        created_by="agent",
+    )
+    task_id = submitted["task_id"]
 
-    def _progress(msg: str, cur: int, tot: int) -> None:
-        events.put(("p", (msg, cur, tot)))
-
-    def _run():
-        try:
-            events.put(
-                (
-                    "done",
-                    import_selected_papers(query=query, arxiv_ids=arxiv_ids, progress=_progress),
+    # 轮询 durable 观察面（与 generate_wiki 同型）
+    last_msg = ""
+    deadline = time.monotonic() + _POLL_DEADLINE_S
+    while time.monotonic() < deadline:
+        time.sleep(_POLL_INTERVAL_S)
+        status = get_task_info(task_id)
+        if not status:
+            break
+        if status.get("finished"):
+            if not status.get("success"):
+                yield ToolResult(
+                    success=False,
+                    summary=f"入库失败: {status.get('error', '未知错误')}",
                 )
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("ingest_arxiv failed: %s", exc)
-            events.put(("error", exc))
-
-    future = _INGEST_POOL.submit(_run)
-
-    while True:
-        try:
-            kind, payload = events.get(timeout=EVENT_TIMEOUT_S)
-        except queue.Empty:
-            if future.done():
-                continue  # 结果恰好入队前超时——下一轮取到
-            # 长时间无进度且未完成：视为执行载体异常，终止等待（任务本身幂等可重入）
-            yield ToolResult(
-                success=False,
-                summary=f"入库超过 {EVENT_TIMEOUT_S}s 无进度，已停止等待（任务仍在后台收敛）",
-            )
-            return
-        if kind == "p":
-            msg, cur, tot = payload
-            yield ToolProgress(message=msg, current=cur, total=tot)
-        elif kind == "done":
-            data = payload
-            if data.get("status") == "failed" or data["total"] == 0:
-                # REVIEW P1-2：完全失败不得报告为成功
-                if data["failed"]:
-                    summary = (
-                        f"入库 0 篇（{len(data['failed'])} 篇失败: "
-                        f"{data['failed'][0].get('error', '')[:80]}）"
-                    )
-                else:
-                    summary = "入库 0 篇：" + data.get("note", "选中的 ID 未从 arXiv 返回")
-                yield ToolResult(success=False, data=data, summary=summary)
                 return
-            summary = (
-                f"入库 {data['total']} 篇 → 主题「{data['topic']}」，"
-                f"向量化 {data['embedded']}，粗读 {data['skimmed']}"
-                + (f"，{len(data['failed'])} 篇失败已跳过" if data["failed"] else "")
-            )
-            yield ToolResult(success=True, data=data, summary=summary)
-            return
-        else:
-            yield ToolResult(success=False, summary=f"入库失败: {payload}")
-            return
+            break
+        msg = status.get("message", "")
+        pct = float(status.get("progress") or 0)
+        if msg and msg != last_msg:
+            yield ToolProgress(message=msg, current=max(1, min(9, int(pct * 10))), total=10)
+            last_msg = msg
+    else:
+        yield ToolResult(
+            success=False,
+            data={"task_id": task_id},
+            summary=f"入库超过 {_POLL_DEADLINE_S:.0f}s 未完成，任务仍在后台收敛（task_id={task_id}）",
+        )
+        return
+
+    data = get_task_result(task_id) or {}
+    total = int(data.get("total") or 0)
+    topic_id = data.get("topic_id")
+    topic_name = ""
+    if topic_id:
+        try:
+            from packages.storage.db import session_scope
+            from packages.storage.repositories import TopicRepository
+
+            with session_scope() as session:
+                topic = TopicRepository(session).get_by_id(str(topic_id))
+                if topic:
+                    topic_name = topic.name
+        except Exception:  # noqa: BLE001
+            logger.warning("topic 名称查询失败: %s", topic_id)
+
+    if total == 0:
+        yield ToolResult(
+            success=False,
+            data={"task_id": task_id, **data},
+            summary="入库 0 篇：选中的 ID 未从 arXiv 返回或已存在于知识库",
+        )
+        return
+
+    summary = f"入库 {total} 篇" + (f" → 主题「{topic_name}」" if topic_name else "")
+    yield ToolProgress(message="入库完成", current=10, total=10)
+    yield ToolResult(success=True, data={"task_id": task_id, **data}, summary=summary)

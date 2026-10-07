@@ -280,6 +280,7 @@ def apply_ingest_papers_proposal(session: Session, proposal: dict) -> dict:
                 metadata=item.get("metadata") or {},
                 source=item.get("source") or "arxiv",
                 source_id=item.get("source_id"),
+                doi=item.get("doi") or None,
             )
         )
         paper_row = session.execute(

@@ -434,7 +434,7 @@ def ingest_ieee_papers(
     topic_id: str | None = Query(default=None, description="可选的主题 ID"),
 ) -> dict:
     """
-    【MVP】IEEE 论文摄取接口
+    【MVP】IEEE 论文摄取接口（任务化）
 
     注意：
     - 需要 IEEE API Key 配置（.env 中设置 IEEE_API_KEY）
@@ -447,7 +447,7 @@ def ingest_ieee_papers(
         topic_id: 可选的主题 ID
 
     Returns:
-        dict: {status, total_fetched, inserted_ids, new_count}
+        dict: {task_id, job_id}——结果经 /tasks/{task_id}/result 轮询
 
     示例:
     ```bash
@@ -456,34 +456,31 @@ def ingest_ieee_papers(
     """
     import logging
 
-    from packages.application.commands.ingest import import_ieee
+    from packages.application.commands.jobs import submit_job
 
     logger = logging.getLogger(__name__)
 
-    try:
-        total, inserted_ids, new_count = import_ieee(
-            query=query, max_results=max_results, topic_id=topic_id
-        )
-
-        return {
-            "status": "success",
-            "total_fetched": total,
-            "inserted_ids": inserted_ids,
-            "new_count": new_count,
-            "message": f"✅ IEEE 摄取完成：{new_count} 篇新论文",
-        }
-
-    except RuntimeError as exc:
-        # IEEE API Key 未配置
-        logger.error("IEEE 摄取失败：%s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail=f"IEEE 服务不可用：{str(exc)}。请在 .env 中设置 IEEE_API_KEY 环境变量。",
-        ) from exc
-
-    except Exception as exc:
-        logger.error("IEEE 摄取失败：%s", exc)
-        raise HTTPException(
-            status_code=500,
-            detail=f"IEEE 摄取失败：{str(exc)}",
-        ) from exc
+    logger.info(
+        "IEEE ingest(task): query=%r max_results=%d topic_id=%s",
+        query,
+        max_results,
+        topic_id,
+    )
+    # 去重第五刀：同步直写 → 提交 ingest_ieee 任务（manifest A 档，Go 权威调度 +
+    # 单事务 apply）；结果经 /tasks/{id}/result 轮询（IEEE_API_KEY 未配置由
+    # handler 显式失败，任务观察面可见）
+    submitted = submit_job(
+        kind="IeeeIngest",
+        capability="ingest_ieee",
+        title=f"IEEE 摄入: {query[:60]}",
+        input_ref={
+            "query": query,
+            "max_results": max_results,
+            "topic_id": topic_id,
+            "action_type": "manual_collect",
+        },
+        idempotency_key=None,
+        timeout_s=600,
+        created_by="api",
+    )
+    return {"task_id": submitted["task_id"], "job_id": submitted["job_id"]}

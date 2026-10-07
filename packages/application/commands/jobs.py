@@ -32,6 +32,7 @@ GO_APPLY_CAPABILITIES: frozenset[str] = frozenset(
         "upsert_paper",
         "download_source",
         "ingest_arxiv_query",
+        "ingest_ieee",
         "import_selected",
         "generate_topic_wiki",
         "build_daily_brief",

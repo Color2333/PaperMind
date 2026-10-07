@@ -290,6 +290,17 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             produces=(),
         ),
         CapabilitySpec(
+            name="ingest_ieee",
+            handler="packages.ai.task_handlers:ingest_ieee_proposal",
+            side_effect="IEEE 关键词搜索入库（papers + action）",
+            input_keys=("query", "max_results", "topic_id", "action_type"),
+            idempotency_template="ingest_ieee:{query}:{date_hour}",
+            timeout_s=600,
+            max_attempts=2,
+            resource_class="network",
+            produces=(),
+        ),
+        CapabilitySpec(
             name="import_references",
             handler="packages.ai.task_handlers:import_references",
             side_effect="参考文献批量导入（papers + citations）",

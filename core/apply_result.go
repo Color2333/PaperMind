@@ -33,7 +33,7 @@ func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result ma
 		return s.applyUpsertPaperResult(taskID, executorID, leaseToken, result)
 	case "download_source":
 		return s.applyDownloadSourceResult(taskID, executorID, leaseToken, result)
-	case "ingest_arxiv_query", "import_selected":
+	case "ingest_arxiv_query", "ingest_ieee", "import_selected":
 		return s.applyIngestPapersResult(taskID, executorID, leaseToken, result)
 	case "generate_topic_wiki", "build_daily_brief":
 		return s.applySaveGeneratedContentResult(taskID, executorID, leaseToken, result)
@@ -213,7 +213,7 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 		if _, err = tx.Exec(
 			`UPDATE analysis_reports SET summary_md=$1, key_insights=$2, skim_score=$3, updated_at=$4
 			 WHERE paper_id=$5`,
-			summaryMD, keyInsights, relevanceScore, paperID,
+			summaryMD, keyInsights, relevanceScore, nowParam(), paperID,
 		); err != nil {
 			return "", fmt.Errorf("analysis_reports update: %w", err)
 		}
@@ -443,8 +443,8 @@ func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken strin
 			newID := newCoreID()
 			if _, err = tx.Exec(
 				`INSERT INTO topic_subscriptions (id, name, query, enabled, created_at, updated_at)
-				 VALUES ($1, $2, $3, 0, NOW(), NOW())`,
-				newID, topicName, topicName,
+				 VALUES ($1, $2, $3, 0, $4, $5)`,
+				newID, topicName, topicName, nowParam(), nowParam(),
 			); err != nil {
 				return "", fmt.Errorf("topic_subscriptions insert: %w", err)
 			}
@@ -472,6 +472,13 @@ func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken strin
 		if source == "" {
 			source = "arxiv"
 		}
+		// 多源（IEEE 等）：source_id 与 doi 由 proposal 透传（合成键在 arxiv_id，
+		// 惯例 ieee:<doc_id> 与 PaperRepository.upsert_paper 对齐）
+		sourceID, _ := item["source_id"].(string)
+		if sourceID == "" {
+			sourceID = arxivID
+		}
+		doi, _ := item["doi"].(string)
 		metaJSON := mergeMetadataFromItem(item["metadata"])
 
 		paperID := newCoreID()
@@ -481,22 +488,22 @@ func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken strin
 			paperID = existingID
 			if metaJSON != "" {
 				if _, err = tx.Exec(
-					`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=NOW() WHERE id=$4`,
-					title, abstract, metaJSON, paperID,
+					`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=$4 WHERE id=$5`,
+					title, abstract, metaJSON, nowParam(), paperID,
 				); err != nil {
 					return "", err
 				}
 			} else if _, err = tx.Exec(
-				`UPDATE papers SET title=$1, abstract=$2, updated_at=NOW() WHERE id=$3`,
-				title, abstract, paperID,
+				`UPDATE papers SET title=$1, abstract=$2, updated_at=$3 WHERE id=$4`,
+				title, abstract, nowParam(), paperID,
 			); err != nil {
 				return "", err
 			}
 		} else if err == sql.ErrNoRows {
 			if _, err = tx.Exec(
-				`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, created_at, updated_at)
-				 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, NOW(), NOW())`,
-				paperID, title, arxivID, abstract, metaJSON, source, arxivID, pubDate,
+				`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, doi, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, $10, $11)`,
+				paperID, title, arxivID, abstract, metaJSON, source, sourceID, pubDate, nullIfEmpty(doi), nowParam(), nowParam(),
 			); err != nil {
 				return "", fmt.Errorf("papers insert: %w", err)
 			}
@@ -527,8 +534,8 @@ func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken strin
 	actionID := newCoreID()
 	if _, err = tx.Exec(
 		`INSERT INTO collection_actions (id, action_type, title, query, topic_id, paper_count, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-		actionID, actionType, actionTitle, query, nullIfEmpty(topicID), len(insertedIDs),
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		actionID, actionType, actionTitle, query, nullIfEmpty(topicID), len(insertedIDs), nowParam(),
 	); err != nil {
 		return "", fmt.Errorf("collection_actions insert: %w", err)
 	}
@@ -643,16 +650,16 @@ func upsertPaperWithMeta(tx *sql.Tx, paper map[string]any) (string, error) {
 	if err == nil {
 		paperID = existingID
 		if _, err = tx.Exec(
-			`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=NOW() WHERE id=$4`,
-			title, abstract, metaJSON, paperID,
+			`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=$4 WHERE id=$5`,
+			title, abstract, metaJSON, nowParam(), paperID,
 		); err != nil {
 			return "", err
 		}
 	} else if err == sql.ErrNoRows {
 		if _, err = tx.Exec(
 			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, NOW(), NOW())`,
-			paperID, title, arxivID, abstract, metaJSON, source, arxivID, pubDate,
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, $10)`,
+			paperID, title, arxivID, abstract, metaJSON, source, arxivID, pubDate, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
 		}
@@ -708,8 +715,8 @@ func (s *CoreStore) applyCitationEdgesResult(taskID, executorID, leaseToken stri
 		if err == sql.ErrNoRows {
 			if _, err = tx.Exec(
 				`INSERT INTO citations (id, source_paper_id, target_paper_id, context, created_at)
-				 VALUES ($1, $2, $3, $4, NOW())`,
-				newCoreID(), srcID, dstID, nullIfEmpty(context),
+				 VALUES ($1, $2, $3, $4, $5)`,
+				newCoreID(), srcID, dstID, nullIfEmpty(context), nowParam(),
 			); err != nil {
 				return "", fmt.Errorf("citations insert: %w", err)
 			}
@@ -775,8 +782,8 @@ func (s *CoreStore) applyFigureAnalysesResult(taskID, executorID, leaseToken str
 		}
 		if _, err = tx.Exec(
 			`INSERT INTO image_analyses (id, paper_id, page_number, image_index, image_type, caption, description, image_path, bbox_json, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-			newCoreID(), paperID, pageNumber, imageIndex, imageType, caption, description, imagePath, bbox,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			newCoreID(), paperID, pageNumber, imageIndex, imageType, caption, description, imagePath, bbox, nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("image_analyses insert: %w", err)
 		}
@@ -829,8 +836,8 @@ func (s *CoreStore) applyPaperTranslationResult(taskID, executorID, leaseToken s
 	case err == sql.ErrNoRows:
 		if _, err = tx.Exec(
 			`INSERT INTO paper_translations (id, paper_id, target_lang, mode, segments, bilingual_pdf_path, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
-			newCoreID(), paperID, targetLang, mode, segments, bilingualPath,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			newCoreID(), paperID, targetLang, mode, segments, bilingualPath, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("paper_translations insert: %w", err)
 		}
@@ -838,8 +845,8 @@ func (s *CoreStore) applyPaperTranslationResult(taskID, executorID, leaseToken s
 		return "", err
 	default:
 		if _, err = tx.Exec(
-			`UPDATE paper_translations SET segments=$1, bilingual_pdf_path=$2, updated_at=NOW() WHERE id=$3`,
-			segments, bilingualPath, existing,
+			`UPDATE paper_translations SET segments=$1, bilingual_pdf_path=$2, updated_at=$3 WHERE id=$4`,
+			segments, bilingualPath, nowParam(), existing,
 		); err != nil {
 			return "", err
 		}
@@ -938,8 +945,8 @@ func (s *CoreStore) applyReferenceImportResult(taskID, executorID, leaseToken st
 		if err == sql.ErrNoRows {
 			if _, err = tx.Exec(
 				`INSERT INTO citations (id, source_paper_id, target_paper_id, context, created_at)
-				 VALUES ($1, $2, $3, $4, NOW())`,
-				newCoreID(), srcID, dstID, context,
+				 VALUES ($1, $2, $3, $4, $5)`,
+				newCoreID(), srcID, dstID, context, nowParam(),
 			); err != nil {
 				return "", fmt.Errorf("citations insert: %w", err)
 			}
@@ -951,8 +958,8 @@ func (s *CoreStore) applyReferenceImportResult(taskID, executorID, leaseToken st
 	actionID := newCoreID()
 	if _, err = tx.Exec(
 		`INSERT INTO collection_actions (id, action_type, title, query, paper_count, created_at)
-		 VALUES ($1, 'reference_import', $2, $3, $4, NOW())`,
-		actionID, ("参考文献导入：" + sourceTitle)[:min(len("参考文献导入："+sourceTitle), 512)], sourcePaperID, len(insertedIDs),
+		 VALUES ($1, 'reference_import', $2, $3, $4, $5)`,
+		actionID, ("参考文献导入：" + sourceTitle)[:min(len("参考文献导入："+sourceTitle), 512)], sourcePaperID, len(insertedIDs), nowParam(),
 	); err != nil {
 		return "", fmt.Errorf("collection_actions insert: %w", err)
 	}
@@ -1121,14 +1128,14 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 		paperID = existingID
 		if metaJSON := mergeMetadata(tx, paperID, proposal["metadata"]); metaJSON != "" {
 			if _, err = tx.Exec(
-				`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=NOW() WHERE id=$4`,
-				title, abstract, metaJSON, paperID,
+				`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=$4 WHERE id=$5`,
+				title, abstract, metaJSON, nowParam(), paperID,
 			); err != nil {
 				return "", err
 			}
 		} else if _, err = tx.Exec(
-			`UPDATE papers SET title=$1, abstract=$2, updated_at=NOW() WHERE id=$3`,
-			title, abstract, paperID,
+			`UPDATE papers SET title=$1, abstract=$2, updated_at=$3 WHERE id=$4`,
+			title, abstract, nowParam(), paperID,
 		); err != nil {
 			return "", err
 		}
@@ -1139,8 +1146,8 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 		}
 		if _, err = tx.Exec(
 			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, NOW(), NOW())`,
-			paperID, title, arxivID, abstract, metaJSON,
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7)`,
+			paperID, title, arxivID, abstract, metaJSON, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
 		}
@@ -1158,15 +1165,15 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 		identityJSON := fmt.Sprintf(`{"abstract":%q,"arxiv_id":%q,"title":%q}`, abstract, arxivID, title)
 		if _, err = tx.Exec(
 			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, is_current, created_at)
-			 VALUES ($1, $2, 1, $3, 'ingest', true, NOW())`,
-			svID, paperID, sha256Hex(identityJSON),
+			 VALUES ($1, $2, 1, $3, 'ingest', true, $4)`,
+			svID, paperID, sha256Hex(identityJSON), nowParam(),
 		); err != nil {
 			return "", err
 		}
 		if _, err = tx.Exec(
 			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, payload, occurred_at)
-			 VALUES ($1, 'source_version_detected', 'source_version', $2, $3, NOW())`,
-			newCoreID(), svID, mustJSON(map[string]any{"paper_id": paperID}),
+			 VALUES ($1, 'source_version_detected', 'source_version', $2, $3, $4)`,
+			newCoreID(), svID, mustJSON(map[string]any{"paper_id": paperID}), nowParam(),
 		); err != nil {
 			return "", err
 		}
@@ -1214,8 +1221,8 @@ func (s *CoreStore) applyDownloadSourceResult(taskID, executorID, leaseToken str
 	}
 
 	if _, err = tx.Exec(
-		`UPDATE papers SET pdf_path=$1, updated_at=NOW() WHERE arxiv_id=$2`,
-		pdfRef, arxivID,
+		`UPDATE papers SET pdf_path=$1, updated_at=$2 WHERE arxiv_id=$3`,
+		pdfRef, nowParam(), arxivID,
 	); err != nil {
 		return "", err
 	}

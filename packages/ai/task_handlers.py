@@ -468,6 +468,67 @@ def import_selected(
     return import_selected_proposal(arxiv_ids=arxiv_ids, query=query, progress=progress)
 
 
+def ingest_ieee_proposal(
+    *,
+    query: str,
+    max_results: int = 20,
+    topic_id: str | None = None,
+    action_type: str = "manual_collect",
+    progress: ProgressFn = None,
+    **_: Any,
+) -> dict:
+    """按关键词抓取 IEEE 候选（纯计算 + 只读去重）——入库 proposal 模式。
+
+    IeeeClient.fetch_by_keywords 网络计算留在 handler；papers 复用 ingest_papers
+    proposal → 权威面单事务 apply（Go applyIngestPapersResult / Python
+    domain_apply）。非 arXiv 源沿用 PaperRepository.upsert_paper 的合成键约定
+    （arxiv_id="ieee:<source_id>"）；DOI 或合成键已命中的论文在只读阶段过滤
+    （与旧 IEEE 直写路径语义一致）。IEEE PDF 下载不在此处（权限限制，维持原状）。
+    """
+    from packages.integrations.ieee_client import IeeeClient
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import PaperRepository
+
+    ieee = IeeeClient()
+    if not ieee.api_key:
+        raise RuntimeError("IEEE API Key 未配置，请设置 IEEE_API_KEY 环境变量")
+
+    if progress:
+        with suppress(Exception):
+            progress("IEEE 检索中...", 0, max(max_results, 1))
+    fetched = ieee.fetch_by_keywords(query=query, max_results=max_results)
+
+    with session_scope() as session:
+        repo = PaperRepository(session)
+        dois = [p.doi for p in fetched if p.doi]
+        existing_dois = repo.list_existing_dois(dois) if dois else set()
+        keys = [f"ieee:{p.source_id}" for p in fetched if p.source_id]
+        existing_keys = repo.list_existing_arxiv_ids(keys) if keys else set()
+
+    selected: list[PaperCreate] = []
+    for paper in fetched:
+        if paper.doi and paper.doi in existing_dois:
+            continue
+        key = f"ieee:{paper.source_id}" if paper.source_id else ""
+        if key and key in existing_keys:
+            continue
+        if key:
+            paper.arxiv_id = key  # 合成键：与 upsert_paper 多源去重约定一致
+        selected.append(paper)
+
+    if progress:
+        with suppress(Exception):
+            progress(f"IEEE 抓取完成：{len(selected)} 篇新论文", len(selected), max(max_results, 1))
+    return _ingest_papers_proposal(
+        query=query,
+        papers=selected,
+        topic_id=topic_id,
+        topic_name=None,
+        action_type=action_type,
+        action_title=f"IEEE 收集：{query[:80]}",
+    )
+
+
 def import_references(
     *,
     source_paper_id: str,
