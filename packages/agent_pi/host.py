@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 PM_BIN = os.environ.get("PAPERMIND_PM_BIN")
 # Web 聊天专用 agentDir（与终端 ~/.config/papermind/agent 隔离：
 # 会话文件、模型物化配置互不可见）
-AGENT_DIR = os.environ.get("PAPERMIND_WEB_AGENT_DIR")
+# compose sidecar 形态用 PAPERMIND_AGENT_DIR（与 gateway 容器同名）；本地/旧部署用 PAPERMIND_WEB_AGENT_DIR
+AGENT_DIR = os.environ.get("PAPERMIND_WEB_AGENT_DIR") or os.environ.get("PAPERMIND_AGENT_DIR")
 # pm 工具回访 PaperMind API 的基址（容器内默认本进程端口，可被 env 覆盖）
 SELF_URL = os.environ.get("PAPERMIND_SELF_URL")
 

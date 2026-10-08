@@ -29,7 +29,7 @@ services:
       - pm_agent_dir:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8765/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8765/healthz || exit 1"]  # localhost 在 alpine 可能先解析 ::1
       interval: 15s
       timeout: 5s
       start_period: 10s
