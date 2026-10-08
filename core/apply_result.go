@@ -1282,6 +1282,10 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 	arxivID, _ := proposal["arxiv_id"].(string)
 	title, _ := proposal["title"].(string)
 	abstract, _ := proposal["abstract"].(string)
+	source, _ := proposal["source"].(string)
+	if source == "" {
+		source = "arxiv"
+	}
 	if arxivID == "" {
 		return "", fmt.Errorf("proposal 缺少 arxiv_id")
 	}
@@ -1322,9 +1326,9 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 			metaJSON = mustJSON(m)
 		}
 		if _, err = tx.Exec(
-			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, favorited, rejected, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, false, false, $6, $7)`,
-			paperID, title, arxivID, abstract, metaJSON, nowParam(), nowParam(),
+			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, favorited, rejected, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, false, false, $7, $8)`,
+			paperID, title, arxivID, abstract, metaJSON, source, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
 		}
