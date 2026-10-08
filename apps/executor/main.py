@@ -106,7 +106,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--core-url", default="http://127.0.0.1:8081")
     parser.add_argument("--core-token", default="")
     parser.add_argument("--executor-id", default="exec-1")
-    parser.add_argument("--capabilities", default="skim_paper")
+    parser.add_argument(
+        "--capabilities",
+        default=None,
+        help="逗号分隔的能力清单；与 --pool 二选一（--pool 优先）",
+    )
+    parser.add_argument(
+        "--pool",
+        default=None,
+        choices=["compute", "orchestration"],
+        help="按注册表执行池整批领取（compute=纯计算/外发；orchestration=编排器）",
+    )
     parser.add_argument("--poll-interval", type=float, default=1.0)
     parser.add_argument("--heartbeat-interval", type=float, default=5.0)
     parser.add_argument("--idle-exit-after", type=float, default=None)
@@ -125,7 +135,14 @@ def main(argv: list[str] | None = None) -> int:
         handlers_from_registry,
     )
 
-    capabilities = [c.strip() for c in args.capabilities.split(",") if c.strip()]
+    if args.pool:
+        from packages.application.commands.task_registry import capabilities_in_pool
+
+        capabilities = capabilities_in_pool(args.pool)
+    else:
+        capabilities = [
+            c.strip() for c in (args.capabilities or "skim_paper").split(",") if c.strip()
+        ]
     handlers = handlers_from_registry(capabilities)
 
     client = CoreClient(args.core_url, token=args.core_token)

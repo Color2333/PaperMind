@@ -57,6 +57,17 @@ def _healthy() -> bool:
 def ensure_gateway() -> str | None:
     """确保 Pi 网关就绪，返回 base_url；不可用返回 None（调用方回退直连）。"""
     global _proc  # noqa: PLW0603
+    # 物化模型配置（DB 单一事实源 → models.json/settings.json）——网关按请求
+    # 读 agentDir 下的文件，未物化时进程照常启动但每请求 502（且不触发调用方
+    # 回退直连）。此前只靠 webchat spawn 物化，纯任务链部署（worker/executor）
+    # 从不跑 webchat → 全部 LLM 任务卡死（真机实证）。入口无条件物化（一次
+    # DB 读 + 两个小文件写），同时自愈"网关已在跑但缺配置"的状态；DB 配置
+    # 改动亦即时生效（与 webchat 每次物化的语义一致）。
+    try:
+        if host.materialize_model_config() is None:
+            logger.warning("[pi-gateway] DB 无 active LLM 配置，网关缺 models.json")
+    except Exception:  # noqa: BLE001 — 物化失败不影响网关复用/启动（保持回退语义）
+        logger.exception("[pi-gateway] models.json 物化失败")
     if not _healthy():
         if _proc is not None and _proc.poll() is None:
             _proc.terminate()

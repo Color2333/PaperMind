@@ -179,16 +179,18 @@ def cs_feed_dispatch_job():
 
 
 # ---------- Executor 宿主（C7：与独立 executor 进程同一执行路径） ----------
+# 双领取池（防自死锁，实证见 dedup-9 真机复跑）：编排器 handler（如
+# fetch_topic_papers）会 submit+poll 等待自己的子任务——若与子任务同池串行
+# 领取，编排器占死唯一执行线程、子任务永远无人领取。按注册表 exec_pool
+# 分两个 Runner：orchestration 池单线程慢速消化编排任务，compute 池并行推进
+# 子任务。独立 apps.executor 进程亦可用 --pool 加入任一池扩容。
 
-_executor_runner = None
-_executor_thread = None
+_executor_pools: list[tuple] = []  # [(pool, ExecutorRunner, Thread)]
 
 
 def _start_executor_host(core_addr: str) -> None:
-    """在 worker 进程内启动 ExecutorRunner（经 Go Core 领取执行）"""
-    global _executor_runner, _executor_thread
-
-    from packages.application.commands.task_registry import TASK_CAPABILITIES
+    """在 worker 进程内按执行池启动 ExecutorRunner（经 Go Core 领取执行）"""
+    from packages.application.commands.task_registry import EXEC_POOLS, capabilities_in_pool
     from packages.core_client.client import CoreClient
     from packages.executor_runtime.runner import (
         ExecutorConfig,
@@ -196,36 +198,36 @@ def _start_executor_host(core_addr: str) -> None:
         handlers_from_registry,
     )
 
-    # 领取集合按 trigger 语义（executor=worker 执行）；manual_recovery 只影响
-    # 重试策略（失败不自动重试），不再排除领取——此前邮件/日报三项被误排除成悬空
-    capabilities = [name for name, spec in TASK_CAPABILITIES.items() if spec.trigger == "executor"]
-    handlers = handlers_from_registry(capabilities)
-    client = CoreClient(
-        f"http://{core_addr}",
-        token=os.environ.get("CORE_TOKEN", ""),
-    )
-    _executor_runner = ExecutorRunner(
-        client=client,
-        config=ExecutorConfig(
-            executor_id=os.environ.get("WORKER_EXECUTOR_ID", f"worker-{os.getpid()}"),
-            capabilities=capabilities,
-            poll_interval_s=1.0,
-            heartbeat_interval_s=15.0,
-        ),
-        handlers=handlers,
-    )
-    _executor_thread = _executor_runner.run_in_thread()
-    logger.info("⚙️ Executor 宿主已启动：%d 项能力 → %s", len(capabilities), core_addr)
+    base_id = os.environ.get("WORKER_EXECUTOR_ID", f"worker-{os.getpid()}")
+    token = os.environ.get("CORE_TOKEN", "")
+    for pool in EXEC_POOLS:
+        capabilities = capabilities_in_pool(pool)
+        if not capabilities:
+            continue
+        runner = ExecutorRunner(
+            client=CoreClient(f"http://{core_addr}", token=token),
+            config=ExecutorConfig(
+                executor_id=f"{base_id}-{pool}",
+                capabilities=capabilities,
+                poll_interval_s=1.0,
+                heartbeat_interval_s=15.0,
+            ),
+            handlers=handlers_from_registry(capabilities),
+        )
+        thread = runner.run_in_thread()
+        _executor_pools.append((pool, runner, thread))
+        logger.info(
+            "⚙️ Executor 宿主 [%s] 已启动：%d 项能力 → %s", pool, len(capabilities), core_addr
+        )
 
 
 def _stop_executor_host() -> None:
-    global _executor_runner, _executor_thread
-    if _executor_runner is None:
-        return
-    _executor_runner.drain()
-    if _executor_thread is not None:
-        _executor_thread.join(timeout=30)
-    logger.info("Executor 宿主已停止")
+    for pool, runner, thread in _executor_pools:
+        runner.drain()
+        if thread is not None:
+            thread.join(timeout=30)
+        logger.info("Executor 宿主 [%s] 已停止", pool)
+    _executor_pools.clear()
 
 
 def run_worker() -> None:

@@ -27,10 +27,17 @@ class CapabilitySpec:
     produces: tuple[str, ...] = field(default_factory=tuple)  # 产出（artifact/事件/领域变化）
     trigger: str = "executor"  # executor=worker 领取执行；inline=由其他 handler/外部触发器内联执行
     notes: str = ""
+    exec_pool: str = (
+        "compute"  # compute=纯计算/外发；orchestration=提交并等待子任务（须独立领取池防自死锁）
+    )
 
 
 # 资源类别允许集（Dispatcher 按此隔离并发；与限流桶对齐）
 RESOURCE_CLASSES = ("default", "network", "llm", "embedding")
+
+# 执行池（Executor 宿主按池分领取器——编排器 handler 会 submit+poll 等待自己的
+# 子任务，与子任务同池串行领取即自死锁，实证见 dedup-9 真机复跑）
+EXEC_POOLS = ("compute", "orchestration")
 
 TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
     spec.name: spec
@@ -174,6 +181,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=3600,
             max_attempts=2,
             resource_class="llm",
+            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=("generated_contents",),
         ),
         CapabilitySpec(
@@ -185,6 +193,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=3600,
             max_attempts=2,
             resource_class="network",
+            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -221,6 +230,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=5400,
             max_attempts=1,  # 单篇失败已在 handler 内计数，整批重试会重复 LLM 成本
             resource_class="llm",
+            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -232,6 +242,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=3600,
             max_attempts=1,
             resource_class="llm",
+            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -243,6 +254,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=3600,
             max_attempts=1,  # 单主题失败在 handler 内记录，不整批重试
             resource_class="network",
+            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -254,6 +266,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=1800,
             max_attempts=2,
             resource_class="network",
+            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -265,6 +278,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=1800,
             max_attempts=2,
             resource_class="network",
+            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -399,3 +413,14 @@ def get_spec(capability: str) -> CapabilitySpec:
 
 def specs_for_resource_class(resource_class: str) -> list[CapabilitySpec]:
     return [s for s in TASK_CAPABILITIES.values() if s.resource_class == resource_class]
+
+
+def capabilities_in_pool(pool: str) -> list[str]:
+    """执行池领取集合（仅 executor 触发的能力；编排器与 compute 分池）"""
+    if pool not in EXEC_POOLS:
+        raise ValueError(f"未知执行池: {pool}（允许 {EXEC_POOLS}）")
+    return [
+        name
+        for name, spec in TASK_CAPABILITIES.items()
+        if spec.trigger == "executor" and spec.exec_pool == pool
+    ]
