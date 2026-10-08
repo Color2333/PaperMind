@@ -122,6 +122,8 @@ services:
       # Executor 宿主（C7）：经 Go Core 领取执行；未配置则仅调度提交
       - CORE_ADDR=core:8081
       - CORE_TOKEN=${CORE_TOKEN:-}
+      # compute 池 Runner 副本数（deep_read 等长任务占线时轻任务的吞吐保障）
+      - WORKER_COMPUTE_CONCURRENCY=${WORKER_COMPUTE_CONCURRENCY:-2}
       # 观察面客户端（idle_processor/queries）与执行器同令牌——缺它全部 401
       - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
       - PAPERMIND_CORE_URL=http://core:8081

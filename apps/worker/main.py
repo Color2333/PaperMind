@@ -189,7 +189,14 @@ _executor_pools: list[tuple] = []  # [(pool, ExecutorRunner, Thread)]
 
 
 def _start_executor_host(core_addr: str) -> None:
-    """在 worker 进程内按执行池启动 ExecutorRunner（经 Go Core 领取执行）"""
+    """在 worker 进程内按执行池启动 ExecutorRunner（经 Go Core 领取执行）
+
+    compute 池按 WORKER_COMPUTE_CONCURRENCY（默认 2）起多个 Runner：单 Runner
+    串行执行时，deep_read 等单篇数分钟的长任务会让轻任务排队（生产实测
+    head-of-line blocking）。多 Runner 各自独立领取（Go claim 原子，安全），
+    长任务最多占住 1/N 的吞吐。orchestration 池保持单 Runner（编排任务本身
+    submit+poll，并发无益）。
+    """
     from packages.application.commands.task_registry import EXEC_POOLS, capabilities_in_pool
     from packages.core_client.client import CoreClient
     from packages.executor_runtime.runner import (
@@ -200,24 +207,35 @@ def _start_executor_host(core_addr: str) -> None:
 
     base_id = os.environ.get("WORKER_EXECUTOR_ID", f"worker-{os.getpid()}")
     token = os.environ.get("CORE_TOKEN", "")
+    try:
+        compute_concurrency = max(1, int(os.environ.get("WORKER_COMPUTE_CONCURRENCY", "2")))
+    except ValueError:
+        compute_concurrency = 2
     for pool in EXEC_POOLS:
         capabilities = capabilities_in_pool(pool)
         if not capabilities:
             continue
-        runner = ExecutorRunner(
-            client=CoreClient(f"http://{core_addr}", token=token),
-            config=ExecutorConfig(
-                executor_id=f"{base_id}-{pool}",
-                capabilities=capabilities,
-                poll_interval_s=1.0,
-                heartbeat_interval_s=15.0,
-            ),
-            handlers=handlers_from_registry(capabilities),
-        )
-        thread = runner.run_in_thread()
-        _executor_pools.append((pool, runner, thread))
+        replicas = compute_concurrency if pool == "compute" else 1
+        for replica in range(replicas):
+            suffix = f"-{replica}" if replicas > 1 else ""
+            runner = ExecutorRunner(
+                client=CoreClient(f"http://{core_addr}", token=token),
+                config=ExecutorConfig(
+                    executor_id=f"{base_id}-{pool}{suffix}",
+                    capabilities=capabilities,
+                    poll_interval_s=1.0,
+                    heartbeat_interval_s=15.0,
+                ),
+                handlers=handlers_from_registry(capabilities),
+            )
+            thread = runner.run_in_thread()
+            _executor_pools.append((pool, runner, thread))
         logger.info(
-            "⚙️ Executor 宿主 [%s] 已启动：%d 项能力 → %s", pool, len(capabilities), core_addr
+            "⚙️ Executor 宿主 [%s] 已启动：%d Runner × %d 项能力 → %s",
+            pool,
+            replicas,
+            len(capabilities),
+            core_addr,
         )
 
 
