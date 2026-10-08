@@ -4,6 +4,5 @@
 """
 
 from packages.ai.pipelines.paper_pipelines import PaperPipelines
-from packages.ai.pipelines.reference_import import ReferenceImporter
 
-__all__ = ["PaperPipelines", "ReferenceImporter"]
+__all__ = ["PaperPipelines"]

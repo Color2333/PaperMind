@@ -1,0 +1,15 @@
+# PaperMind Go Core — 纯 stdlib 静态二进制（多阶段构建，最终镜像无工具链）
+FROM golang:1.22-alpine AS build
+WORKDIR /src
+COPY go.mod ./
+COPY cmd ./cmd
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/papermind-core ./cmd/papermind-core
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates wget
+COPY --from=build /out/papermind-core /usr/local/bin/papermind-core
+# 默认 loopback；compose 内 CORE_ADDR=0.0.0.0:8081 仅服务网内
+ENV CORE_ADDR=0.0.0.0:8081
+EXPOSE 8081
+ENTRYPOINT ["papermind-core"]

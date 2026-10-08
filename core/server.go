@@ -1,0 +1,739 @@
+// Go Core 的版本化 API（P0：控制面网关）。
+//
+// 端点（Executor↔Core，统一信封）：
+//
+//	GET  /health                    健康检查（版本化）
+//	POST /v1/executors/register     Executor 注册（能力声明）
+//	POST /v1/tasks/claim            领取任务（代理 durable store）
+//	POST /v1/tasks/{id}/heartbeat   续约 lease + 取消探测
+//	POST /v1/tasks/{id}/complete    提交结果 proposal
+//	POST /v1/tasks/{id}/fail        上报失败
+//	POST /v1/tasks/{id}/cancel      取消任务（控制面）
+//	GET  /v1/tasks/{id}/status      观察面状态（durable store 快照）
+//
+// 任务/lease 状态全部代理到 Python durable-state API（/internal/durable/*）；
+// Go Core 自身零任务内存态（P0：重启零状态损失）。
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"runtime"
+	"strings"
+	"time"
+)
+
+// Server 把 durable-state API 暴露为 Executor Protocol。
+// Store 非 nil 时为 Go-authority 模式（skim 切片）：自有任务优先，
+// 其余 capability 代理 Python durable-state（过渡期双轨，逐 capability 迁移）。
+type Server struct {
+	Registry *ExecutorRegistry
+	State    *StateClient
+	Store    *CoreStore
+	mux      *http.ServeMux
+}
+
+// NewServer 创建带全部路由的 Server。
+func NewServer(reg *ExecutorRegistry, state *StateClient) *Server {
+	return NewServerWithStore(reg, state, nil)
+}
+
+// NewServerWithStore 创建带权威存储的 Server（Go-authority 切片）。
+func NewServerWithStore(reg *ExecutorRegistry, state *StateClient, store *CoreStore) *Server {
+	s := &Server{Registry: reg, State: state, Store: store, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /readyz", s.handleReady)
+	s.mux.HandleFunc("POST /mcp", s.ServeMCP)
+	if store != nil {
+		s.RegisterAPIRoutes()
+	}
+	// Auth 路由默认不注册（第四轮 P1-4 收缩）：Go Auth/MCP 是内网执行面，
+	// 公网浏览器认证的唯一入口是 Python backend（ FastAPI auth + JWT）。
+	// Go 侧的 JWTAuthMiddleware 与 CORE_TOKEN 静态凭证属不同 audience，
+	// 混用会造成双边界。需要 Go Auth 实验时显式 PAPERMIND_GO_AUTH=1。
+	if os.Getenv("PAPERMIND_GO_AUTH") == "1" {
+		authCfg := &AuthConfig{
+			SecretKey:      os.Getenv("AUTH_SECRET_KEY"),
+			GitHubClientID: os.Getenv("GITHUB_CLIENT_ID"),
+			GitHubSecret:   os.Getenv("GITHUB_CLIENT_SECRET"),
+			SiteURL:        os.Getenv("SITE_URL"),
+			AuthPassword:   os.Getenv("AUTH_PASSWORD"),
+		}
+		if authCfg.SecretKey == "" {
+			authCfg.SecretKey = "papermind-dev-secret" // 本地开发 fallback
+		}
+		s.RegisterAuthRoutes(authCfg)
+	}
+	s.mux.HandleFunc("POST /v1/jobs", s.enveloped(s.handleSubmitJob))
+	s.mux.HandleFunc("GET /v1/jobs/{id}", s.handleJobGraphGET)
+	s.mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.enveloped(s.handleJobCancel))
+	s.mux.HandleFunc("GET /v1/jobs", s.handleJobsListGET)
+	s.mux.HandleFunc("POST /v1/executors/register", s.enveloped(s.handleRegister))
+	s.mux.HandleFunc("POST /v1/tasks/claim", s.enveloped(s.handleClaim))
+	s.mux.HandleFunc("POST /v1/tasks/{id}/heartbeat", s.enveloped(s.handleHeartbeat))
+	s.mux.HandleFunc("POST /v1/tasks/{id}/progress", s.enveloped(s.handleProgress))
+	s.mux.HandleFunc("POST /v1/tasks/{id}/complete", s.enveloped(s.handleComplete))
+	s.mux.HandleFunc("POST /v1/tasks/{id}/fail", s.enveloped(s.handleFail))
+	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel-execution", s.enveloped(s.handleCancelExecution))
+	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.enveloped(s.handleCancel))
+	s.mux.HandleFunc("GET /v1/tasks/{id}/domain-result", s.handleDomainResultGET)
+	s.mux.HandleFunc("GET /v1/tasks/{id}/status", s.handleTaskStatusGET)
+	return s
+}
+
+// Handler 返回 http.Handler（测试与部署共用）。
+func (s *Server) Handler() http.Handler { return s.mux }
+
+// writeJSON 写统一响应信封。
+func writeJSON(w http.ResponseWriter, status int, correlationID string, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"schema_version": SchemaVersion,
+		"correlation_id": correlationID,
+		"body":           body,
+	})
+}
+
+// enveloped 统一解析信封、校验 schema_version、回显 correlation_id。
+func (s *Server) enveloped(h func(w http.ResponseWriter, r *http.Request, correlationID string, raw json.RawMessage)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var envelope struct {
+			SchemaVersion int             `json:"schema_version"`
+			CorrelationID string          `json:"correlation_id"`
+			Payload       json.RawMessage `json:"payload"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			writeJSON(w, http.StatusBadRequest, "", map[string]any{"ok": false, "error": "invalid_json: " + err.Error()})
+			return
+		}
+		if envelope.SchemaVersion != SchemaVersion {
+			writeJSON(w, http.StatusBadRequest, envelope.CorrelationID, map[string]any{
+				"ok":             false,
+				"error":          "schema_version_mismatch",
+				"expected":       SchemaVersion,
+				"schema_version": envelope.SchemaVersion,
+			})
+			return
+		}
+		h(w, r, envelope.CorrelationID, envelope.Payload)
+	}
+}
+
+// handleHealth：liveness（进程存活）恒为 200；
+// state 字段反映 durable-state API 的最近探测结果（readiness 由部署层消费）。
+// 设计④：durable-state 不可达时 Core 不能假装健康——/healthz 与 /readyz 分离。
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	stateReachable := s.checkStateReady(r.Context())
+	writeJSON(w, http.StatusOK, "", HealthResponse{
+		Envelope:    Envelope{SchemaVersion: SchemaVersion},
+		Status:      "ok",
+		CoreVersion: CoreVersion,
+		GoVersion:   runtime.Version(),
+		StateURL:    s.State.BaseURL,
+		StateReady:  stateReachable,
+	})
+}
+
+// handleReady：readiness——durable-state API 不可达时返回 503（编排层摘除流量）
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if !s.checkStateReady(r.Context()) {
+		writeJSON(w, http.StatusServiceUnavailable, "", map[string]any{
+			"ok": false, "error": "state_unavailable", "state_url": s.State.BaseURL,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, "", map[string]any{"ok": true})
+}
+
+// checkStateReady 快速探测 durable-state（1.5s 超时；结果不缓存——编排层轮询频率即探测频率）
+func (s *Server) checkStateReady(ctx context.Context) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.State.BaseURL+"/health", nil)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode < 500
+}
+
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req RegisterRequest
+	if err := json.Unmarshal(raw, &req); err != nil || req.ExecutorID == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_register_request"})
+		return
+	}
+	s.Registry.RegisterExecutor(req.ExecutorID, req.Capabilities)
+	writeJSON(w, http.StatusOK, cid, RegisterResponse{
+		Envelope:    Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:          true,
+		CoreVersion: CoreVersion,
+		ExecutorID:  req.ExecutorID,
+	})
+}
+
+func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req ClaimRequest
+	if err := json.Unmarshal(raw, &req); err != nil || req.ExecutorID == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_claim_request"})
+		return
+	}
+	// P1 修复：未注册的 Executor 不能领取；claim 能力必须与注册声明取交集
+	if !s.Registry.HasExecutor(req.ExecutorID) {
+		writeJSON(w, http.StatusForbidden, cid, map[string]any{"ok": false, "error": "executor_not_registered"})
+		return
+	}
+	declared := s.Registry.DeclaredCapabilities(req.ExecutorID)
+	wanted := Intersect(req.Capabilities, declared)
+	if len(wanted) == 0 {
+		writeJSON(w, http.StatusOK, cid, ClaimResponse{
+			Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:       true,
+			Task:     nil,
+		})
+		return
+	}
+	// Go-authority：自有 queued 任务优先（skim 切片）
+	if s.Store != nil {
+		own, err := s.Store.ClaimTask(req.ExecutorID, wanted)
+		if err != nil {
+			log.Printf("core claim: %v", err)
+		}
+		if own != nil {
+			s.Registry.Touch(req.ExecutorID)
+			writeJSON(w, http.StatusOK, cid, ClaimResponse{
+				Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+				OK:       true,
+				Task:     own,
+			})
+			return
+		}
+		// 自有无任务 → 继续代理 Python durable-state（其他 capability 过渡期）
+	}
+
+	var out struct {
+		Task *Task `json:"task"`
+	}
+	err := s.State.Post("/internal/durable/tasks/claim", map[string]any{
+		"executor_id":  req.ExecutorID,
+		"capabilities": wanted,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	s.Registry.Touch(req.ExecutorID)
+	writeJSON(w, http.StatusOK, cid, ClaimResponse{
+		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:       true,
+		Task:     out.Task,
+	})
+}
+
+func (s *Server) taskID(r *http.Request) string {
+	// 路径形如 /v1/tasks/{id}/heartbeat —— 取第三段
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) >= 3 {
+		return parts[2]
+	}
+	return ""
+}
+
+func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req HeartbeatRequest
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_heartbeat_request"})
+		return
+	}
+	// Go-authority 路由：core 任务 lease 续约在 Go 权威面
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		ok, cancelReq, err := s.Store.HeartbeatTask(s.taskID(r), req.ExecutorID, req.LeaseToken)
+		if err != nil {
+			s.writeStateError(w, cid, err)
+			return
+		}
+		if !ok {
+			writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "lease_not_renewable"})
+			return
+		}
+		s.Registry.Touch(req.ExecutorID)
+		writeJSON(w, http.StatusOK, cid, HeartbeatResponse{
+			Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:              true,
+			CancelRequested: cancelReq,
+		})
+		return
+	}
+	var out struct {
+		OK              bool `json:"ok"`
+		CancelRequested bool `json:"cancel_requested"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/heartbeat", map[string]any{
+		"lease_token": req.LeaseToken,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	if !out.OK {
+		writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "lease_not_renewable"})
+		return
+	}
+	s.Registry.Touch(req.ExecutorID)
+	writeJSON(w, http.StatusOK, cid, HeartbeatResponse{
+		Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:              true,
+		CancelRequested: out.CancelRequested,
+	})
+}
+
+func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req ProgressRequest
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_progress_request"})
+		return
+	}
+	var out struct {
+		OK bool `json:"ok"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/progress", map[string]any{
+		"lease_token": req.LeaseToken,
+		"current":     req.Current,
+		"total":       req.Total,
+		"message":     req.Message,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	s.Registry.Touch(req.ExecutorID)
+	writeJSON(w, http.StatusOK, cid, ProgressResponse{
+		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:       out.OK,
+	})
+}
+
+func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req CompleteRequest
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_complete_request"})
+		return
+	}
+	// Go-authority 路由：core 任务 → apply-result 单事务；其余 → 代理
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		status, err := s.Store.ApplyResult(s.taskID(r), req.ExecutorID, req.LeaseToken, req.Result)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeJSON(w, http.StatusNotFound, cid, map[string]any{"ok": false, "error": "task_not_found", "detail": err.Error()})
+				return
+			}
+			// fencing 拒绝/校验失败 → 409（迟到写入被拒绝的信号）
+			writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "apply_rejected", "detail": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, cid, CompleteResponse{
+			Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:       true,
+			Status:   status,
+		})
+		return
+	}
+	var out struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/complete", map[string]any{
+		"executor_id": req.ExecutorID,
+		"lease_token": req.LeaseToken,
+		"result":      req.Result,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, CompleteResponse{
+		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:       true,
+		Status:   out.Status,
+	})
+}
+
+func (s *Server) handleFail(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req FailRequest
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_fail_request"})
+		return
+	}
+	// Go-authority 路由
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		status, err := s.Store.FailTask(s.taskID(r), req.ExecutorID, req.LeaseToken, req.ErrorClass, req.Message)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "fail_rejected", "detail": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, cid, FailResponse{
+			Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:              true,
+			Status:          status,
+			RetryScheduled:  status == TaskQueued,
+			AttemptRecorded: true,
+		})
+		return
+	}
+	var out struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/fail", map[string]any{
+		"executor_id": req.ExecutorID,
+		"lease_token": req.LeaseToken,
+		"error_class": req.ErrorClass,
+		"message":     req.Message,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, FailResponse{
+		Envelope:        Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:              true,
+		Status:          out.Status,
+		RetryScheduled:  out.Status == TaskQueued,
+		AttemptRecorded: true,
+	})
+}
+
+// handleCancelExecution 处理协作取消回执（Executor 安全点退出后提交）。
+func (s *Server) handleCancelExecution(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	var req CompleteRequest // executor_id + task_id + lease_token 同形
+	if err := json.Unmarshal(raw, &req); err != nil || req.LeaseToken == "" {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_cancel_execution_request"})
+		return
+	}
+	// Go-owned 任务：回执落 Go store（第四轮 P1——此前永远代理 Python state，
+	// cancelling 态无法收敛）
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		status, err := s.Store.CancelExecution(s.taskID(r), req.ExecutorID, req.LeaseToken)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, cid, map[string]any{"ok": false, "error": "cancel_rejected", "detail": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, cid, CancelResponse{
+			Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+			OK:       true, Status: status,
+		})
+		return
+	}
+	var out struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+s.taskID(r)+"/cancel-execution", map[string]any{
+		"executor_id": req.ExecutorID,
+		"lease_token": req.LeaseToken,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, CancelResponse{
+		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:       true,
+		Status:   out.Status,
+	})
+}
+
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	// 以 URL path id 为唯一资源标识；payload 携带 task_id 时必须一致（P1 修复）
+	pathID := s.taskID(r)
+	var req CancelRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_cancel_request"})
+		return
+	}
+	if req.TaskID != "" && req.TaskID != pathID {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{
+			"ok": false, "error": "task_id_mismatch",
+			"detail": "payload task_id must match URL resource id",
+		})
+		return
+	}
+	var out struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	err := s.State.Post("/internal/durable/tasks/"+pathID+"/cancel", map[string]any{
+		"reason": req.Reason,
+	}, &out)
+	if err != nil {
+		s.writeStateError(w, cid, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, CancelResponse{
+		Envelope: Envelope{SchemaVersion: SchemaVersion, CorrelationID: cid},
+		OK:       out.OK,
+		Status:   out.Status,
+	})
+}
+
+// handleDomainResultGET 幂等卫兵：既有成功领域结果查询（透传 durable store）
+func (s *Server) handleDomainResultGET(w http.ResponseWriter, r *http.Request) {
+	var out struct {
+		Found  bool           `json:"found"`
+		TaskID string         `json:"task_id,omitempty"`
+		Result map[string]any `json:"result,omitempty"`
+	}
+	if err := s.State.Get("/internal/durable/tasks/"+s.taskID(r)+"/domain-result", &out); err != nil {
+		s.writeStateError(w, "", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, "", out)
+}
+
+func (s *Server) handleTaskStatusGET(w http.ResponseWriter, r *http.Request) {
+	// Go-owned 任务：状态/result 直接读权威面（第四轮——此前 result 观察面
+	// 只查 Python durable store，Go 任务 /tasks/{id}/result 拿不到）
+	if s.Store != nil && s.Store.OwnsTask(s.taskID(r)) {
+		task, err := s.Store.TaskStatus(s.taskID(r))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, "", map[string]any{"ok": false, "error": "task_not_found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, "", TaskStatusResponse{
+			Envelope:     Envelope{SchemaVersion: SchemaVersion},
+			OK:           true,
+			TaskID:       task.ID,
+			Status:       task.Status,
+			Capability:   task.Capability,
+			AttemptCount: task.AttemptCount,
+			MaxAttempts:  task.MaxAttempts,
+			Input:        task.Input,
+			ResultRef:    task.ResultRef,
+			LastError:    task.LastError,
+		})
+		return
+	}
+	var out struct {
+		Task *struct {
+			TaskID       string         `json:"task_id"`
+			Status       string         `json:"status"`
+			Capability   string         `json:"capability"`
+			AttemptCount int            `json:"attempt_count"`
+			MaxAttempts  int            `json:"max_attempts"`
+			Input        map[string]any `json:"input"`
+			LastError    string         `json:"last_error"`
+		} `json:"task"`
+	}
+	if err := s.State.Get("/internal/durable/tasks/"+s.taskID(r), &out); err != nil {
+		var se *StateError
+		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+			writeJSON(w, http.StatusNotFound, "", map[string]any{"ok": false, "error": "task_not_found"})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, "", map[string]any{"ok": false, "error": "state_unavailable"})
+		return
+	}
+	t := out.Task
+	writeJSON(w, http.StatusOK, "", TaskStatusResponse{
+		Envelope:     Envelope{SchemaVersion: SchemaVersion},
+		OK:           true,
+		TaskID:       t.TaskID,
+		Status:       t.Status,
+		Capability:   t.Capability,
+		AttemptCount: t.AttemptCount,
+		MaxAttempts:  t.MaxAttempts,
+		Input:        t.Input,
+		LastError:    t.LastError,
+	})
+}
+
+// writeStateError 把 durable-state 的错误映射到 Executor 协议响应。
+// fencing 冲突（409）必须原样传给 Executor——它是「迟到写入被拒绝」的信号。
+func (s *Server) writeStateError(w http.ResponseWriter, cid string, err error) {
+	if se, ok := err.(*StateError); ok {
+		status := http.StatusBadGateway
+		if se.StatusCode == http.StatusConflict {
+			status = http.StatusConflict
+		} else if se.StatusCode == http.StatusNotFound {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, cid, map[string]any{"ok": false, "error": "state_rejected", "detail": se.Body})
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, cid, map[string]any{"ok": false, "error": "state_unavailable"})
+}
+
+// handleSubmitJob：Go-authority 任务提交（skim 切片：capability=skim_paper）。
+func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusNotImplemented, cid, map[string]any{"ok": false, "error": "core_store_not_configured"})
+		return
+	}
+	var req struct {
+		Kind           string         `json:"kind"`
+		Capability     string         `json:"capability"`
+		InputRef       map[string]any `json:"input_ref"`
+		IdempotencyKey string         `json:"idempotency_key"`
+		TimeoutS       int            `json:"timeout_s"`
+		MaxAttempts    int            `json:"max_attempts"`
+		ResourceClass  string         `json:"resource_class"`
+		Priority       int            `json:"priority"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{"ok": false, "error": "invalid_job_request"})
+		return
+	}
+	// manifest 校验（第四轮 P0-2 fail closed）：Go 只接受 apply 已实现的
+	// A 档 capability——与 Python 侧 GO_APPLY_CAPABILITIES 清单一致；
+	// 清单外任务由 Python 留在自身 authority，不应到达这里。
+	if !GoApplyManifest[req.Capability] {
+		writeJSON(w, http.StatusBadRequest, cid, map[string]any{
+			"ok": false, "error": "capability_not_in_manifest",
+			"detail": "capability 不在 Go-apply manifest 内（应留在 Python authority）",
+		})
+		return
+	}
+	inputJSON, _ := json.Marshal(req.InputRef)
+	jobID, taskID, created, err := s.Store.SubmitCoreTaskMeta(
+		req.Capability, string(inputJSON), req.IdempotencyKey, req.TimeoutS,
+		req.MaxAttempts, req.ResourceClass, req.Priority,
+	)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, cid, map[string]any{"ok": false, "error": "submit_failed", "detail": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, map[string]any{
+		"ok": true, "job_id": jobID, "task_id": taskID,
+		"status": "queued", "created": created, "authority": "go_core",
+	})
+}
+
+// handleJobCancel：Go 权威 Job 取消（控制面路由）
+func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request, cid string, raw json.RawMessage) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusNotImplemented, cid, map[string]any{"ok": false, "error": "core_store_not_configured"})
+		return
+	}
+	counts, err := s.Store.CancelJob(jobIDFromPath(r))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, cid, map[string]any{"ok": false, "error": "cancel_failed", "detail": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, cid, map[string]any{"ok": true, "counts": counts})
+}
+
+// handleJobsListGET：core Job 列表（观察面合并）
+func (s *Server) handleJobsListGET(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusNotImplemented, "", map[string]any{"ok": false, "error": "core_store_not_configured"})
+		return
+	}
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	items, err := s.Store.JobsList(limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, "", map[string]any{"ok": false, "error": "list_failed"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+}
+
+// handleJobGraphGET：core 任务图（观察面）
+func (s *Server) handleJobGraphGET(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusNotImplemented, "", map[string]any{"ok": false, "error": "core_store_not_configured"})
+		return
+	}
+	graph, err := s.Store.JobGraph(jobIDFromPath(r))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, "", map[string]any{"ok": false, "error": "graph_failed"})
+		return
+	}
+	if graph == nil {
+		writeJSON(w, http.StatusNotFound, "", map[string]any{"ok": false, "error": "job_not_found"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(graph)
+}
+
+// jobIDFromPath：/v1/jobs/{id} 第二段
+func jobIDFromPath(r *http.Request) string {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) >= 3 {
+		return parts[2]
+	}
+	return ""
+}
+
+// StartReconciler 周期驱动 durable store 回收过期 lease（权威逻辑在 Python 侧）。
+func (s *Server) StartReconciler(interval time.Duration, backoffS int, stop <-chan struct{}) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				if s.Store != nil {
+					coreOutcomes, err := s.Store.ReclaimExpired(backoffS)
+					if err != nil {
+						log.Printf("core reclaim: %v", err)
+					} else if len(coreOutcomes) > 0 {
+						log.Printf("reconciler reclaimed %d core lease(s): %v", len(coreOutcomes), coreOutcomes)
+					}
+				}
+				var out struct {
+					Outcomes map[string]string `json:"outcomes"`
+				}
+				if err := s.State.Post("/internal/durable/reclaim", map[string]any{
+					"backoff_s": backoffS,
+				}, &out); err != nil {
+					continue // state API 暂不可用——下轮重试
+				}
+				if len(out.Outcomes) > 0 {
+					log.Printf("reconciler reclaimed %d lease(s): %v", len(out.Outcomes), out.Outcomes)
+				}
+			}
+		}
+	}()
+}
+
+// TokenAuthMiddleware 校验 Bearer token（Executor/控制面认证）。
+func TokenAuthMiddleware(next http.Handler, token string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 健康探针（liveness/readiness）在受控网络内免静态 token——否则 Compose
+		// healthcheck 恒 401，Core 被标 unhealthy，worker 永不启动（第四轮 P0）
+		if r.URL.Path == "/health" || r.URL.Path == "/readyz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer "+token {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"schema_version": SchemaVersion,
+				"correlation_id": "",
+				"body":           map[string]any{"ok": false, "error": "unauthorized"},
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// errorsAs 已移除——统一使用标准 errors.As。

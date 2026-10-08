@@ -12,9 +12,10 @@ import {
   useMemo,
 } from "react";
 import { agentApi } from "@/services/api";
-import type { AgentMessage, SSEEvent, SSEEventType } from "@/types";
+import type { AgentEngine, AgentMessage, SSEEvent, SSEEventType } from "@/types";
 import { parseSSEStream } from "@/types";
 import { useConversationCtx } from "@/contexts/ConversationContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { loadConversation } from "@/hooks/useConversations";
 import type { ConversationMessage } from "@/hooks/useConversations";
 import { uid } from "@/lib/utils";
@@ -30,6 +31,8 @@ export interface ChatItem {
   actionId?: string;
   actionDescription?: string;
   actionTool?: string;
+  /* Pi 引擎动作：确认走轻量批准（主流不中断），非 Python 引擎的续播流 */
+  actionEngine?: string;
   toolArgs?: Record<string, unknown>;
   artifactTitle?: string;
   artifactContent?: string;
@@ -65,6 +68,8 @@ interface AgentSessionCtx {
   confirmingActions: Set<string>;
   canvas: CanvasData | null;
   hasPendingConfirm: boolean;
+  /* 本次会话的聊天引擎（SSE engine 事件上报：pi=Pi agent core / python=回退） */
+  engine: AgentEngine | null;
   setCanvas: (v: CanvasData | null) => void;
   sendMessage: (text: string) => Promise<void>;
   handleConfirm: (actionId: string) => Promise<void>;
@@ -82,12 +87,16 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   const [pendingActionIds, setPendingActionIds] = useState<string[]>([]);
   const [confirmingActionIds, setConfirmingActionIds] = useState<string[]>([]);
   const [canvas, setCanvas] = useState<CanvasData | null>(null);
+  const [engine, setEngine] = useState<AgentEngine | null>(null);
 
   // 从数组派生 Set，避免每次渲染都创建新对象
   const pendingActions = useMemo(() => new Set(pendingActionIds), [pendingActionIds]);
   const confirmingActions = useMemo(() => new Set(confirmingActionIds), [confirmingActionIds]);
 
   const { activeId, createConversation, saveMessages, setActiveId } = useConversationCtx();
+  const workspace = useWorkspace();
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
   const justCreatedRef = useRef(false);
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
@@ -275,6 +284,12 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
           }
           break;
         }
+        case "engine": {
+          // 聊天引擎通告（Pi agent core / Python 回退）——徽标展示
+          const eng = data.engine as AgentEngine;
+          if (eng === "pi" || eng === "python") setEngine(eng);
+          break;
+        }
         case "text_delta": {
           streamBufRef.current += (data.content as string) || "";
           scheduleFlush();
@@ -282,6 +297,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         }
         case "tool_start": {
           const pending = drainBuffer();
+          lastToolArgsRef.current = (data.args as Record<string, unknown>) || null;
           setItems((prev) => {
             const copy = [...prev];
             applyPendingText(copy, pending);
@@ -340,6 +356,17 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         case "tool_result": {
           const toolId = (data.id as string) || "";
           const toolName = data.name as string;
+          // 工作区联动：agent 查看论文 → 主区切到该论文工作桌（agent→主区）
+          if (toolName === "pm_list_claims") {
+            const qid = lastToolArgsRef.current?.question_id as string | undefined;
+            if (qid) workspaceRef.current?.openQuestion(qid);
+          }
+          if (toolName === "pm_get_paper") {
+            const pid = lastToolArgsRef.current?.paper_id as string | undefined;
+            const detail = data.data as Record<string, unknown> | undefined;
+            const title = (detail?.title as string) || null;
+            if (pid) workspaceRef.current?.openPaper(pid, title, "agent");
+          }
           setItems((prev) => {
             const copy = [...prev];
             for (let i = copy.length - 1; i >= 0; i--) {
@@ -406,6 +433,9 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
         case "action_confirm": {
           const pending = drainBuffer();
           const actionId = data.id as string;
+          const actionEngine = (data.engine as string) || undefined;
+          // Pi 引擎动作：确认走轻量批准（handleConfirm 分支），主流不取消
+          if (actionEngine === "pi") piActionsRef.current.add(actionId);
           setPendingActionIds((prev) => [...prev, actionId]);
           setItems((prev) => {
             const copy = [...prev];
@@ -419,6 +449,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
                 actionId,
                 actionDescription: data.description as string,
                 actionTool: data.tool as string,
+                actionEngine,
                 toolArgs: data.args as Record<string, unknown>,
                 timestamp: new Date(),
               },
@@ -677,6 +708,10 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
   /* ---- 确认/拒绝操作 ---- */
   // 已处理（confirm/reject 过）的 actionId，用于防重复提交
   const handledActionsRef = useRef<Set<string>>(new Set());
+  // 工作区联动：最近一次 tool_start 的 args（pm_get_paper 的 paper_id）
+  const lastToolArgsRef = useRef<Record<string, unknown> | null>(null);
+  // Pi 引擎动作（主流保持打开，工具阻塞轮询决定）——确认走轻量批准
+  const piActionsRef = useRef<Set<string>>(new Set());
 
   const handleConfirm = useCallback(
     async (actionId: string) => {
@@ -687,6 +722,30 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
 
       setConfirmingActionIds((prev) => [...prev, actionId]);
       setPendingActionIds((prev) => prev.filter((id) => id !== actionId));
+
+      // Pi 引擎：批准 = 轻量 POST（决定由 pm 工具在主流内轮询拾取），
+      // 不得 cancelStream——那会终止 pm 子进程，批准就无效了
+      if (piActionsRef.current.has(actionId)) {
+        try {
+          await agentApi.resolvePiAction(actionId, "approved");
+          setLoading(true); // 工具继续执行 + 后续文本到达，done 事件收尾
+        } catch (err) {
+          setItems((p) => [
+            ...p,
+            {
+              id: `e_${uid()}`,
+              type: "error" as const,
+              content: err instanceof Error ? err.message : "确认失败",
+              timestamp: new Date(),
+            },
+          ]);
+          setLoading(false);
+        } finally {
+          setConfirmingActionIds((prev) => prev.filter((id) => id !== actionId));
+        }
+        return;
+      }
+
       cancelStream();
       setLoading(true);
       try {
@@ -719,6 +778,27 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       handledActionsRef.current.add(actionId);
 
       setPendingActionIds((prev) => prev.filter((id) => id !== actionId));
+
+      // Pi 引擎：拒绝 = 轻量 POST；工具抛"用户取消"→ 主流 tool_result 显示失败
+      if (piActionsRef.current.has(actionId)) {
+        try {
+          await agentApi.resolvePiAction(actionId, "rejected");
+        } catch (err) {
+          setItems((p) => [
+            ...p,
+            {
+              id: `e_${uid()}`,
+              type: "error" as const,
+              content: err instanceof Error ? err.message : "拒绝操作失败",
+              timestamp: new Date(),
+            },
+          ]);
+        } finally {
+          setConfirmingActionIds((prev) => prev.filter((id) => id !== actionId));
+        }
+        return;
+      }
+
       cancelStream();
       setLoading(true);
       try {
@@ -769,6 +849,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       confirmingActions,
       canvas,
       hasPendingConfirm,
+      engine,
       setCanvas,
       sendMessage,
       handleConfirm,
@@ -782,6 +863,7 @@ export function AgentSessionProvider({ children }: { children: React.ReactNode }
       confirmingActions,
       canvas,
       hasPendingConfirm,
+      engine,
       sendMessage,
       handleConfirm,
       handleReject,

@@ -151,14 +151,19 @@ class AutoReadService(ServiceBase):
 
         # 执行精读
         if papers_to_read:
+            # 去重第四刀：proposal 纯计算 + domain_apply（与任务链同源，双轨消除）
             from packages.ai.pipelines import PaperPipelines
+            from packages.application.commands.domain_apply import apply_proposal
+            from packages.storage.db import session_scope
 
             pipelines = PaperPipelines()
             for i, p in enumerate(papers_to_read, 1):
                 try:
                     if progress_callback:
                         progress_callback(f"正在精读: {p['title'][:50]}", 5 + i * 15, 100)
-                    pipelines.deep_dive(p["id"])
+                    proposal_result = pipelines.deep_dive_proposal(p["id"])
+                    with session_scope() as session:
+                        apply_proposal(session, proposal_result.get("proposal") or {})
                     result["deep_read_count"] += 1
                 except Exception as e:
                     logger.error(f"精读失败: {p['title']}, 错误: {e}")

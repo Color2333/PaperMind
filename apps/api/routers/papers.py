@@ -9,9 +9,10 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from apps.api.deps import cache, paper_list_response, rag_service
+from apps.api.deps import cache
+from packages.application.queries import papers as papers_queries
+from packages.domain.exceptions import NotFoundError
 from packages.domain.schemas import AIExplainReq
-from packages.domain.task_tracker import global_tracker
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
 from packages.storage.repositories.stats import get_folder_stats
@@ -59,28 +60,20 @@ def latest(
     tag_ids: list[str] | None = Query(default=None),
 ) -> dict:
     with session_scope() as session:
-        repo = PaperRepository(session)
-        papers, total = repo.list_paginated(
+        return papers_queries.list_papers(
+            session,
             page=page,
             page_size=page_size,
             folder=folder,
             topic_id=topic_id,
             status=status,
-            date_str=date,
-            search=search.strip() if search else None,
-            sort_by=sort_by
-            if sort_by in ("created_at", "publication_date", "title")
-            else "created_at",
-            sort_order=sort_order if sort_order in ("asc", "desc") else "desc",
+            date=date,
+            search=search,
+            sort_by=sort_by,
+            sort_order=sort_order,
             category=category,
             tag_ids=tag_ids,
         )
-        resp = paper_list_response(papers, repo)
-        resp["total"] = total
-        resp["page"] = page
-        resp["page_size"] = page_size
-        resp["total_pages"] = max(1, (total + page_size - 1) // page_size)
-        return resp
 
 
 @router.get("/papers/recommended")
@@ -98,68 +91,12 @@ async def search_multi(
     topic_id: str | None = Query(default=None),
 ) -> dict:
     """多渠道并行搜索论文"""
-    import asyncio
-    import logging
-
-    from packages.config import get_settings
-    from packages.integrations.aggregator import ResultAggregator
-    from packages.integrations.registry import ChannelRegistry
-
-    logger = logging.getLogger(__name__)
-
-    ChannelRegistry.register_default_channels()
-    settings = get_settings()
-
-    async def fetch_channel(ch: str) -> tuple[str, list, dict]:
-        try:
-            # Semantic Scholar 的 api_key 需从 Settings 注入（客户端仅 env 兜底）
-            kwargs: dict = {}
-            if ch == "semantic_scholar":
-                kwargs["api_key"] = settings.semantic_scholar_api_key
-            channel = ChannelRegistry.get(ch, **kwargs)
-            if not channel:
-                return ch, [], {"error": "channel not found"}
-            papers = await asyncio.to_thread(channel.fetch, query, max_results_per_channel)
-            return ch, papers, {"total": len(papers)}
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Channel %s failed: %s", ch, exc)
-            return ch, [], {"error": str(exc)}
-
-    tasks = [fetch_channel(ch) for ch in channels]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    aggregator = ResultAggregator()
-    channel_stats: dict[str, dict[str, int | str]] = {}
-
-    for result in results:
-        if isinstance(result, Exception):
-            logger.error("Channel task failed: %s", result)
-            continue
-        ch, papers, meta = result
-        channel_stats[ch] = {"total": 0, "new": 0, "duplicates": 0}
-        if "error" in meta:
-            channel_stats[ch]["error"] = meta["error"]
-        else:
-            channel_stats[ch]["total"] = meta.get("total", 0)
-            aggregator.add_results(ch, papers, meta)
-
-    aggregated = aggregator.get_sorted_results()
-
-    return {
-        "papers": [
-            {
-                "id": f"temp-{i}",
-                "title": r.paper.title,
-                "authors": (r.paper.metadata_json or {}).get("authors", []),
-                "year": r.paper.publication_date.year if r.paper.publication_date else None,
-                "venue": (r.paper.metadata_json or {}).get("venue"),
-                "abstract": r.paper.abstract,
-                "sources": r.sources,
-            }
-            for i, r in enumerate(aggregated)
-        ],
-        "channel_stats": channel_stats,
-    }
+    return await papers_queries.search_multi(
+        query=query,
+        channels=channels,
+        max_results_per_channel=max_results_per_channel,
+        topic_id=topic_id,
+    )
 
 
 @router.get("/papers/suggest-channels")
@@ -220,91 +157,44 @@ async def proxy_arxiv_pdf(arxiv_id: str):
 @router.get("/papers/{paper_id}")
 def paper_detail(paper_id: UUID) -> dict:
     with session_scope() as session:
-        repo = PaperRepository(session)
         try:
-            p = repo.get_by_id(paper_id)
-        except ValueError as exc:
+            return papers_queries.get_paper(session, paper_id)
+        except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        topic_map = repo.get_topic_names_for_papers([str(p.id)])
-        tag_map = repo.get_tags_for_papers([str(p.id)])
-        # 查询已有分析报告
-        from sqlalchemy import select as _sel
-
-        from packages.storage.models import AnalysisReport as AR
-
-        ar = session.execute(_sel(AR).where(AR.paper_id == str(p.id))).scalar_one_or_none()
-        skim_data = None
-        deep_data = None
-        if ar:
-            if ar.summary_md:
-                skim_data = {
-                    "summary_md": ar.summary_md,
-                    "skim_score": ar.skim_score,
-                    "key_insights": ar.key_insights or {},
-                }
-            if ar.deep_dive_md:
-                deep_data = {
-                    "deep_dive_md": ar.deep_dive_md,
-                    "key_insights": ar.key_insights or {},
-                }
-        return {
-            "id": str(p.id),
-            "title": p.title,
-            "arxiv_id": p.arxiv_id,
-            "abstract": p.abstract,
-            "publication_date": str(p.publication_date) if p.publication_date else None,
-            "read_status": p.read_status.value,
-            "pdf_path": p.pdf_path,
-            "favorited": getattr(p, "favorited", False),
-            "rejected": getattr(p, "rejected", False),
-            "categories": (p.metadata_json or {}).get("categories", []),
-            "authors": (p.metadata_json or {}).get("authors", []),
-            "keywords": (p.metadata_json or {}).get("keywords", []),
-            "title_zh": (p.metadata_json or {}).get("title_zh", ""),
-            "abstract_zh": (p.metadata_json or {}).get("abstract_zh", ""),
-            "topics": topic_map.get(str(p.id), []),
-            "tags": tag_map.get(str(p.id), []),
-            "metadata": p.metadata_json,
-            "has_embedding": p.embedding is not None,
-            "skim_report": skim_data,
-            "deep_report": deep_data,
-        }
 
 
 @router.patch("/papers/{paper_id}/favorite")
 def toggle_favorite(paper_id: UUID) -> dict:
     """切换论文收藏状态"""
+    from packages.application.commands.papers import toggle_paper_flag
+    from packages.domain.exceptions import NotFoundError
+
     with session_scope() as session:
-        repo = PaperRepository(session)
         try:
-            p = repo.get_by_id(paper_id)
-        except ValueError as exc:
+            result = toggle_paper_flag(session, paper_id=paper_id, field="favorited")
+        except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        current = getattr(p, "favorited", False)
-        p.favorited = not current
-        session.commit()
-        cache.invalidate("folder_stats")
-        return {"id": str(p.id), "favorited": p.favorited}
+    cache.invalidate("folder_stats")
+    return result
 
 
 @router.patch("/papers/{paper_id}/reject")
 def toggle_reject(paper_id: UUID) -> dict:
     """切换论文"不感兴趣"状态（推荐系统负反馈）"""
     from packages.ai.recommendation_service import invalidate_recommendations
+    from packages.application.commands.papers import toggle_paper_flag
+    from packages.domain.exceptions import NotFoundError
 
     with session_scope() as session:
-        repo = PaperRepository(session)
         try:
-            p = repo.get_by_id(paper_id)
-        except ValueError as exc:
+            result = toggle_paper_flag(session, paper_id=paper_id, field="rejected")
+        except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        p.rejected = not getattr(p, "rejected", False)
-        session.commit()
-        # 失效 folder_stats（左侧文件夹计数）+ 推荐缓存（被拒论文立即从推荐列表移除，
-        # 否则 recommend:{top_k} / today_summary 最长 5min 仍含该论文）
-        cache.invalidate("folder_stats")
-        invalidate_recommendations()
-        return {"id": str(p.id), "rejected": p.rejected}
+    # 失效 folder_stats（左侧文件夹计数）+ 推荐缓存（被拒论文立即从推荐列表移除，
+    # 否则 recommend:{top_k} / today_summary 最长 5min 仍含该论文）
+    cache.invalidate("folder_stats")
+    invalidate_recommendations()
+    return result
 
 
 # ---------- PDF 服务 ----------
@@ -313,24 +203,17 @@ def toggle_reject(paper_id: UUID) -> dict:
 @router.post("/papers/{paper_id}/download-pdf")
 def download_paper_pdf(paper_id: UUID) -> dict:
     """从 arXiv 下载论文 PDF"""
-    from packages.integrations.arxiv_client import ArxivClient
+    from packages.application.commands.papers import download_source
+    from packages.domain.exceptions import NotFoundError, ValidationError
 
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        try:
-            paper = repo.get_by_id(paper_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if paper.pdf_path and Path(paper.pdf_path).exists():
-            return {"status": "exists", "pdf_path": paper.pdf_path}
-        if not paper.arxiv_id or paper.arxiv_id.startswith("ss-"):
-            raise HTTPException(status_code=400, detail="该论文没有有效的 arXiv ID，无法下载 PDF")
-        try:
-            pdf_path = ArxivClient().download_pdf(paper.arxiv_id)
-            repo.set_pdf_path(paper_id, pdf_path)
-            return {"status": "downloaded", "pdf_path": pdf_path}
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"PDF 下载失败: {exc}") from exc
+    try:
+        return download_source(paper_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF 下载失败: {exc}") from exc
 
 
 @router.get("/papers/{paper_id}/pdf")
@@ -489,63 +372,15 @@ def analyze_paper_figures(
     max_figures: int = Query(default=10, ge=1, le=30),
 ) -> dict:
     """提取并解读论文中的图表（异步任务）"""
+    from packages.application.commands.papers import start_figure_analysis
+    from packages.domain.exceptions import NotFoundError, ValidationError
 
-    # 先验证论文和 PDF
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        try:
-            paper = repo.get_by_id(paper_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if not paper.pdf_path:
-            raise HTTPException(status_code=400, detail="论文没有 PDF 文件")
-        pdf_path = paper.pdf_path
-        paper_title = paper.title[:50]
-
-    # 提交后台任务
-    def _analyze_fn(progress_callback=None):
-        from packages.ai.figure_service import FigureService
-
-        if progress_callback:
-            progress_callback("正在提取图表...", 10, 100)
-        svc = FigureService()
-        results = svc.analyze_paper_figures(paper_id, pdf_path, max_figures)
-
-        total_figures = len(results)
-        if progress_callback and total_figures > 0:
-            progress_callback(f"正在生成解读 ({total_figures} 个图表)...", 50, 100)
-
-        # 分析完成后，从 DB 获取带 id 的完整结果
-        from packages.ai.figure_service import FigureService as FS2
-
-        items = FS2.get_paper_analyses(paper_id)
-        for i, item in enumerate(items):
-            if item.get("has_image"):
-                item["image_url"] = f"/papers/{paper_id}/figures/{item['id']}/image"
-            else:
-                item["image_url"] = None
-            if progress_callback:
-                progress_callback(
-                    f"解读中 ({i + 1}/{total_figures})...",
-                    50 + int((i + 1) / total_figures * 45),
-                    100,
-                )
-
-        if progress_callback:
-            progress_callback("图表分析完成", 95, 100)
-        return {"paper_id": str(paper_id), "count": len(items), "items": items}
-
-    task_id = global_tracker.submit(
-        task_type="figure_analysis",
-        title=f"📊 图表分析：{paper_title}",
-        fn=_analyze_fn,
-        total=max_figures,
-    )
-    return {
-        "task_id": task_id,
-        "status": "started",
-        "message": "图表分析已启动，正在处理...",
-    }
+    try:
+        return start_figure_analysis(paper_id, max_figures=max_figures)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/papers/{paper_id}/similar")
@@ -553,42 +388,12 @@ def similar(
     paper_id: UUID,
     top_k: int = Query(default=5, ge=1, le=20),
 ) -> dict:
-    try:
-        ids = rag_service.similar_papers(paper_id, top_k=top_k)
-    except ValueError as exc:
-        # get_by_id 在论文不存在时抛 ValueError，统一转 404（此前返回 500）
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    items = []
-    if ids:
-        # N+1 修复：一次 list_by_ids 查完，按 ids 顺序构建（缺失的补 UUID 占位）
-        with session_scope() as session:
-            repo = PaperRepository(session)
-            by_id = {str(p.id): p for p in repo.list_by_ids([str(i) for i in ids])}
-        for pid in ids:
-            p = by_id.get(str(pid))
-            if p is not None:
-                items.append(
-                    {
-                        "id": str(p.id),
-                        "title": p.title,
-                        "arxiv_id": p.arxiv_id,
-                        "read_status": p.read_status.value if p.read_status else "unread",
-                    }
-                )
-            else:
-                items.append(
-                    {
-                        "id": str(pid),
-                        "title": str(pid),
-                        "arxiv_id": None,
-                        "read_status": "unread",
-                    }
-                )
-    return {
-        "paper_id": str(paper_id),
-        "similar_ids": [str(x) for x in ids],
-        "items": items,
-    }
+    with session_scope() as session:
+        try:
+            return papers_queries.get_similar_papers(session, paper_id, top_k=top_k)
+        except NotFoundError as exc:
+            # get_by_id 在论文不存在时抛，统一转 404（此前返回 500）
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/papers/{paper_id}/duplicates")
@@ -610,15 +415,13 @@ def paper_duplicates(
 @router.post("/papers/{paper_id}/reasoning")
 def paper_reasoning(paper_id: UUID) -> dict:
     """推理链深度分析"""
-    from packages.ai.reasoning_service import ReasoningService
+    from packages.application.commands.analysis import paper_reasoning_report
+    from packages.domain.exceptions import NotFoundError
 
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        try:
-            repo.get_by_id(paper_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return ReasoningService().analyze(paper_id)
+    try:
+        return paper_reasoning_report(paper_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # ========== IEEE 渠道专用路由（MVP 阶段新增）==========
@@ -631,7 +434,7 @@ def ingest_ieee_papers(
     topic_id: str | None = Query(default=None, description="可选的主题 ID"),
 ) -> dict:
     """
-    【MVP】IEEE 论文摄取接口
+    【MVP】IEEE 论文摄取接口（任务化）
 
     注意：
     - 需要 IEEE API Key 配置（.env 中设置 IEEE_API_KEY）
@@ -644,7 +447,7 @@ def ingest_ieee_papers(
         topic_id: 可选的主题 ID
 
     Returns:
-        dict: {status, total_fetched, inserted_ids, new_count}
+        dict: {task_id, job_id}——结果经 /tasks/{task_id}/result 轮询
 
     示例:
     ```bash
@@ -653,39 +456,31 @@ def ingest_ieee_papers(
     """
     import logging
 
-    from packages.ai.pipelines import PaperPipelines
-    from packages.domain.enums import ActionType
+    from packages.application.commands.jobs import submit_job
 
     logger = logging.getLogger(__name__)
-    pipelines = PaperPipelines()
 
-    try:
-        total, inserted_ids, new_count = pipelines.ingest_ieee(
-            query=query,
-            max_results=max_results,
-            topic_id=topic_id,
-            action_type=ActionType.manual_collect,
-        )
-
-        return {
-            "status": "success",
-            "total_fetched": total,
-            "inserted_ids": inserted_ids,
-            "new_count": new_count,
-            "message": f"✅ IEEE 摄取完成：{new_count} 篇新论文",
-        }
-
-    except RuntimeError as exc:
-        # IEEE API Key 未配置
-        logger.error("IEEE 摄取失败：%s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail=f"IEEE 服务不可用：{str(exc)}。请在 .env 中设置 IEEE_API_KEY 环境变量。",
-        ) from exc
-
-    except Exception as exc:
-        logger.error("IEEE 摄取失败：%s", exc)
-        raise HTTPException(
-            status_code=500,
-            detail=f"IEEE 摄取失败：{str(exc)}",
-        ) from exc
+    logger.info(
+        "IEEE ingest(task): query=%r max_results=%d topic_id=%s",
+        query,
+        max_results,
+        topic_id,
+    )
+    # 去重第五刀：同步直写 → 提交 ingest_ieee 任务（manifest A 档，Go 权威调度 +
+    # 单事务 apply）；结果经 /tasks/{id}/result 轮询（IEEE_API_KEY 未配置由
+    # handler 显式失败，任务观察面可见）
+    submitted = submit_job(
+        kind="IeeeIngest",
+        capability="ingest_ieee",
+        title=f"IEEE 摄入: {query[:60]}",
+        input_ref={
+            "query": query,
+            "max_results": max_results,
+            "topic_id": topic_id,
+            "action_type": "manual_collect",
+        },
+        idempotency_key=None,
+        timeout_s=600,
+        created_by="api",
+    )
+    return {"task_id": submitted["task_id"], "job_id": submitted["job_id"]}

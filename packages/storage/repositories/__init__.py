@@ -20,6 +20,11 @@ from packages.storage.repositories.citation import CitationRepository
 from packages.storage.repositories.cs_feed import CSFeedRepository
 from packages.storage.repositories.daily_report import DailyReportConfigRepository
 from packages.storage.repositories.device_auth import DeviceAuthRequestRepository
+from packages.storage.repositories.durable import (
+    ArtifactRepository,
+    JobRepository,
+    TaskRepository,
+)
 from packages.storage.repositories.email_config import EmailConfigRepository
 from packages.storage.repositories.generated_content import GeneratedContentRepository
 from packages.storage.repositories.ieee_quota import IeeeQuotaRepository
@@ -27,6 +32,14 @@ from packages.storage.repositories.llm_config import LLMConfigRepository
 from packages.storage.repositories.paper import PaperRepository
 from packages.storage.repositories.pipeline import PipelineRunRepository
 from packages.storage.repositories.prompt_trace import PromptTraceRepository
+from packages.storage.repositories.research import (
+    ClaimRelationRepository,
+    ClaimRepository,
+    ResearchEventRepository,
+    ResearchQuestionRepository,
+    ResearchRunRepository,
+    SourceVersionRepository,
+)
 from packages.storage.repositories.tag import TagRepository
 from packages.storage.repositories.topic import TopicRepository
 
@@ -52,4 +65,13 @@ __all__ = [
     "BatchJobRepository",
     "ApiTokenRepository",
     "DeviceAuthRequestRepository",
+    "JobRepository",
+    "TaskRepository",
+    "ArtifactRepository",
+    "ResearchQuestionRepository",
+    "ResearchRunRepository",
+    "ClaimRepository",
+    "ClaimRelationRepository",
+    "SourceVersionRepository",
+    "ResearchEventRepository",
 ]

@@ -71,7 +71,6 @@ class ReasoningService:
         result = self.llm.complete_json(
             prompt,
             stage="deep",
-            model_override=self.settings.llm_model_deep,
             max_tokens=8192,
         )
 

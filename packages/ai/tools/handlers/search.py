@@ -6,10 +6,9 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from packages.ai.graph_service import GraphService
-from packages.ai.rag_service import RAGService
 from packages.ai.tools.base import _require_paper
 from packages.ai.tools.types import ToolProgress, ToolResult
+from packages.application.queries import papers as papers_queries
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
 
@@ -22,23 +21,11 @@ logger = logging.getLogger(__name__)
 def _search_papers(keyword: str, limit: int = 20) -> ToolResult:
     try:
         with session_scope() as session:
-            papers = PaperRepository(session).full_text_candidates(query=keyword, limit=limit)
-            items = [
-                {
-                    "id": str(p.id),
-                    "title": p.title,
-                    "arxiv_id": p.arxiv_id,
-                    "abstract": (p.abstract or "")[:500],
-                    "publication_date": str(p.publication_date) if p.publication_date else None,
-                    "read_status": p.read_status.value,
-                    "categories": (p.metadata_json or {}).get("categories", []),
-                }
-                for p in papers
-            ]
+            data = papers_queries.search_papers(session, keyword=keyword, limit=limit)
         return ToolResult(
             success=True,
-            data={"papers": items, "count": len(items)},
-            summary=f"搜索到 {len(items)} 篇论文",
+            data=data,
+            summary=f"搜索到 {data['count']} 篇论文",
         )
     except Exception as exc:
         logger.exception("search_papers failed: %s", exc)
@@ -83,29 +70,16 @@ def _get_similar_papers(paper_id: str, top_k: int = 5) -> ToolResult:
             summary="该论文未向量化，请先调用 embed_paper",
         )
     try:
-        ids = RAGService().similar_papers(pid, top_k=top_k)
-        items = []
         with session_scope() as session:
-            repo = PaperRepository(session)
-            for sid in ids:
-                try:
-                    sp = repo.get_by_id(sid)
-                    items.append(
-                        {
-                            "id": str(sp.id),
-                            "title": sp.title,
-                            "arxiv_id": sp.arxiv_id,
-                            "read_status": sp.read_status.value,
-                        }
-                    )
-                except Exception:
-                    items.append({"id": str(sid), "title": "未知论文"})
+            result = papers_queries.get_similar_papers(session, pid, top_k=top_k)
+        items = result["items"]
+        ids = result["similar_ids"]
         titles = ", ".join(it["title"][:30] for it in items[:3])
         return ToolResult(
             success=True,
             data={
                 "paper_id": paper.id,
-                "similar_ids": [str(x) for x in ids],
+                "similar_ids": ids,
                 "items": items,
             },
             summary=f"找到 {len(ids)} 篇相似论文: {titles}{'...' if len(ids) > 3 else ''}",
@@ -137,12 +111,9 @@ def _ask_knowledge_base(
 
     try:
         yield ToolProgress(message=f"开始迭代 RAG 检索：{question[:50]}...")
-        resp = RAGService().ask_iterative(
-            question=question,
-            max_rounds=3,
-            initial_top_k=top_k,
-            on_progress=on_progress,
-        )
+        from packages.application.queries.ask import ask_knowledge_base as app_ask
+
+        resp = app_ask(question=question, top_k=top_k, max_rounds=3, on_progress=on_progress)
         # 逐条发送进度
         for msg in progress_msgs:
             yield ToolProgress(message=msg)
@@ -179,7 +150,9 @@ def _get_citation_tree(paper_id: str, depth: int = 2) -> ToolResult:
         return err
     try:
         # 用完整 UUID（paper.id），不用原始短前缀（citation_tree 内部用 paper.id 作 dict key）
-        result = GraphService().citation_tree(root_paper_id=paper.id, depth=depth)
+        from packages.application.queries.graph import get_citation_tree as app_citation_tree
+
+        result = app_citation_tree(paper_id=paper.id, depth=depth)
         node_count = len(result.get("nodes", []))
         edge_count = len(result.get("edges", []))
         return ToolResult(
@@ -194,7 +167,9 @@ def _get_citation_tree(paper_id: str, depth: int = 2) -> ToolResult:
 
 def _get_timeline(keyword: str, limit: int = 100) -> ToolResult:
     try:
-        result = GraphService().timeline(keyword=keyword, limit=limit)
+        from packages.application.queries.graph import get_timeline as app_timeline
+
+        result = app_timeline(keyword=keyword, limit=limit)
         tl = result.get("timeline", [])
         years = sorted({p.get("year") for p in tl if p.get("year")})
         year_range = (
@@ -212,10 +187,10 @@ def _get_timeline(keyword: str, limit: int = 100) -> ToolResult:
 
 def _suggest_keywords(description: str) -> ToolResult:
     """AI 生成 arXiv 搜索关键词建议"""
-    from packages.ai.keyword_service import KeywordService
+    from packages.application.commands.content import suggest_keywords as app_suggest
 
     try:
-        suggestions = KeywordService().suggest(description.strip())
+        suggestions = app_suggest(description.strip())
     except Exception as exc:
         logger.exception("Keyword suggestion failed: %s", exc)
         return ToolResult(success=False, summary=f"关键词建议生成失败: {exc!s}")
@@ -246,9 +221,8 @@ def _list_papers_by_filter(
 ) -> ToolResult:
     try:
         with session_scope() as session:
-            papers, total = PaperRepository(session).list_paginated(
-                page=1,
-                page_size=limit,
+            data = papers_queries.list_papers_by_filter(
+                session,
                 start_date=start_date,
                 end_date=end_date,
                 date_field=date_field,
@@ -258,21 +232,12 @@ def _list_papers_by_filter(
                 search=search,
                 sort_by=sort_by,
                 sort_order=sort_order,
+                limit=limit,
             )
-        items = [
-            {
-                "paper_id": str(p.id),
-                "title": p.title,
-                "created_at": p.created_at.isoformat(),
-                "publication_date": p.publication_date.isoformat() if p.publication_date else None,
-                "read_status": p.read_status.value,
-            }
-            for p in papers
-        ]
         return ToolResult(
             success=True,
-            data={"items": items, "total": total},
-            summary=f"找到 {total} 篇（返回前 {len(items)} 篇）",
+            data=data,
+            summary=f"找到 {data['total']} 篇（返回前 {len(data['items'])} 篇）",
         )
     except Exception as exc:
         logger.exception("list_papers_by_filter failed: %s", exc)

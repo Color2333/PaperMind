@@ -68,6 +68,7 @@ import type {
   MultiSourceSearchResult,
   ChannelSuggestion,
   Tag,
+  AgentEngineStatus,
 } from "@/types";
 
 export type {
@@ -454,10 +455,13 @@ export const translateApi = {
 export const pipelineApi = {
   // 后台任务化：返回 task_id，前端轮询 tasksApi.getStatus + getResult 取结果
   skim: (paperId: string) => post<{ task_id: string; status: string }>(`/pipelines/skim/${paperId}`),
+  skimBatch: (paperIds: string[]) =>
+    post<{ task_id: string; job_id: string; status: string }>("/pipelines/skim-batch", {
+      paper_ids: paperIds,
+    }),
   deep: (paperId: string) => post<{ task_id: string; status: string }>(`/pipelines/deep/${paperId}`),
   embed: (paperId: string) =>
     post<{ task_id: string; status: string }>(`/pipelines/embed/${paperId}`),
-  runs: (limit = 30) => get<{ items: PipelineRun[] }>(`/pipelines/runs?limit=${limit}`),
 };
 
 /* ========== RAG ========== */
@@ -571,7 +575,72 @@ export const jobApi = {
     post<{ processed: number; failed: number; total: number; message: string }>(
       `/jobs/batch-process-unread?max_papers=${maxPapers}`
     ),
+  // durable execution（C3/C10）
+  list: (params?: { status?: string; kind?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set("status", params.status);
+    if (params?.kind) q.set("kind", params.kind);
+    if (params?.limit) q.set("limit", String(params.limit));
+    return get<{ items: DurableJobItem[] }>(`/jobs?${q.toString()}`);
+  },
+  graph: (jobId: string) => get<DurableJobGraph>(`/jobs/${jobId}`),
+  cancel: (jobId: string) => post<{ cancelled: number; cancel_requested: number }>(`/jobs/${jobId}/cancel`),
+  retry: (jobId: string) => post<{ retried: number }>(`/jobs/${jobId}/retry`),
+  retryTask: (taskId: string) => post<{ task_id: string; status: string }>(`/tasks/${taskId}/retry`),
+  pauseQueue: () => post<{ paused: boolean }>("/queue/pause"),
+  resumeQueue: () => post<{ paused: boolean }>("/queue/resume"),
 };
+
+export interface DurableJobItem {
+  id: string;
+  kind: string;
+  status: string;
+  priority: number;
+  progress: { current: number; total: number; message: string };
+  created_by: string;
+  research_run_id: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  authority?: "go_core" | "python_durable";
+}
+
+export interface DurableJobGraph {
+  id: string;
+  kind: string;
+  status: string;
+  authority?: "go_core" | "python_durable";
+  payload: Record<string, unknown>;
+  progress: { current: number; total: number; message: string };
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  tasks: {
+    id: string;
+    seq: number;
+    capability: string;
+    status: string;
+    attempt_count: number;
+    resource_class: string;
+    timeout_s: number;
+    max_attempts: number;
+    last_error: string | null;
+    external_ref: string | null;
+    output_artifact_id: string | null;
+  }[];
+  attempts: {
+    id: string;
+    task_id: string;
+    attempt_no: number;
+    executor_id: string;
+    fencing_token: number;
+    status: string;
+    error_class: string | null;
+    error_message: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+  }[];
+}
 
 /* ========== 指标 ========== */
 export const metricsApi = {
@@ -658,6 +727,13 @@ export const agentApi = {
     const url = `${getApiBase().replace(/\/+$/, "")}/agent/reject/${actionId}`;
     return fetchSSE(url, { method: "POST" });
   },
+  /* 聊天引擎状态（Pi agent core / Python 回退）——Settings LLM Gateway 与聊天徽标 */
+  engine: () => get<AgentEngineStatus>("/agent/engine"),
+  /* Pi 引擎动作的轻量决定（主流保持打开，pm 工具轮询拾取；非 SSE 续播） */
+  resolvePiAction: (actionId: string, decision: "approved" | "rejected") =>
+    post<{ ok: boolean; status: string }>(
+      `/agent/${decision === "approved" ? "confirm" : "reject"}/${actionId}`
+    ),
 };
 
 /* ========== 邮箱配置 ========== */
@@ -703,17 +779,7 @@ export const tasksApi = {
     get<{ tasks: TaskStatus[] }>(
       `/tasks?${taskType ? `task_type=${taskType}&` : ""}limit=${limit}`
     ),
-  track: (body: {
-    action: string;
-    task_id: string;
-    task_type?: string;
-    title?: string;
-    total?: number;
-    current?: number;
-    message?: string;
-    success?: boolean;
-    error?: string;
-  }) => post<{ ok: boolean }>("/tasks/track", body),
+
 };
 
 /* ========== 认证 ========== */
@@ -738,4 +804,69 @@ export const deviceAuthApi = {
     post<{ status: string }>(`/auth/device/${encodeURIComponent(userCode)}/authorize`),
   deny: (userCode: string) =>
     post<{ status: string }>(`/auth/device/${encodeURIComponent(userCode)}/deny`),
+};
+
+/* ========== Research State（C/D 阶段新增） ========== */
+export interface ClaimItem {
+  id: string;
+  statement: string;
+  statement_zh: string | null;
+  origin: "author" | "papermind" | "user";
+  status: "draft" | "pending_verification" | "confirmed" | "superseded" | "invalidated";
+  certainty: "established" | "conditional" | "conflicted" | "insufficient_evidence" | "unknown";
+  evidence_count: number;
+  superseded_by_id: string | null;
+  run_id: string | null;
+  created_at: string | null;
+}
+
+export interface EvidenceItem {
+  id: string;
+  kind: string;
+  stance: string;
+  locator: Record<string, unknown>;
+  quote: string | null;
+  experiment_conditions: Record<string, unknown> | null;
+  extracted_by: string;
+  source_version: {
+    id: string;
+    version_label: number;
+    external_version: string | null;
+    content_hash: string;
+    paper: { id: string; title: string; arxiv_id: string; doi: string | null };
+  };
+}
+
+export interface DiffEntry {
+  id: string;
+  event: string;
+  diff_kind: string;
+  aggregate_id: string;
+  actor: string;
+  payload: Record<string, unknown>;
+  occurred_at: string | null;
+}
+
+export const researchApi = {
+  getQuestion: (id: string) =>
+    get<{
+      id: string; title: string; question: string; status: string;
+      claim_counts: { by_status: Record<string, number>; by_certainty: Record<string, number> };
+    }>(`/research/questions/${id}`),
+  listClaims: (questionId: string, status?: string) =>
+    get<{ items: ClaimItem[] }>(
+      `/research/questions/${questionId}/claims${status ? `?status=${status}` : ""}`
+    ),
+  getClaimEvidence: (claimId: string) =>
+    get<{ claim: Record<string, unknown>; evidence: EvidenceItem[] }>(
+      `/research/claims/${claimId}/evidence`
+    ),
+  diff: (questionId: string, sinceHours?: number) =>
+    get<{ items: DiffEntry[] }>(
+      `/research/questions/${questionId}/diff${sinceHours ? `?since_hours=${sinceHours}` : ""}`
+    ),
+  exportMd: (questionId: string) =>
+    fetch(`${getApiBase()}/research/questions/${questionId}/export?format=markdown`, {
+      headers: { Authorization: `Bearer ${getAuthToken()}` },
+    }).then((r) => r.text()),
 };

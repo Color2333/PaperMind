@@ -12,7 +12,6 @@ import ToastContainer from "@/components/Toast";
 import { Loader2, FileQuestion } from "lucide-react";
 
 /* Agent 作为首页，不做懒加载，保证首屏速度 */
-import AgentPage from "@/pages/Agent";
 
 /* 其余页面全部懒加载，按需拆 chunk */
 const Collect = lazy(() => import("@/pages/Collect"));
@@ -22,11 +21,10 @@ const PaperDetail = lazy(() => import("@/pages/PaperDetail"));
 const GraphExplorer = lazy(() => import("@/pages/GraphExplorer"));
 const Wiki = lazy(() => import("@/pages/Wiki"));
 const DailyBrief = lazy(() => import("@/pages/DailyBrief"));
-const Pipelines = lazy(() => import("@/pages/Pipelines"));
-const Operations = lazy(() => import("@/pages/Operations"));
-const EmailSettings = lazy(() => import("@/pages/EmailSettings"));
 const Writing = lazy(() => import("@/pages/Writing"));
 const Statistics = lazy(() => import("@/pages/Statistics"));
+const ResearchState = lazy(() => import("@/pages/ResearchState"));
+const JobMonitor = lazy(() => import("@/pages/JobMonitor"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const DeviceAuthorize = lazy(() => import("@/pages/DeviceAuthorize"));
 
@@ -105,7 +103,7 @@ export default function App() {
         {/* 设备码授权页：独立布局（pm login 打开的 verification_url） */}
         <Route path="/device" element={<Suspense fallback={<PageFallback />}><DeviceAuthorize /></Suspense>} />
         <Route element={<Layout />}>
-          <Route path="/" element={<AgentPage />} />
+          <Route index element={<Navigate to="/papers" replace />} />
           <Route path="/collect" element={<Suspense fallback={<PageFallback />}><Collect /></Suspense>} />
           <Route path="/dashboard" element={<Suspense fallback={<PageFallback />}><Dashboard /></Suspense>} />
           <Route path="/papers" element={<Suspense fallback={<PageFallback />}><Papers /></Suspense>} />
@@ -113,11 +111,10 @@ export default function App() {
           <Route path="/graph" element={<Suspense fallback={<PageFallback />}><GraphExplorer /></Suspense>} />
           <Route path="/wiki" element={<Suspense fallback={<PageFallback />}><Wiki /></Suspense>} />
           <Route path="/brief" element={<Suspense fallback={<PageFallback />}><DailyBrief /></Suspense>} />
-          <Route path="/pipelines" element={<Suspense fallback={<PageFallback />}><Pipelines /></Suspense>} />
-          <Route path="/operations" element={<Suspense fallback={<PageFallback />}><Operations /></Suspense>} />
-          <Route path="/email-settings" element={<Suspense fallback={<PageFallback />}><EmailSettings /></Suspense>} />
           <Route path="/writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
           <Route path="/statistics" element={<Suspense fallback={<PageFallback />}><Statistics /></Suspense>} />
+          <Route path="/research" element={<Suspense fallback={<PageFallback />}><ResearchState /></Suspense>} />
+          <Route path="/jobs" element={<Suspense fallback={<PageFallback />}><JobMonitor /></Suspense>} />
 
           {/* 常见拼写重定向 */}
           <Route path="/briefs" element={<Navigate to="/brief" replace />} />

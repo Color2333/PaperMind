@@ -7,10 +7,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 
-from apps.api.deps import cache, get_paper_title, graph_service
-from packages.domain.task_tracker import global_tracker
-from packages.storage.db import session_scope
-from packages.storage.repositories import TopicRepository
+from apps.api.deps import cache
+from packages.application.queries import graph as graph_queries
 
 router = APIRouter()
 
@@ -25,20 +23,11 @@ def sync_citations_incremental(
     edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
 ) -> dict:
     """增量同步引用（后台执行）"""
+    from packages.application.commands.graph import start_incremental_citation_sync
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步增量引用...", 20, 100)
-        result = graph_service.sync_incremental(
-            paper_limit=paper_limit,
-            edge_limit_per_paper=edge_limit_per_paper,
-        )
-        if progress_callback:
-            progress_callback("增量引用同步完成", 90, 100)
-        return result
-
-    task_id = global_tracker.submit("citation_sync", "📊 增量引用同步", _fn, category="sync")
-    return {"task_id": task_id, "message": "增量引用同步已启动", "status": "running"}
+    return start_incremental_citation_sync(
+        paper_limit=paper_limit, edge_limit_per_paper=edge_limit_per_paper
+    )
 
 
 @router.post("/citations/sync/topic/{topic_id}")
@@ -48,31 +37,11 @@ def sync_citations_for_topic(
     edge_limit_per_paper: int = Query(default=6, ge=1, le=50),
 ) -> dict:
     """主题引用同步（后台执行）"""
-    topic_name = topic_id
-    try:
-        with session_scope() as session:
-            topic = TopicRepository(session).get_by_id(topic_id)
-            if topic:
-                topic_name = topic.name
-    except Exception:
-        pass
+    from packages.application.commands.graph import start_topic_citation_sync
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步主题引用...", 20, 100)
-        result = graph_service.sync_citations_for_topic(
-            topic_id=topic_id,
-            paper_limit=paper_limit,
-            edge_limit_per_paper=edge_limit_per_paper,
-        )
-        if progress_callback:
-            progress_callback("主题引用同步完成", 90, 100)
-        return result
-
-    task_id = global_tracker.submit(
-        "citation_sync", f"📊 主题引用同步：{topic_name}", _fn, category="sync"
+    return start_topic_citation_sync(
+        topic_id=topic_id, paper_limit=paper_limit, edge_limit_per_paper=edge_limit_per_paper
     )
-    return {"task_id": task_id, "message": f"主题引用同步已启动: {topic_name}", "status": "running"}
 
 
 @router.post("/citations/sync/{paper_id}")
@@ -81,20 +50,9 @@ def sync_citations(
     limit: int = Query(default=8, ge=1, le=50),
 ) -> dict:
     """单篇论文引用同步（后台执行）"""
-    paper_title = get_paper_title(UUID(paper_id)) or paper_id[:8]
+    from packages.application.commands.graph import start_paper_citation_sync
 
-    def _fn(progress_callback=None):
-        if progress_callback:
-            progress_callback("正在同步论文引用...", 20, 100)
-        result = graph_service.sync_citations_for_paper(paper_id=paper_id, limit=limit)
-        if progress_callback:
-            progress_callback("论文引用同步完成", 90, 100)
-        return result
-
-    task_id = global_tracker.submit(
-        "citation_sync", f"📄 引用同步：{paper_title[:30]}", _fn, category="sync"
-    )
-    return {"task_id": task_id, "message": "论文引用同步已启动", "status": "running"}
+    return start_paper_citation_sync(paper_id=paper_id, limit=limit)
 
 
 # ---------- 图谱 ----------
@@ -110,7 +68,7 @@ async def similarity_map(
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.similarity_map, topic_id=topic_id, limit=limit)
+    result = await run_in_threadpool(graph_queries.similarity_map, topic_id=topic_id, limit=limit)
     cache.set(cache_key, result, ttl=60)
     return result
 
@@ -127,7 +85,7 @@ async def cluster_map(
     if cached is not None:
         return cached
     result = await run_in_threadpool(
-        graph_service.cluster_map,
+        graph_queries.cluster_map,
         n_clusters=n_clusters,
         limit=limit,
         papers_per_cluster=papers_per_cluster,
@@ -144,7 +102,7 @@ async def similar_via_citation(
     """引用同一篇论文且语义相近的论文（co-citation + 向量补强）"""
     try:
         return await run_in_threadpool(
-            graph_service.similar_via_citation, paper_id=str(paper_id), top_k=top_k
+            graph_queries.similar_via_citation, paper_id=str(paper_id), top_k=top_k
         )
     except ValueError as exc:
         # get_by_id 在论文不存在时抛 ValueError，统一转 404（此前返回 500）
@@ -162,7 +120,7 @@ async def citation_tree(
     if cached is not None:
         return cached
     result = await run_in_threadpool(
-        graph_service.citation_tree, root_paper_id=paper_id, depth=depth
+        graph_queries.get_citation_tree, paper_id=paper_id, depth=depth
     )
     cache.set(cache_key, result, ttl=60)
     return result
@@ -171,7 +129,7 @@ async def citation_tree(
 @router.get("/graph/citation-detail/{paper_id}")
 def citation_detail(paper_id: str) -> dict:
     """获取单篇论文的丰富引用详情（含参考文献和被引列表，含外部 API 副作用，不缓存）"""
-    return graph_service.citation_detail(paper_id=paper_id)
+    return graph_queries.citation_detail(paper_id=paper_id)
 
 
 @router.get("/graph/citation-network/topic/{topic_id}")
@@ -181,7 +139,7 @@ async def topic_citation_network(topic_id: str) -> dict:
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.topic_citation_network, topic_id=topic_id)
+    result = await run_in_threadpool(graph_queries.topic_citation_network, topic_id=topic_id)
     cache.set(cache_key, result, ttl=60)
     return result
 
@@ -189,7 +147,9 @@ async def topic_citation_network(topic_id: str) -> dict:
 @router.post("/graph/citation-network/topic/{topic_id}/deep-trace")
 def topic_deep_trace(topic_id: str) -> dict:
     """对主题内论文执行深度溯源，拉取外部引用并进行共引分析（含外部 API 副作用，不缓存）"""
-    return graph_service.topic_deep_trace(topic_id=topic_id)
+    from packages.application.commands.graph import topic_deep_trace
+
+    return topic_deep_trace(topic_id=topic_id)
 
 
 @router.get("/graph/overview")
@@ -198,7 +158,7 @@ async def graph_overview() -> dict:
     cached = cache.get("graph_overview")
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.library_overview)
+    result = await run_in_threadpool(graph_queries.library_overview)
     cache.set("graph_overview", result, ttl=60)
     return result
 
@@ -209,7 +169,7 @@ async def graph_bridges() -> dict:
     cached = cache.get("graph_bridges")
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.cross_topic_bridges)
+    result = await run_in_threadpool(graph_queries.cross_topic_bridges)
     cache.set("graph_bridges", result, ttl=60)
     return result
 
@@ -223,7 +183,7 @@ async def graph_frontier(
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.research_frontier, days=days)
+    result = await run_in_threadpool(graph_queries.research_frontier, days=days)
     cache.set(cache_key, result, ttl=60)
     return result
 
@@ -237,7 +197,7 @@ async def graph_cocitation_clusters(
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.cocitation_clusters, min_cocite=min_cocite)
+    result = await run_in_threadpool(graph_queries.cocitation_clusters, min_cocite=min_cocite)
     cache.set(cache_key, result, ttl=300)
     return result
 
@@ -245,7 +205,9 @@ async def graph_cocitation_clusters(
 @router.post("/graph/auto-link")
 def graph_auto_link(paper_ids: list[str]) -> dict:
     """手动触发引用自动关联（含外部 API 副作用，不缓存）"""
-    return graph_service.auto_link_citations(paper_ids)
+    from packages.application.commands.graph import auto_link_citations
+
+    return auto_link_citations(paper_ids)
 
 
 @router.get("/graph/timeline")
@@ -258,7 +220,7 @@ async def graph_timeline(
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.timeline, keyword=keyword, limit=limit)
+    result = await run_in_threadpool(graph_queries.get_timeline, keyword=keyword, limit=limit)
     cache.set(cache_key, result, ttl=120)
     return result
 
@@ -273,7 +235,7 @@ async def graph_quality(
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.quality_metrics, keyword=keyword, limit=limit)
+    result = await run_in_threadpool(graph_queries.quality_metrics, keyword=keyword, limit=limit)
     cache.set(cache_key, result, ttl=120)
     return result
 
@@ -288,7 +250,7 @@ async def graph_weekly_evolution(
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.weekly_evolution, keyword=keyword, limit=limit)
+    result = await run_in_threadpool(graph_queries.weekly_evolution, keyword=keyword, limit=limit)
     cache.set(cache_key, result, ttl=300)
     return result
 
@@ -303,7 +265,7 @@ async def graph_survey(
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = await run_in_threadpool(graph_service.survey, keyword=keyword, limit=limit)
+    result = await run_in_threadpool(graph_queries.survey, keyword=keyword, limit=limit)
     cache.set(cache_key, result, ttl=300)
     return result
 
@@ -319,7 +281,7 @@ async def graph_research_gaps(
     if cached is not None:
         return cached
     result = await run_in_threadpool(
-        graph_service.detect_research_gaps, keyword=keyword, limit=limit
+        graph_queries.detect_research_gaps, keyword=keyword, limit=limit
     )
     cache.set(cache_key, result, ttl=600)
     return result

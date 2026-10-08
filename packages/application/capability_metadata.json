@@ -1,0 +1,324 @@
+{
+  "schema_version": 1,
+  "capabilities": [
+    {
+      "name": "search_papers",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "paper_list",
+      "surfaces": {
+        "terminal": "command",
+        "mcp": "tool",
+        "full_web": "GET /papers/search-multi"
+      }
+    },
+    {
+      "name": "get_paper",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "paper_card",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "PaperDetail",
+        "full_web": "GET /papers/{id}",
+        "mcp": "tool"
+      }
+    },
+    {
+      "name": "get_research_question",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "question_card",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "ClaimWorkspace",
+        "full_web": "GET /research/questions/{id}",
+        "mcp": "resource"
+      }
+    },
+    {
+      "name": "list_claims",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "claim_list",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "ClaimWorkspace",
+        "full_web": "GET /research/questions/{id}/claims",
+        "mcp": "resource"
+      }
+    },
+    {
+      "name": "get_claim_evidence",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "claim_evidence_card",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "ClaimEvidencePanel",
+        "full_web": "GET /research/claims/{id}/evidence",
+        "mcp": "resource"
+      }
+    },
+    {
+      "name": "diff_research_state",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "research_diff",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "ResearchDiff",
+        "full_web": "GET /research/questions/{id}/diff",
+        "mcp": "resource"
+      }
+    },
+    {
+      "name": "export_research_object",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "research_pack",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "ResearchPack",
+        "full_web": "GET /research/questions/{id}/export",
+        "mcp": "resource"
+      }
+    },
+    {
+      "name": "import_paper",
+      "kind": "command",
+      "risk": "write",
+      "required_scope": "research:write",
+      "supports_async": true,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "import_progress",
+      "surfaces": {
+        "terminal": "command",
+        "full_web": "POST /ingest/arxiv",
+        "mcp": "tool"
+      }
+    },
+    {
+      "name": "start_skim",
+      "kind": "start_job",
+      "risk": "write",
+      "required_scope": "research:write",
+      "supports_async": true,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "job_progress",
+      "surfaces": {
+        "terminal": "command",
+        "full_web": "POST /pipelines/skim/{id}",
+        "mcp": "tool"
+      }
+    },
+    {
+      "name": "start_deep_read",
+      "kind": "start_job",
+      "risk": "write",
+      "required_scope": "research:write",
+      "supports_async": true,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "job_progress",
+      "surfaces": {
+        "terminal": "command",
+        "full_web": "POST /pipelines/deep/{id}",
+        "mcp": "tool"
+      }
+    },
+    {
+      "name": "confirm_claim",
+      "kind": "command",
+      "risk": "write",
+      "required_scope": "research:write",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "claim_card",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "ClaimWorkspace",
+        "full_web": "POST（application command）"
+      }
+    },
+    {
+      "name": "cancel_job",
+      "kind": "command",
+      "risk": "write",
+      "required_scope": "jobs:control",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "JobMonitor",
+        "full_web": "POST /jobs/{id}/cancel"
+      }
+    },
+    {
+      "name": "ask_knowledge_base",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "answer_card",
+      "surfaces": {
+        "terminal": "command",
+        "mcp": "tool",
+        "full_web": "POST /rag/ask"
+      }
+    },
+    {
+      "name": "get_daily_brief",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "brief_card",
+      "surfaces": {
+        "terminal": "command",
+        "mcp": "tool",
+        "full_web": "GET /brief"
+      }
+    },
+    {
+      "name": "get_similar_papers",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "paper_list",
+      "surfaces": {
+        "terminal": "command",
+        "mcp": "tool",
+        "full_web": "GET /papers/{id}/similar"
+      }
+    },
+    {
+      "name": "get_recommendations",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "paper_list",
+      "surfaces": {
+        "terminal": "command",
+        "mcp": "tool",
+        "full_web": "GET /papers/recommended"
+      }
+    },
+    {
+      "name": "list_topics",
+      "kind": "query",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "topic_list",
+      "surfaces": {
+        "terminal": "command",
+        "mcp": "tool",
+        "full_web": "GET /topics"
+      }
+    },
+    {
+      "name": "start_daily_brief",
+      "kind": "start_job",
+      "risk": "write",
+      "required_scope": "research:write",
+      "supports_async": true,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "job_progress",
+      "surfaces": {
+        "terminal": "command",
+        "full_web": "POST /brief/daily",
+        "mcp": "tool"
+      }
+    },
+    {
+      "name": "start_topic_research",
+      "kind": "start_job",
+      "risk": "write",
+      "required_scope": "research:write",
+      "supports_async": true,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "job_progress",
+      "surfaces": {
+        "terminal": "command",
+        "full_web": "POST /topics/{id}/fetch"
+      }
+    },
+    {
+      "name": "export_research_pack",
+      "kind": "command",
+      "risk": "read_only",
+      "required_scope": "research:read",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "research_pack",
+      "surfaces": {
+        "terminal": "command",
+        "local_ui": "ResearchPack",
+        "full_web": "GET /research/questions/{id}/export"
+      }
+    },
+    {
+      "name": "manage_subscription",
+      "kind": "command",
+      "risk": "write",
+      "required_scope": "research:write",
+      "supports_async": false,
+      "input_schema": {},
+      "output_schema": {},
+      "render_hint": "",
+      "surfaces": {
+        "terminal": "command",
+        "full_web": "POST /topics"
+      }
+    }
+  ]
+}

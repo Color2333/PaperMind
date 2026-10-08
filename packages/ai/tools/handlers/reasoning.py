@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 
 def _reasoning_analysis(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     """推理链深度分析"""
-    from packages.ai.reasoning_service import ReasoningService
     from packages.ai.tools.base import _require_paper
 
     # 用 _require_paper 统一解析（支持短前缀，返回 detached 但属性已加载的 paper）
@@ -25,9 +24,10 @@ def _reasoning_analysis(paper_id: str) -> Iterator[ToolProgress | ToolResult]:
     pid = UUID(paper.id)  # 用完整 UUID，不用原始短前缀
 
     yield ToolProgress(message=f"正在分析「{(title or '')[:30]}」的推理链...", current=1, total=2)
-    svc = ReasoningService()
+    from packages.application.commands.analysis import run_reasoning_analysis
+
     try:
-        result = svc.analyze(pid)
+        result = run_reasoning_analysis(pid)
     except Exception as exc:
         yield ToolResult(success=False, summary=f"推理链分析失败: {exc}")
         return

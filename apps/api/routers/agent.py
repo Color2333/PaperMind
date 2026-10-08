@@ -1,16 +1,27 @@
 """Agent 对话路由
+
+引擎双轨（设计④：Pi 是 agent 循环 + LLM 网关的唯一实现）：
+- pi（默认）：packages.agent_pi 桥 spawn `pm -p --json`，多轮上下文由
+  Pi session 文件承载；LLM 配置从 DB 物化，pm 工具经用户 JWT 回访 API；
+- python（回退）：packages.ai.agent_service 原生引擎（确认操作机制仅在
+  此引擎可用——Pi 工具为服务端受控白名单，无需前端二次确认）。
+
+引擎经 SSE `engine` 事件通告前端（徽标展示）；pm 不可用时自动回退 python。
+
 @author Color2333
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Callable  # noqa: TC003  FastAPI 需运行时可见以解析 body 注解
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from packages.agent_core.sse import make_sse
 from packages.ai.agent_service import confirm_action, reject_action, stream_chat
 from packages.domain.schemas import (
     AgentChatRequest,  # noqa: TC001  FastAPI 需运行时可见以解析 body 注解
@@ -104,8 +115,41 @@ def _new_messages_to_dicts(req_messages: list) -> list[dict]:
     return out
 
 
+def _select_engine(confirmed_action_id: str | None) -> str:
+    """引擎选择：确认操作机制仅 Python 引擎实现 → 强制回退；
+    其余按 PAPERMIND_AGENT_ENGINE（默认 pi），pm 不可用再降级。"""
+    forced = os.environ.get("PAPERMIND_AGENT_ENGINE", "pi").strip().lower()
+    if confirmed_action_id or forced == "python":
+        return "python"
+    return "pi"
+
+
+@router.get("/agent/engine")
+def agent_engine() -> dict:
+    """当前聊天引擎状态（Settings LLM Gateway / 聊天页徽标数据源）。
+
+    - engine：本次会话实际使用的引擎（pi=Pi agent core / python=回退）；
+    - pm_available：pm 二进制是否就位（False 时 pi 自动降级 python）；
+    - chat_model：Pi 聊天模型（DB active 配置的 model_skim）。
+    """
+    from packages.agent_pi import pi_engine_available
+    from packages.agent_pi.host import _get_active_llm_config
+
+    pm_ok = pi_engine_available()
+    forced = os.environ.get("PAPERMIND_AGENT_ENGINE", "pi").strip().lower()
+    engine = "python" if (not pm_ok or forced == "python") else "pi"
+    cfg = _get_active_llm_config() or {}
+    return {
+        "engine": engine,
+        "pm_available": pm_ok,
+        "forced": forced,
+        "chat_model": cfg.get("model_skim"),
+        "provider": cfg.get("provider"),
+    }
+
+
 @router.post("/agent/chat")
-async def agent_chat(req: AgentChatRequest):
+async def agent_chat(req: AgentChatRequest, request: Request):
     """Agent 对话 - SSE 流式响应（带持久化 + 工具调用记录）
 
     修②：后端真相源——前端只发本次新增消息，后端按 conversation_id 从 DB
@@ -172,17 +216,38 @@ async def agent_chat(req: AgentChatRequest):
     tool_call_id: str | None = None
     saved_done = False  # 修④：done 去重，一个 stream 只存一次 assistant
 
+    engine = _select_engine(req.confirmed_action_id)
+    if engine == "pi":
+        from packages.agent_pi import pi_engine_available
+
+        if not pi_engine_available():
+            engine = "python"  # pm 未部署：透明回退，前端经 engine 事件知情
+
+    def sse_iter_factory():
+        """按引擎产出 SSE 流（统一契约，持久化循环共用）。"""
+        if engine == "python":
+            return stream_chat(msgs, confirmed_action_id=req.confirmed_action_id)[0]
+        from packages.agent_pi import pi_chat_stream
+
+        last_user = next((m.content for m in reversed(req.messages) if m.role == "user"), None)
+        if not last_user:
+
+            def _empty():
+                yield make_sse("error", {"message": "缺少用户消息"})
+                yield make_sse("done", {})
+
+            return _empty()
+        return pi_chat_stream(
+            conversation_id, last_user, auth_header=request.headers.get("Authorization")
+        )
+
     def stream_with_save():
         nonlocal text_buf, tool_records, tool_call_id, saved_done
         # 修①：SSE 首事件返 conversation_id，前端采用后端 id 作 localStorage key
-        from packages.agent_core.sse import make_sse
-
         yield make_sse("conversation_init", {"conversation_id": conversation_id})
+        yield make_sse("engine", {"engine": engine})
 
-        sse_iter, _updated_conversation = stream_chat(
-            msgs, confirmed_action_id=req.confirmed_action_id
-        )
-        for chunk in sse_iter:
+        for chunk in sse_iter_factory():
             yield chunk
 
             for event_type, data in _parse_sse_events(chunk):
@@ -266,8 +331,6 @@ def _stream_with_save_for_action(
 
     sse_iter_factory 返回 (sse_iter, conversation)。
     """
-    from packages.agent_core.sse import make_sse
-
     text_buf = ""
     tool_records: list[dict] = []
     tool_call_id: str | None = None
@@ -339,9 +402,78 @@ def _stream_with_save_for_action(
     return _gen()
 
 
+@router.post("/agent/pending-actions")
+def create_pending_action(body: dict):
+    """Pi 工具（pm 子进程，持用户 JWT）创建破坏性操作确认请求。
+
+    E7：webchat headless 无本地确认 UI——工具建 pending-action 后轮询本
+    端点族的决定；决定落在 conversation_state JSON（免 schema 迁移）。
+    """
+    from uuid import uuid4
+
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import AgentPendingActionRepository
+
+    tool = str(body.get("tool") or "").strip()
+    if not tool:
+        raise HTTPException(status_code=400, detail="tool required")
+    with session_scope() as session:
+        record = AgentPendingActionRepository(session).create(
+            action_id=str(uuid4()),
+            tool_name=tool,
+            tool_args=body.get("args") if isinstance(body.get("args"), dict) else {},
+            conversation_id=body.get("conversation_id"),
+            conversation_state={
+                "engine": "pi",
+                "status": "pending",
+                "description": str(body.get("description") or ""),
+            },
+        )
+        return {"id": record.id, "status": "pending"}
+
+
+@router.get("/agent/pending-actions/{action_id}")
+def get_pending_action(action_id: str):
+    """Pi 工具轮询确认决定（pending/approved/rejected）；不存在=已过期。"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import AgentPendingActionRepository
+
+    with session_scope() as session:
+        record = AgentPendingActionRepository(session).get_by_id(action_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="确认请求不存在或已过期")
+        state = record.conversation_state or {}
+        return {
+            "id": record.id,
+            "status": state.get("status", "pending"),
+            "tool": record.tool_name,
+            "description": state.get("description") or "",
+        }
+
+
+def _resolve_pi_action(action_id: str, decision: str) -> bool:
+    """若该 action 属于 Pi 引擎：持久落决定并返回 True（不走 Python 引擎的
+    "流暂停-续播" SSE——Pi 工具在原 SSE 流内轮询到此决定后自行继续/取消）。"""
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import AgentPendingActionRepository
+
+    with session_scope() as session:
+        record = AgentPendingActionRepository(session).get_by_id(action_id)
+        if record is None:
+            return False
+        state = dict(record.conversation_state or {})
+        if state.get("engine") != "pi":
+            return False
+        state["status"] = decision
+        record.conversation_state = state  # 整体重赋值以触发 JSON 列更新
+        return True
+
+
 @router.post("/agent/confirm/{action_id}")
 async def agent_confirm(action_id: str):
     """确认执行 Agent 挂起的操作（修⑤：持久化 tool/assistant 消息）"""
+    if _resolve_pi_action(action_id, "approved"):
+        return {"ok": True, "status": "approved"}
     conversation_id = _resolve_conversation_id_from_action(action_id)
     return StreamingResponse(
         _stream_with_save_for_action(conversation_id, lambda: confirm_action(action_id)),
@@ -353,6 +485,8 @@ async def agent_confirm(action_id: str):
 @router.post("/agent/reject/{action_id}")
 async def agent_reject(action_id: str):
     """拒绝 Agent 挂起的操作（修⑤：持久化 tool/assistant 消息）"""
+    if _resolve_pi_action(action_id, "rejected"):
+        return {"ok": True, "status": "rejected"}
     conversation_id = _resolve_conversation_id_from_action(action_id)
     return StreamingResponse(
         _stream_with_save_for_action(conversation_id, lambda: reject_action(action_id)),

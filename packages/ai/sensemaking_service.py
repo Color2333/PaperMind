@@ -46,7 +46,6 @@ class SensemakingService:
         result = self.llm.complete_json(
             prompt,
             stage="deep",
-            model_override=self.settings.llm_model_deep,
             max_tokens=4096,
         )
         parsed = result.parsed_json or {"summary": "生成失败，请重试", "key_findings": []}
@@ -76,7 +75,6 @@ class SensemakingService:
         result = self.llm.complete_json(
             prompt,
             stage="deep",
-            model_override=self.settings.llm_model_deep,
             max_tokens=4096,
         )
         parsed = result.parsed_json or {"conflicts": [], "questions": []}
@@ -107,7 +105,6 @@ class SensemakingService:
         result = self.llm.complete_json(
             prompt,
             stage="deep",
-            model_override=self.settings.llm_model_deep,
             max_tokens=4096,
         )
         parsed = result.parsed_json or {

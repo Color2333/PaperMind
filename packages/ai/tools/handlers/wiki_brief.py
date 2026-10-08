@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from packages.ai.brief_service import DailyBriefService
-from packages.ai.graph_service import GraphService
 from packages.ai.tools.types import ToolProgress, ToolResult
 from packages.storage.db import session_scope
 from packages.storage.repositories import PaperRepository
@@ -18,7 +16,7 @@ def _generate_wiki(type: str, keyword_or_id: str):
     """Wiki 生成 - generator，yield 进度和最终结果"""
     import time
 
-    from packages.domain.task_tracker import global_tracker
+    from packages.application.queries.tasks import get_task_info, get_task_result
 
     if type == "topic":
         with session_scope() as session:
@@ -30,28 +28,21 @@ def _generate_wiki(type: str, keyword_or_id: str):
                 )
                 return
 
-        # 提交后台任务
-        gs = GraphService()
-        task_id = global_tracker.submit(
-            task_type="topic_wiki",
-            title=f"Wiki: {keyword_or_id}",
-            fn=lambda progress_callback=None: gs.topic_wiki(
-                keyword=keyword_or_id,
-                limit=120,
-                progress_callback=progress_callback,
-            ),
-        )
+        # 提交后台任务（application 命令）
+        from packages.application.commands.wiki import start_topic_wiki
+
+        task_id = start_topic_wiki(keyword=keyword_or_id, limit=120)
         yield ToolProgress(
             message=f"已提交后台任务，正在为「{keyword_or_id}」生成 Wiki...",
             current=1,
             total=10,
         )
 
-        # 轮询进度
+        # 轮询进度（durable store）
         last_msg = ""
         while True:
             time.sleep(3)
-            status = global_tracker.get_task(task_id)
+            status = get_task_info(task_id)
             if not status:
                 break
             if status.get("finished"):
@@ -63,13 +54,13 @@ def _generate_wiki(type: str, keyword_or_id: str):
                     return
                 break
             msg = status.get("message", "")
-            pct = status.get("progress_pct", 0)
+            pct = float(status.get("progress") or 0) * 100
             step = max(1, min(9, int(pct / 10)))
             if msg and msg != last_msg:
                 yield ToolProgress(message=msg, current=step, total=10)
                 last_msg = msg
 
-        result = global_tracker.get_result(task_id) or {}
+        result = get_task_result(task_id) or {}
         result["title"] = f"Wiki: {keyword_or_id}"
         yield ToolProgress(message="Wiki 生成完毕", current=10, total=10)
     elif type == "paper":
@@ -86,7 +77,9 @@ def _generate_wiki(type: str, keyword_or_id: str):
                 yield ToolResult(success=False, summary=f"论文 {keyword_or_id[:8]}... 不存在")
                 return
         yield ToolProgress(message="正在为论文生成 Wiki...", current=1, total=2)
-        result = GraphService().paper_wiki(paper_id=keyword_or_id)
+        from packages.application.commands.graph import get_paper_wiki
+
+        result = get_paper_wiki(paper_id=keyword_or_id)
         result["title"] = f"Wiki: {paper_title[:40]}"
         yield ToolProgress(message="Wiki 生成完毕，正在渲染...", current=2, total=2)
     else:
@@ -100,72 +93,31 @@ def _generate_wiki(type: str, keyword_or_id: str):
 
 
 def _generate_daily_brief(recipient: str = ""):
-    """简报生成 - generator，yield 进度和最终结果"""
-    from datetime import UTC, datetime
+    """简报生成 - generator（业务在 application/commands/brief.py）
 
-    from packages.integrations.notifier import NotificationService
-    from packages.storage.repositories import GeneratedContentRepository
+    REVIEW P2：publish 是同步整体调用，无法报告真实中间阶段——
+    只发一条如实的开始事件，不发事后伪造的阶段进度。
+    """
+    yield ToolProgress(
+        message="正在生成每日简报（收集+生成+保存，可能需要 1-3 分钟）...", current=1, total=4
+    )
+    from packages.application.commands.brief import publish_daily_brief
 
-    yield ToolProgress(message="正在收集今日论文数据...", current=1, total=4)
-    svc = DailyBriefService()
-
-    yield ToolProgress(message="正在生成简报内容...", current=2, total=4)
-    html_content = svc.build_html()
-    ts_label = datetime.now(UTC).strftime("%Y-%m-%d")
-    ts_file = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-
-    yield ToolProgress(message="正在保存简报...", current=3, total=4)
-    notifier = NotificationService()
-    saved_path = notifier.save_brief_html(f"daily_brief_{ts_file}.html", html_content)
-
-    email_sent = False
-    clean_recipient = recipient.strip() if recipient else ""
-    if clean_recipient:
-        yield ToolProgress(message="正在发送邮件...", current=4, total=4)
-        email_sent = notifier.send_email_html(
-            clean_recipient, "PaperMind Daily Brief", html_content
-        )
-
-    db_saved = False
-    for attempt in range(3):
-        try:
-            with session_scope() as session:
-                repo = GeneratedContentRepository(session)
-                repo.create(
-                    content_type="daily_brief",
-                    title=f"Daily Brief: {ts_label}",
-                    markdown=html_content,
-                )
-            db_saved = True
-            break
-        except Exception as exc:
-            logger.warning("简报保存到数据库失败 (attempt %d): %s", attempt + 1, exc)
-            import time
-
-            time.sleep(1)
-
-    if not db_saved:
-        logger.error("简报保存到数据库最终失败，但文件已保存: %s", saved_path)
+    result = publish_daily_brief(recipient=recipient)
 
     yield ToolResult(
         success=True,
-        data={
-            "saved_path": saved_path,
-            "email_sent": email_sent,
-            "html": html_content,
-            "title": f"研究简报: {ts_label}",
-        },
-        summary="简报已生成" + ("并发送" if email_sent else ""),
+        data=result,
+        summary="简报已生成" + ("并发送" if result["email_sent"] else ""),
     )
 
 
 def _identify_research_gaps(keyword: str, limit: int = 100) -> ToolResult:
     """识别研究空白"""
-    from packages.ai.graph_service import GraphService
+    from packages.application.commands.graph import detect_research_gaps
 
-    svc = GraphService()
     try:
-        result = svc.detect_research_gaps(keyword=keyword, limit=limit)
+        result = detect_research_gaps(keyword=keyword, limit=limit)
     except Exception as exc:
         return ToolResult(success=False, summary=f"研究空白分析失败: {exc}")
 

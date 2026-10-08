@@ -1,6 +1,6 @@
-"""
-LLM 模型管理路由 - 配置管理 + 场景化切换
-"""
+"""LLM 模型管理路由 - 配置管理 + 场景化切换（业务在 application/commands/settings.py）"""
+
+from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -61,64 +61,48 @@ class LLMConfigDetail(BaseModel):
     config: LLMConfigItem
 
 
+def _to_item(cfg) -> LLMConfigItem:
+    return LLMConfigItem(
+        id=cfg.id,
+        name=cfg.name,
+        provider=cfg.provider,
+        api_base_url=cfg.api_base_url,
+        model_skim=cfg.model_skim,
+        model_deep=cfg.model_deep,
+        model_vision=cfg.model_vision,
+        model_embedding=cfg.model_embedding,
+        model_fallback=cfg.model_fallback,
+        is_active=cfg.is_active,
+    )
+
+
 @router.get("", response_model=LLMConfigList)
 def list_configs():
-    """获取所有 LLM 配置列表"""
     with session_scope() as session:
         repo = LLMConfigRepository(session)
         configs = repo.list_all()
         active_cfg = repo.get_active()
         return LLMConfigList(
-            configs=[
-                LLMConfigItem(
-                    id=c.id,
-                    name=c.name,
-                    provider=c.provider,
-                    api_base_url=c.api_base_url,
-                    model_skim=c.model_skim,
-                    model_deep=c.model_deep,
-                    model_vision=c.model_vision,
-                    model_embedding=c.model_embedding,
-                    model_fallback=c.model_fallback,
-                    is_active=c.is_active,
-                )
-                for c in configs
-            ],
+            configs=[_to_item(c) for c in configs],
             active_id=active_cfg.id if active_cfg else None,
         )
 
 
 @router.get("/{config_id}", response_model=LLMConfigDetail)
 def get_config(config_id: str):
-    """获取单个配置详情"""
     with session_scope() as session:
         repo = LLMConfigRepository(session)
         try:
             cfg = repo.get_by_id(config_id)
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        return LLMConfigDetail(
-            config=LLMConfigItem(
-                id=cfg.id,
-                name=cfg.name,
-                provider=cfg.provider,
-                api_base_url=cfg.api_base_url,
-                model_skim=cfg.model_skim,
-                model_deep=cfg.model_deep,
-                model_vision=cfg.model_vision,
-                model_embedding=cfg.model_embedding,
-                model_fallback=cfg.model_fallback,
-                is_active=cfg.is_active,
-            )
-        )
+        return LLMConfigDetail(config=_to_item(cfg))
 
 
 @router.post("", response_model=LLMConfigDetail)
 def create_config(req: LLMConfigCreate):
-    """创建新的 LLM 配置"""
     with session_scope() as session:
-        repo = LLMConfigRepository(session)
-        cfg = repo.create(
+        cfg = LLMConfigRepository(session).create(
             name=req.name,
             provider=req.provider,
             api_key=req.api_key,
@@ -130,25 +114,11 @@ def create_config(req: LLMConfigCreate):
             model_fallback=req.model_fallback,
         )
         session.commit()
-        return LLMConfigDetail(
-            config=LLMConfigItem(
-                id=cfg.id,
-                name=cfg.name,
-                provider=cfg.provider,
-                api_base_url=cfg.api_base_url,
-                model_skim=cfg.model_skim,
-                model_deep=cfg.model_deep,
-                model_vision=cfg.model_vision,
-                model_embedding=cfg.model_embedding,
-                model_fallback=cfg.model_fallback,
-                is_active=cfg.is_active,
-            )
-        )
+        return LLMConfigDetail(config=_to_item(cfg))
 
 
 @router.patch("/{config_id}", response_model=LLMConfigDetail)
 def update_config(config_id: str, req: LLMConfigUpdate):
-    """更新配置"""
     with session_scope() as session:
         repo = LLMConfigRepository(session)
         try:
@@ -167,25 +137,11 @@ def update_config(config_id: str, req: LLMConfigUpdate):
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         session.commit()
-        return LLMConfigDetail(
-            config=LLMConfigItem(
-                id=cfg.id,
-                name=cfg.name,
-                provider=cfg.provider,
-                api_base_url=cfg.api_base_url,
-                model_skim=cfg.model_skim,
-                model_deep=cfg.model_deep,
-                model_vision=cfg.model_vision,
-                model_embedding=cfg.model_embedding,
-                model_fallback=cfg.model_fallback,
-                is_active=cfg.is_active,
-            )
-        )
+        return LLMConfigDetail(config=_to_item(cfg))
 
 
 @router.delete("/{config_id}")
 def delete_config(config_id: str):
-    """删除配置（不能删除当前激活的配置）"""
     with session_scope() as session:
         repo = LLMConfigRepository(session)
         cfg = repo.get_by_id(config_id)
@@ -198,7 +154,6 @@ def delete_config(config_id: str):
 
 @router.post("/activate", response_model=LLMConfigDetail)
 def activate_config(req: LLMConfigActivate):
-    """激活指定配置"""
     with session_scope() as session:
         repo = LLMConfigRepository(session)
         try:
@@ -206,17 +161,4 @@ def activate_config(req: LLMConfigActivate):
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         session.commit()
-        return LLMConfigDetail(
-            config=LLMConfigItem(
-                id=cfg.id,
-                name=cfg.name,
-                provider=cfg.provider,
-                api_base_url=cfg.api_base_url,
-                model_skim=cfg.model_skim,
-                model_deep=cfg.model_deep,
-                model_vision=cfg.model_vision,
-                model_embedding=cfg.model_embedding,
-                model_fallback=cfg.model_fallback,
-                is_active=cfg.is_active,
-            )
-        )
+        return LLMConfigDetail(config=_to_item(cfg))

@@ -12,7 +12,43 @@
 
 services:
   # ==========================================
-  # 后端服务 (FastAPI)
+  # Go Core（控制面网关：Executor Protocol → durable-state API）
+  # ==========================================
+  core:
+    build:
+      context: ./core
+      dockerfile: Dockerfile.core
+    container_name: papermind-core
+    environment:
+      - CORE_ADDR=0.0.0.0:8081
+      # P1 fail-closed：缺任一令牌 Core 拒绝启动（见 papermind-core main）
+      - CORE_TOKEN=${CORE_TOKEN:?CORE_TOKEN required}
+      - STATE_ADDR=http://backend:8000
+      - STATE_TOKEN=${DURABLE_STATE_TOKEN:?DURABLE_STATE_TOKEN required}
+      - RECONCILE_INTERVAL_S=15
+      - RECLAIM_BACKOFF_S=60
+      # Go authority（第四轮 P0-2/P0-3）：权威 core_* 表与领域表同库（PG），
+      # 与 Python 侧 DATABASE_URL 指向同一 postgres
+      - CORE_DB_PATH=${CORE_PG_DSN:-postgresql://papermind:papermind@postgres:5432/papermind}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    # readiness：/readyz 探测 durable-state 可用性（state 不可达 → 503 → unhealthy）
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/readyz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
+  # ==========================================
+  # 后端服务 (FastAPI；durable-state 内部 API 需 DURABLE_STATE_TOKEN)
   # ==========================================
   backend:
     build:
@@ -34,12 +70,21 @@ services:
       - SITE_URL=https://pm.vibingu.cn
       - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002,https://pm.vibingu.cn
       - DEMO_MODE=false
+      # P1 PG 切换：DATABASE_URL 显式指定 PG
+      - DATABASE_URL=postgresql://papermind:papermind@postgres:5432/papermind
+      # durable-state 内部 API（P0）：非空才挂载 /internal/durable/*，Core 凭此访问权威状态
+      - DURABLE_STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
+      # Go authority（manifest 路由）：A 档 capability 提交 Go 权威，其余留 Python
+      - PAPERMIND_CORE_URL=http://core:8081
+      # 管线 LLM 统一走 Pi 网关（pm gateway——OpenAI 兼容面，pi-ai 底座）：
+      # 需要 backend/worker 镜像内安装 PaperMind-Terminal 的 pm（未装则自动回退直连）
+      - PAPERMIND_LLM_GATEWAY=1
+      - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
+      - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-        # DATABASE_URL=sqlite://... 时 backend 不实际连 postgres，但 compose
-        # 仍会拉起 postgres 容器，无副作用；切到 PG 后自动等待 ready
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
@@ -73,10 +118,18 @@ services:
     environment:
       - APP_ENV=production
       - SITE_URL=https://pm.vibingu.cn
+      - DATABASE_URL=postgresql://papermind:papermind@postgres:5432/papermind
+      # Executor 宿主（C7）：经 Go Core 领取执行；未配置则仅调度提交
+      - CORE_ADDR=core:8081
+      - CORE_TOKEN=${CORE_TOKEN:-}
+      - PAPERMIND_CORE_URL=http://core:8081
+      - WORKER_EXECUTOR_ID=worker-1
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_started
+      core:
+        condition: service_healthy
       postgres:
         condition: service_healthy
     # worker 共用 Dockerfile.backend（含 HEALTHCHECK curl 8000/health），但 worker
@@ -142,6 +195,52 @@ services:
           cpus: '0.1'
           memory: 64M
 
+  # ==========================================
+  # Demo 独立实例（Stage G1：独立 DB/文件卷/额度；隔离是实例级的）
+  # 使用：docker compose --profile demo up
+  # ==========================================
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: papermind-demo
+    profiles: ["demo"]
+    ports:
+      - "8003:8000"
+    volumes:
+      - demo_data:/app/data
+      - demo_logs:/app/logs
+    env_file:
+      - ./.env
+    environment:
+      - APP_ENV=production
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DATABASE_URL=sqlite:///app/data/demo.db  # 独立 Demo DB
+      - DEMO_MODE=true  # 写接口 403 + IP 限流
+      - SITE_URL=${DEMO_SITE_URL:-https://demo.pm.vibingu.cn}
+      - DURABLE_STATE_TOKEN=${DEMO_DURABLE_STATE_TOKEN:?required}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - AUTH_PASSWORD=  # Demo 免密（DemoMode 中间件拦截写接口）
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+
 # ==========================================
 # 数据卷定义（持久化存储）
 # ==========================================
@@ -153,3 +252,7 @@ volumes:
   pm_pip_cache:
   papermind_pgdata:
     name: papermind_pgdata
+  demo_data:
+    name: papermind_demo_data
+  demo_logs:
+    name: papermind_demo_logs

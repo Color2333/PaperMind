@@ -39,9 +39,30 @@ function IngestModal({
     if (!query.trim()) return;
     setLoading(true);
     try {
+      // 去重第三刀：路由已转任务提交（A 档 manifest）——提交后轮询任务结果
       const res = await ingestApi.arxiv(query, maxResults, topicId || undefined);
-      setResult(res.ingested);
-      onDone();
+      const taskId = (res as unknown as { task_id?: string }).task_id;
+      if (!taskId) {
+        // 兼容旧同步响应
+        setResult((res as unknown as { ingested: number }).ingested ?? 0);
+        onDone();
+        return;
+      }
+      const deadline = Date.now() + 300_000;
+      let done = false;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const st = await fetch(
+          `${import.meta.env.VITE_API_BASE || "http://localhost:8000"}/tasks/${taskId}/result`,
+        ).then((r) => (r.ok ? r.json() : null));
+        if (st && typeof st.total === "number") {
+          setResult(st.total);
+          onDone();
+          done = true;
+          break;
+        }
+      }
+      if (!done) toast("error", "摄入超时，请在任务监控查看");
     } finally {
       setLoading(false);
     }

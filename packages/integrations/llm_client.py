@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import socket
 import threading
@@ -188,6 +189,23 @@ PROVIDER_BASE_URLS: dict[str, str] = {
 }
 
 
+def _gateway_base_url_if_enabled() -> str | None:
+    """Pi 网关开关：PAPERMIND_LLM_GATEWAY=1 时确保网关就绪并返回 base_url。"""
+    if os.environ.get("PAPERMIND_LLM_GATEWAY") != "1":
+        return None
+    try:
+        from packages.agent_pi.gateway import ensure_gateway, gateway_token
+
+        global _GATEWAY_API_KEY  # noqa: PLW0603
+        _GATEWAY_API_KEY = gateway_token()
+        return ensure_gateway()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Pi 网关不可用，回退直连: %s", exc)
+        return None
+
+
+_GATEWAY_API_KEY = ""
+
 _LLM_TIMEOUT = 120  # LLM 请求超时秒数
 
 # OpenAI 客户端复用缓存（按 api_key + base_url 复用）
@@ -289,6 +307,11 @@ class LLMClient:
         model_override: str | None = None,
         max_tokens: int | None = None,
     ) -> LLMResult:
+        # Pi 网关前置（第四轮审计补漏）：覆盖全部 provider（含 anthropic）——
+        # 文本补全统一走 Pi，不再按 provider 分支直连
+        gw = _gateway_base_url_if_enabled()
+        if gw:
+            return self._call_pi_gateway(gw, prompt, stage, max_tokens=max_tokens)
         cfg = self._config()
         if cfg.provider in ("openai", "zhipu", "xiaomi") and cfg.api_key:
             return self._call_openai_compatible(
@@ -306,7 +329,7 @@ class LLMClient:
                 model_override,
                 max_tokens=max_tokens,
             )
-        return self._pseudo_summary(prompt, stage, cfg, model_override)
+        return self._pseudo_or_raise(prompt, stage, cfg, model_override)
 
     def complete_json(
         self,
@@ -374,6 +397,42 @@ class LLMClient:
         max_tokens: int = 1024,
     ) -> LLMResult:
         """发送图片 + 文本给 Vision 模型（GLM-4.6V 等）"""
+        # Pi 网关优先（审计补漏）：视觉调用统一走网关（网关映射 image_url →
+        # pi-ai image content；model=vision 语义映射）
+        gw = _gateway_base_url_if_enabled()
+        if gw:
+            client = _get_openai_client(_GATEWAY_API_KEY, gw)
+            response = client.chat.completions.create(
+                model="vision",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content or ""
+            usage = response.usage
+            in_cost, out_cost = self._estimate_cost(
+                model="pi-gateway/vision",
+                input_tokens=usage.prompt_tokens if usage else None,
+                output_tokens=usage.completion_tokens if usage else None,
+            )
+            return LLMResult(
+                content=content,
+                input_tokens=usage.prompt_tokens if usage else None,
+                output_tokens=usage.completion_tokens if usage else None,
+                input_cost_usd=in_cost,
+                output_cost_usd=out_cost,
+                total_cost_usd=in_cost + out_cost,
+            )
         cfg = self._config()
         model = cfg.model_vision or cfg.model_deep
         if cfg.provider in ("openai", "zhipu", "xiaomi") and cfg.api_key:
@@ -621,6 +680,12 @@ class LLMClient:
         max_tokens: int | None = None,
     ) -> LLMResult:
         """OpenAI 兼容调用（带指数退避重试）"""
+        # Pi 网关优先（PAPERMIND_LLM_GATEWAY=1）：文本补全统一走 Pi LLM 网关
+        # （pi-ai），Python 不再直连 provider——模型凭据链：DB → 物化 models.json
+        # → 网关。embedding 无 pi-ai 实现，继续原直连路径。
+        gw = _gateway_base_url_if_enabled()
+        if gw:
+            return self._call_pi_gateway(gw, prompt, stage, max_tokens=max_tokens)
         import httpx
 
         max_retries = 3
@@ -684,13 +749,48 @@ class LLMClient:
                 time.sleep(delay)
             except Exception as exc:
                 logger.warning("OpenAI-compatible call failed: %s", exc)
-                return self._pseudo_summary(prompt, stage, cfg, model_override)
+                return self._pseudo_or_raise(prompt, stage, cfg, model_override)
 
         # 所有重试失败，返回伪结果
         logger.error(
             "OpenAI-compatible call failed after %d retries: %s", max_retries, last_exception
         )
-        return self._pseudo_summary(prompt, stage, cfg, model_override)
+        return self._pseudo_or_raise(prompt, stage, cfg, model_override)
+
+    def _call_pi_gateway(
+        self,
+        base_url: str,
+        prompt: str,
+        stage: str,
+        max_tokens: int | None = None,
+    ) -> LLMResult:
+        """经 Pi LLM 网关的文本补全（model=skim/deep 语义映射，网关解析真实模型）"""
+
+        model = "skim" if stage in ("skim", "rag") else "deep"
+        client = _get_openai_client(_GATEWAY_API_KEY, base_url)
+        kwargs: dict = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        response = client.chat.completions.create(**kwargs)
+        msg = response.choices[0].message
+        content = msg.content or ""
+        usage = response.usage
+        in_tokens = usage.prompt_tokens if usage else None
+        out_tokens = usage.completion_tokens if usage else None
+        in_cost, out_cost = self._estimate_cost(
+            model=f"pi-gateway/{model}", input_tokens=in_tokens, output_tokens=out_tokens
+        )
+        return LLMResult(
+            content=content,
+            input_tokens=in_tokens,
+            output_tokens=out_tokens,
+            input_cost_usd=in_cost,
+            output_cost_usd=out_cost,
+            total_cost_usd=in_cost + out_cost,
+        )
 
     def _embed_openai_compatible(self, text: str, cfg: LLMConfig) -> list[float] | None:
         if not text:
@@ -770,9 +870,23 @@ class LLMClient:
                 total_cost_usd=in_cost + out_cost,
             )
         except Exception:
-            return self._pseudo_summary(prompt, stage, cfg, model_override)
+            return self._pseudo_or_raise(prompt, stage, cfg, model_override)
 
     # ---------- Pseudo（无 API Key 回退）----------
+
+    def _pseudo_or_raise(
+        self, prompt: str, stage: str, cfg: LLMConfig, model_override: str | None = None
+    ) -> LLMResult:
+        """LLM 失败/未配置的降级：仅 demo 模式允许伪结果——生产必须显式失败
+        （伪结果伪装成功会污染领域数据，真机 E2E 实证）。"""
+        from packages.config import get_settings
+
+        if get_settings().demo_mode:
+            return self._pseudo_summary(prompt, stage, cfg, model_override)
+        raise RuntimeError(
+            f"LLM 调用失败（stage={stage}, provider={cfg.provider}）：无可用结果——"
+            "检查 API Key/网络；任务按失败处理"
+        )
 
     def _pseudo_summary(
         self,

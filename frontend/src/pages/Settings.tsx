@@ -2,20 +2,20 @@
  * Claude 风格的设置页面 - 左侧导航 + 右侧内容
  */
 import { useState } from "react";
-import { Cpu, Mail, GitBranch, Settings, ChevronRight, KeyRound } from "lucide-react";
+import { Sparkles, Cpu, Mail, GitBranch, Settings, ChevronRight, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LLMSettingsTab } from "@/components/settings/LLMSettingsTab";
 import { EmailSettingsTab } from "@/components/settings/EmailSettingsTab";
-import { PipelineSettingsTab } from "@/components/settings/PipelineSettingsTab";
 import { OpsSettingsTab } from "@/components/settings/OpsSettingsTab";
 import { TokensSettingsTab } from "@/components/settings/TokensSettingsTab";
+import { PiSettingsTab } from "@/components/settings/PiSettingsTab";
 
-type SettingsTab = "llm" | "email" | "pipeline" | "ops" | "tokens";
+type SettingsTab = "llm" | "pi" | "email" | "ops" | "tokens";
 
 const NAV_ITEMS: { key: SettingsTab; label: string; icon: typeof Cpu }[] = [
   { key: "llm", label: "LLM 配置", icon: Cpu },
+  { key: "pi", label: "Pi 引擎", icon: Sparkles },
   { key: "email", label: "邮箱与报告", icon: Mail },
-  { key: "pipeline", label: "Pipeline", icon: GitBranch },
   { key: "tokens", label: "API 令牌", icon: KeyRound },
   { key: "ops", label: "运维", icon: Settings },
 ];
@@ -59,8 +59,8 @@ export default function SettingsPage() {
       <main className="flex-1 overflow-y-auto bg-surface">
         <div className="mx-auto max-w-3xl p-8">
           {activeTab === "llm" && <LLMSettingsTab />}
+          {activeTab === "pi" && <PiSettingsTab />}
           {activeTab === "email" && <EmailSettingsTab />}
-          {activeTab === "pipeline" && <PipelineSettingsTab />}
           {activeTab === "tokens" && <TokensSettingsTab />}
           {activeTab === "ops" && <OpsSettingsTab />}
         </div>

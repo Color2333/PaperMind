@@ -1,320 +1,258 @@
 """
 每日/每周定时任务编排 - 智能调度 + 精读限额
-@author Color2333
-@author Color2333
+
+去重第九刀（Go 迁移收尾）：本模块全部领域写经权威面任务链——编排器只
+submit_job + 轮询 durable 观察面（任务完成后展开的设计边界：编排任务留在
+Python authority，子任务领域写全部在 Go 单事务 apply）。
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import TYPE_CHECKING
-from uuid import UUID
 
 from packages.ai.brief_service import DailyBriefService
-from packages.ai.graph_service import GraphService
-from packages.ai.pipelines import PaperPipelines
-from packages.ai.rate_limiter import acquire_api
-from packages.config import get_settings
-from packages.domain.enums import ActionType
 from packages.storage.db import session_scope
 from packages.storage.models import TopicSubscription
-from packages.storage.repositories import (
-    PaperRepository,
-    TopicRepository,
-)
-
-if TYPE_CHECKING:
-    from datetime import date
 
 logger = logging.getLogger(__name__)
 
+# 编排器轮询参数（子任务观察面）
+_POLL_INTERVAL_S = 2.0
+_INGEST_WAIT_S = 600.0
+_PROCESS_WAIT_S = 1200.0
+_DEEP_WAIT_S = 900.0
 
-PAPER_CONCURRENCY = 3
+
+def _submit_task(
+    *,
+    capability: str,
+    input_ref: dict,
+    title: str,
+    created_by: str,
+    timeout_s: int,
+) -> dict:
+    """提交子任务（权威面 Job/Task），返回 {task_id, job_id}"""
+    from packages.application.commands.jobs import submit_job
+
+    return submit_job(
+        kind="CoreTask",
+        capability=capability,
+        title=title,
+        input_ref=input_ref,
+        idempotency_key=None,
+        timeout_s=timeout_s,
+        created_by=created_by,
+    )
 
 
-def _process_paper(paper_id, force_deep: bool = False, deep_read_quota: int | None = None) -> dict:
-    """
-    单篇论文：embed ∥ skim 并行，智能精读
+def _wait_task(task_id: str, *, timeout_s: float, progress=None, message: str = "") -> dict | None:
+    """轮询单任务至终态；成功返回 result，失败/超时/不可见返回 None"""
+    from packages.application.queries.tasks import get_task_info, get_task_result
 
-    Args:
-        paper_id: 论文 ID
-        force_deep: 是否强制精读（忽略配额）
-        deep_read_quota: 剩余精读配额（None 表示不限制）
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        time.sleep(_POLL_INTERVAL_S)
+        info = get_task_info(task_id)
+        if not info:
+            continue
+        if info.get("finished"):
+            if not info.get("success"):
+                return None
+            return get_task_result(task_id) or {}
+        if progress and message:
+            with_suppress = getattr(info, "get", lambda *_: None)("message") or message
+            progress(with_suppress, 0, 0)
+    return None
 
-    Returns:
-        dict: 处理结果 {skim_score, deep_read, success}
-    """
 
-    settings = get_settings()
-    pipelines = PaperPipelines()
-    result = {
-        "paper_id": str(paper_id)[:8],
-        "skim_score": None,
-        "deep_read": False,
-        "success": False,
-        "error": None,
-    }
+def _wait_tasks(
+    task_ids: list[str],
+    *,
+    timeout_s: float,
+    progress=None,
+    base: int = 0,
+    span: int = 100,
+) -> list[str]:
+    """批量轮询至全部终态；返回失败/超时未完成的 task_id（调用方逐篇容错）"""
+    from packages.application.queries.tasks import get_task_info
 
-    skim_result = None
-    with ThreadPoolExecutor(max_workers=2) as inner:
-        fe = inner.submit(pipelines.embed_paper, paper_id)
-        fs = inner.submit(pipelines.skim, paper_id)
-        for fut in as_completed([fe, fs]):
-            try:
-                r = fut.result()
-                if fut is fs:
-                    skim_result = r
-            except Exception as exc:
-                label = "embed" if fut is fe else "skim"
-                logger.warning(
-                    "%s %s failed: %s",
-                    label,
-                    str(paper_id)[:8],
-                    exc,
-                )
-                result["error"] = f"{label}: {exc}"
-
-    # 检查粗读结果
-    if skim_result and skim_result.relevance_score is not None:
-        result["skim_score"] = skim_result.relevance_score
-        result["success"] = True
-
-    # 判断是否精读
-    should_deep = False
-    deep_reason = ""
-
-    if force_deep:
-        should_deep = True
-        deep_reason = "强制精读"
-    elif skim_result and skim_result.relevance_score >= settings.skim_score_threshold:
-        # 检查精读配额
-        if deep_read_quota is None or deep_read_quota > 0:
-            should_deep = True
-            deep_reason = f"高分论文 (分数={skim_result.relevance_score:.2f})"
-        else:
-            deep_reason = "精读配额已用尽"
-
-    # 执行精读
-    if should_deep:
-        try:
-            # 获取 API 许可
-            if acquire_api("llm", timeout=30.0):
-                pipelines.deep_dive(UUID(paper_id))
-                result["deep_read"] = True
-                logger.info("🎯 %s 精读完成 - %s", str(paper_id)[:8], deep_reason)
-            else:
-                logger.warning("⚠️  %s 等待 API 许可超时，跳过精读", str(paper_id)[:8])
-        except Exception as exc:
-            logger.warning(
-                "deep_dive %s failed: %s",
-                str(paper_id)[:8],
-                exc,
+    pending = list(task_ids)
+    deadline = time.monotonic() + timeout_s
+    while pending and time.monotonic() < deadline:
+        time.sleep(_POLL_INTERVAL_S)
+        still = []
+        for tid in pending:
+            info = get_task_info(tid)
+            if not info or not info.get("finished"):
+                still.append(tid)
+        pending = still
+        if progress and pending:
+            done = len(task_ids) - len(pending)
+            progress(
+                f"处理中 ({done}/{len(task_ids)})...",
+                base + int(done / max(len(task_ids), 1) * span),
+                100,
             )
-            result["error"] = f"deep: {exc}"
-
-    return result
+    return pending
 
 
 def run_topic_ingest(topic_id: str, progress_callback: callable | None = None) -> dict:
     """
-    单独处理一个主题的抓取 + 处理 - 智能精读限额
+    单独处理一个主题的抓取 + 处理 - 智能精读限额（任务链编排器）
 
-    Args:
-        topic_id: 主题 ID
-        progress_callback: 可选的进度回调函数，签名 callback(message, current, total)
+    领域写全部经权威面任务链（Go apply 单事务）：
+      1. ingest_arxiv_query   —— 抓取入库（幂等去重在 handler 只读预筛）
+      2. embed/skim（逐篇）    —— 新论文并行粗读 + 嵌入
+      3. deep_read_paper      —— 粗读分数排序取前 N（>= 阈值）精读
 
-    Returns:
-        dict: 处理结果统计
+    本函数只提交任务并轮询观察面；重试/退避由 durable 任务层承接。
     """
+    from sqlalchemy import select
 
-    pipelines = PaperPipelines()
+    from packages.storage.models import AnalysisReport
+
     with session_scope() as session:
         topic = session.get(TopicSubscription, topic_id)
         if not topic:
             return {"topic_id": topic_id, "status": "not_found"}
         topic_name = topic.name
-
-        # 获取精读配额配置
         max_deep_reads = getattr(topic, "max_deep_reads_per_run", 2)
-
-        # 读取日期过滤配置
         enable_date_filter = getattr(topic, "enable_date_filter", False)
         date_filter_days = getattr(topic, "date_filter_days", 7)
         days_back = date_filter_days if enable_date_filter else 0
 
-        last_error: str | None = None
-        ids: list[str] = []
-        new_count: int = 0
-        attempts = 0
-        for _attempt in range(topic.retry_limit + 1):
-            attempts += 1
-            try:
-                # 返回详细统计信息
-                if progress_callback:
-                    progress_callback("正在抓取论文...", 10, 100)
-                result = pipelines.ingest_arxiv_with_stats(
-                    query=topic.query,
-                    max_results=topic.max_results_per_run,
-                    topic_id=topic.id,
-                    action_type=ActionType.auto_collect,
-                    days_back=days_back,
-                    progress_callback=progress_callback,
-                )
-                ids = result["inserted_ids"]
-                new_count = result["new_count"]
-                last_error = None
-                break
-            except Exception as exc:
-                last_error = str(exc)
-                # 修 High：内层 retry 此前无 sleep 无退避，失败后立即重发请求，限流场景
-                # 下加速触发 429。改指数退避；429/限流类错误用更长退避，其余快速失败重试。
-                if _attempt < topic.retry_limit:
-                    is_rate_limited = any(
-                        tok in str(exc).lower()
-                        for tok in ("429", "rate limit", "限流", "timeout", "timed out")
-                    )
-                    delay = 10.0 * (2**_attempt) if is_rate_limited else 3.0 * (2**_attempt)
-                    logger.warning(
-                        "topic %s 抓取失败 (attempt %d/%d): %s — %.0fs 后重试",
-                        topic_name,
-                        attempts,
-                        topic.retry_limit + 1,
-                        str(exc)[:120],
-                        delay,
-                    )
-                    time.sleep(delay)
+        # 编排所需的主题配置在 Session 关闭前取值（免 DetachedInstanceError）
+        query = topic.query
+        max_results = topic.max_results_per_run
 
-        if last_error is not None:
-            return {
+    # ---- 第一步：抓取入库（ingest_arxiv_query 任务，A 档）----
+    if progress_callback:
+        progress_callback("正在抓取论文...", 5, 100)
+    try:
+        ingest_task = _submit_task(
+            capability="ingest_arxiv_query",
+            input_ref={
+                "query": query,
+                "max_results": max_results,
                 "topic_id": topic_id,
-                "topic_name": topic_name,
-                "status": "failed",
-                "attempts": attempts,
-                "error": last_error,
-                "inserted": 0,
-            }
+                "days_back": days_back,
+                "action_type": "auto_collect",
+            },
+            title=f"主题抓取: {topic_name[:40]}",
+            created_by="topic_ingest",
+            timeout_s=900,
+        )
+    except Exception as exc:
+        logger.error("主题 [%s] 抓取任务提交失败: %s", topic_name, exc)
+        return {
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "status": "failed",
+            "error": str(exc),
+            "inserted": 0,
+        }
 
-        # 如果没有新论文，直接返回
-        if new_count == 0:
-            logger.info(
-                "⚠️  主题 [%s] 没有新论文（重复 %d 篇），跳过处理",
-                topic_name,
-                len(ids),
-            )
-            if progress_callback:
-                progress_callback("没有新论文", 100, 100)
-            return {
-                "topic_id": topic_id,
-                "topic_name": topic_name,
-                "status": "no_new_papers",
-                "inserted": 0,
-                "new_count": 0,
-                "total_count": len(ids),
-            }
+    ingest_result = _wait_task(
+        ingest_task["task_id"], timeout_s=_INGEST_WAIT_S, progress=progress_callback
+    )
+    inserted_ids: list[str] = list((ingest_result or {}).get("inserted_ids") or [])
+    if ingest_result is None:
+        return {
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "status": "failed",
+            "error": "抓取任务失败或超时",
+            "inserted": 0,
+        }
+    if not inserted_ids:
+        logger.info("⚠️  主题 [%s] 没有新论文，跳过处理", topic_name)
+        if progress_callback:
+            progress_callback("没有新论文", 100, 100)
+        return {
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "status": "no_new_papers",
+            "inserted": 0,
+            "new_count": 0,
+            "total_count": 0,
+        }
 
-        repo = PaperRepository(session)
-        # 只处理这次新入库的论文
-        unique = repo.list_by_ids(ids) if ids else []
-        # 在 Session 关闭前提取所有需要的数据，避免 DetachedInstanceError
-        papers_data = [(str(p.id), p.title) for p in unique]
-
+    total_new = len(inserted_ids)
     logger.info(
-        "📝 主题 [%s] 新抓取 %d 篇论文（新论文 %d 篇），精读配额：%d 篇",
-        topic_name,
-        len(unique),
-        new_count,
-        max_deep_reads,
+        "📝 主题 [%s] 新抓取 %d 篇论文，精读配额：%d 篇", topic_name, total_new, max_deep_reads
     )
 
-    # 第一步：全部论文并行粗读 + 嵌入（不精读）
-    logger.info("第一步：并行粗读 + 嵌入...")
+    # ---- 第二步：粗读 + 嵌入（embed_paper + skim_paper 任务，A 档）----
     if progress_callback:
         progress_callback("开始粗读 + 嵌入...", 30, 100)
-    skim_results = []
-
-    total_papers = len(papers_data)
-    with ThreadPoolExecutor(max_workers=PAPER_CONCURRENCY) as pool:
-        futs = {
-            pool.submit(_process_paper, paper_id, force_deep=False, deep_read_quota=0): paper_id
-            for paper_id, _ in papers_data
-        }
-        for i, fut in enumerate(as_completed(futs)):
+    child_tasks: list[str] = []
+    for pid in inserted_ids:
+        for cap in ("embed_paper", "skim_paper"):
             try:
-                result = fut.result()
-                skim_results.append(result)
-                if progress_callback:
-                    progress_callback(
-                        f"粗读中 ({i + 1}/{total_papers})...",
-                        30 + int((i + 1) / total_papers * 40),
-                        100,
-                    )
-            except Exception as exc:
-                paper_id = futs[fut]
-                logger.warning(
-                    "skim %s failed: %s",
-                    str(paper_id)[:8],
-                    exc,
+                task = _submit_task(
+                    capability=cap,
+                    input_ref={"paper_id": pid},
+                    title=f"主题处理 {cap.split('_')[0]} {pid[:8]}",
+                    created_by="topic_ingest",
+                    timeout_s=900 if cap == "skim_paper" else 300,
                 )
+                child_tasks.append(task["task_id"])
+            except Exception as exc:
+                logger.warning("%s %s 提交失败: %s", cap, pid[:8], exc)
 
-    # 第二步：按粗读分数排序，选前 N 篇精读
-    logger.info("第二步：选择高分论文进行精读...")
+    unfinished = _wait_tasks(
+        child_tasks,
+        timeout_s=_PROCESS_WAIT_S,
+        progress=progress_callback,
+        base=30,
+        span=40,
+    )
+    if unfinished:
+        logger.warning("主题 [%s] %d 个处理任务未在期限内完成", topic_name, len(unfinished))
+
+    # ---- 第三步：按粗读分数选前 N 精读（deep_read_paper 任务，A 档）----
     if progress_callback:
         progress_callback("选择高分论文...", 70, 100)
-    # 只用 ID 和分数排序，不再引用 ORM 对象
-    scored_papers = [
-        (r, paper_id)
-        for r, (paper_id, _) in zip(skim_results, papers_data)
-        if r["success"] and r["skim_score"] is not None
-    ]
-    scored_papers.sort(key=lambda x: x[0]["skim_score"], reverse=True)
-
-    # 精读前 N 篇
-    deep_read_count = 0
-    max_scored = len(scored_papers)
-    for i, (result, paper_id) in enumerate(scored_papers):
-        if deep_read_count >= max_deep_reads:
-            logger.info(
-                "⚠️  精读配额已用尽 (%d/%d)，剩余 %d 篇跳过精读",
-                deep_read_count,
-                max_deep_reads,
-                len(scored_papers) - i,
+    scored: list[tuple[float, str]] = []
+    with session_scope() as session:
+        rows = session.execute(
+            select(AnalysisReport.paper_id, AnalysisReport.skim_score).where(
+                AnalysisReport.paper_id.in_(inserted_ids)
             )
-            break
+        ).all()
+        from packages.config import get_settings
 
-        # 只精读分数 >= 阈值的
-        if result["skim_score"] < get_settings().skim_score_threshold:
-            logger.info("⚠️  %s 分数过低 (%.2f)，跳过精读", str(paper_id)[:8], result["skim_score"])
-            continue
+        threshold = get_settings().skim_score_threshold
+        for paper_id, score in rows:
+            if score is not None and score >= threshold:
+                scored.append((float(score), str(paper_id)))
+    scored.sort(reverse=True)
+    deep_ids = [pid for _score, pid in scored[:max_deep_reads]]
 
-        logger.info(
-            "🎯 开始精读第 %d 篇：%s (分数=%.2f)",
-            deep_read_count + 1,
-            str(paper_id)[:50],
-            result["skim_score"],
-        )
-
+    deep_done = 0
+    deep_tasks: list[str] = []
+    for pid in deep_ids:
         try:
-            # 获取 API 许可
-            if acquire_api("llm", timeout=60.0):
-                pipelines.deep_dive(UUID(paper_id))  # type: ignore[arg-type]
-                deep_read_count += 1
-                if progress_callback:
-                    progress_callback(
-                        f"精读中 ({deep_read_count}/{max_deep_reads})...",
-                        70 + int((i + 1) / max_scored * 30),
-                        100,
-                    )
-                logger.info("✅ 精读完成 (%d/%d)", deep_read_count, max_deep_reads)
-            else:
-                logger.warning("等待 API 许可超时，跳过精读")
-        except Exception as exc:
-            logger.warning(
-                "deep_dive %s failed: %s",
-                str(paper_id)[:8],
-                exc,
+            task = _submit_task(
+                capability="deep_read_paper",
+                input_ref={"paper_id": pid},
+                title=f"精读 {pid[:8]}",
+                created_by="topic_ingest",
+                timeout_s=1800,
             )
+            deep_tasks.append(task["task_id"])
+        except Exception as exc:
+            logger.warning("deep_read %s 提交失败: %s", pid[:8], exc)
+    if deep_tasks:
+        unfinished_deep = _wait_tasks(
+            deep_tasks,
+            timeout_s=_DEEP_WAIT_S,
+            progress=progress_callback,
+            base=70,
+            span=30,
+        )
+        deep_done = len(deep_tasks) - len(unfinished_deep)
 
     if progress_callback:
         progress_callback("处理完成", 100, 100)
@@ -323,16 +261,18 @@ def run_topic_ingest(topic_id: str, progress_callback: callable | None = None) -
         "topic_id": topic_id,
         "topic_name": topic_name,
         "status": "ok",
-        "attempts": attempts,
-        "inserted": len(ids),
-        "skimmed": len(skim_results),
-        "deep_read": deep_read_count,
+        "inserted": total_new,
+        "new_count": total_new,
+        "skimmed": total_new,
+        "deep_read": deep_done,
         "max_deep_reads": max_deep_reads,
     }
 
 
 def run_daily_ingest() -> dict:
-    """兼容旧调用：遍历所有 enabled 主题执行抓取"""
+    """兼容旧调用：遍历所有 enabled 主题执行抓取（任务链编排，见 run_topic_ingest）"""
+    from packages.storage.repositories import TopicRepository
+
     with session_scope() as session:
         topic_repo = TopicRepository(session)
         topics = topic_repo.list_topics(enabled_only=True)
@@ -353,7 +293,7 @@ def run_daily_ingest() -> dict:
         results.append(run_topic_ingest(tid))
 
     total_inserted = sum(r.get("inserted", 0) for r in results)
-    total_processed = sum(r.get("processed", 0) for r in results)
+    total_processed = sum(r.get("skimmed", 0) for r in results)
     return {
         "newly_inserted": total_inserted,
         "processed": total_processed,
@@ -362,9 +302,7 @@ def run_daily_ingest() -> dict:
 
 
 def run_daily_brief() -> dict:
-    """生成每日简报，从数据库读取收件人配置"""
-    # 从数据库读取收件人
-    from packages.storage.db import session_scope
+    """生成每日简报，从数据库读取收件人配置（proposal 模式：领域写同事务 apply）"""
     from packages.storage.repositories import DailyReportConfigRepository
 
     recipient = None
@@ -376,203 +314,20 @@ def run_daily_brief() -> dict:
     except Exception as e:
         logger.warning(f"读取收件人配置失败：{e}")
 
-    return DailyBriefService().publish(recipient=recipient)
+    # persist=False：publish 不直写 generated_contents，把领域写所需字段带回，
+    # 由 domain_apply.apply_proposal 单事务落库（与 daily_brief_publish 任务
+    # handler 同源；邮件发送仍在此处——外部副作用非领域写）
+    from packages.ai.brief_service import user_date_str
+    from packages.application.commands.domain_apply import apply_proposal
 
-
-def run_weekly_graph_maintenance() -> dict:
-    with session_scope() as session:
-        topics = TopicRepository(session).list_topics(enabled_only=True)
-    graph = GraphService()
-    topic_results = []
-    for t in topics:
-        try:
-            topic_results.append(
-                graph.sync_citations_for_topic(
-                    topic_id=t.id,
-                    paper_limit=20,
-                    edge_limit_per_paper=6,
-                )
-            )
-        except Exception:
-            logger.exception(
-                "Failed to sync citations for topic %s",
-                t.id,
-            )
-            continue
-    incremental = graph.sync_incremental(paper_limit=50, edge_limit_per_paper=6)
-    return {
-        "topic_sync": topic_results,
-        "incremental": incremental,
+    result = DailyBriefService().publish(recipient=recipient, persist=False)
+    proposal = {
+        "kind": "save_generated_content",
+        "content_type": "daily_brief",
+        "title": f"Daily Brief: {user_date_str()}",
+        "markdown": result.get("brief_markdown", ""),
+        "metadata_json": result.get("brief_metadata") or {},
     }
-
-
-# ========== 完整版新增：多渠道调度支持 ==========
-
-
-def run_topic_ingest_v2(topic_id: str) -> dict:
-    """
-    单独处理一个主题的抓取 + 处理 - 支持多渠道（完整版）
-
-    新功能:
-    - 支持同时从 ArXiv 和 IEEE 抓取
-    - 独立 IEEE 配额控制
-    - 按渠道分别统计结果
-
-    Args:
-        topic_id: 主题 ID
-
-    Returns:
-        dict: 处理结果统计（包含 by_source 字段）
-    """
-
-    pipelines = PaperPipelines()
     with session_scope() as session:
-        topic = session.get(TopicSubscription, topic_id)
-        if not topic:
-            return {"topic_id": topic_id, "status": "not_found"}
-
-        topic_name = topic.name
-        # 获取配置的渠道列表，默认只有 ArXiv
-        sources = getattr(topic, "sources", ["arxiv"])
-
-        # 按渠道分别抓取
-        all_results = {}
-        total_inserted = 0
-
-        for source in sources:
-            if source == "arxiv":
-                result = _ingest_from_arxiv(pipelines, topic, session)
-            elif source == "ieee":
-                result = _ingest_from_ieee(pipelines, topic, session)
-            else:
-                logger.warning("未知渠道：%s，跳过", source)
-                continue
-
-            all_results[source] = result
-            total_inserted += result.get("inserted", 0)
-
-        # 汇总统计
-        return {
-            "topic_id": topic_id,
-            "topic_name": topic_name,
-            "sources": sources,
-            "total_inserted": total_inserted,
-            "by_source": all_results,
-        }
-
-
-def _ingest_from_arxiv(pipelines, topic, session) -> dict:
-    """ArXiv 渠道抓取（保持现有逻辑）"""
-    last_error: str | None = None
-    ids: list[str] = []
-    new_count: int = 0
-    attempts = 0
-
-    for _attempt in range(topic.retry_limit + 1):
-        attempts += 1
-        try:
-            result = pipelines.ingest_arxiv_with_stats(
-                query=topic.query,
-                max_results=topic.max_results_per_run,
-                topic_id=topic.id,
-                action_type=ActionType.auto_collect,
-            )
-            ids = result["inserted_ids"]
-            new_count = result["new_count"]
-            last_error = None
-            break
-        except Exception as exc:
-            last_error = str(exc)
-
-    if last_error is not None:
-        return {
-            "status": "failed",
-            "attempts": attempts,
-            "error": last_error,
-            "inserted": 0,
-        }
-
-    return {
-        "status": "ok",
-        "inserted": len(ids),
-        "new_count": new_count,
-    }
-
-
-def _ingest_from_ieee(pipelines, topic, session) -> dict:
-    """
-    IEEE 渠道抓取 - 独立配额控制
-
-    Args:
-        pipelines: PaperPipelines 实例
-        topic: TopicSubscription 对象
-        session: SQLAlchemy Session
-
-    Returns:
-        dict: 抓取结果统计
-    """
-    from packages.config import get_settings
-
-    settings = get_settings()
-
-    # 检查 IEEE 配额
-    ieee_quota = getattr(topic, "ieee_daily_quota", 10)
-    if ieee_quota <= 0:
-        logger.info("主题 [%s] IEEE 配额已用尽，跳过", topic.name)
-        return {"status": "quota_exhausted", "inserted": 0}
-
-    # 检查 IEEE API Key
-    api_key = getattr(topic, "ieee_api_key_override", None) or settings.ieee_api_key
-    if not api_key:
-        logger.warning("主题 [%s] IEEE API Key 未配置，跳过", topic.name)
-        return {"status": "no_api_key", "inserted": 0}
-
-    try:
-        # 使用 IEEE 渠道抓取
-        total, inserted_ids, new_count = pipelines.ingest_ieee(
-            query=topic.query,
-            max_results=min(ieee_quota, topic.max_results_per_run),
-            topic_id=topic.id,
-            action_type=ActionType.auto_collect,
-        )
-
-        return {
-            "status": "ok",
-            "inserted": len(inserted_ids),
-            "new_count": new_count,
-            "quota_used": 1,
-        }
-
-    except Exception as exc:
-        logger.error("IEEE 抓取失败：%s", exc)
-        return {"status": "failed", "error": str(exc), "inserted": 0}
-
-
-def _check_and_consume_ieee_quota(session, topic_id: str, date: date) -> bool:
-    """
-    检查并消耗 IEEE 配额
-
-    Args:
-        session: SQLAlchemy Session
-        topic_id: 主题 ID
-        date: 日期
-
-    Returns:
-        bool: True 表示成功消耗配额，False 表示配额不足
-    """
-    from packages.storage.repositories import IeeeQuotaRepository
-
-    quota_repo = IeeeQuotaRepository(session)
-    topic = session.get(TopicSubscription, topic_id)
-    if not topic:
-        return False
-
-    limit = getattr(topic, "ieee_daily_quota", 10)
-
-    # 检查配额
-    if not quota_repo.check_quota(topic_id, date, limit):
-        logger.warning("主题 [%s] IEEE 配额已用尽 (%d/%d)", topic.name, limit, limit)
-        return False
-
-    # 消耗配额
-    return quota_repo.consume_quota(topic_id, date, 1)
+        applied = apply_proposal(session, proposal) or {}
+    return {**result, **applied}

@@ -1,35 +1,73 @@
+import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
+import { Activity } from "lucide-react";
 import Sidebar from "./Sidebar";
+import ChatPane from "./ChatPane";
+import TaskRail from "./TaskRail";
+import { WorkspaceProvider, useWorkspace } from "@/contexts/WorkspaceContext";
 import { ConversationProvider } from "@/contexts/ConversationContext";
 import { AgentSessionProvider } from "@/contexts/AgentSessionContext";
 import { GlobalTaskProvider } from "@/contexts/GlobalTaskContext";
 import GlobalTaskBar from "./GlobalTaskBar";
 
+
+function CenterPane() {
+  const { setView } = useWorkspace();
+  const { pathname } = useLocation();
+  useEffect(() => {
+    setView(pathname.replace(/^\//, "").split("/")[0] || "papers");
+  }, [pathname, setView]);
+  return <Outlet />;
+}
+
+
 export default function Layout() {
   const { pathname } = useLocation();
-  const isFullscreen = pathname === "/";
+  // 知识工作台（选项 A）：[侧栏][对话窄栏][知识工作区][任务右栏]
+  const [chatOpen, setChatOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(false); // 默认收起（VS Code 协议：面板按需展开）
+  const isDevice = pathname === "/device";
+  if (isDevice) {
+    return (
+      <ConversationProvider>
+        <AgentSessionProvider>
+          <GlobalTaskProvider>
+            <div className="min-h-screen bg-page">
+              <Outlet />
+            </div>
+          </GlobalTaskProvider>
+        </AgentSessionProvider>
+      </ConversationProvider>
+    );
+  }
 
   return (
-    <ConversationProvider>
-      <AgentSessionProvider>
+    <WorkspaceProvider>
+      <ConversationProvider>
+        <AgentSessionProvider>
         <GlobalTaskProvider>
-          <div className="min-h-screen bg-page">
+          <div className="bg-page flex h-screen overflow-hidden">
             <Sidebar />
-            {isFullscreen ? (
-              <main className="flex h-screen flex-col lg:ml-[240px]">
-                <Outlet />
-              </main>
+            {chatOpen && <ChatPane onCollapse={() => setChatOpen(false)} />}
+            <main className="min-w-0 flex-1 overflow-y-auto">
+              <CenterPane />
+            </main>
+            {railOpen ? (
+              <TaskRail onClose={() => setRailOpen(false)} />
             ) : (
-              <main className="min-h-screen pt-14 lg:ml-[240px] lg:pt-0">
-                <div className="mx-auto max-w-6xl px-4 py-6 lg:px-8 lg:py-8">
-                  <Outlet />
-                </div>
-              </main>
+              <button
+                onClick={() => setRailOpen(true)}
+                aria-label="展开任务流"
+                className="border-border bg-surface text-ink-secondary hover:text-ink hidden h-full w-9 shrink-0 items-center justify-center border-l xl:flex"
+              >
+                <Activity className="h-4 w-4" />
+              </button>
             )}
-            <GlobalTaskBar />
           </div>
+          <GlobalTaskBar />
         </GlobalTaskProvider>
       </AgentSessionProvider>
-    </ConversationProvider>
+      </ConversationProvider>
+    </WorkspaceProvider>
   );
 }

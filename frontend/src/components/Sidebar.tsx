@@ -26,22 +26,41 @@ import {
   Menu,
   X,
   BarChart3,
+  ListTodo,
+  PanelLeft,
   PenTool,
   Loader2,
   LogOut,
 } from "lucide-react";
 import { paperApi, clearAuth } from "@/services/api";
 
-/* 工具网格定义 */
-const TOOLS = [
-  { to: "/collect", icon: Search, label: "论文收集", accent: true },
-  { to: "/papers", icon: FileText, label: "论文库", accent: false },
-  { to: "/graph", icon: Network, label: "引用图谱", accent: false },
-  { to: "/writing", icon: PenTool, label: "写作助手", accent: true },
-  { to: "/wiki", icon: BookOpen, label: "Wiki", accent: false },
-  { to: "/brief", icon: Newspaper, label: "研究简报", accent: false },
-  { to: "/dashboard", icon: LayoutDashboard, label: "看板", accent: false },
-  { to: "/statistics", icon: BarChart3, label: "主题统计", accent: false },
+/* 工具网格定义——研究主线分组：收集→沉淀→产出→观测 */
+const TOOL_GROUPS: { label: string; items: { to: string; icon: typeof Search; label: string }[] }[] = [
+  {
+    label: "研究",
+    items: [
+      { to: "/collect", icon: Search, label: "论文收集" },
+      { to: "/papers", icon: FileText, label: "论文库" },
+      { to: "/graph", icon: Network, label: "引用图谱" },
+      { to: "/research", icon: BookOpen, label: "Research" },
+    ],
+  },
+  {
+    label: "产出",
+    items: [
+      { to: "/writing", icon: PenTool, label: "写作助手" },
+      { to: "/wiki", icon: BookOpen, label: "Wiki" },
+      { to: "/brief", icon: Newspaper, label: "研究简报" },
+    ],
+  },
+  {
+    label: "系统",
+    items: [
+      { to: "/dashboard", icon: LayoutDashboard, label: "看板" },
+      { to: "/jobs", icon: ListTodo, label: "任务监控" },
+      { to: "/statistics", icon: BarChart3, label: "主题统计" },
+    ],
+  },
 ];
 
 function useDarkMode() {
@@ -65,6 +84,7 @@ function useDarkMode() {
 export default function Sidebar() {
   const [dark, toggleDark] = useDarkMode();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const navigate = useNavigate();
@@ -139,8 +159,9 @@ export default function Sidebar() {
       )}
 
       <aside className={cn(
-        "fixed left-0 top-0 z-50 flex h-screen w-[240px] flex-col border-r border-border bg-sidebar transition-transform duration-200",
-        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        "border-border bg-sidebar relative flex h-screen shrink-0 flex-col border-r",
+        collapsed ? "w-[60px]" : "w-[240px]",
+        mobileOpen && "fixed left-0 top-0 z-50 h-screen translate-x-0"
       )}>
         {/* 移动端关闭按钮 */}
         <button
@@ -163,7 +184,7 @@ export default function Sidebar() {
             className="flex w-full items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-sm font-medium text-ink transition-all hover:bg-hover hover:shadow-sm"
           >
             <Plus className="h-4 w-4" />
-            新对话
+            {!collapsed && "新对话"}
           </button>
         </div>
 
@@ -187,86 +208,47 @@ export default function Sidebar() {
           </div>
         )}
 
-        {/* 工具网格 */}
-        <div className="border-b border-border px-3 pb-3">
-          <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
-            工具
-          </p>
-          <div className="grid grid-cols-3 gap-1.5">
-            {TOOLS.map((tool) => (
-              <NavLink
-                key={tool.to}
-                to={tool.to}
-                className={({ isActive }) =>
-                  cn(
-                    "relative flex flex-col items-center gap-1 rounded-xl px-1 py-2.5 text-center transition-all",
-                    isActive
-                      ? "bg-primary-light text-primary shadow-sm"
-                      : tool.accent
-                        ? "bg-page text-ink-secondary hover:bg-hover hover:text-ink"
-                        : "text-ink-tertiary hover:bg-hover hover:text-ink-secondary",
-                  )
-                }
-              >
-                <tool.icon className="h-4.5 w-4.5" />
-                <span className="text-[10px] font-medium leading-tight">
-                  {tool.label}
-                </span>
-                {tool.to === "/papers" && unreadCount > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-white">
-                    {unreadCount > 99 ? "99+" : unreadCount}
-                  </span>
-                )}
-              </NavLink>
-            ))}
-          </div>
+        <div className="border-border flex items-center justify-end border-b px-2 pb-1.5">
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
+            className="text-ink-secondary hover:bg-hover hover:text-ink rounded p-1.5"
+          >
+            <PanelLeft className="h-3.5 w-3.5" />
+          </button>
         </div>
 
-        {/* 对话历史 */}
-        <div className="flex-1 overflow-y-auto px-3 pt-2">
-          <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
-            对话历史
-          </p>
-          {groups.length === 0 ? (
-            <p className="px-2 py-4 text-center text-xs text-ink-tertiary">
-              还没有对话记录
-            </p>
-          ) : (
-            groups.map((group) => (
-              <div key={group.label} className="mb-3">
-                <p className="mb-0.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">
-                  {group.label}
-                </p>
-                <div className="space-y-0.5">
-                  {group.items.map((meta) => (
-                    <button
-                      key={meta.id}
-                      onClick={() => handleSelectChat(meta.id)}
-                      className={cn(
-                        "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-all",
-                        activeId === meta.id
-                          ? "bg-primary-light text-primary font-medium"
+        {/* 工具网格——研究主线分组 */}
+        <div className="border-b border-border px-3 pb-3">
+          {TOOL_GROUPS.map((group) => (
+            <div key={group.label} className="mb-2.5 last:mb-0">
+              <p className={cn("mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary", collapsed && "hidden")}>
+                {group.label}
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {group.items.map((tool) => (
+                  <NavLink
+                    key={tool.to}
+                    to={tool.to}
+                    className={({ isActive }) =>
+                      cn(
+                        "relative flex flex-col items-center gap-1 rounded-xl px-1 py-2.5 text-center transition-all",
+                        isActive
+                          ? "bg-primary-light text-primary shadow-sm"
                           : "text-ink-secondary hover:bg-hover hover:text-ink",
-                      )}
-                    >
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                      <span className="flex-1 truncate">{meta.title}</span>
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteId(meta.id);
-                        }}
-                        className="hidden shrink-0 rounded p-0.5 text-ink-tertiary hover:bg-error-light hover:text-error group-hover:block"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                      )
+                    }
+                  >
+                    <tool.icon className="h-[18px] w-[18px]" />
+                    {!collapsed && <span className="text-[10px] leading-tight">{tool.label}</span>}
+                  </NavLink>
+                ))}
               </div>
-            ))
-          )}
+            </div>
+          ))}
         </div>
+
+        {/* 会话列表已迁至对话窄栏（ChatPane）——侧栏只保留工具导航 */}
 
         {/* 底部：设置 + 暗色 */}
         <div className="border-t border-border px-3 py-2">

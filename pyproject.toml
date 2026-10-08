@@ -53,18 +53,10 @@ build-backend = "setuptools.build_meta"
 [project.scripts]
 pm = "apps.cli.main:app"
 
-[tool.setuptools]
-packages = [
-  "apps",
-  "apps.api",
-  "apps.cli",
-  "apps.worker",
-  "packages",
-  "packages.ai",
-  "packages.domain",
-  "packages.integrations",
-  "packages.storage",
-]
+[tool.setuptools.packages.find]
+# 自动发现（REVIEW P1：显式清单漏包导致 wheel 不可发布）。
+# include 限定仓库内源码包；新增子包（如 packages.application.*）自动进入产物。
+include = ["apps*", "packages*"]
 
 [tool.ruff]
 line-length = 100
@@ -108,3 +100,6 @@ line-ending = "auto"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "p0_closed_loop: P0 全链路闭环（多进程 + Go 工具链，较慢）",
+]

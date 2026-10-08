@@ -6,7 +6,6 @@ PaperMind API - FastAPI 入口
 import logging
 import time
 import uuid as _uuid
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -67,6 +66,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/auth/status",
         "/auth/device/start",
         "/auth/device/poll",
+        "/auth/github/login",
+        "/auth/github/callback",
         "/mcp",
     }
 
@@ -81,6 +82,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # 白名单路径跳过认证
         if request.url.path in self.WHITELIST or request.url.path.startswith("/mcp"):
+            return await call_next(request)
+
+        # /internal/* 有独立的 X-Internal-Token 校验（durable-state API），不走用户面凭证
+        if request.url.path.startswith("/internal/"):
             return await call_next(request)
 
         # 静态文件和文档跳过
@@ -157,30 +162,15 @@ if settings.auth_password and settings.auth_secret_key in _WEAK_SECRET_KEYS:
         "请在 .env 中设置一个强随机密钥，例如: AUTH_SECRET_KEY=$(openssl rand -hex 32)"
     )
 
-# ---------- lifespan（batch consumer + MCP session manager）----------
+# ---------- lifespan（MCP session manager）----------
+# Stage C1：batch consumer 已移出 API 进程（进程职责分离——长任务消费归 worker，
+# API 只做请求处理；见 docs/plans/2026-09-02-design-3-durable-execution-protocol.md §6）。
 # MCP ASGI 子 app（fastmcp），挂到 /mcp 供 hermes 接入
-from fastmcp.utilities.lifespan import combine_lifespans  # noqa: E402
-
 from apps.api.mcp import get_mcp_asgi_app  # noqa: E402
-from packages.agent_core import batch_consumer as _batch  # noqa: E402
 
 _mcp_app = get_mcp_asgi_app()
 
-
-@asynccontextmanager
-async def _batch_lifespan(app: FastAPI):
-    """batch consumer 启动/关闭（替代 @app.on_event）。"""
-    _batch.start()
-    try:
-        yield
-    finally:
-        _batch.stop()
-
-
-# 合并 batch lifespan + MCP session manager lifespan（fastmcp 要求必须传 mcp_app.lifespan）
-app_lifespan = combine_lifespans(_batch_lifespan, _mcp_app.lifespan)
-
-app = FastAPI(title=settings.app_name, lifespan=app_lifespan)
+app = FastAPI(title=settings.app_name, lifespan=_mcp_app.lifespan)
 
 # 中间件注册顺序：Starlette 中间件为倒序执行（最后注册的最先执行）
 # 执行顺序: CORS -> GZip -> DemoMode -> Auth -> RequestLog -> 路由处理
@@ -222,11 +212,13 @@ from apps.api.routers import (  # noqa: E402
     auth,
     content,
     cs_feeds,
+    github_auth,
     graph,
     jobs,
     llm_configs,
     papers,
     pipelines,
+    research,
     sensemaking,
     system,
     tags,
@@ -238,6 +230,12 @@ from apps.api.routers import (  # noqa: E402
     settings as settings_router,
 )
 
+# P0：durable-state 内部 API——仅当配置了内部令牌才挂载（未配置 = 不暴露此面）
+if settings.durable_state_token:
+    from apps.api.routers import durable_state  # noqa: E402
+
+    app.include_router(durable_state.router)
+
 app.include_router(system.router)
 app.include_router(papers.router)
 app.include_router(topics.router)
@@ -247,13 +245,55 @@ app.include_router(graph.router)
 app.include_router(agent.router)
 app.include_router(content.router)
 app.include_router(pipelines.router)
+app.include_router(research.router)
 app.include_router(settings_router.router)
 app.include_router(writing.router)
 app.include_router(jobs.router)
 app.include_router(auth.router)
+app.include_router(github_auth.router)
 app.include_router(sensemaking.router)
 app.include_router(translate.router)
 app.include_router(llm_configs.router)
 
 # ---------- 挂载 MCP server（端点 /mcp/，供 hermes agent 接入）----------
 app.mount("/mcp", _mcp_app)
+
+# ---------- Web 部署 profile（F6，设计⑤ §7）----------
+# --web=full: 挂载 frontend/dist 静态文件（个人 Full Web）
+# --web=demo: 挂载 demo 构建产物（公开 Demo 实例用；隔离在独立实例，非本进程职责）
+# --web=none: 仅 Core + MCP，不携带任何 Web（headless 部署）
+# 环境变量 WEB_PROFILE 或 CLI --web 参数控制；默认 "full"（向后兼容）。
+
+
+def _mount_web_profile(app: FastAPI) -> None:
+    import os
+    from pathlib import Path
+
+    profile = os.environ.get("WEB_PROFILE", "full")
+    if profile == "none":
+        logger.info("Web profile=none：不挂载静态 Web（headless 模式）")
+        return
+
+    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if not frontend_dist.is_dir():
+        logger.warning("Web profile=%s 但 frontend/dist 不存在，跳过静态挂载", profile)
+        return
+
+    from fastapi.staticfiles import StaticFiles
+
+    if profile == "demo":
+        # Demo 实例的精简公开页面（独立部署实例使用；此处仅挂载构建产物）
+        demo_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist-demo"
+        if demo_dist.is_dir():
+            app.mount("/", StaticFiles(directory=str(demo_dist), html=True), name="demo-web")
+            logger.info("Web profile=demo：挂载 demo 构建产物 %s", demo_dist)
+        else:
+            logger.warning("Web profile=demo 但 frontend/dist-demo 不存在")
+        return
+
+    # full（默认）：挂载完整 Web
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="full-web")
+    logger.info("Web profile=full：挂载完整 Web %s", frontend_dist)
+
+
+_mount_web_profile(app)

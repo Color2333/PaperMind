@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 
 def _analyze_figures(paper_id: str, max_figures: int = 10) -> Iterator[ToolProgress | ToolResult]:
     """提取并解读论文图表"""
-    from packages.ai.figure_service import FigureService
     from packages.ai.tools.base import _require_paper
 
     # 用 _require_paper 统一解析（支持短前缀，返回 detached 但属性已加载的 paper）
@@ -29,13 +28,10 @@ def _analyze_figures(paper_id: str, max_figures: int = 10) -> Iterator[ToolProgr
     pid = UUID(paper.id)  # 用完整 UUID，不用原始短前缀
 
     yield ToolProgress(message=f"正在提取「{(title or '')[:30]}」中的图表...", current=1, total=3)
-    svc = FigureService()
+    from packages.application.commands.analysis import analyze_paper_figures
+
     try:
-        results = svc.analyze_paper_figures(
-            pid,
-            pdf_path,
-            max_figures=max_figures,
-        )
+        results = analyze_paper_figures(pid, pdf_path, max_figures=max_figures)
     except Exception as exc:
         yield ToolResult(success=False, summary=f"图表解读失败: {exc}")
         return

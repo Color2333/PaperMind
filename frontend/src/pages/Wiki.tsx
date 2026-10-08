@@ -21,7 +21,7 @@ import type {
   TaskStatus,
 } from "@/types";
 const Markdown = lazy(() => import("@/components/Markdown"));
-import {
+import { PanelLeft,
   Search,
   BookOpen,
   FileText,
@@ -41,7 +41,7 @@ import {
   ExternalLink,
   Quote,
   Loader2,
-} from "lucide-react";
+ } from "lucide-react";
 
 const wikiTabs = [
   { id: "topic", label: "主题 Wiki" },
@@ -51,6 +51,8 @@ const wikiTabs = [
 export default function Wiki() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("topic");
+  /* 工作台协议：历史栏条件列（默认收起，头部按钮唤出） */
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [paperId, setPaperId] = useState("");
   const [topicWiki, setTopicWiki] = useState<TopicWiki | null>(null);
@@ -275,6 +277,13 @@ export default function Wiki() {
               />
             )}
           </div>
+          <button
+            onClick={() => setHistoryDrawerOpen((v) => !v)}
+            aria-label="历史记录"
+            className="border-border text-ink-secondary hover:bg-hover hover:text-ink rounded-xl border p-2.5 transition-colors"
+          >
+            <PanelLeft className="h-4 w-4" />
+          </button>
           <Button icon={<BookOpen className="h-4 w-4" />} onClick={handleQuery} loading={loading}>
             生成 Wiki
           </Button>
@@ -324,7 +333,8 @@ export default function Wiki() {
 
       {/* 主体：左侧历史 + 右侧内容 */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        {/* 左侧历史 */}
+        {/* 左侧历史（抽屉——默认收起） */}
+        {historyDrawerOpen && (
         <div className="lg:col-span-1">
           <Card>
             <CardHeader
@@ -366,8 +376,9 @@ export default function Wiki() {
           </Card>
         </div>
 
+        )}
         {/* 右侧内容区 */}
-        <div className="space-y-6 lg:col-span-4">
+        <div className={historyDrawerOpen ? "space-y-6 lg:col-span-4" : "space-y-6 lg:col-span-5"}>
           {detailLoading && <Spinner text="加载内容..." />}
 
           {/* 历史内容展示（markdown） */}

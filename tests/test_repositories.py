@@ -358,20 +358,30 @@ class TestAnalysisRepository:
 
 
 class TestCSFeedTopicLink:
+    """cs_feed_fetch proposal 的 csfeed:{code} 主题关联（apply 层语义）"""
+
+    @staticmethod
+    def _apply_fetch(db_session, category_code: str, arxiv_ids: list[str]) -> dict:
+        from packages.application.commands.domain_apply import apply_cs_feed_fetch_proposal
+
+        papers = [
+            {
+                "arxiv_id": aid,
+                "title": f"t-{aid}",
+                "abstract": "a",
+                "source": "arxiv",
+                "metadata": {},
+            }
+            for aid in arxiv_ids
+        ]
+        return apply_cs_feed_fetch_proposal(
+            db_session,
+            {"kind": "cs_feed_fetch", "category_code": category_code, "papers": papers},
+        )
+
     def test_link_creates_disabled_topic_and_links_papers(self, db_session):
         """cs_feed 论文关联到每分类的 disabled topic（接入主题侧边栏/图谱/统计）"""
-        from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
-
-        repo = PaperRepository(db_session)
-        p1 = repo.upsert_paper(
-            PaperCreate(arxiv_id="2401.00201", title="t1", abstract="a", metadata={})
-        )
-        p2 = repo.upsert_paper(
-            PaperCreate(arxiv_id="2401.00202", title="t2", abstract="a", metadata={})
-        )
-        db_session.flush()
-
-        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.AI", [p1.id, p2.id])
+        self._apply_fetch(db_session, "cs.AI", ["2401.00201", "2401.00202"])
         db_session.commit()
 
         topic = TopicRepository(db_session).get_by_name("csfeed:cs.AI")
@@ -383,19 +393,11 @@ class TestCSFeedTopicLink:
         assert len(linked) == 2
 
     def test_link_idempotent_no_duplicate_rows(self, db_session):
-        """重复关联同一 (paper, topic) 不产生重复行（uq_paper_topic 兜底）"""
-        from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
-
-        repo = PaperRepository(db_session)
-        p = repo.upsert_paper(
-            PaperCreate(arxiv_id="2401.00203", title="t", abstract="a", metadata={})
-        )
-        db_session.flush()
-
-        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.LG", [p.id])
+        """重复抓取同一分类：papers upsert 幂等 + 关联不产生重复行"""
+        self._apply_fetch(db_session, "cs.LG", ["2401.00203"])
         db_session.commit()
-        # 再关联一次
-        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.LG", [p.id])
+        # 再抓取一次（重复入库场景）
+        self._apply_fetch(db_session, "cs.LG", ["2401.00203"])
         db_session.commit()
 
         topic = TopicRepository(db_session).get_by_name("csfeed:cs.LG")
@@ -404,19 +406,8 @@ class TestCSFeedTopicLink:
 
     def test_link_category_isolation(self, db_session):
         """不同分类建独立 topic，论文不串"""
-        from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
-
-        repo = PaperRepository(db_session)
-        p_ai = repo.upsert_paper(
-            PaperCreate(arxiv_id="2401.00204", title="ai", abstract="a", metadata={})
-        )
-        p_lg = repo.upsert_paper(
-            PaperCreate(arxiv_id="2401.00205", title="lg", abstract="a", metadata={})
-        )
-        db_session.flush()
-
-        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.AI", [p_ai.id])
-        CSFeedOrchestrator._link_cs_papers_to_topic(db_session, "cs.LG", [p_lg.id])
+        self._apply_fetch(db_session, "cs.AI", ["2401.00204"])
+        self._apply_fetch(db_session, "cs.LG", ["2401.00205"])
         db_session.commit()
 
         t_ai = TopicRepository(db_session).get_by_name("csfeed:cs.AI")
@@ -451,18 +442,50 @@ class TestIdleCompensationTrigger:
     """
 
     def test_process_batch_returns_zero_when_no_unread(self, db_session, monkeypatch):
-        """无 unread 论文时 _process_batch 返回 0（主路径提前返回）"""
+        """无 unread 论文时 _submit_batch 返回 0（主路径提前返回；不提交任务）"""
         from packages.ai.idle_processor import IdleProcessor
+        from packages.storage.db import session_scope
 
         ip = IdleProcessor()
-        # 无论文时 _get_unread_papers 返回空 → _process_batch 直接 return 0
+        # 无论文时 _get_unread_papers 返回空 → _submit_batch 直接 return 0
         monkeypatch.setattr(ip, "_get_unread_papers", lambda limit=10: [])
-        # 不应触发补偿（补偿已移出 _process_batch）
+        # 不应触发补偿（补偿已移出 _run_loop）
         called = []
         monkeypatch.setattr(ip, "_compensate_stuck_skimmed", lambda: called.append(1) or 0)
-        result = ip._process_batch()
+        result = ip._submit_batch()
         assert result == 0
-        assert called == [], "_process_batch 不应再调用补偿（已移到 _run_loop）"
+        assert called == [], "_submit_batch 不应再调用补偿（已移到 _run_loop）"
+        # 且未产生任何 durable Job
+        from sqlalchemy import select
+
+        from packages.storage.models import DurableTask
+
+        with session_scope() as session:
+            assert session.execute(select(DurableTask)).scalars().all() == []
+
+    def test_submit_batch_submits_durable_job_when_unread(self, db_session, monkeypatch):
+        """有 unread 论文 → 提交 batch_process_unread durable 任务（不直接执行）"""
+        from sqlalchemy import select
+
+        from packages.ai.idle_processor import IdleProcessor
+        from packages.domain.enums import TaskStatus
+        from packages.storage.db import session_scope
+        from packages.storage.models import DurableTask
+
+        ip = IdleProcessor()
+        monkeypatch.setattr(ip, "_get_unread_papers", lambda limit=10: [("p1", "t1")])
+        result = ip._submit_batch()
+        assert result == 1
+        # 任务应为 queued（等待 Executor），而非进程内已执行
+        with session_scope() as session:
+            task = (
+                session.execute(
+                    select(DurableTask).where(DurableTask.capability == "batch_process_unread")
+                )
+                .scalars()
+                .one()
+            )
+            assert task.status is TaskStatus.queued
 
     def test_compensate_runs_independently_of_unread(self, db_session, monkeypatch):
         """补偿独立触发：无 unread 但有 stuck skimmed 时仍补偿精读"""

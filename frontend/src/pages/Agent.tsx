@@ -39,6 +39,7 @@ import {
   ArrowDown,
 } from "lucide-react";
 import { useAgentSession, type ChatItem, type StepItem } from "@/contexts/AgentSessionContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { todayApi } from "@/services/api";
 import type { TodaySummary } from "@/types";
 import { ActionConfirmCard } from "./AgentSteps";
@@ -134,6 +135,24 @@ const TOOL_META: Record<string, { icon: typeof Search; label: string }> = {
   generate_wiki: { icon: FileText, label: "生成 Wiki" },
   generate_daily_brief: { icon: Newspaper, label: "生成简报" },
   manage_subscription: { icon: BookOpen, label: "订阅管理" },
+  /* Pi agent（pm）受控工具集：终端与 Web 共用同一 agent 循环 */
+  pm_search_papers: { icon: Search, label: "搜索论文" },
+  pm_get_paper: { icon: FileText, label: "论文详情" },
+  pm_list_claims: { icon: BookOpen, label: "Claims 列表" },
+  pm_get_claim_evidence: { icon: FileText, label: "证据核对" },
+  pm_diff_research_state: { icon: Search, label: "研究状态 Diff" },
+  pm_export_research_pack: { icon: FileText, label: "导出 Research Pack" },
+  pm_submit_job: { icon: Download, label: "提交处理任务" },
+  pm_get_job: { icon: Search, label: "任务详情" },
+  pm_list_jobs: { icon: Search, label: "任务列表" },
+  pm_cancel_job: { icon: X, label: "取消任务" },
+  /* Pi 工作区文件工具（查看/修改——写论文场景） */
+  read: { icon: FileText, label: "读取文件" },
+  edit: { icon: FileText, label: "编辑文件" },
+  write: { icon: FileText, label: "写入文件" },
+  grep: { icon: Search, label: "搜索文件" },
+  find: { icon: Search, label: "查找文件" },
+  ls: { icon: Circle, label: "列目录" },
 };
 
 function getToolMeta(name: string) {
@@ -152,12 +171,16 @@ export default function Agent() {
     confirmingActions,
     canvas,
     hasPendingConfirm,
+    engine,
     setCanvas,
     sendMessage,
     handleConfirm,
     handleReject,
     stopGeneration,
   } = useAgentSession();
+  const { activePaperId, activePaperTitle, contextHint } = useWorkspace();
+  const contextChip = activePaperId ? { id: activePaperId, title: activePaperTitle } : null;
+  const chipTitle = activePaperTitle || activePaperId?.slice(0, 8);
 
   const [input, setInput] = useState("");
   const [activeAbility, setActiveAbility] = useState<Ability | null>(null);
@@ -218,11 +241,12 @@ export default function Agent() {
   const handleSend = useCallback(
     async (text: string) => {
       const savedInput = text;
+      const outgoing = contextHint ? `${text}\n${contextHint}` : text;
       isAtBottomRef.current = true;
       setInput("");
       setActiveAbility(null);
       try {
-        await sendMessage(text);
+        await sendMessage(outgoing);
       } catch {
         setInput(savedInput);
         toast("error", "发送失败，请重试");
@@ -330,10 +354,40 @@ export default function Agent() {
         {/* 输入区域 */}
         <div className="border-border bg-surface border-t px-4 py-3">
           <div className="mx-auto max-w-3xl space-y-2">
+            {engine && (
+              <div className="flex justify-end">
+                <span
+                  title={
+                    engine === "pi"
+                      ? "聊天引擎：Pi agent core（终端 pm 同款循环 + 受控工具集）"
+                      : "聊天引擎：Python（pm 未部署时的回退）"
+                  }
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                    engine === "pi"
+                      ? "bg-primary/10 text-primary"
+                      : "bg-warning-light text-warning"
+                  )}
+                >
+                  <Sparkles className="h-2.5 w-2.5" />
+                  {engine === "pi" ? "Pi 驱动" : "Python 引擎"}
+                </span>
+              </div>
+            )}
             {hasPendingConfirm && (
               <div className="bg-warning-light text-warning flex items-center gap-2 rounded-lg px-3 py-2 text-xs">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                 <span>请先处理上方的确认请求，再继续对话</span>
+              </div>
+            )}
+
+            {/* 当前主区上下文（用户→agent 跟随） */}
+            {contextChip && (
+              <div className="flex justify-start">
+                <span className="border-border bg-page text-ink-secondary inline-flex max-w-full items-center gap-1.5 truncate rounded-full border px-2.5 py-1 text-[11px]">
+                  <FileText className="text-primary h-3 w-3 shrink-0" />
+                  <span className="truncate">正在查看：{chipTitle}</span>
+                </span>
               </div>
             )}
 
@@ -467,6 +521,7 @@ export default function Agent() {
 
 const EmptyState = memo(function EmptyState({ onSelect }: { onSelect: (p: string) => void }) {
   const navigate = useNavigate();
+  const { engine } = useAgentSession();
   const [today, setToday] = useState<TodaySummary | null>(null);
 
   useEffect(() => {
@@ -482,7 +537,12 @@ const EmptyState = memo(function EmptyState({ onSelect }: { onSelect: (p: string
         <Sparkles className="text-primary h-8 w-8" />
       </div>
       <h2 className="text-ink mb-1 text-2xl font-bold">PaperMind Agent</h2>
-      <p className="text-ink-secondary mb-6 max-w-lg text-center text-sm leading-relaxed">
+      <p className="text-ink-secondary mb-1 text-center text-sm leading-relaxed">
+        {engine === "python"
+          ? "由 Python 引擎驱动（pm 未部署）。"
+          : "由 Pi agent core 驱动——与终端 pm 同一循环、同一工具集。"}
+      </p>
+      <p className="text-ink-tertiary mb-6 max-w-lg text-center text-sm leading-relaxed">
         告诉我你的研究需求，我会自动规划执行步骤：搜索论文、下载、分析、生成综述。
       </p>
 

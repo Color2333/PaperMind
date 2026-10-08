@@ -305,8 +305,12 @@ class FigureService:
         paper_id: UUID,
         pdf_path: str,
         max_figures: int = 10,
+        *,
+        persist: bool = True,
     ) -> list[FigureAnalysis]:
-        """提取并解读论文中的所有图表，结果存库"""
+        """提取并解读论文中的所有图表；persist=False 时只返回结果（proposal
+        模式——image_analyses 的写由权威面单事务承载），图片文件仍落盘（文件
+        IO 不属领域状态）"""
         figures = self.extract_figures(pdf_path, max_figures=max_figures)
         if not figures:
             logger.info("No figures found in %s", pdf_path)
@@ -348,7 +352,8 @@ class FigureService:
                     results.append(r)
         results.sort(key=lambda a: (a.page_number, a.image_index))
 
-        self._save_analyses(paper_id, results)
+        if persist:
+            self._save_analyses(paper_id, results)
         return results
 
     @staticmethod

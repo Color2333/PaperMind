@@ -21,7 +21,29 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from packages.domain.enums import ActionType, PipelineStatus, ReadStatus
+from packages.domain.enums import (
+    ActionType,
+    ClaimCertainty,
+    ClaimOrigin,
+    ClaimStatus,
+    EffectKind,
+    EventAggregate,
+    EventType,
+    EvidenceKind,
+    EvidenceStance,
+    JobStatus,
+    PipelineStatus,
+    QuestionStatus,
+    ReadStatus,
+    RelationOrigin,
+    RelationPredicate,
+    ResearchRunStatus,
+    RunTrigger,
+    SourceDetectedBy,
+    TaskAttemptStatus,
+    TaskStatus,
+)
+from packages.domain.ids import new_id
 from packages.storage.db import Base, JSONB_or_JSON, Vector_or_JSON
 
 
@@ -721,3 +743,392 @@ class DeviceAuthRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ---------- Research State（设计①数据契约，docs/plans/2026-09-02-design-1-*.md）----------
+# 主键统一 UUIDv7 hex（String(32)），id 即时间序；与既有 String(36) 表通过外键衔接。
+
+
+class ResearchQuestion(Base):
+    """聚合一个问题的当前研究状态"""
+
+    __tablename__ = "research_questions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[QuestionStatus] = mapped_column(
+        Enum(QuestionStatus, name="question_status"),
+        nullable=False,
+        default=QuestionStatus.active,
+        index=True,
+    )
+    watch_terms: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class ResearchRun(Base):
+    """一次研究活动的输入/模型/成本/产物（Claim/Evidence 的 provenance 锚点）。
+
+    job_ref/attempt_refs 是 Phase 2 durable execution 的弱引用字符串，
+    不跨子系统建外键——执行层表归 Stage C 契约管。
+    """
+
+    __tablename__ = "research_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    research_question_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("research_questions.id", ondelete="SET NULL"), nullable=True
+    )
+    trigger: Mapped[RunTrigger] = mapped_column(
+        Enum(RunTrigger, name="run_trigger"), nullable=False, default=RunTrigger.manual
+    )
+    paper_ids: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    model_policy: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    status: Mapped[ResearchRunStatus] = mapped_column(
+        Enum(ResearchRunStatus, name="research_run_status"),
+        nullable=False,
+        default=ResearchRunStatus.running,
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cost_refs: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    artifact_refs: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    job_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    attempt_refs: Mapped[list | None] = mapped_column(JSONB_or_JSON(), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Claim(Base):
+    """可比较、可修订的最小研究判断。
+
+    硬规则（设计① §5）：无证据坐标的判断不能 confirmed；papermind 推断最高
+    pending_verification，只有用户（或 author 自动规则）能置为 confirmed。
+    """
+
+    __tablename__ = "claims"
+    __table_args__ = (Index("ix_claims_question_status", "research_question_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    research_question_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("research_questions.id", ondelete="SET NULL"), nullable=True
+    )
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    statement_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
+    origin: Mapped[ClaimOrigin] = mapped_column(
+        Enum(ClaimOrigin, name="claim_origin"), nullable=False
+    )
+    status: Mapped[ClaimStatus] = mapped_column(
+        Enum(ClaimStatus, name="claim_status"),
+        nullable=False,
+        default=ClaimStatus.draft,
+        index=True,
+    )
+    certainty: Mapped[ClaimCertainty] = mapped_column(
+        Enum(ClaimCertainty, name="claim_certainty"),
+        nullable=False,
+        default=ClaimCertainty.insufficient_evidence,
+    )
+    superseded_by_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("claims.id", ondelete="SET NULL"), nullable=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("research_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    user_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    confirmed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    invalidated_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class SourceVersion(Base):
+    """论文的具体版本与内容校验值（事实层的"来源"）。papers 表保持不动。"""
+
+    __tablename__ = "source_versions"
+    __table_args__ = (
+        UniqueConstraint("paper_id", "version_label", name="uq_source_version"),
+        Index("ix_source_versions_paper_current", "paper_id", "is_current"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    paper_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False
+    )
+    version_label: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    external_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    doi: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    origin_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    detected_by: Mapped[SourceDetectedBy] = mapped_column(
+        Enum(SourceDetectedBy, name="source_detected_by"),
+        nullable=False,
+        default=SourceDetectedBy.ingest,
+    )
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
+class Evidence(Base):
+    """指向精确原文位置的证据（必须挂 SourceVersion）。
+
+    fingerprint = sha256(claim_id + source_version + kind + locator + quote)，
+    唯一约束保证同一 Attempt 重放不产生重复证据行（至少一次执行 + 幂等副作用）。
+    """
+
+    __tablename__ = "evidence"
+    __table_args__ = (
+        UniqueConstraint("fingerprint", name="uq_evidence_fingerprint"),
+        Index("ix_evidence_source_version", "source_version_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    claim_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("claims.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_version_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("source_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[EvidenceKind] = mapped_column(
+        Enum(EvidenceKind, name="evidence_kind"), nullable=False
+    )
+    stance: Mapped[EvidenceStance] = mapped_column(
+        Enum(EvidenceStance, name="evidence_stance"), nullable=False
+    )
+    locator: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+    experiment_conditions: Mapped[dict | None] = mapped_column(JSONB_or_JSON(), nullable=True)
+    extracted_by: Mapped[ClaimOrigin] = mapped_column(
+        Enum(ClaimOrigin, name="evidence_extracted_by"), nullable=False
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("research_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    image_analysis_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("image_analyses.id", ondelete="SET NULL"), nullable=True
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
+class ClaimRelation(Base):
+    """Claim 间关系（supports/contradicts/supersedes …），方向：subject 对 object"""
+
+    __tablename__ = "claim_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_claim_id", "object_claim_id", "predicate", name="uq_claim_relation"
+        ),
+        Index("ix_claim_relations_object", "object_claim_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    subject_claim_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    object_claim_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    predicate: Mapped[RelationPredicate] = mapped_column(
+        Enum(RelationPredicate, name="claim_relation_predicate"), nullable=False
+    )
+    origin: Mapped[RelationOrigin] = mapped_column(
+        Enum(RelationOrigin, name="claim_relation_origin"), nullable=False
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("research_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
+class ResearchEvent(Base):
+    """append-only 领域事件：History 与 outbox 合一（设计① §4.7）。
+
+    与聚合变更同一事务写入；processed_at 是 P1 watch/通知的消费标记，P0 恒为 NULL。
+    DB 存枚举 name（snake_case），对外序列化用 value（设计文档 PascalCase）。
+    """
+
+    __tablename__ = "research_events"
+    __table_args__ = (
+        Index("ix_research_events_aggregate", "aggregate_type", "aggregate_id", "occurred_at"),
+        Index("ix_research_events_type_time", "type", "occurred_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    type: Mapped[EventType] = mapped_column(
+        Enum(EventType, name="research_event_type"), nullable=False
+    )
+    aggregate_type: Mapped[EventAggregate] = mapped_column(
+        Enum(EventAggregate, name="research_event_aggregate"), nullable=False
+    )
+    aggregate_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    run_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    job_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    attempt_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False, index=True
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TaskEffect(Base):
+    """副作用账本（设计③ §9：幂等去重外部效果；effect_key 唯一）"""
+
+    __tablename__ = "task_effects"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    task_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    effect_key: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
+    kind: Mapped[EffectKind] = mapped_column(Enum(EffectKind, name="effect_kind"), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    committed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
+# ---------- 原子 durable execution（设计③ §1，Stage C2）----------
+# jobs/tasks/task_attempts/artifacts；主键 UUIDv7 hex；Job 状态由子 Task 收敛（§2）。
+
+
+class Job(Base):
+    """应用层用户意图/计划流程（设计③ §1.1）"""
+
+    __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_kind_status", "kind", "status"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)  # 设计②命令目录名
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, name="job_status"),
+        nullable=False,
+        default=JobStatus.submitted,
+        index=True,
+    )
+    payload: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    budget: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    research_run_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("research_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    progress: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DurableTask(Base):
+    """可独立调度/重放的工作原子（设计③ §1.2）"""
+
+    __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_job_status", "job_id", "status"),
+        Index("ix_tasks_status_resource", "status", "resource_class"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    job_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    capability: Mapped[str] = mapped_column(String(64), nullable=False)
+    handler_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    input_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[TaskStatus] = mapped_column(
+        Enum(TaskStatus, name="task_status"), nullable=False, default=TaskStatus.queued, index=True
+    )
+    depends_on: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    input_ref: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    output_artifact_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("artifacts.id", ondelete="SET NULL", use_alter=True), nullable=True
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    resource_class: Mapped[str] = mapped_column(String(32), nullable=False, default="default")
+    timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 过渡期桥接：tracker task_id（C3）；C7 后为 Go Core task id
+    external_ref: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class TaskAttempt(Base):
+    """Executor 对 Task 的一次真实执行（设计③ §1.3；fencing_token 单调递增）"""
+
+    __tablename__ = "task_attempts"
+    __table_args__ = (Index("ix_task_attempts_task", "task_id", "attempt_no"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    task_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    executor_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    fencing_token: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[TaskAttemptStatus] = mapped_column(
+        Enum(TaskAttemptStatus, name="task_attempt_status"),
+        nullable=False,
+        default=TaskAttemptStatus.running,
+    )
+    error_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    log_ref: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    cost_refs: Mapped[list] = mapped_column(JSONB_or_JSON(), nullable=False, default=list)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TaskArtifact(Base):
+    """Task 的可引用产物（设计③ §1.4；大结果进对象存储，此处存引用）"""
+
+    __tablename__ = "artifacts"
+    __table_args__ = (Index("ix_artifacts_task", "task_id", "kind"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    # FK 环（tasks.output_artifact_id ↔ artifacts.task_id）：use_alter 允许 create_all/迁移建表
+    task_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("tasks.id", ondelete="CASCADE", use_alter=True, name="fk_artifacts_task"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    uri: Mapped[str] = mapped_column(String(1024), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSONB_or_JSON(), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
+class SystemFlag(Base):
+    """跨进程控制面标志（P0 修复：pause/resume 必须持久化，不能只活在进程内存）。
+
+    key → value 简单 KV；queue_paused 由 /queue/pause|resume 与 durable-state
+    claim 端点共同消费。唯一控制面 = durable store 本身。
+    """
+
+    __tablename__ = "system_flags"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )

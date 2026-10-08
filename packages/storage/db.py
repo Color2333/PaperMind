@@ -169,6 +169,11 @@ def run_migrations() -> None:
     if not _is_sqlite:
         _run_alembic_upgrade()
         return
+    # 新表（含 Research State 契约表）由 metadata 补齐——create_all 只建缺失表，
+    # 不改动既有结构；列级增量兜底仍走下方 _safe_add_column。
+    from packages.storage import models  # noqa: F401  # 注册全部表定义
+
+    Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:
         _safe_add_column(
             conn,
