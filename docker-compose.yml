@@ -29,7 +29,7 @@ services:
       - RECLAIM_BACKOFF_S=60
       # Go authority（第四轮 P0-2/P0-3）：权威 core_* 表与领域表同库（PG），
       # 与 Python 侧 DATABASE_URL 指向同一 postgres
-      - CORE_DB_PATH=${CORE_PG_DSN:-postgresql://papermind:papermind@postgres:5432/papermind}
+      - CORE_DB_PATH=${CORE_PG_DSN:-postgresql://papermind:papermind@postgres:5432/papermind?sslmode=disable}
     restart: unless-stopped
     depends_on:
       backend:
@@ -71,7 +71,7 @@ services:
       - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002,https://pm.vibingu.cn
       - DEMO_MODE=false
       # P1 PG 切换：DATABASE_URL 显式指定 PG
-      - DATABASE_URL=postgresql://papermind:papermind@postgres:5432/papermind
+      - DATABASE_URL=${PAPER_PG_DSN:-postgresql+psycopg2://papermind:papermind@postgres:5432/papermind}
       # durable-state 内部 API（P0）：非空才挂载 /internal/durable/*，Core 凭此访问权威状态
       - DURABLE_STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
       # Go authority（manifest 路由）：A 档 capability 提交 Go 权威，其余留 Python
@@ -118,7 +118,7 @@ services:
     environment:
       - APP_ENV=production
       - SITE_URL=https://pm.vibingu.cn
-      - DATABASE_URL=postgresql://papermind:papermind@postgres:5432/papermind
+      - DATABASE_URL=${PAPER_PG_DSN:-postgresql+psycopg2://papermind:papermind@postgres:5432/papermind}
       # Executor 宿主（C7）：经 Go Core 领取执行；未配置则仅调度提交
       - CORE_ADDR=core:8081
       - CORE_TOKEN=${CORE_TOKEN:-}
