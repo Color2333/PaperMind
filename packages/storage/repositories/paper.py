@@ -40,6 +40,12 @@ class PaperRepository:
     def __init__(self, session: Session):
         self.session = session
 
+    def get_by_arxiv_id(self, arxiv_id: str) -> Paper | None:
+        """按 arxiv_id（含多源合成键）取论文；不存在返回 None"""
+        return self.session.execute(
+            select(Paper).where(Paper.arxiv_id == arxiv_id)
+        ).scalar_one_or_none()
+
     def upsert_paper(self, data: PaperCreate) -> Paper:
         # 非 arXiv 源用合成值填充 arxiv_id（NOT NULL UNIQUE 列），维持多源去重
         arxiv_id = data.arxiv_id or data.normalized_arxiv_id or f"{data.source}:{data.source_id}"
@@ -139,6 +145,18 @@ class PaperRepository:
             return set()
         q = select(Paper.arxiv_id).where(Paper.arxiv_id.in_(arxiv_ids))
         return set(self.session.execute(q).scalars())
+
+    def mark_pdf_unavailable(self, paper_id: str, reason: str) -> None:
+        """持久标记论文无可用 PDF（如 arXiv 404）——补偿/批处理选择器据此
+        永久跳过，终止重试风暴。metadata 合并写（保留既有字段）。"""
+        paper = self.get_by_id(paper_id)
+        if paper is None:
+            return
+        meta = dict(paper.metadata_json or {})
+        meta["pdf_unavailable"] = True
+        meta["pdf_unavailable_reason"] = reason[:200]
+        paper.metadata_json = meta
+        self.session.flush()
 
     def list_existing_dois(self, dois: list[str]) -> set[str]:
         """批量检查哪些 DOI 已存在，返回已存在的 DOI 集合（IEEE 去重用）"""

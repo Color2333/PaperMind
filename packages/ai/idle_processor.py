@@ -204,6 +204,9 @@ class IdleProcessor:
                 .join(AnalysisReport, Paper.id == AnalysisReport.paper_id)
                 .where(AnalysisReport.summary_md.is_not(None))
                 .where(AnalysisReport.deep_dive_md.is_(None))
+                # 来源无 PDF 的论文（arXiv 404 已持久标记）永久跳过——否则
+                # deep_read 死信后 deep_dive_md 仍为空，每轮重提成重试风暴
+                .where(Paper.metadata_json["pdf_unavailable"].as_boolean().is_not(True))
                 .order_by(Paper.created_at.asc())  # 优先处理旧的
                 .limit(limit)
             ).all()

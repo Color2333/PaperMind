@@ -843,9 +843,21 @@ def download_source_data(*, arxiv_id: str, progress: ProgressFn = None, **_: Any
     """PDF 下载（IO 计算，proposal 模式）：文件落盘由本 handler 承载，
     papers.pdf_path 回填在权威面单事务执行（Go applyDownloadSourceResult /
     domain_apply.apply_download_proposal）。"""
+    from packages.domain.exceptions import PdfUnavailableError
     from packages.integrations.arxiv_client import ArxivClient
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import PaperRepository
 
-    pdf_path = ArxivClient().download_pdf(arxiv_id)
+    try:
+        pdf_path = ArxivClient().download_pdf(arxiv_id)
+    except PdfUnavailableError as exc:
+        # 永久性条件：按 arxiv_id 找到论文打标记（批次/补偿据此永久跳过）；
+        # 独立 scope 先提交再抛——异常路径会让外层/当前 scope 整体回滚
+        with session_scope() as session:
+            paper = PaperRepository(session).get_by_arxiv_id(arxiv_id)
+            if paper is not None:
+                PaperRepository(session).mark_pdf_unavailable(str(paper.id), str(exc))
+        raise
     return {
         "proposal": {
             "kind": "download_source",

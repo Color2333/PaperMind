@@ -161,13 +161,22 @@ class ArxivClient:
         raise last_exc or RuntimeError("ArXiv fetch_by_ids failed")
 
     def download_pdf(self, arxiv_id: str) -> str:
-        """下载 PDF 到本地存储"""
+        """下载 PDF 到本地存储
+
+        Raises:
+            PdfUnavailableError: arXiv 返回 404——该论文没有可下载的 PDF
+                （永久性条件，调用方应标记论文并停止重试）。
+        """
         url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         target = self.settings.pdf_storage_root / f"{arxiv_id}.pdf"
         target.parent.mkdir(parents=True, exist_ok=True)
 
         # PDF 下载不经过速率限制器（因为是直接下载，不是 API 查询）
         response = self.client.get(url, timeout=90)
+        if response.status_code == 404:
+            from packages.domain.exceptions import PdfUnavailableError
+
+            raise PdfUnavailableError(f"arXiv 无此 PDF：{arxiv_id}（404）")
         response.raise_for_status()
         target.write_bytes(response.content)
         return str(target)
