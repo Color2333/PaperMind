@@ -164,17 +164,23 @@ class CoreClient:
         )
 
     def task_status(self, task_id: str) -> dict[str, Any] | None:
-        """Go 权威任务状态（含 result_ref）；404/不可达返回 None"""
+        """Go 权威任务状态（含 result_ref）；404/不可达返回 None。
+
+        响应是统一信封（writeJSON）——必须解 "body"（此前返回整个信封，
+        消费方 status.get("status") 恒 None，Go 任务观察面形同失明）。"""
         try:
             resp = self._client.get(f"{self._base}/v1/tasks/{task_id}/status")
         except Exception:
             return None
         if resp.status_code != 200:
             return None
-        return resp.json()
+        return resp.json().get("body", {})
 
     def jobs_graph(self, job_id: str) -> dict[str, Any] | None:
-        """Go 权威 Job graph（观察面代理）；404 返回 None"""
+        """Go 权威 Job graph（观察面代理）；404 返回 None。
+
+        注意：/v1/jobs/{id} 是裸 JSON（handleJobGraphGET 直接 Encode，无统一
+        信封）——与 task_status 的信封形状不同，勿"统一"解包。"""
         try:
             resp = self._client.get(f"{self._base}/v1/jobs/{job_id}")
         except Exception:

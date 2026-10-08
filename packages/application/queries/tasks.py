@@ -71,6 +71,51 @@ def resolve_task_unified(session, task_ref: str) -> dict[str, Any] | None:
     return _unified_view(task, session)
 
 
+def _go_task_view(task_id: str) -> dict[str, Any] | None:
+    """Go 权威任务的统一视图（与 _unified_view 同形状）。
+
+    观察面合并的另一半：A 档任务只存在于 Go Core——此前 get_task_info/
+    get_task_status 对 Go 任务恒 None（dedup-9 编排器 submit+poll、前端
+    /tasks/{id} 全部失明；get_task_result 有回退但视图没有）。
+    """
+    import os
+
+    if not os.environ.get("PAPERMIND_CORE_URL"):
+        return None
+    from packages.core_client.client import CoreClient
+
+    client = CoreClient(
+        os.environ["PAPERMIND_CORE_URL"], token=os.environ.get("PAPERMIND_CORE_TOKEN", "")
+    )
+    try:
+        status = client.task_status(task_id)
+    except Exception:  # noqa: BLE001 — Go 不可达按未命中处理
+        return None
+    finally:
+        client.close()
+    if not status or not status.get("ok"):
+        return None
+    status_value = str(status.get("status") or "")
+    finished = status_value in _FINISHED
+    return {
+        "task_id": status.get("task_id") or task_id,
+        "task_type": "core",
+        "category": "core",
+        "title": "",
+        "current": 100 if finished else 0,
+        "total": 100,
+        "message": "",
+        "progress": 1.0 if finished else 0.0,
+        "finished": finished,
+        "success": status_value == "succeeded",
+        "status": _STATUS_MAP.get(status_value, "running"),
+        "error": status.get("last_error") or None,
+        "has_result": bool(status.get("result_ref")),
+        "job_id": None,
+        "durable": False,
+    }
+
+
 def get_task_status(task_id: str) -> dict[str, Any] | None:
     """返回 {"task": 统一视图, "result": 已完成结果}；不存在返回 None"""
     from packages.storage.db import session_scope
@@ -78,19 +123,28 @@ def get_task_status(task_id: str) -> dict[str, Any] | None:
     with session_scope() as session:
         view = resolve_task_unified(session, task_id)
         if view is None:
+            view = _go_task_view(task_id)
+        if view is None:
             return None
         result = None
         if view["success"]:
             result = _result_of(session, task_id)
+        if result is None and view["success"] and view.get("category") == "core":
+            result = _go_task_result(task_id)
         return {"task": view, "result": result}
 
 
 def get_task_info(task_id: str) -> dict | None:
-    """平铺的统一视图（/ingest/references/status 等旧形状消费方）"""
+    """平铺的统一视图（/ingest/references/status 等旧形状消费方）。
+
+    Python durable store 优先，Go 权威任务回退 Core（观察面合并）。"""
     from packages.storage.db import session_scope
 
     with session_scope() as session:
-        return resolve_task_unified(session, task_id)
+        view = resolve_task_unified(session, task_id)
+    if view is not None:
+        return view
+    return _go_task_view(task_id)
 
 
 def list_active_tasks() -> list[dict]:
@@ -114,19 +168,8 @@ def _result_of(session, task_ref: str) -> dict | None:  # noqa: ANN001
     return (task.input_ref or {}).get("result_ref") or {}
 
 
-def get_task_result(task_id: str) -> dict | None:
-    """已完成任务的结果摘要；未完成/不存在返回 None。
-
-    观察面合并：Python durable store 优先，Go 权威任务（manifest 内 A 档）
-    回退经 Core 读 result_ref——此前 Go 任务在此永远拿不到结果。
-    """
-    from packages.storage.db import session_scope
-
-    with session_scope() as session:
-        result = _result_of(session, task_id)
-    if result is not None:
-        return result
-
+def _go_task_result(task_id: str) -> dict | None:
+    """Go 权威任务的 result_ref（未成功/不可达返回 None）"""
     import os
 
     if not os.environ.get("PAPERMIND_CORE_URL"):
@@ -145,6 +188,21 @@ def get_task_result(task_id: str) -> dict | None:
     if not status or status.get("status") != "succeeded":
         return None
     return status.get("result_ref") or {}
+
+
+def get_task_result(task_id: str) -> dict | None:
+    """已完成任务的结果摘要；未完成/不存在返回 None。
+
+    观察面合并：Python durable store 优先，Go 权威任务（manifest 内 A 档）
+    回退经 Core 读 result_ref——此前 Go 任务在此永远拿不到结果。
+    """
+    from packages.storage.db import session_scope
+
+    with session_scope() as session:
+        result = _result_of(session, task_id)
+    if result is not None:
+        return result
+    return _go_task_result(task_id)
 
 
 def find_fetch_task_by_topic(topic_id: str) -> dict | None:
