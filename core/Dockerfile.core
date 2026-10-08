@@ -1,5 +1,5 @@
 # PaperMind Go Core — 纯 stdlib 静态二进制（多阶段构建，最终镜像无工具链）
-FROM golang:1.22-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
