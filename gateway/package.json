@@ -1,0 +1,14 @@
+{
+  "name": "papermind-gateway",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "PaperMind Pi LLM 网关（sidecar）——同步自 PaperMind-Terminal/packages/papermind-cli/src/gateway.js",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^1.1.0"
+  }
+}

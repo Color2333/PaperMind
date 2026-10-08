@@ -26,12 +26,15 @@ from packages.agent_pi import host  # noqa: E402  —— web_agent_dir 供网关
 _GATEWAY_PORT = int(os.environ.get("PAPERMIND_GATEWAY_PORT", "8765"))
 _GATEWAY_TOKEN = os.environ.get("PAPERMIND_GATEWAY_TOKEN", "pm-gateway-internal")
 _START_TIMEOUT = 15.0
+# 远程网关（sidecar 部署形态）：设置后本进程不再 spawn pm，直接用该 URL
+# （容器编排里 gateway 是独立服务，backend/worker 经共享卷物化其配置）
+_EXTERNAL_URL = os.environ.get("PAPERMIND_GATEWAY_URL", "").rstrip("/")
 
 _proc: subprocess.Popen | None = None  # noqa: T105
 
 
 def gateway_base_url() -> str:
-    return f"http://127.0.0.1:{_GATEWAY_PORT}"
+    return _EXTERNAL_URL or f"http://127.0.0.1:{_GATEWAY_PORT}"
 
 
 def gateway_token() -> str:
@@ -55,7 +58,10 @@ def _healthy() -> bool:
 
 
 def ensure_gateway() -> str | None:
-    """确保 Pi 网关就绪，返回 base_url；不可用返回 None（调用方回退直连）。"""
+    """确保 Pi 网关就绪，返回 base_url；不可用返回 None（调用方回退直连）。
+
+    PAPERMIND_GATEWAY_URL 已设置（sidecar 形态）时：只物化配置 + 健康检查，
+    绝不本地 spawn（生产镜像无 pm；sidecar 由容器编排保证存活）。"""
     global _proc  # noqa: PLW0603
     # 物化模型配置（DB 单一事实源 → models.json/settings.json）——网关按请求
     # 读 agentDir 下的文件，未物化时进程照常启动但每请求 502（且不触发调用方
@@ -68,6 +74,11 @@ def ensure_gateway() -> str | None:
             logger.warning("[pi-gateway] DB 无 active LLM 配置，网关缺 models.json")
     except Exception:  # noqa: BLE001 — 物化失败不影响网关复用/启动（保持回退语义）
         logger.exception("[pi-gateway] models.json 物化失败")
+    if _EXTERNAL_URL:
+        if _healthy():
+            return gateway_base_url()
+        logger.warning("[pi-gateway] 远程网关 %s 不可达，LLM 管线回退直连", _EXTERNAL_URL)
+        return None
     if not _healthy():
         if _proc is not None and _proc.poll() is None:
             _proc.terminate()

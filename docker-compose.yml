@@ -12,6 +12,34 @@
 
 services:
   # ==========================================
+  # Pi LLM 网关（sidecar）：OpenAI 兼容 HTTP 面（pi-ai 底座）。
+  # models.json 由 backend/worker 经共享卷物化（DB 单一事实源），本容器无 DB。
+  # ==========================================
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: papermind-gateway
+    environment:
+      - PAPERMIND_AGENT_DIR=/data
+      - PAPERMIND_GATEWAY_PORT=8765
+      - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
+    volumes:
+      - pm_agent_dir:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8765/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # ==========================================
   # Go Core（控制面网关：Executor Protocol → durable-state API）
   # ==========================================
   core:
@@ -61,6 +89,7 @@ services:
       - pm_data:/app/data
       - pm_logs:/app/logs
       - pm_pip_cache:/.pip-cache
+      - pm_agent_dir:/data
     env_file:
       - ./.env
     environment:
@@ -76,10 +105,12 @@ services:
       - DURABLE_STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
       # Go authority（manifest 路由）：A 档 capability 提交 Go 权威，其余留 Python
       - PAPERMIND_CORE_URL=http://core:8081
-      # 管线 LLM 统一走 Pi 网关（pm gateway——OpenAI 兼容面，pi-ai 底座）：
-      # 需要 backend/worker 镜像内安装 PaperMind-Terminal 的 pm（未装则自动回退直连）
+      # 管线 LLM 统一走 Pi 网关（gateway sidecar——OpenAI 兼容面，pi-ai 底座）：
+      # sidecar 不可达自动回退直连；PAPERMIND_AGENT_DIR 为共享物化卷（DB 单一事实源）
       - PAPERMIND_LLM_GATEWAY=1
+      - PAPERMIND_GATEWAY_URL=http://gateway:8765
       - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
+      - PAPERMIND_AGENT_DIR=/data
       - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
     restart: unless-stopped
     depends_on:
@@ -113,6 +144,7 @@ services:
       - pm_data:/app/data
       - pm_logs:/app/logs
       - pm_pip_cache:/.pip-cache
+      - pm_agent_dir:/data
     env_file:
       - ./.env
     environment:
@@ -127,6 +159,11 @@ services:
       # 观察面客户端（idle_processor/queries）与执行器同令牌——缺它全部 401
       - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
       - PAPERMIND_CORE_URL=http://core:8081
+      # Pi LLM 网关（sidecar）：同 backend
+      - PAPERMIND_LLM_GATEWAY=1
+      - PAPERMIND_GATEWAY_URL=http://gateway:8765
+      - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
+      - PAPERMIND_AGENT_DIR=/data
       - WORKER_EXECUTOR_ID=worker-1
     restart: unless-stopped
     depends_on:
@@ -253,6 +290,7 @@ volumes:
     name: papermind_data
   pm_logs:
     name: papermind_logs
+  pm_agent_dir:
   pm_pip_cache:
   papermind_pgdata:
     name: papermind_pgdata
