@@ -1675,7 +1675,7 @@ func finalizeTaskWithResult(tx *sql.Tx, taskID string, result map[string]any) er
 	now := nowParam()
 	if _, err := tx.Exec(
 		`UPDATE core_tasks SET status='succeeded', lease_token=NULL, lease_expires_at=NULL,
-		 result_ref=$1 WHERE id=?`,
+		 result_ref=$1 WHERE id=$2`,
 		mustJSON(result), taskID,
 	); err != nil {
 		return err
@@ -1686,13 +1686,13 @@ func finalizeTaskWithResult(tx *sql.Tx, taskID string, result map[string]any) er
 	}
 	if _, err := tx.Exec(
 		`UPDATE core_attempts SET status='succeeded', finished_at=$1
-		 WHERE task_id=? AND fencing_token=? AND status='running'`,
+		 WHERE task_id=$2 AND fencing_token=$3 AND status='running'`,
 		now, taskID, attemptCount,
 	); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(
-		`UPDATE core_jobs SET status='succeeded', finished_at=$1 WHERE id=? AND status='running'`,
+		`UPDATE core_jobs SET status='succeeded', finished_at=$2 WHERE id=$1 AND status='running'`,
 		now, jobIDOf(tx, taskID),
 	); err != nil {
 		return err
