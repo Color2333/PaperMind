@@ -122,6 +122,8 @@ services:
       # Executor 宿主（C7）：经 Go Core 领取执行；未配置则仅调度提交
       - CORE_ADDR=core:8081
       - CORE_TOKEN=${CORE_TOKEN:-}
+      # 观察面客户端（idle_processor/queries）与执行器同令牌——缺它全部 401
+      - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
       - PAPERMIND_CORE_URL=http://core:8081
       - WORKER_EXECUTOR_ID=worker-1
     restart: unless-stopped
