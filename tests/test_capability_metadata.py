@@ -94,3 +94,5 @@ def test_worker_host_dual_pool_wiring():
     assert "_executor_pools" in src, "worker 未维护多池 Runner 列表"
     # 单池串行旧路径必须消失（全部能力一个 Runner 即自死锁形态）
     assert 'spec.trigger == "executor"]' not in src
+    # compute 池多副本（长任务 head-of-line blocking 缓解）
+    assert "WORKER_COMPUTE_CONCURRENCY" in src, "compute 池副本数不可调"
