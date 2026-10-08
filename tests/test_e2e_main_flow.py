@@ -30,7 +30,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
-import packages.ai.pipelines.paper_pipelines as paper_pipelines_module
 import packages.storage.db as db_module
 import packages.storage.models  # noqa: F401  # 注册全部表到 Base.metadata
 from packages.ai.seed_research import seed_sample
@@ -235,8 +234,7 @@ def e2e_env(tmp_path, monkeypatch):
         "extract_page_descriptions",
         lambda self, pdf_path: "[fake vision] page 1: method and experiments described",
     )
-    # 入库后的后台引用关联不在主链路内，置空避免引入图谱外部依赖
-    monkeypatch.setattr(paper_pipelines_module, "_bg_auto_link", lambda paper_ids: None)
+    # 入库后的后台引用关联已随任务链收口移除（引用边经 sync_citations 任务）
     # ingest 分页间隔 sleep(3) 在单页 fake 下无意义，跳过
     monkeypatch.setattr(time, "sleep", lambda _s: None)
 
