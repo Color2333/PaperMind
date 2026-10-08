@@ -513,3 +513,88 @@ class TestIdleCompensationTrigger:
         stuck = ip._get_stuck_skimmed_papers(limit=5)
         assert len(stuck) == 1, "应捞到 1 篇 stuck skimmed 论文"
         assert stuck[0][0] == paper.id
+
+
+class TestPdfUnavailableMarking:
+    """PDF-404 死信风暴修复：类型化 404 + 持久标记 + 选择器永久跳过"""
+
+    def test_selector_excludes_marked_paper(self, db_session):
+        """打了 pdf_unavailable 标记的 stuck 论文不再被补偿精读捞起"""
+        from uuid import uuid4
+
+        from packages.domain.enums import ReadStatus
+        from packages.storage.models import AnalysisReport
+
+        repo = PaperRepository(db_session)
+        marked = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00311", title="no-pdf", abstract="a", metadata={})
+        )
+        healthy = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00312", title="has-pdf", abstract="a", metadata={})
+        )
+        for p in (marked, healthy):
+            repo.update_read_status(p.id, ReadStatus.skimmed)
+            db_session.add(
+                AnalysisReport(id=str(uuid4()), paper_id=p.id, summary_md="skim", deep_dive_md=None)
+            )
+        repo.mark_pdf_unavailable(str(marked.id), "arXiv 无此 PDF（404）")
+        db_session.commit()
+
+        from packages.ai.idle_processor import IdleProcessor
+
+        stuck = IdleProcessor()._get_stuck_skimmed_papers(limit=10)
+        ids = [pid for pid, _ in stuck]
+        assert marked.id not in ids, "已标记无 PDF 的论文不得再被补偿精读捞起"
+        assert healthy.id in ids
+
+    def test_download_pdf_404_raises_typed_error(self, monkeypatch):
+        """arXiv 404 → PdfUnavailableError（与瞬时网络错误区分）"""
+        import httpx
+
+        from packages.domain.exceptions import PdfUnavailableError
+        from packages.integrations.arxiv_client import ArxivClient
+
+        def _fake_get(self, url, timeout=None):
+            return httpx.Response(404, request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(httpx.Client, "get", _fake_get)
+        try:
+            ArxivClient().download_pdf("2401.99999")
+            raised = None
+        except PdfUnavailableError as exc:
+            raised = exc
+        assert raised is not None, "404 必须抛 PdfUnavailableError"
+
+    def test_deep_dive_marks_paper_on_pdf_unavailable(self, db_session, monkeypatch):
+        """deep_dive_proposal 遇 PDF 404：打标记 + 抛类型化异常（任务照常失败）"""
+        import pytest
+
+        from packages.ai.pipelines import PaperPipelines
+        from packages.domain.exceptions import PdfUnavailableError
+
+        repo = PaperRepository(db_session)
+        paper = repo.upsert_paper(
+            PaperCreate(arxiv_id="2401.00313", title="t", abstract="a", metadata={})
+        )
+        db_session.commit()
+
+        def _fake_download(self, arxiv_id):
+            raise PdfUnavailableError("arXiv 无此 PDF（404）")
+
+        from packages.integrations.arxiv_client import ArxivClient
+
+        monkeypatch.setattr(ArxivClient, "download_pdf", _fake_download)
+
+        pipelines = PaperPipelines()
+        with pytest.raises(PdfUnavailableError):
+            pipelines.deep_dive_proposal(paper.id)
+
+        # handler 在自己的 session_scope 内落标记——用全新会话断言
+        from packages.storage.db import SessionLocal
+
+        s2 = SessionLocal()
+        try:
+            refreshed = PaperRepository(s2).get_by_id(paper.id)
+            assert refreshed.metadata_json.get("pdf_unavailable") is True
+        finally:
+            s2.close()

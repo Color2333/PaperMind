@@ -80,3 +80,11 @@ class TaskError(AppError):
 
     status_code = 500
     error_type = "task_error"
+
+
+class PdfUnavailableError(TaskError):
+    """论文在来源处没有可下载的 PDF（如 arXiv 404）——永久性条件。
+
+    与瞬时网络错误区分：调用方应给论文打持久标记并停止重试，
+    而不是把任务反复送回队列。
+    """

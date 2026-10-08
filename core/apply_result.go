@@ -613,7 +613,7 @@ func upsertPaperItem(tx *sql.Tx, item map[string]any) (string, error) {
 	} else if err == sql.ErrNoRows {
 		if _, err = tx.Exec(
 			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, doi, favorited, rejected, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, 0, 0, $10, $11)`,
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, false, false, $10, $11)`,
 			paperID, title, arxivID, abstract, metaJSON, source, sourceID, pubDate, nullIfEmpty(doi), nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
@@ -835,7 +835,7 @@ func upsertPaperWithMeta(tx *sql.Tx, paper map[string]any) (string, error) {
 	} else if err == sql.ErrNoRows {
 		if _, err = tx.Exec(
 			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, favorited, rejected, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, 0, 0, $9, $10)`,
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, false, false, $9, $10)`,
 			paperID, title, arxivID, abstract, metaJSON, source, arxivID, pubDate, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
@@ -1323,7 +1323,7 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 		}
 		if _, err = tx.Exec(
 			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, favorited, rejected, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, 0, 0, $6, $7)`,
+			 VALUES ($1, $2, $3, $4, 'unread', $5, false, false, $6, $7)`,
 			paperID, title, arxivID, abstract, metaJSON, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)

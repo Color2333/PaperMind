@@ -18,6 +18,7 @@ from packages.ai.pdf_parser import PdfTextExtractor
 from packages.ai.prompts import build_deep_prompt, build_skim_prompt
 from packages.ai.vision_reader import VisionPdfReader
 from packages.config import get_ieee_api_key, get_ieee_enabled, get_settings
+from packages.domain.exceptions import PdfUnavailableError
 from packages.domain.schemas import DeepDiveReport, SkimReport
 from packages.integrations.arxiv_client import ArxivClient
 from packages.integrations.ieee_client import IeeeClient
@@ -144,10 +145,16 @@ class PaperPipelines:
             paper_repo = PaperRepository(session)
             paper = paper_repo.get_by_id(paper_id)
             if not paper.pdf_path:
-                paper_repo.set_pdf_path(
-                    paper_id,
-                    self.arxiv.download_pdf(paper.arxiv_id),
-                )
+                try:
+                    pdf_path = self.arxiv.download_pdf(paper.arxiv_id)
+                except PdfUnavailableError as exc:
+                    # 永久性条件：arXiv 无此 PDF——打标记让补偿选择器永久跳过，
+                    # 终止"死信→重提"风暴。注意：标记必须在独立 scope 内提交——
+                    # 当前 session_scope 捕获异常路径会整体回滚。
+                    with session_scope() as mark_scope:
+                        PaperRepository(mark_scope).mark_pdf_unavailable(str(paper_id), str(exc))
+                    raise
+                paper_repo.set_pdf_path(paper_id, pdf_path)
                 paper = paper_repo.get_by_id(paper_id)
             pdf_path = paper.pdf_path
             paper_title = paper.title
