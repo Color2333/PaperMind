@@ -110,17 +110,50 @@ def _get_active_llm_config():
 
     with session_scope() as session:
         cfg = LLMConfigRepository(session).get_active()
-        if cfg is None:
-            return None
-        return {
-            "provider": cfg.provider,
-            "name": cfg.name,
-            "api_key": cfg.api_key,
-            "api_base_url": cfg.api_base_url,
-            "model_skim": cfg.model_skim,
-            "model_deep": cfg.model_deep,
-            "model_vision": cfg.model_vision,
-        }
+    if cfg is None:
+        return _llm_config_from_settings()
+    return {
+        "provider": cfg.provider,
+        "name": cfg.name,
+        "api_key": cfg.api_key,
+        "api_base_url": cfg.api_base_url,
+        "model_skim": cfg.model_skim,
+        "model_deep": cfg.model_deep,
+        "model_vision": cfg.model_vision,
+    }
+
+
+_PROVIDER_BASE_URLS = {
+    "xiaomi": "https://token-plan-cn.xiaomimimo.com/v1",
+}
+
+
+def _llm_config_from_settings() -> dict | None:
+    """DB 无 active 配置时回退 Settings（生产 .env 形态：XIAOMI_API_KEY 等）。
+
+    生产库 llm_provider_configs 常为空——此前仅 DB 单源导致网关物化失败
+    （直连可用而网关不可用）。key/base_url 对齐 llm_client 的 provider 表。
+    """
+    from packages.config import get_settings
+
+    s = get_settings()
+    api_key = {
+        "xiaomi": s.xiaomi_api_key,
+        "openai": s.openai_api_key,
+        "zhipu": s.zhipu_api_key,
+        "anthropic": s.anthropic_api_key,
+    }.get(s.llm_provider)
+    if not api_key:
+        return None
+    return {
+        "provider": s.llm_provider,
+        "name": f"{s.llm_provider}-env",
+        "api_key": api_key,
+        "api_base_url": _PROVIDER_BASE_URLS.get(s.llm_provider),
+        "model_skim": s.llm_model_skim,
+        "model_deep": s.llm_model_deep,
+        "model_vision": s.llm_model_vision,
+    }
 
 
 def materialize_model_config() -> dict | None:
