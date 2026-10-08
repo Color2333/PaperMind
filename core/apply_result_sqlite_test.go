@@ -21,14 +21,20 @@ func TestSQLiteApplyIngestPapersIEEE(t *testing.T) {
 		`CREATE TABLE IF NOT EXISTS papers (
 			id TEXT PRIMARY KEY, title TEXT NOT NULL, abstract TEXT NOT NULL DEFAULT '',
 			arxiv_id TEXT UNIQUE, read_status TEXT NOT NULL DEFAULT 'unread',
-			metadata TEXT, pdf_path TEXT, source TEXT, source_id TEXT,
-			publication_date TEXT, doi TEXT, created_at TEXT, updated_at TEXT)`,
+			metadata TEXT NOT NULL, pdf_path TEXT, source TEXT, source_id TEXT,
+			publication_date TEXT, doi TEXT,
+			favorited BOOLEAN NOT NULL, rejected BOOLEAN NOT NULL,
+			created_at TEXT, updated_at TEXT)`,
 		`CREATE TABLE IF NOT EXISTS topic_subscriptions (
-			id TEXT PRIMARY KEY, name TEXT NOT NULL, query TEXT NOT NULL,
-			enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT, updated_at TEXT)`,
+			id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, query TEXT NOT NULL,
+			enabled INTEGER NOT NULL, max_results_per_run INTEGER NOT NULL,
+			retry_limit INTEGER NOT NULL, schedule_frequency TEXT NOT NULL,
+			schedule_time_utc INTEGER NOT NULL, sources TEXT NOT NULL,
+			ieee_daily_quota INTEGER NOT NULL, enable_date_filter BOOLEAN NOT NULL,
+			date_filter_days INTEGER NOT NULL, created_at TEXT, updated_at TEXT)`,
 		`CREATE TABLE IF NOT EXISTS paper_topics (
 			id TEXT PRIMARY KEY, paper_id TEXT NOT NULL, topic_id TEXT NOT NULL,
-			UNIQUE(paper_id, topic_id))`,
+			created_at TEXT NOT NULL, UNIQUE(paper_id, topic_id))`,
 		`CREATE TABLE IF NOT EXISTS collection_actions (
 			id TEXT PRIMARY KEY, action_type TEXT NOT NULL, title TEXT NOT NULL, query TEXT,
 			topic_id TEXT, paper_count INTEGER NOT NULL DEFAULT 0, created_at TEXT)`,
@@ -120,14 +126,20 @@ func TestSQLiteApplyCsFeedAndCategories(t *testing.T) {
 		`CREATE TABLE IF NOT EXISTS papers (
 			id TEXT PRIMARY KEY, title TEXT NOT NULL, abstract TEXT NOT NULL DEFAULT '',
 			arxiv_id TEXT UNIQUE, read_status TEXT NOT NULL DEFAULT 'unread',
-			metadata TEXT, pdf_path TEXT, source TEXT, source_id TEXT,
-			publication_date TEXT, doi TEXT, created_at TEXT, updated_at TEXT)`,
+			metadata TEXT NOT NULL, pdf_path TEXT, source TEXT, source_id TEXT,
+			publication_date TEXT, doi TEXT,
+			favorited BOOLEAN NOT NULL, rejected BOOLEAN NOT NULL,
+			created_at TEXT, updated_at TEXT)`,
 		`CREATE TABLE IF NOT EXISTS topic_subscriptions (
-			id TEXT PRIMARY KEY, name TEXT NOT NULL, query TEXT NOT NULL,
-			enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT, updated_at TEXT)`,
+			id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, query TEXT NOT NULL,
+			enabled INTEGER NOT NULL, max_results_per_run INTEGER NOT NULL,
+			retry_limit INTEGER NOT NULL, schedule_frequency TEXT NOT NULL,
+			schedule_time_utc INTEGER NOT NULL, sources TEXT NOT NULL,
+			ieee_daily_quota INTEGER NOT NULL, enable_date_filter BOOLEAN NOT NULL,
+			date_filter_days INTEGER NOT NULL, created_at TEXT, updated_at TEXT)`,
 		`CREATE TABLE IF NOT EXISTS paper_topics (
 			id TEXT PRIMARY KEY, paper_id TEXT NOT NULL, topic_id TEXT NOT NULL,
-			UNIQUE(paper_id, topic_id))`,
+			created_at TEXT NOT NULL, UNIQUE(paper_id, topic_id))`,
 		`CREATE TABLE IF NOT EXISTS cs_categories (
 			code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, cached_at TEXT)`,
 		`CREATE TABLE IF NOT EXISTS cs_feed_subscriptions (

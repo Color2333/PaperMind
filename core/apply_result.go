@@ -446,9 +446,9 @@ func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken strin
 		if err == sql.ErrNoRows {
 			newID := newCoreID()
 			if _, err = tx.Exec(
-				`INSERT INTO topic_subscriptions (id, name, query, enabled, created_at, updated_at)
-				 VALUES ($1, $2, $3, 0, $4, $5)`,
-				newID, topicName, topicName, nowParam(), nowParam(),
+				`INSERT INTO topic_subscriptions (id, name, query, enabled, max_results_per_run, retry_limit, schedule_frequency, schedule_time_utc, sources, ieee_daily_quota, enable_date_filter, date_filter_days, created_at, updated_at)
+				 VALUES ($1, $2, $3, 0, 20, 2, 'daily', 21, '[\"arxiv\"]', 10, 0, 7, $4, $5)`,
+				newID, topicName, nowParam(), nowParam(),
 			); err != nil {
 				return "", fmt.Errorf("topic_subscriptions insert: %w", err)
 			}
@@ -612,8 +612,8 @@ func upsertPaperItem(tx *sql.Tx, item map[string]any) (string, error) {
 		}
 	} else if err == sql.ErrNoRows {
 		if _, err = tx.Exec(
-			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, doi, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, $10, $11)`,
+			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, doi, favorited, rejected, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, 0, 0, $10, $11)`,
 			paperID, title, arxivID, abstract, metaJSON, source, sourceID, pubDate, nullIfEmpty(doi), nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
@@ -632,8 +632,8 @@ func linkPaperToTopic(tx *sql.Tx, paperID, topicID string) error {
 	).Scan(&linkID)
 	if err == sql.ErrNoRows {
 		if _, err := tx.Exec(
-			`INSERT INTO paper_topics (id, paper_id, topic_id) VALUES ($1, $2, $3)`,
-			newCoreID(), paperID, topicID,
+			`INSERT INTO paper_topics (id, paper_id, topic_id, created_at) VALUES ($1, $2, $3, $4)`,
+			newCoreID(), paperID, topicID, nowParam(),
 		); err != nil {
 			return fmt.Errorf("paper_topics insert: %w", err)
 		}
@@ -673,8 +673,8 @@ func (s *CoreStore) applyCsFeedFetchResult(taskID, executorID, leaseToken string
 	if err == sql.ErrNoRows {
 		topicID = newCoreID()
 		if _, err = tx.Exec(
-			`INSERT INTO topic_subscriptions (id, name, query, enabled, created_at, updated_at)
-			 VALUES ($1, $2, $3, 0, $4, $5)`,
+			`INSERT INTO topic_subscriptions (id, name, query, enabled, max_results_per_run, retry_limit, schedule_frequency, schedule_time_utc, sources, ieee_daily_quota, enable_date_filter, date_filter_days, created_at, updated_at)
+			 VALUES ($1, $2, $3, 0, 20, 2, 'daily', 21, '[\"arxiv\"]', 10, 0, 7, $4, $5)`,
 			topicID, topicName, "cat:"+categoryCode, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("topic_subscriptions insert: %w", err)
@@ -834,8 +834,8 @@ func upsertPaperWithMeta(tx *sql.Tx, paper map[string]any) (string, error) {
 		}
 	} else if err == sql.ErrNoRows {
 		if _, err = tx.Exec(
-			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, $10)`,
+			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, favorited, rejected, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, 0, 0, $9, $10)`,
 			paperID, title, arxivID, abstract, metaJSON, source, arxivID, pubDate, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
@@ -1322,8 +1322,8 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 			metaJSON = mustJSON(m)
 		}
 		if _, err = tx.Exec(
-			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7)`,
+			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, favorited, rejected, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, 'unread', $5, 0, 0, $6, $7)`,
 			paperID, title, arxivID, abstract, metaJSON, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("papers insert: %w", err)
@@ -1341,15 +1341,15 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 		svID = newCoreID()
 		identityJSON := fmt.Sprintf(`{"abstract":%q,"arxiv_id":%q,"title":%q}`, abstract, arxivID, title)
 		if _, err = tx.Exec(
-			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, is_current, created_at)
-			 VALUES ($1, $2, 1, $3, 'ingest', true, $4)`,
-			svID, paperID, sha256Hex(identityJSON), nowParam(),
+			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, fetched_at, is_current, created_at)
+			 VALUES ($1, $2, 1, $3, 'ingest', $4, true, $5)`,
+			svID, paperID, sha256Hex(identityJSON), nowParam(), nowParam(),
 		); err != nil {
 			return "", err
 		}
 		if _, err = tx.Exec(
-			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, payload, occurred_at)
-			 VALUES ($1, 'source_version_detected', 'source_version', $2, $3, $4)`,
+			`INSERT INTO research_events (id, type, aggregate_type, aggregate_id, actor, payload, occurred_at)
+			 VALUES ($1, 'source_version_detected', 'source_version', $2, 'system', $3, $4)`,
 			newCoreID(), svID, mustJSON(map[string]any{"paper_id": paperID}), nowParam(),
 		); err != nil {
 			return "", err
@@ -1486,9 +1486,9 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 			return "", err
 		}
 		if _, err = tx.Exec(
-			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, is_current, created_at)
-			 VALUES ($1, $2, $3, $4, 'ingest', 1, $5)`,
-			svID, paperID, maxLabel+1, contentHash, nowParam(),
+			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, fetched_at, is_current, created_at)
+			 VALUES ($1, $2, $3, $4, 'ingest', $5, 1, $6)`,
+			svID, paperID, maxLabel+1, contentHash, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("source_versions insert: %w", err)
 		}
