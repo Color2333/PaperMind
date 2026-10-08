@@ -1339,7 +1339,7 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 	// SourceVersion v1
 	var svID string
 	err = tx.QueryRow(
-		`SELECT id FROM source_versions WHERE paper_id=$1 AND is_current=1`, paperID,
+		`SELECT id FROM source_versions WHERE paper_id=$1 AND is_current=true`, paperID,
 	).Scan(&svID)
 	if err == sql.ErrNoRows {
 		svID = newCoreID()
@@ -1465,7 +1465,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 	// ---- SourceVersion 幂等回补（get_current → 无则 create v1）----
 	svID := ""
 	err = tx.QueryRow(
-		`SELECT id FROM source_versions WHERE paper_id=$1 AND is_current=1 LIMIT 1`, paperID,
+		`SELECT id FROM source_versions WHERE paper_id=$1 AND is_current=true LIMIT 1`, paperID,
 	).Scan(&svID)
 	if err == sql.ErrNoRows {
 		svID = newCoreID()
@@ -1485,7 +1485,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		).Scan(&maxLabel)
 		// 降级旧 current
 		if _, err = tx.Exec(
-			`UPDATE source_versions SET is_current=0 WHERE paper_id=$1 AND is_current=1`, paperID,
+			`UPDATE source_versions SET is_current=false WHERE paper_id=$1 AND is_current=true`, paperID,
 		); err != nil {
 			return "", err
 		}
