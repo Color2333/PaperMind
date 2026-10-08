@@ -23,6 +23,7 @@ services:
     environment:
       - PAPERMIND_AGENT_DIR=/data
       - PAPERMIND_GATEWAY_PORT=8765
+      - PAPERMIND_GATEWAY_HOST=0.0.0.0
       - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
     volumes:
       - pm_agent_dir:/data
