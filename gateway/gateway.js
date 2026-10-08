@@ -213,7 +213,10 @@ const server = createServer((req, res) => {
 	res.end(JSON.stringify({ detail: "not found" }));
 });
 
-server.listen(PORT, "127.0.0.1", () => {
+// 绑定地址可配：sidecar 容器形态必须 0.0.0.0（仅编排网内可达，端口不对外发布）；
+// 本地直跑默认 127.0.0.1
+const HOST = process.env.PAPERMIND_GATEWAY_HOST || "127.0.0.1";
+	server.listen(PORT, HOST, () => {
 	loadConfig().then((cfg) => {
 		process.stdout.write(`${JSON.stringify({ event: "gateway_ready", port: PORT, provider: cfg?.defaultProvider || "" })}\n`);
 	});
