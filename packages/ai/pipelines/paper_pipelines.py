@@ -17,11 +17,10 @@ from packages.ai.cost_guard import CostGuardService
 from packages.ai.pdf_parser import PdfTextExtractor
 from packages.ai.prompts import build_deep_prompt, build_skim_prompt
 from packages.ai.vision_reader import VisionPdfReader
-from packages.config import get_ieee_api_key, get_ieee_enabled, get_settings
+from packages.config import get_settings
 from packages.domain.exceptions import PdfUnavailableError
 from packages.domain.schemas import DeepDiveReport, SkimReport
 from packages.integrations.arxiv_client import ArxivClient
-from packages.integrations.ieee_client import IeeeClient
 from packages.integrations.llm_client import LLMClient
 from packages.storage.db import session_scope
 from packages.storage.models import AnalysisReport
@@ -81,14 +80,6 @@ class PaperPipelines:
         self.llm = LLMClient()
         self.vision = VisionPdfReader()
         self.pdf_extractor = PdfTextExtractor()
-        # IEEE 客户端（MVP 阶段新增）
-        self.ieee: IeeeClient | None = None
-        ieee_api_key = get_ieee_api_key()
-        if ieee_api_key and get_ieee_enabled():
-            self.ieee = IeeeClient(api_key=ieee_api_key)
-            logger.info("IEEE 客户端已初始化")
-        else:
-            logger.warning("IEEE API Key 未配置，IEEE 摄取功能将不可用")
 
     def skim_proposal(self, paper_id: UUID) -> dict:
         """Go-authority 切片（第三轮 REVIEW P0-2 选 a）：skim 纯计算——不写任何领域表。
