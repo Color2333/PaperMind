@@ -300,9 +300,89 @@ def apply_ingest_papers_proposal(session: Session, proposal: dict) -> dict:
     )
     return {
         "total": len(inserted_ids),
-        "inserted_ids": inserted_ids[:20],
+        # 与 Go applyIngestPapersResult 对齐：不截断（主题摄取编排器依赖
+        # inserted_ids 提交下游 skim/embed；上限由 max_results 约束）
+        "inserted_ids": inserted_ids,
         "topic_id": topic_id,
     }
+
+
+def apply_cs_feed_fetch_proposal(session: Session, proposal: dict) -> dict:
+    """应用 CS 分类抓取 proposal：papers upsert + csfeed:{code} 主题关联
+    （自动创建 enabled=False）+ 订阅运行状态（last_run_at/count 跨天清零累加）。
+
+    与 Go applyCsFeedFetchResult 语义对齐。"""
+    from datetime import date as _date
+
+    from sqlalchemy import select
+
+    from packages.domain.schemas import PaperCreate
+    from packages.storage.models import Paper, TopicSubscription
+    from packages.storage.repositories import CSFeedRepository, PaperRepository
+
+    category_code = str(proposal.get("category_code") or "")
+    papers = proposal.get("papers") or []
+    if not category_code:
+        raise ValueError("cs_feed_fetch proposal 缺少 category_code")
+
+    topic_name = f"csfeed:{category_code}"
+    found = session.execute(
+        select(TopicSubscription).where(TopicSubscription.name == topic_name)
+    ).scalar_one_or_none()
+    if found is None:
+        found = TopicSubscription(name=topic_name, query=f"cat:{category_code}", enabled=False)
+        session.add(found)
+        session.flush()
+    topic_id = str(found.id)
+
+    repo = PaperRepository(session)
+    inserted_ids: list[str] = []
+    for item in papers:
+        pub = item.get("publication_date")
+        repo.upsert_paper(
+            PaperCreate(
+                arxiv_id=str(item.get("arxiv_id") or ""),
+                title=str(item.get("title") or f"arXiv:{item.get('arxiv_id')}"),
+                abstract=str(item.get("abstract") or ""),
+                publication_date=_date.fromisoformat(pub) if isinstance(pub, str) else pub,
+                metadata=item.get("metadata") or {},
+                source=item.get("source") or "arxiv",
+                source_id=item.get("source_id"),
+                doi=item.get("doi") or None,
+            )
+        )
+        paper_row = session.execute(
+            select(Paper).where(Paper.arxiv_id == item.get("arxiv_id"))
+        ).scalar_one()
+        inserted_ids.append(str(paper_row.id))
+        repo.link_to_topic(str(paper_row.id), topic_id)
+
+    # 订阅运行状态：当日累加、跨天清零（与 CSFeedRepository.update_run_status 一致）
+    fetched = len(papers)
+    CSFeedRepository(session).update_run_status(category_code, fetched)
+    return {
+        "total": len(inserted_ids),
+        "inserted_ids": inserted_ids,
+        "category_code": category_code,
+        "topic_id": topic_id,
+        "fetched": fetched,
+    }
+
+
+def apply_cs_categories_sync_proposal(session: Session, proposal: dict) -> dict:
+    """应用 CS 分类同步 proposal：cs_categories upsert（code 主键幂等）。
+
+    与 Go applyCsCategoriesSyncResult 语义对齐。"""
+    from packages.storage.repositories import CSFeedRepository
+
+    cats = proposal.get("categories") or []
+    repo = CSFeedRepository(session)
+    for c in cats:
+        code = str(c.get("code") or "").strip()
+        if not code:
+            continue
+        repo.upsert_category(code, str(c.get("name") or ""), str(c.get("description") or ""))
+    return {"synced": len(cats)}
 
 
 def apply_save_generated_content_proposal(session: Session, proposal: dict) -> dict:
@@ -500,6 +580,10 @@ def apply_proposal(session: Session, proposal: dict) -> dict | None:
         return apply_download_proposal(session, proposal)
     if kind == "ingest_papers":
         return apply_ingest_papers_proposal(session, proposal)
+    if kind == "cs_feed_fetch":
+        return apply_cs_feed_fetch_proposal(session, proposal)
+    if kind == "cs_categories_sync":
+        return apply_cs_categories_sync_proposal(session, proposal)
     if kind == "save_generated_content":
         return apply_save_generated_content_proposal(session, proposal)
     if kind == "citation_edges":

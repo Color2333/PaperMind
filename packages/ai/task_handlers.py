@@ -56,8 +56,10 @@ def daily_ingest_and_brief(*, progress: ProgressFn = None, **_: Any) -> dict:
 
 
 def weekly_graph_maintenance(*, progress: ProgressFn = None, **_: Any) -> dict:
-    """每周图维护（逐主题引用同步 + 增量同步）"""
-    from packages.application.queries.graph import _graph_service
+    """每周图维护（任务链编排器）：逐主题提交 sync_citations_topic + 增量
+    sync_citations_incremental 任务（均为 A 档，引用边在权威面单事务 apply），
+    本 handler 只提交 + 轮询观察面，不再内联调 GraphService 直写。"""
+    from packages.ai.daily_runner import _wait_tasks
     from packages.storage.db import session_scope
     from packages.storage.repositories import TopicRepository
 
@@ -67,31 +69,60 @@ def weekly_graph_maintenance(*, progress: ProgressFn = None, **_: Any) -> dict:
         topics = TopicRepository(session).list_topics(enabled_only=True)
 
     total_topics = len(topics)
-    graph = _graph_service()
-    topic_results: list[dict] = []
+    task_ids: list[str] = []
     for i, t in enumerate(topics):
         if progress:
             progress(
-                f"处理主题 {i + 1}/{total_topics}: {t.name[:20]}...",
-                20 + int((i + 1) / total_topics * 40),
+                f"提交主题引用同步 {i + 1}/{total_topics}: {t.name[:20]}...",
+                10 + int((i + 1) / max(total_topics, 1) * 30),
                 100,
             )
         try:
-            topic_results.append(
-                graph.sync_citations_for_topic(
-                    topic_id=t.id, paper_limit=20, edge_limit_per_paper=6
-                )
+            from packages.application.commands.jobs import submit_job
+
+            submitted = submit_job(
+                kind="CoreTask",
+                capability="sync_citations_topic",
+                title=f"引用同步 {t.name[:30]}",
+                input_ref={"topic_id": str(t.id), "paper_limit": 20, "edge_limit_per_paper": 6},
+                idempotency_key=None,
+                created_by="weekly_graph",
             )
+            task_ids.append(submitted["task_id"])
         except Exception:
-            logger.exception("Failed to sync citations for topic %s", t.id)
+            logger.exception("Failed to submit citation sync for topic %s", t.id)
             continue
 
+    try:
+        from packages.application.commands.jobs import submit_job
+
+        incremental_submitted = submit_job(
+            kind="CoreTask",
+            capability="sync_citations_incremental",
+            title="增量引用同步",
+            input_ref={"paper_limit": 50, "edge_limit_per_paper": 6},
+            idempotency_key=None,
+            created_by="weekly_graph",
+        )
+        task_ids.append(incremental_submitted["task_id"])
+    except Exception:
+        logger.exception("Failed to submit incremental citation sync")
+
     if progress:
-        progress("正在执行增量同步...", 70, 100)
-    incremental = graph.sync_incremental(paper_limit=50, edge_limit_per_paper=6)
+        progress(f"等待 {len(task_ids)} 个同步任务完成...", 45, 100)
+    unfinished = _wait_tasks(
+        task_ids,
+        timeout_s=3600.0,
+        progress=progress,
+        base=45,
+        span=50,
+    )
     if progress:
         progress("图维护完成", 95, 100)
-    return {"topic_sync": topic_results, "incremental": incremental}
+    return {
+        "submitted": len(task_ids),
+        "unfinished": len(unfinished),
+    }
 
 
 def daily_report_workflow(*, progress: ProgressFn = None, **_: Any) -> dict:
@@ -269,18 +300,100 @@ def topic_dispatch(*, progress: ProgressFn = None, **_: Any) -> dict:
     return {"triggered": len(candidates), "failed": failures}
 
 
-def cs_feed_dispatch(*, progress: ProgressFn = None, **_: Any) -> dict:
-    """CS 分类订阅调度（每小时）：同步分类 + 抓取订阅"""
-    from packages.ai.cs_feed_orchestrator import CSFeedOrchestrator
+def cs_feed_dispatch(
+    *, progress: ProgressFn = None, cancel_check: Callable[[], bool] | None = None, **_: Any
+) -> dict:
+    """CS 分类订阅调度（每小时，任务链编排器）。
+
+    分类表经 cs_categories_sync proposal 在权威面落库；到点订阅逐个提交
+    cs_feed_fetch_category 任务（A 档，papers + 主题 + 运行状态单事务 apply）。
+    冷却/每日配额检查保留在编排器（提交前过滤）；arXiv 限流由串行领取 +
+    ArxivClient 内建退避承接（原 token bucket/REQUEST_INTERVAL 随内联抓取退役）。
+    """
+    from datetime import UTC, datetime
+
+    from packages.integrations.arxiv_client import ArxivClient
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import CSFeedRepository
 
     if progress:
-        progress("同步 CS 分类...", 10, 100)
-    orchestrator = CSFeedOrchestrator()
-    orchestrator.sync_categories()
+        progress("拉取 CS 分类...", 5, 100)
+    try:
+        cats = ArxivClient().fetch_categories()
+    except Exception as exc:
+        logger.warning("CS 分类拉取失败（跳过同步，不影响订阅抓取）: %s", exc)
+        cats = []
+
     if progress:
-        progress("抓取订阅分类...", 50, 100)
-    orchestrator.run()
-    return {"status": "done"}
+        progress("筛选到点订阅...", 30, 100)
+    now = datetime.now(UTC)
+    with session_scope() as session:
+        subs = CSFeedRepository(session).get_active_subscriptions()
+        specs = [
+            (
+                s.category_code,
+                s.status,
+                s.cool_down_until,
+                s.last_run_at,
+                s.last_run_count,
+                s.daily_limit,
+            )
+            for s in subs
+        ]
+
+    from packages.application.commands.jobs import submit_job
+
+    submitted, skipped = 0, 0
+    for category_code, status, cool_down_until, last_run_at, last_run_count, daily_limit in specs:
+        if cancel_check and cancel_check():
+            break
+        if status == "cool_down" and cool_down_until and now < cool_down_until:
+            skipped += 1
+            continue
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        remaining = (
+            daily_limit - last_run_count
+            if (last_run_at and last_run_at >= today_start)
+            else daily_limit
+        )
+        if remaining <= 0:
+            skipped += 1
+            continue
+        if progress:
+            progress(
+                f"提交抓取 {category_code}...", 40 + int(submitted / max(len(specs), 1) * 50), 100
+            )
+        try:
+            submit_job(
+                kind="CoreTask",
+                capability="cs_feed_fetch_category",
+                title=f"📥 抓取分类: {category_code}",
+                input_ref={"category_code": category_code},
+                idempotency_key=None,
+                created_by="cs_feed_dispatch",
+            )
+            submitted += 1
+        except Exception:
+            logger.exception("cs_feed_fetch 提交失败: %s", category_code)
+            skipped += 1
+
+    if progress:
+        progress(f"已提交 {submitted} 个分类抓取", 95, 100)
+    return {
+        "proposal": {
+            "kind": "cs_categories_sync",
+            "categories": [
+                {
+                    "code": c.get("code", ""),
+                    "name": c.get("name", ""),
+                    "description": c.get("description", ""),
+                }
+                for c in cats
+            ],
+        },
+        "submitted": submitted,
+        "skipped": skipped,
+    }
 
 
 def fetch_topic_papers(*, topic_id: str, progress: ProgressFn = None, **_: Any) -> dict:
@@ -332,6 +445,7 @@ def ingest_arxiv_query_proposal(
     topic_id: str | None = None,
     sort_by: str = "submittedDate",
     days_back: int = 7,
+    action_type: str = "manual_collect",
     progress: ProgressFn = None,
     **_: Any,
 ) -> dict:
@@ -397,7 +511,7 @@ def ingest_arxiv_query_proposal(
         papers=selected,
         topic_id=topic_id,
         topic_name=None,
-        action_type="manual_collect",
+        action_type=action_type,
         action_title=f"收集：{query[:80]}",
     )
 
@@ -612,10 +726,38 @@ def import_references(
 
 
 def cs_feed_fetch_category(*, category_code: str, progress: ProgressFn = None, **_: Any) -> dict:
-    """抓取单个 CS 分类（自 cs_feeds 命令迁入）"""
-    from packages.application.commands.cs_feeds import _fetch_category_impl
+    """抓取单个 CS 分类（proposal 模式）：arXiv 网络抓取留 handler（纯计算），
+    papers 入库 + csfeed:{code} 主题关联 + 订阅运行状态在权威面单事务执行
+    （Go applyCsFeedFetchResult / Python domain_apply.apply_cs_feed_fetch_proposal）。
 
-    return _fetch_category_impl(category_code=category_code, progress=progress)
+    此前的内联 upsert 直写、auto_link 线程池与抓取即 embed/skim 随 proposal
+    模式移除——抓取后处理由 cs_feed_dispatch 编排器经任务链承接。
+    """
+    from packages.domain.exceptions import NotFoundError
+    from packages.integrations.arxiv_client import ArxivClient
+    from packages.storage.db import session_scope
+    from packages.storage.repositories import CSFeedRepository
+
+    with session_scope() as session:
+        sub = CSFeedRepository(session).get_subscription(category_code)
+        if not sub:
+            raise NotFoundError("订阅不存在")
+        daily_limit = sub.daily_limit
+
+    if progress:
+        progress("正在获取论文列表...", 10, 100)
+    papers = ArxivClient().fetch_latest(
+        query=f"cat:{category_code}", max_results=daily_limit, days_back=7
+    )
+    if progress:
+        progress(f"抓取到 {len(papers)} 篇候选", 80, 100)
+    return {
+        "proposal": {
+            "kind": "cs_feed_fetch",
+            "category_code": category_code,
+            "papers": [p.model_dump(mode="json") for p in papers],
+        }
+    }
 
 
 # ---------- Workflow 可执行 handler（第三轮 REVIEW：注册表任务须可被独立 Executor 执行）----------

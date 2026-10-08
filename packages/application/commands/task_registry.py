@@ -248,7 +248,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         CapabilitySpec(
             name="cs_feed_dispatch",
             handler="packages.ai.task_handlers:cs_feed_dispatch",
-            side_effect="CS 分类同步 + 订阅抓取入库",
+            side_effect="CS 分类表同步（proposal）+ 到点订阅抓取任务提交",
             input_keys=(),
             idempotency_template="cs_dispatch:{date_hour}",
             timeout_s=1800,
@@ -271,7 +271,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             name="ingest_arxiv_query",
             handler="packages.ai.task_handlers:ingest_arxiv_query_proposal",
             side_effect="按关键词 arXiv 搜索入库（papers + action）",
-            input_keys=("query", "max_results", "topic_id", "sort_by", "days_back"),
+            input_keys=("query", "max_results", "topic_id", "sort_by", "days_back", "action_type"),
             idempotency_template="ingest_query:{query}:{date_hour}",
             timeout_s=1800,
             max_attempts=2,
@@ -314,7 +314,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         CapabilitySpec(
             name="cs_feed_fetch_category",
             handler="packages.ai.task_handlers:cs_feed_fetch_category",
-            side_effect="单个 CS 分类抓取入库（papers）",
+            side_effect="单个 CS 分类抓取入库（papers + csfeed 主题 + 订阅运行状态）",
             input_keys=("category_code",),
             idempotency_template="cs_fetch:{category_code}:{date_hour}",
             timeout_s=1800,

@@ -7,6 +7,9 @@ package core
 var GoApplyManifest = map[string]bool{
 	"analyze_figures":            true,
 	"build_daily_brief":          true,
+	"cs_feed_dispatch":           true,
+	"cs_feed_fetch_category":     true,
+	"daily_brief_publish":        true,
 	"deep_read_paper":            true,
 	"download_source":            true,
 	"embed_paper":                true,
@@ -20,6 +23,7 @@ var GoApplyManifest = map[string]bool{
 	"sync_citations_incremental": true,
 	"sync_citations_paper":       true,
 	"sync_citations_topic":       true,
+	"topic_wiki_save":            true,
 	"translate_bilingual_pdf":    true,
 	"upsert_paper":               true,
 }

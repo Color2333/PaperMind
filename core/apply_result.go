@@ -35,7 +35,11 @@ func (s *CoreStore) ApplyResult(taskID, executorID, leaseToken string, result ma
 		return s.applyDownloadSourceResult(taskID, executorID, leaseToken, result)
 	case "ingest_arxiv_query", "ingest_ieee", "import_selected":
 		return s.applyIngestPapersResult(taskID, executorID, leaseToken, result)
-	case "generate_topic_wiki", "build_daily_brief":
+	case "cs_feed_fetch_category":
+		return s.applyCsFeedFetchResult(taskID, executorID, leaseToken, result)
+	case "cs_feed_dispatch":
+		return s.applyCsCategoriesSyncResult(taskID, executorID, leaseToken, result)
+	case "generate_topic_wiki", "topic_wiki_save", "build_daily_brief", "daily_brief_publish":
 		return s.applySaveGeneratedContentResult(taskID, executorID, leaseToken, result)
 	case "sync_citations_paper", "sync_citations_incremental", "sync_citations_topic":
 		return s.applyCitationEdgesResult(taskID, executorID, leaseToken, result)
@@ -461,70 +465,14 @@ func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken strin
 		if !ok {
 			continue
 		}
-		arxivID, _ := item["arxiv_id"].(string)
-		if arxivID == "" {
-			continue
-		}
-		title, _ := item["title"].(string)
-		abstract, _ := item["abstract"].(string)
-		pubDate, _ := item["publication_date"].(string)
-		source, _ := item["source"].(string)
-		if source == "" {
-			source = "arxiv"
-		}
-		// 多源（IEEE 等）：source_id 与 doi 由 proposal 透传（合成键在 arxiv_id，
-		// 惯例 ieee:<doc_id> 与 PaperRepository.upsert_paper 对齐）
-		sourceID, _ := item["source_id"].(string)
-		if sourceID == "" {
-			sourceID = arxivID
-		}
-		doi, _ := item["doi"].(string)
-		metaJSON := mergeMetadataFromItem(item["metadata"])
-
-		paperID := newCoreID()
-		var existingID string
-		err = tx.QueryRow(`SELECT id FROM papers WHERE arxiv_id=$1`, arxivID).Scan(&existingID)
-		if err == nil {
-			paperID = existingID
-			if metaJSON != "" {
-				if _, err = tx.Exec(
-					`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=$4 WHERE id=$5`,
-					title, abstract, metaJSON, nowParam(), paperID,
-				); err != nil {
-					return "", err
-				}
-			} else if _, err = tx.Exec(
-				`UPDATE papers SET title=$1, abstract=$2, updated_at=$3 WHERE id=$4`,
-				title, abstract, nowParam(), paperID,
-			); err != nil {
-				return "", err
-			}
-		} else if err == sql.ErrNoRows {
-			if _, err = tx.Exec(
-				`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, doi, created_at, updated_at)
-				 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, $10, $11)`,
-				paperID, title, arxivID, abstract, metaJSON, source, sourceID, pubDate, nullIfEmpty(doi), nowParam(), nowParam(),
-			); err != nil {
-				return "", fmt.Errorf("papers insert: %w", err)
-			}
-		} else {
+		paperID, err := upsertPaperItem(tx, item)
+		if err != nil {
 			return "", err
 		}
 		insertedIDs = append(insertedIDs, paperID)
 
 		if topicID != "" {
-			var linkID string
-			err = tx.QueryRow(
-				`SELECT id FROM paper_topics WHERE paper_id=$1 AND topic_id=$2`, paperID, topicID,
-			).Scan(&linkID)
-			if err == sql.ErrNoRows {
-				if _, err = tx.Exec(
-					`INSERT INTO paper_topics (id, paper_id, topic_id) VALUES ($1, $2, $3)`,
-					newCoreID(), paperID, topicID,
-				); err != nil {
-					return "", fmt.Errorf("paper_topics insert: %w", err)
-				}
-			} else if err != nil {
+			if err := linkPaperToTopic(tx, paperID, topicID); err != nil {
 				return "", err
 			}
 		}
@@ -566,6 +514,235 @@ func mergeMetadataFromItem(incoming any) string {
 		return ""
 	}
 	return mustJSON(m)
+}
+
+// applyCsCategoriesSyncResult：CS 分类表同步（A 档）——cs_categories upsert
+// （code 主键幂等），单事务。与 domain_apply.apply_cs_categories_sync_proposal
+// 语义对齐。
+func (s *CoreStore) applyCsCategoriesSyncResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	cats, _ := proposal["categories"].([]any)
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	synced := 0
+	for _, cAny := range cats {
+		c, ok := cAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		code, _ := c["code"].(string)
+		code = strings.TrimSpace(code)
+		if code == "" {
+			continue
+		}
+		name, _ := c["name"].(string)
+		description, _ := c["description"].(string)
+		if _, err = tx.Exec(
+			`INSERT INTO cs_categories (code, name, description, cached_at)
+			 VALUES ($1, $2, $3, $4)
+			 ON CONFLICT(code) DO UPDATE SET name=$2, description=$3, cached_at=$4`,
+			code, name, description, nowParam(),
+		); err != nil {
+			return "", fmt.Errorf("cs_categories upsert: %w", err)
+		}
+		synced++
+	}
+
+	if err = finalizeTaskWithResult(tx, taskID, map[string]any{"synced": synced}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("succeeded (synced=%d)", synced), nil
+}
+
+// upsertPaperItem：paper item upsert（arxiv_id 幂等 + skim 保护合并）——
+// ingest_papers / cs_feed_fetch 共用。多源（IEEE 等）source_id 与 doi 由
+// proposal 透传（合成键在 arxiv_id，惯例 ieee:<doc_id> 与
+// PaperRepository.upsert_paper 对齐）。空 arxiv_id 的 item 跳过。
+func upsertPaperItem(tx *sql.Tx, item map[string]any) (string, error) {
+	arxivID, _ := item["arxiv_id"].(string)
+	if arxivID == "" {
+		return "", nil
+	}
+	title, _ := item["title"].(string)
+	abstract, _ := item["abstract"].(string)
+	pubDate, _ := item["publication_date"].(string)
+	source, _ := item["source"].(string)
+	if source == "" {
+		source = "arxiv"
+	}
+	sourceID, _ := item["source_id"].(string)
+	if sourceID == "" {
+		sourceID = arxivID
+	}
+	doi, _ := item["doi"].(string)
+	metaJSON := mergeMetadataFromItem(item["metadata"])
+
+	paperID := newCoreID()
+	var existingID string
+	err := tx.QueryRow(`SELECT id FROM papers WHERE arxiv_id=$1`, arxivID).Scan(&existingID)
+	if err == nil {
+		paperID = existingID
+		if metaJSON != "" {
+			if _, err = tx.Exec(
+				`UPDATE papers SET title=$1, abstract=$2, metadata=$3, updated_at=$4 WHERE id=$5`,
+				title, abstract, metaJSON, nowParam(), paperID,
+			); err != nil {
+				return "", err
+			}
+		} else if _, err = tx.Exec(
+			`UPDATE papers SET title=$1, abstract=$2, updated_at=$3 WHERE id=$4`,
+			title, abstract, nowParam(), paperID,
+		); err != nil {
+			return "", err
+		}
+	} else if err == sql.ErrNoRows {
+		if _, err = tx.Exec(
+			`INSERT INTO papers (id, title, arxiv_id, abstract, read_status, metadata, source, source_id, publication_date, doi, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, 'unread', $5, $6, $7, $8, $9, $10, $11)`,
+			paperID, title, arxivID, abstract, metaJSON, source, sourceID, pubDate, nullIfEmpty(doi), nowParam(), nowParam(),
+		); err != nil {
+			return "", fmt.Errorf("papers insert: %w", err)
+		}
+	} else {
+		return "", err
+	}
+	return paperID, nil
+}
+
+// linkPaperToTopic：paper_topics 幂等关联
+func linkPaperToTopic(tx *sql.Tx, paperID, topicID string) error {
+	var linkID string
+	err := tx.QueryRow(
+		`SELECT id FROM paper_topics WHERE paper_id=$1 AND topic_id=$2`, paperID, topicID,
+	).Scan(&linkID)
+	if err == sql.ErrNoRows {
+		if _, err := tx.Exec(
+			`INSERT INTO paper_topics (id, paper_id, topic_id) VALUES ($1, $2, $3)`,
+			newCoreID(), paperID, topicID,
+		); err != nil {
+			return fmt.Errorf("paper_topics insert: %w", err)
+		}
+		return nil
+	}
+	return err
+}
+
+// applyCsFeedFetchResult：CS 分类抓取（A 档）——papers upsert + csfeed:{code}
+// 主题关联（自动创建 enabled=false）+ 订阅运行状态（当日累加/跨天清零），
+// 单事务。与 domain_apply.apply_cs_feed_fetch_proposal 语义对齐。
+func (s *CoreStore) applyCsFeedFetchResult(taskID, executorID, leaseToken string, result map[string]any) (string, error) {
+	proposal, _ := result["proposal"].(map[string]any)
+	if proposal == nil {
+		return "", fmt.Errorf("result 缺少 proposal")
+	}
+	categoryCode, _ := proposal["category_code"].(string)
+	if categoryCode == "" {
+		return "", fmt.Errorf("proposal 缺少 category_code")
+	}
+	items, _ := proposal["papers"].([]any)
+	topicName := "csfeed:" + categoryCode
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+		return "", err
+	}
+
+	// topic 解析：csfeed:{code} 自动创建（enabled=false，防 topic_dispatch 重复抓取）
+	var topicID string
+	err = tx.QueryRow(`SELECT id FROM topic_subscriptions WHERE name=$1`, topicName).Scan(&topicID)
+	if err == sql.ErrNoRows {
+		topicID = newCoreID()
+		if _, err = tx.Exec(
+			`INSERT INTO topic_subscriptions (id, name, query, enabled, created_at, updated_at)
+			 VALUES ($1, $2, $3, 0, $4, $5)`,
+			topicID, topicName, "cat:"+categoryCode, nowParam(), nowParam(),
+		); err != nil {
+			return "", fmt.Errorf("topic_subscriptions insert: %w", err)
+		}
+	} else if err != nil {
+		return "", err
+	}
+
+	insertedIDs := []string{}
+	for _, itemAny := range items {
+		item, ok := itemAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		paperID, err := upsertPaperItem(tx, item)
+		if err != nil {
+			return "", err
+		}
+		if paperID == "" {
+			continue
+		}
+		insertedIDs = append(insertedIDs, paperID)
+		if err := linkPaperToTopic(tx, paperID, topicID); err != nil {
+			return "", err
+		}
+	}
+
+	// 订阅运行状态：当日累加、跨天清零（与 CSFeedRepository.update_run_status 一致）
+	var subID string
+	var lastRunAt sql.NullString
+	var lastRunCount int
+	err = tx.QueryRow(
+		`SELECT id, last_run_at, last_run_count FROM cs_feed_subscriptions WHERE category_code=$1 LIMIT 1`,
+		categoryCode,
+	).Scan(&subID, &lastRunAt, &lastRunCount)
+	switch {
+	case err == sql.ErrNoRows:
+		// 订阅被并发删除：papers 已入库，状态更新跳过（不失败）
+	case err != nil:
+		return "", err
+	default:
+		now := time.Now().UTC()
+		newCount := len(insertedIDs)
+		if lastRunAt.Valid && len(lastRunAt.String) >= 19 {
+			// PG/SQLite 时间字符串前 19 位均为 "YYYY-MM-DD HH:MM:SS"
+			if runDay, perr := time.Parse("2006-01-02 15:04:05", lastRunAt.String[:19]); perr == nil &&
+				runDay.Format("2006-01-02") == now.Format("2006-01-02") {
+				newCount += lastRunCount
+			}
+		}
+		if _, err = tx.Exec(
+			`UPDATE cs_feed_subscriptions SET last_run_at=$1, last_run_count=$2, status='active' WHERE id=$3`,
+			nowParam(), newCount, subID,
+		); err != nil {
+			return "", fmt.Errorf("cs_feed_subscriptions update: %w", err)
+		}
+	}
+
+	if err = finalizeTaskWithResult(tx, taskID, map[string]any{
+		"total": len(insertedIDs), "inserted_ids": insertedIDs,
+		"category_code": categoryCode, "topic_id": topicID,
+	}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("succeeded (papers=%d)", len(insertedIDs)), nil
 }
 
 // applySaveGeneratedContentResult：generated_contents 插入（A 档升级）——
