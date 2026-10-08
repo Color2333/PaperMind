@@ -1692,7 +1692,7 @@ func finalizeTaskWithResult(tx *sql.Tx, taskID string, result map[string]any) er
 		return err
 	}
 	if _, err := tx.Exec(
-		`UPDATE core_jobs SET status='succeeded', finished_at=$2 WHERE id=$1 AND status='running'`,
+		`UPDATE core_jobs SET status='succeeded', finished_at=$1 WHERE id=$2 AND status='running'`,
 		now, jobIDOf(tx, taskID),
 	); err != nil {
 		return err
