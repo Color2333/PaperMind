@@ -605,9 +605,25 @@ class DailyBriefService:
                 if config.send_email_report and config.recipient_emails:
                     recipient = config.recipient_emails.split(",")[0]  # 取第一个收件人
 
+        # 邮件过 effect ledger 防重（此前直发——任务重试/同日重跑会重复发送）：
+        # 每 收件人×日期 一封，发送成功才登记；失败不登记（可重试）。
         sent = False
+        email_skipped = False
         if recipient:
-            sent = self.notifier.send_email_html(recipient, "PaperMind Daily Brief", html)
+            from packages.application.commands.effect_ledger import has_effect, register_effect
+            from packages.domain.enums import EffectKind
+
+            effect_key = f"brief_mail:{recipient}:{user_date_str()}"
+            with session_scope() as session:
+                already_sent = has_effect(session, effect_key)
+            if already_sent:
+                email_skipped = True
+                logger.info("简报邮件今日已发送（账本命中），跳过：%s", recipient)
+            else:
+                sent = self.notifier.send_email_html(recipient, "PaperMind Daily Brief", html)
+                if sent:
+                    with session_scope() as session:
+                        register_effect(session, effect_key=effect_key, kind=EffectKind.mail_send)
 
         # 写入 generated_content 表，确保研究简报页面能查到
         # persist=False（proposal 模式）：不写库，把领域写所需字段带回——
@@ -617,6 +633,7 @@ class DailyBriefService:
             return {
                 "saved_path": saved,
                 "email_sent": sent,
+                "email_skipped": email_skipped,
                 "content_id": None,
                 "brief_markdown": html,
                 "brief_metadata": {

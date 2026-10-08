@@ -9,7 +9,6 @@ task_handlers 的 proposal handler；调用方（API/agent 工具）提交 durab
 from __future__ import annotations
 
 import logging
-from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -36,42 +35,3 @@ def search_arxiv(
         }
         for i, p in enumerate(papers, 1)
     ]
-
-
-def import_ieee(*, query: str, max_results: int = 20, topic_id: str | None = None) -> dict:
-    """[已退役直写路径] 兼容保留：转调 ingest_ieee proposal handler（纯计算 +
-    只读去重，领域写在权威面 apply）。需要 IEEE_API_KEY；未配置抛 RuntimeError。"""
-    from packages.ai.task_handlers import ingest_ieee_proposal
-
-    return ingest_ieee_proposal(
-        query=query,
-        max_results=max_results,
-        topic_id=topic_id,
-        action_type="manual_collect",
-    )
-
-
-def describe_ingested_papers(inserted_ids: list[str], *, limit: int = 50) -> list[dict]:
-    """入库后返回论文基本信息（/ingest/arxiv 响应形状）"""
-    from packages.storage.db import session_scope
-    from packages.storage.repositories import PaperRepository
-
-    papers_info: list[dict] = []
-    with session_scope() as session:
-        repo = PaperRepository(session)
-        for pid in inserted_ids[:limit]:
-            try:
-                p = repo.get_by_id(UUID(pid))
-                papers_info.append(
-                    {
-                        "id": p.id,
-                        "title": p.title,
-                        "arxiv_id": p.arxiv_id,
-                        "publication_date": p.publication_date.isoformat()
-                        if p.publication_date
-                        else None,
-                    }
-                )
-            except Exception:
-                pass
-    return papers_info
