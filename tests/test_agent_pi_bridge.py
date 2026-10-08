@@ -190,3 +190,24 @@ def test_session_file_layout(fake_pm_env):
     f = host.session_file_for("abc-123")
     assert f.name == "abc-123.jsonl"
     assert f.parent.name == "web-sessions"
+
+
+def test_gateway_sidecar_url_mode(monkeypatch):
+    """PAPERMIND_GATEWAY_URL（sidecar 形态）：base_url 指向远端、健康即用不 spawn"""
+    import importlib
+
+    import packages.agent_pi.gateway as gw
+
+    monkeypatch.setenv("PAPERMIND_GATEWAY_URL", "http://gateway:8765")
+    mod = importlib.reload(gw)
+    try:
+        assert mod.gateway_base_url() == "http://gateway:8765"
+        monkeypatch.setattr(mod, "_healthy", lambda: True)
+        assert mod.ensure_gateway() == "http://gateway:8765"
+        # sidecar 不可达 → None（回退直连），绝不本地 spawn
+        monkeypatch.setattr(mod, "_healthy", lambda: False)
+        assert mod.ensure_gateway() is None
+        assert mod._proc is None
+    finally:
+        monkeypatch.delenv("PAPERMIND_GATEWAY_URL", raising=False)
+        importlib.reload(gw)
