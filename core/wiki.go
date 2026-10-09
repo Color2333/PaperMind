@@ -20,7 +20,7 @@ type milestone struct {
 }
 
 // pageRank 引用图 PageRank（Python _pagerank 移植——20 轮迭代阻尼 0.85）。
-func pageRank(nodes []string, edges [][2]string) map[string]float64 {
+func PageRank(nodes []string, edges [][2]string) map[string]float64 {
 	if len(nodes) == 0 {
 		return nil
 	}
@@ -101,7 +101,7 @@ func (e *HandlerEnv) milestonesForTopic(topicID string, limit int) []milestone {
 	if len(nodes) == 0 {
 		return nil
 	}
-	rank := pageRank(nodes, edges)
+	rank := PageRank(nodes, edges)
 	// 取分数 top 30 的论文标题 + 年份
 	type pr struct {
 		id    string

@@ -23,6 +23,7 @@ services:
     container_name: papermind-goserver
     volumes:
       - pm_agent_dir:/data
+      - pm_data:/app/data
     env_file:
       - ./.env
     environment:
