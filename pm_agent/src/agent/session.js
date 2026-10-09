@@ -5,9 +5,9 @@
 // - agentDir 隔离到 ~/.config/papermind/agent——PaperMind 的模型凭据（auth.json/
 //   models.json）与 Pi 上游互不可见，与 PaperMind token 分开保存（设计④ §7）；
 // - 系统提示/主题经 ResourceLoader override 注入（默认资源关闭），不改上游文件。
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -31,6 +31,24 @@ import { papermindTools } from "./tools.js";
 
 export function pmAgentDir() {
 	return process.env.PAPERMIND_AGENT_DIR || join(homedir(), ".config", "papermind", "agent");
+}
+
+const THEMES_SRC = join(fileURLToPath(new URL(".", import.meta.url)), "../../../../extension/themes");
+
+/** 1.1.0 默认资源加载器原生扫描 <agentDir>/themes/*.json——首次启动把 fork 主题布署进去 */
+function ensureAgentThemes(agentDir) {
+	const destDir = join(agentDir, "themes");
+	try {
+		mkdirSync(destDir, { recursive: true });
+		for (const name of ["papermind-dark.json", "papermind-light.json"]) {
+			const dest = join(destDir, name);
+			if (existsSync(dest)) continue;
+			const src = join(THEMES_SRC, name);
+			if (existsSync(src)) copyFileSync(src, dest);
+		}
+	} catch {
+		// 主题布署失败不阻塞启动（回退系统主题）
+	}
 }
 
 /** PaperMind 资源装载定制（注入点全部来自 DefaultResourceLoaderOptions 公开契约）。
@@ -71,6 +89,7 @@ function workspaceFileTools(cwd) {
 export async function createPmRuntime(options = {}) {
 	const cwd = options.cwd || process.cwd();
 	const agentDir = pmAgentDir();
+	ensureAgentThemes(agentDir);
 
 		const createRuntime = async ({ cwd: c, agentDir: a, sessionManager, sessionStartEvent }) => {
 		// patch 0002：pm 是研究终端，无 coding 操作——project trust 交互整体跳过
@@ -137,6 +156,12 @@ function resolveSessionManager(cwd, sessionFile) {
 
 /** pm（无参数）：交互 TUI（E2c） */
 export async function runPmTui({ cwd, initialMessage, codingTools = false } = {}) {
+	const modelsPath = join(pmAgentDir(), "models.json");
+	if (!existsSync(modelsPath)) {
+		process.stderr.write(
+			`提示：${pmAgentDir()} 下未检测到 models.json——进入 TUI 后输入 /login 可配置 provider（或手动放置 models.json + settings.json）。\n`,
+		);
+	}
 	const runtime = await createPmRuntime({ cwd, codingTools });
 	const interactive = new InteractiveMode(runtime, {
 		modelFallbackMessage: runtime.modelFallbackMessage,
