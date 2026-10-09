@@ -5,9 +5,12 @@ FROM golang:1.26-alpine AS build
 # 大陆构建环境：Go 模块走国内代理
 ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /src
+# server 依赖 core（replace ../core）——两个模块必须一起就位
 COPY server/go.mod server/go.sum ./
+COPY core/go.mod core/go.sum /core/
 RUN go mod download
 COPY server/ .
+COPY core/ /core/
 RUN CGO_ENABLED=0 go build -ldflags "-s -w" -o /out/papermind-api .
 
 FROM debian:bookworm-slim
