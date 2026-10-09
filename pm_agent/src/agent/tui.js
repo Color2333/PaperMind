@@ -35,6 +35,9 @@ class InputLine {
 		this.onExit = onExit;
 	}
 	handleInput(data) {
+		// 终端应答/功能键（CSI 16t 尺寸应答、方向键等 Esc 序列）整段丢弃——
+		// 否则会被当普通字符打进输入行（生产实证 [6;37;17t 污染）
+		if (data.startsWith("")) return { handled: true, render: false };
 		let submitted = false;
 		for (const ch of data) {
 			if (ch === "\x03") {
