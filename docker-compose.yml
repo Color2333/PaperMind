@@ -17,9 +17,14 @@ services:
   # ==========================================
   goserver:
     build:
-      context: ./server
-      dockerfile: Dockerfile
+      # 仓库根为 context（Dockerfile 内引用 pm_agent/ 与 server/ 源码）
+      context: .
+      dockerfile: server/Dockerfile
     container_name: papermind-goserver
+    volumes:
+      - pm_agent_dir:/data
+    env_file:
+      - ./.env
     environment:
       - DATABASE_URL=${PAPER_PG_DSN:-postgresql://papermind:papermind@postgres:5432/papermind?sslmode=disable}
       - BACKEND_ORIGIN=http://backend:8000
@@ -27,6 +32,14 @@ services:
       - AUTH_SECRET_KEY=${AUTH_SECRET_KEY:-}
       - SITE_URL=${SITE_URL:-https://pm.vibingu.cn}
       - LISTEN_ADDR=:8080
+      # Phase 4：Go 端点直连网关/embedding/PDF 根（worker 同构环境）
+      - PAPERMIND_GATEWAY_URL=http://gateway:8765
+      - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
+      - PDF_STORAGE_ROOT=/app/data/papers
+      - PAPERMIND_AGENT_DIR=/data
+      - PAPERMIND_SELF_URL=http://backend:8000
+      - S2_API_KEY=${S2_API_KEY:-}
+      - IEEE_API_KEY=${IEEE_API_KEY:-}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -41,7 +54,7 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 128M
+          memory: 256M
 
   # ==========================================
   # Pi LLM 网关（sidecar）：OpenAI 兼容 HTTP 面（pi-ai 底座）。

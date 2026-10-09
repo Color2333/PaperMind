@@ -22,6 +22,17 @@ import (
 type CoreStore struct {
 	DB   *sql.DB
 	isPG bool
+	// IsPG 外部构造（如 goserver 复用既有连接池）时显式声明方言；
+	// OpenCoreStore 路径由 DSN 推断。
+	IsPG bool
+}
+
+// dialect 生产环境推断：外部构造走 IsPG 字段，内部打开走 isPG。
+func (s *CoreStore) pg() bool {
+	if s.IsPG {
+		return true
+	}
+	return s.isPG
 }
 
 // OpenCoreStore 打开权威存储——双驱动。
