@@ -37,8 +37,9 @@ func main() {
 	mux.HandleFunc("GET /papers/latest", s.requireAuth(s.handlePapersLatest))
 
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
-	mux.HandleFunc("/api/", s.proxyLegacy)
-	mux.HandleFunc("/internal/", s.proxyLegacy)
+	// "/" 兜底：/whoami /jobs /papers/search 等未注册路径全部进反代
+	// （Go 1.22 ServeMux 中精确/具体 pattern 优先于 "/"）
+	mux.HandleFunc("/", s.proxyLegacy)
 
 	addr := cfg.ListenAddr
 	srv := &http.Server{Addr: addr, Handler: mux,
