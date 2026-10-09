@@ -38,7 +38,7 @@ services:
       - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
       - PDF_STORAGE_ROOT=/app/data/papers
       - PAPERMIND_AGENT_DIR=/data
-      - PAPERMIND_SELF_URL=http://backend:8000
+      - PAPERMIND_SELF_URL=http://goserver:8080
       - S2_API_KEY=${S2_API_KEY:-}
       - IEEE_API_KEY=${IEEE_API_KEY:-}
     restart: unless-stopped
@@ -107,9 +107,9 @@ services:
       - CORE_DB_PATH=${CORE_PG_DSN:-postgresql://papermind:papermind@postgres:5432/papermind?sslmode=disable}
     restart: unless-stopped
     depends_on:
-      backend:
-        condition: service_started
-    # readiness：/readyz 探测 durable-state 可用性（state 不可达 → 503 → unhealthy）
+      postgres:
+        condition: service_healthy
+    # readiness：PG 连通性（Go 权威面自持——backend 已退役）
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/readyz || exit 1"]
       interval: 15s
@@ -121,65 +121,6 @@ services:
         limits:
           cpus: '0.5'
           memory: 128M
-
-  # ==========================================
-  # 后端服务 (FastAPI；durable-state 内部 API 需 DURABLE_STATE_TOKEN)
-  # ==========================================
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-    container_name: papermind-backend
-    ports:
-      - "8002:8000"  # 映射到 8002（避免 8001 冲突）
-    volumes:
-      - pm_data:/app/data
-      - pm_logs:/app/logs
-      - pm_pip_cache:/.pip-cache
-      - pm_agent_dir:/data
-    env_file:
-      - ./.env
-    environment:
-      - APP_ENV=production
-      - API_HOST=0.0.0.0
-      - API_PORT=8000
-      - SITE_URL=https://pm.vibingu.cn
-      - CORS_ALLOW_ORIGINS=http://localhost:3002,http://127.0.0.1:3002,https://pm.vibingu.cn
-      - DEMO_MODE=false
-      # P1 PG 切换：DATABASE_URL 显式指定 PG
-      - DATABASE_URL=${PAPER_PG_DSN:-postgresql+psycopg2://papermind:papermind@postgres:5432/papermind}
-      # durable-state 内部 API（P0）：非空才挂载 /internal/durable/*，Core 凭此访问权威状态
-      - DURABLE_STATE_TOKEN=${DURABLE_STATE_TOKEN:-}
-      # Go authority（manifest 路由）：A 档 capability 提交 Go 权威，其余留 Python
-      - PAPERMIND_CORE_URL=http://core:8081
-      # 管线 LLM 统一走 Pi 网关（gateway sidecar——OpenAI 兼容面，pi-ai 底座）：
-      # sidecar 不可达自动回退直连；PAPERMIND_AGENT_DIR 为共享物化卷（DB 单一事实源）
-      - PAPERMIND_LLM_GATEWAY=1
-      - PAPERMIND_GATEWAY_URL=http://gateway:8765
-      - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
-      - PAPERMIND_AGENT_DIR=/data
-      - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
-      # Pi agent 桥：spawn 的 Node pm 定位（镜像内 /opt/pm-agent）
-      - PAPERMIND_PM_BIN=/opt/pm-agent/bin/pm.js
-      - PAPERMIND_SERVER_URL=http://127.0.0.1:8000
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 5s
-      start_period: 40s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 768M
-        reservations:
-          cpus: '0.5'
-          memory: 256M
 
   # ==========================================
   # Go Worker (Phase 3)：嵌入式执行器 + 调度器（单二进制，无 Python 运行时）
@@ -307,8 +248,8 @@ services:
       - AUTH_PASSWORD=  # Demo 免密（DemoMode 中间件拦截写接口）
     restart: unless-stopped
     depends_on:
-      backend:
-        condition: service_started
+      postgres:
+        condition: service_healthy
       core:
         condition: service_healthy
     healthcheck:

@@ -140,8 +140,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleReady：readiness——durable-state API 不可达时返回 503（编排层摘除流量）
+// handleReady：readiness——Phase 7 终态：Go core 自持权威面（core_* 表在 PG），
+// readiness 探测 PG 连通性而非 Python durable-state（backend 已退役）。
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if s.Store != nil {
+		if err := s.Store.DB.PingContext(r.Context()); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, "", map[string]any{
+				"ok": false, "error": "db_unavailable",
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, "", map[string]any{"ok": true, "authority": "go_core"})
+		return
+	}
+	// 无 Store 的纯网关形态（理论不再出现）：回退 state 探测
 	if !s.checkStateReady(r.Context()) {
 		writeJSON(w, http.StatusServiceUnavailable, "", map[string]any{
 			"ok": false, "error": "state_unavailable", "state_url": s.State.BaseURL,
