@@ -1,6 +1,8 @@
 # PaperMind Go API（2.1 重写 Phase 0：绞杀者入口）
 # 已移植：设备码授权全流程 / 健康检查 / folder-stats；未移植 /api/* 反代 backend
 FROM golang:1.23-alpine AS build
+# 大陆构建环境：Go 模块走国内代理
+ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
