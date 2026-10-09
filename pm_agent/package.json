@@ -1,0 +1,15 @@
+{
+	"name": "papermind-pm-agent",
+	"private": true,
+	"type": "module",
+	"version": "0.1.0",
+	"description": "PaperMind pm（Node CLI + Pi agent runtime）——服务端 webchat 桥的执行体。⚠️ 同步自 PaperMind-Terminal/packages/papermind-cli（单一事实源在 Terminal 仓库）。",
+	"bin": {
+		"pm": "bin/pm.js"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "^1.1.0",
+		"@earendil-works/pi-coding-agent": "^1.1.0",
+		"@earendil-works/pi-tui": "^1.1.0"
+	}
+}
