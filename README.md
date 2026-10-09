@@ -1,505 +1,118 @@
-# PaperMind
+# PaperMind 2.0
 
-**AI 驱动的学术论文研究工作流平台**
+**AI 驱动的个人研究终端 —— 从「管论文」进化为「懂领域」**
 
-*从「搜索论文」进化为「理解领域」*
-
+[![Release](https://img.shields.io/badge/Release-2.0-6C5CE7?style=flat-square)](https://github.com/Color2333/PaperMind/releases/tag/v2.0.0)
+[![Go](https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Node](https://img.shields.io/badge/Node-22+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React_18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![Tailwind](https://img.shields.io/badge/Tailwind_CSS_v4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
-[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-[![LLM](https://img.shields.io/badge/LLM-Xiaomi_%7C_Zhipu_%7C_OpenAI_%7C_Anthropic-blueviolet?style=flat-square)]()
 
-> 让 AI 成为你的研究助理 —— 自动追踪、智能分析、知识图谱、学术写作，一站式搞定！
+> 2.0 全面重构：**Go 权威执行面 + Pi Agent 单网关 + 云端 CLI 终端**。
+> 论文库不只是被检索——它被一个持久化、可审计、全天候的研究智能体持续消化。
+
+🌐 **[在线发布页](https://color2333.github.io/PaperMind/)** · 📦 [1.x 历史文档](docs/README-1.x.md)
 
 ---
+
+## ✨ 2.0 核心跃迁
+
+### 1. Go 权威执行面
+任务编排（Job / Task / Attempt）与领域写入全部收敛到 **Go 单事务权威面**：
+21 项能力（skim / deep-read / embed / 摄取 / 引用同步…）经 manifest 路由，
+fencing 令牌防脑裂，崩溃可恢复，死信可追溯。编排开销实测 **~10ms/任务**，
+对比 LLM 秒级调用可忽略。
+
+### 2. Pi Agent 单网关
+所有 LLM 调用统一经 **Pi 网关**（OpenAI 兼容面，pi-ai 底座，Sidecar 容器部署）——
+provider 换型零改码、配置热生效、令牌三容器同源。Agent 循环（1.1.0 内核）
+同时驱动 Web 聊天与 CLI 终端。
+
+### 3. 云端 CLI 终端（pm）
+```bash
+pm login --endpoint https://your-server/api   # 设备码授权，一次登录
+pm                                            # 全屏 TUI——会话数据存云端，与网页同源
+pm -p "库里最近有什么新论文？"                  # 一次性问答
+pm papers search "world model"                # 确定性命令面（jobs/claims/export…）
+```
+CLI 零本地依赖（无需模型凭据）——agent 循环、工具、LLM 全在服务端，
+换机器登录即续接。
+
+### 4. 双执行池 + 闲时补偿
+compute / orchestration 双执行池隔离长短任务；闲时自动补偿精读，
+在途任务去重，PDF 不可用自动标记——**不重复计费，不无限重试**。
+
+---
+
+## 🏗️ 架构
+
+```mermaid
+graph LR
+    subgraph Clients
+        WEB[Web 工作台]
+        CLI[pm CLI / TUI]
+    end
+    subgraph "Go 权威面"
+        CORE[Core :8081<br/>Job/Task/Attempt]
+    end
+    subgraph "Python 应用面"
+        API[FastAPI :8000]
+        WORKER[Worker 双执行池]
+    end
+    WEB & CLI -->|HTTPS/API| API
+    API -->|提交/查询| CORE
+    WORKER -->|领取/完成| CORE
+    API & WORKER -->|LLM| GW[Pi 网关 sidecar]
+    GW --> LLM[MiMo / Zhipu / OpenAI / Anthropic]
+    API & WORKER & CORE --> PG[(PostgreSQL)]
+```
+
+- **Go Core**：权威任务存储 + 领域 apply 单事务（21 项能力 A 档）
+- **Python**：纯计算 proposal + 编排器（submit → 在途去重 → 轮询）
+- **Pi 网关**：LLM 单一出口（pi-ai 底座），配置热生效
+- **pm CLI**：三形态终端 —— 云端全屏 TUI / 一次性问答 / 确定性命令面
+
+## ⚡ 生产实测（真实运行数据）
+
+| 指标 | 数值 |
+|---|---|
+| 任务编排开销 | submit 10.1ms · claim 3.8ms · **apply 单事务 6.5ms** |
+| 深读单篇耗时 | 482.7s（视觉提取 + LLM，全链真实） |
+| 库容规模 | 2,096 篇 · 近 7 天 +155 |
+| 累计精读 | 995 篇成功（双 compute Runner 并行消化） |
+| 测试 | 339 用例全绿 · Go build/vet/test 通过 |
 
 ## 🚀 快速开始
 
-### Docker 部署（生产推荐）
-
 ```bash
-# 1️⃣ 克隆项目
 git clone https://github.com/Color2333/PaperMind.git && cd PaperMind
-
-# 2️⃣ 配置环境变量
-cp .env.example .env
-vim .env  # 至少填写 LLM API Key
-
-# 3️⃣ 一键部署
+cp .env.example .env && $EDITOR .env        # 至少填一个 LLM API Key
 docker compose up -d --build
 
-# 4️⃣ 访问服务
-# 🌐 前端：http://localhost:3002
-# 📡 后端 API: http://localhost:8002
-# 📚 API 文档：http://localhost:8002/docs
+# 🌐 前端    http://localhost:3002
+# 📡 API    http://localhost:8002  · 文档 /docs
 ```
 
-### 本地开发
+CLI（任何有 Node ≥ 18 的机器）：
 
 ```bash
-# 1️⃣ 克隆项目
-git clone https://github.com/Color2333/PaperMind.git && cd PaperMind
-
-# 2️⃣ 一键初始化（推荐）
-python scripts/dev_setup.py
-
-# 或手动初始化：
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[llm,pdf]"
-cp .env.example .env
-vim .env  # 填入 LLM API Key
-python scripts/local_bootstrap.py
-
-# 3️⃣ 启动后端
-uvicorn apps.api.main:app --reload --port 8000
-
-# 4️⃣ 启动前端
-cd frontend && npm install && npm run dev
-# 🌐 打开 http://localhost:5173
+npm install -g @papermind/cli    # 或使用 dist/papermind-cli-*.tgz
+pm login --endpoint https://your-server/api
+pm                               # 进入云端研究终端
 ```
 
-### 站点认证（可选）
-
-```bash
-# 在 .env 中设置密码即可启用全站认证
-AUTH_PASSWORD=your_password_here
-AUTH_SECRET_KEY=your_random_secret_key
-```
-
----
-
-## 🎯 这是什么？
-
-PaperMind 是一个面向科研工作者的 AI 增强平台，帮你从「搜索论文」进化为「理解领域」。
-
-| 😫 以前 | 😎 现在 |
-|:--------|:--------|
-| 每天手动刷 arXiv，怕错过重要论文 | 自动订阅主题，新论文推送到邮箱 |
-| 读论文从摘要开始，不知道值不值得精读 | AI 粗读打分，快速筛选高价值论文 |
-| 想了解领域发展，不知道从哪篇读起 | 知识图谱可视化，一眼看清引用脉络 |
-| 写论文卡壳，不知道怎么表达 | 学术写作助手，润色/翻译/去 AI 味 |
-| 文献综述耗时耗力，整理几百篇头大 | Wiki 自动生成，一键产出领域综述 |
-
----
-
-## ✨ 核心能力
-
-### 🧠 认知重构工作流 (PaperSenseMaking)
-
-「阅读→理解→重构」的完整论文工作流：
-
-- 📝 **Act 1 理解** —— 摘要 + 关键发现，厘清论文核心
-- ⚡ **Act 2 碰撞** —— 冲突 + 疑问，与已有知识对话
-- 🔄 **Act 3 重构** —— 前后对比 + 认知变化，形成新认知
-- 📖 **全文对照翻译** —— 段落级中英对照，支持两种模式，结果持久化（二次打开免重译）
-  - ⚡ **快速翻译**：1-2 分钟，PyMuPDF 分段 + 并发翻译
-  - 📐 **布局保留**：3-5 分钟，PDFMathTranslate 完整排版（公式/图表保留）
-
-> 💡 布局保留模式依赖 pdf2zh（`pip install ".[pdf]"` 已含），首次使用会联网下载翻译模型。
-
-### 🤖 AI Agent 对话
-
-你的智能研究助理，自然语言交互搞定一切：
-
-- 💬 **SSE 流式对话** —— Claude 风格，实时响应
-- 🔧 **工具链** —— 搜索/入库/分析/生成/写作自动调度
-- ✅ **用户确认机制** —— 重要操作等你点头再执行
-- 📜 **对话历史持久化** —— 切页面不丢上下文
-- 🎯 **AI 关键词建议** —— 描述研究方向 → 自动生成搜索词
-
-### 📄 智能论文管理
-
-从收录到精读，全流程自动化：
-
-- 🔄 **多源订阅** —— ArXiv 关键词 + CSFeeds 论文源双重抓取
-- 🚫 **论文去重检测** —— 避免重复处理浪费 token
-- 📦 **递归抓取** —— 自动延伸更早期论文
-- ⚡ **并行处理** —— 粗读/精读/嵌入三管齐下
-- 💾 **按需下载 PDF** —— 入库不下载，精读才拉取
-
-### 🕸️ 引用图谱
-
-可视化你的研究领域：
-
-- 🌳 **引用树** —— 单篇论文引用网络
-- 🌐 **主题图谱** —— 跨主题引用关系
-- 🌉 **桥接论文** —— 发现跨领域的核心工作
-- 🔬 **研究前沿** —— 高被引 + 高引用的热点
-- 📊 **共引聚类** —— 相关研究自动分组
-
-### 📚 Wiki 自动生成
-
-一键生成领域综述：
-
-- 📖 **主题 Wiki** —— 输入关键词，输出完整综述
-- 📄 **论文 Wiki** —— 单篇论文深度解读
-- 📊 **实时进度条** —— 异步生成，自动刷新
-- 📜 **历史版本** —— 所有生成内容可追溯
-
-### 🔍 论文订阅源（CSFeeds）
-
-发现你研究领域最重要的论文来源：
-
-- 🎯 **关键词订阅** —— arXiv 关键词自动追踪
-- 📡 **论文源订阅** —— 直接订阅 CSFeeds 热门论文
-- 📬 **邮件推送** —— 新论文自动发送到邮箱
-- ⏰ **按主题独立调度** —— 每个主题独立抓取频率
-
-### ✍️ 学术写作助手
-
-来自顶尖研究机构的写作工具：
-
-- 🌏 **中转英 / 英转中** —— 学术级翻译
-- ✨ **润色（中/英）** —— 更地道的学术表达
-- 🤖 **去 AI 味** —— 降低 AI 检测率
-- 📊 **图表推荐 / 标题生成** —— 实验数据可视化建议
-
-### 📖 沉浸式 PDF 阅读器
-
-专注阅读，AI 随叫随到：
-
-- 📜 **连续滚动** —— IntersectionObserver 页码追踪
-- 🔍 **缩放/全屏/跳转** —— 键盘快捷键支持
-- 🌐 **arXiv 在线代理** —— 无本地 PDF 也能读
-- ✨ **选中即问** —— AI 解释/翻译/总结
-
-### 🔐 站点安全认证
-
-保护你的研究资产：
-
-- 🔑 **站点密码** —— 简单可靠，适合个人/小团队
-- 🎫 **JWT Token** —— 7 天有效期，自动续期
-- 🛡️ **全站保护** —— 所有 API 都需要认证
-
-### 🔑 API 令牌与 pm CLI
-
-让 pm CLI、Claude Code / ZCode 等 AI harness 安全访问你的 PaperMind：
-
-- 📱 **设备码授权登录** —— `pm login` 打开浏览器确认设备码，自动签发长期令牌（类似 `gh auth login`）
-- 🛡️ **细粒度权限** —— read / write scope 按 HTTP 方法强制，网页端随时创建/吊销
-- 🩺 **pm doctor** —— 一条命令体检连通性与认证状态
-
-### ⚙️ LLM 模型管理
-
-灵活控制成本，按场景分配模型：
-
-- 📊 **多配置管理** —— 支持多个 LLM 提供商配置，默认使用小米 MiMo（文本）+ MiMo（视觉）
-- 🔄 **一键切换** —— 在设置页面随时激活不同配置
-- 🎯 **场景映射** —— 粗读/精读/视觉/嵌入各有独立模型配置
-- 💰 **成本优化** —— 每日预算守卫，自动降级控制成本
-- 📈 **Token 追踪** —— 所有 API 调用自动记录成本和用量
-
-**默认模型配置**（小米 MiMo）：
-- 文本任务（粗读/精读/翻译/写作）：mimo-v2-omni / mimo-v2.5-pro
-- 视觉任务（图表分析/OCR）：mimo-v2.5
-- 降级备用：mimo-v2.5-pro
-- 嵌入向量：text-embedding-v4（阿里百炼 DashScope）
-
----
-
-## 🖥️ pm CLI 与 API 令牌
-
-### 安装（你的电脑上，无需 Python）
-
-```bash
-# macOS / Linux：一键安装（自动识别平台，从 GitHub Releases 下载）
-curl -fsSL https://raw.githubusercontent.com/Color2333/PaperMind/main/scripts/install-pm.sh | bash
-
-# Windows（PowerShell）：
-irm https://raw.githubusercontent.com/Color2333/PaperMind/main/scripts/install-pm.ps1 | iex
-```
-
-或到 [Releases](https://github.com/Color2333/PaperMind/releases) 手动下载对应平台二进制
-（`pm-darwin-arm64` / `pm-darwin-x86_64` / `pm-linux-x86_64` / `pm-windows-x86_64.exe`），
-放到 PATH 目录并 `chmod +x`。
-
-> macOS 首次运行如被 Gatekeeper 拦截：`xattr -d com.apple.quarantine pm`
-
-开发者也可以从源码安装：`pipx install /path/to/PaperMind`，或本地构建单文件二进制
-`bash scripts/build-pm-cli.sh`（输出 `dist/pm`）。
-
-### 登录
-
-```bash
-# 设备码授权（推荐）：浏览器确认设备码后自动完成
-pm login --server https://pm.your-domain.com
-
-# 兜底：网页「设置 → API 令牌」创建后粘贴（SSH 等无浏览器环境）
-pm login --token pmt_xxx
-
-pm whoami    # 查看身份与权限
-pm doctor    # 连通性体检
-pm logout    # 吊销令牌并清除本地配置
-```
-
-配置存于 `~/.config/papermind/config.toml`（权限 0600），也可用环境变量 `PAPERMIND_SERVER_URL` / `PAPERMIND_TOKEN` 覆盖。
-
-### 权限模型
-
-| 凭证 | 来源 | 权限 |
-|------|------|------|
-| JWT（7 天） | 网页密码登录 | 全部，含令牌管理 |
-| API 令牌 `pmt_` | 网页创建 / 设备码签发 | scope 强制：GET → `read`，变更操作 → `write`；仅能吊销自己 |
-
-数据库只存令牌 SHA-256 哈希，明文仅创建时返回一次；令牌管理接口（创建/列表/吊销他人）仅限网页会话。
-
-### 接入 Claude Code / ZCode（MCP）
-
-服务端 `/mcp` 同时接受静态 `MCP_AUTH_TOKEN` 与数据库 API 令牌：
-
-```bash
-# 用 pm login 签发的令牌接入 Claude Code
-claude mcp add --transport http papermind https://pm.your-domain.com/mcp \
-  --header "Authorization: Bearer pmt_xxx"
-```
-
----
-
-## 🏗️ 架构总览
-
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Frontend (React 18)                      │
-│  Agent │ Papers │ Wiki │ Graph │ Brief │ Collect │ Writing  │
-│         路由懒加载 · Vite 代码分割 · SSE 跨页保活            │
-└─────────────────────────┬───────────────────────────────────┘
-                          │ REST + SSE (JWT Auth)
-┌─────────────────────────┴───────────────────────────────────┐
-│                      FastAPI Backend                         │
-├─────────────┬─────────────┬─────────────┬───────────────────┤
-│   Agent     │   Pipeline  │    RAG      │  Graph / Wiki /   │
-│   Service   │   Engine    │   Service   │  Brief / Write    │
-├─────────────┴─────────────┴─────────────┴───────────────────┤
-│         Global TaskTracker (异步任务 + 实时进度)             │
-│         右下角悬浮面板 · 分类图标 · 完成历史                │
-├─────────────────────────────────────────────────────────────┤
-│           Unified LLM Client (连接复用 + TTL 缓存)           │
-│         Xiaomi(MiMo) │ Zhipu │ OpenAI │ Anthropic         │
-├─────────────────────────────────────────────────────────────┤
-│   SQLite (WAL)  │  ArXiv API  │  Semantic Scholar API       │
-└─────────────────────────────────────────────────────────────┘
-                            │
-              ┌────────────┴────────────┐
-              │   APScheduler Worker    │
-              │   按主题独立调度         │
-              │   每日简报 / 每周图谱    │
-              └─────────────────────────┘
-```
-
----
-
-## ⚙️ 环境变量
-
-| 变量 | 说明 | 默认值 |
-|:-----|:-----|:------:|
-| `LLM_PROVIDER` | LLM 提供商 (xiaomi/zhipu/openai/anthropic) | `xiaomi` |
-| `XIAOMI_API_KEY` | 小米 MiMo API Key | — |
-| `ZHIPU_API_KEY` | 智谱 API Key | — |
-| `OPENAI_API_KEY` | OpenAI API Key | — |
-| `ANTHROPIC_API_KEY` | Anthropic API Key | — |
-| `LLM_MODEL_SKIM` | 粗读模型 | `mimo-v2-omni` |
-| `LLM_MODEL_DEEP` | 精读模型 | `mimo-v2.5-pro` |
-| `LLM_MODEL_VISION` | 视觉模型 | `mimo-v2.5` |
-| `LLM_MODEL_FALLBACK` | 降级备用模型 | `mimo-v2.5-pro` |
-| `EMBEDDING_MODEL` | Embedding 模型 | `text-embedding-v4` |
-| `EMBEDDING_API_KEY` | Embedding API Key（阿里百炼 DashScope） | — |
-| `EMBEDDING_BASE_URL` | Embedding 服务地址 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| `EMBEDDING_DIMENSIONS` | Embedding 向量维度 | `1024` |
-| `SITE_URL` | 生产域名 | `http://localhost:3002` |
-| `AUTH_PASSWORD` | 站点密码（留空禁用认证） | — |
-| `AUTH_SECRET_KEY` | JWT 密钥 | — |
-| `COST_GUARD_ENABLED` | 成本守卫 | `true` |
-| `DAILY_BUDGET_USD` | 每日预算 | `2.0` |
-| `OPENALEX_EMAIL` | OpenAlex 邮箱（用于 API） | — |
-| `IEEE_API_ENABLED` | 启用 IEEE 搜索 | `false` |
-| `IEEE_API_KEY` | IEEE API Key | — |
-| `SEMANTIC_SCHOLAR_API_KEY` | Semantic Scholar API Key | — |
-
-> 完整配置见 `.env.example`
-
----
-
-## 📡 API 速览
-
-<details>
-<summary><strong>🔐 认证</strong></summary>
-
-| 方法 | 路径 | 说明 |
-|:----:|:-----|:-----|
-| POST | `/auth/login` | 登录获取 JWT Token |
-| GET | `/auth/status` | 查询认证状态 |
-
-</details>
-
-<details>
-<summary><strong>🤖 AI Agent</strong></summary>
-
-| 方法 | 路径 | 说明 |
-|:----:|:-----|:-----|
-| POST | `/agent/chat` | Agent 对话（SSE 流式） |
-| POST | `/agent/confirm/{id}` | 确认工具执行 |
-| POST | `/agent/reject/{id}` | 拒绝工具执行 |
-
-</details>
-
-<details>
-<summary><strong>📄 论文管理</strong></summary>
-
-| 方法 | 路径 | 说明 |
-|:----:|:-----|:-----|
-| GET | `/papers/latest` | 论文列表（分页） |
-| GET | `/papers/{id}` | 论文详情 |
-| POST | `/pipelines/skim/{id}` | 粗读 |
-| POST | `/pipelines/deep/{id}` | 精读 |
-| POST | `/pipelines/embed/{id}` | 生成嵌入向量 |
-
-</details>
-
-<details>
-<summary><strong>🕸️ 知识图谱</strong></summary>
-
-| 方法 | 路径 | 说明 |
-|:----:|:-----|:-----|
-| GET | `/graph/citation-tree/{paper_id}` | 引文树 |
-| GET | `/graph/citation-detail/{paper_id}` | 引用详情 |
-| GET | `/graph/overview` | 全局概览 |
-| GET | `/graph/bridges` | 桥接论文 |
-| GET | `/graph/frontier` | 研究前沿 |
-| GET | `/graph/cocitation-clusters` | 共引聚类 |
-| GET | `/graph/timeline` | 时间线 + seminal |
-| GET | `/graph/survey` | 领域综述 |
-
-</details>
-
-<details>
-<summary><strong>📚 Wiki</strong></summary>
-
-| 方法 | 路径 | 说明 |
-|:----:|:-----|:-----|
-| GET | `/wiki/paper/{paper_id}` | 论文深度解读 |
-| GET | `/wiki/topic` | 获取主题 Wiki |
-| POST | `/tasks/wiki/topic` | 生成主题综述 |
-| GET | `/generated/list` | 已生成内容列表 |
-
-</details>
-
-<details>
-<summary><strong>📡 订阅源（CSFeeds）</strong></summary>
-
-| 方法 | 路径 | 说明 |
-|:----:|:-----|:-----|
-| GET | `/cs/categories` | arXiv CS 分类列表 |
-| GET | `/cs/feeds` | 列表订阅源 |
-| POST | `/cs/feeds` | 订阅论文源 |
-| POST | `/cs/feeds/{category_code}/fetch` | 手动触发抓取 |
-
-</details>
-
----
-
-## ⚡ 性能优化
-
-| 类别 | 优化策略 |
-|------|----------|
-| **首屏** | KaTeX 字体 CDN + PDF Worker CDN + 重型库懒加载（-2.7MB） |
-| **前端** | 路由懒加载 · `useMemo`/`useCallback` · React.memo · RAF batching |
-| **数据库** | SQLite WAL · 批量聚合查询 · Citation 索引 |
-| **图谱** | list_lightweight 轻量加载 · 90% 内存削减 |
-| **LLM** | 连接复用 · 30s TTL 缓存 · 指数退避重试 |
-| **任务** | 统一进度回调 · 粒度化进度报告 · 分类图标 |
-
----
-
-## 📋 更新日志
-
-### v3.2 (2026-03-19) — 性能优化 + 全局任务系统重构
-
-**性能优化**
-- KaTeX 字体 + PDF Worker 改为 CDN，首屏 -2.7MB
-- ForceGraph2D / react-pdf / react-markdown 懒加载
-- topic_stats N+1 查询改为批量聚合（401次→4次）
-- Citation 字段加索引，图谱查询加速
-- graph_service 全量加载改为轻量模式，内存 -90%
-- HTTP 客户端复用 + LLM 指数退避重试
-- 50+ 处 index-as-key 修复
-
-**任务系统重构**
-- 统一进度回调签名（message, current, total）
-- TaskManager 合并到 global_tracker
-- fetch / cs_feed / weekly / figure_analysis 进度粒度增强
-- GlobalTaskBar 改为右下角悬浮面板（分类图标/颜色/历史）
-- ActiveTask 增加 category 字段
-
-**其他**
-- CSFeeds 论文订阅源功能完善
-- Agent 对话体验优化
-- 前端状态管理优化，减少无效重渲染
-
-### v3.1 (2026-03-01) — 安全认证 + 稳定性增强
-
-**新功能**
-- 🔐 站点密码认证 —— JWT Token 保护所有 API
-- 📄 PDF Token 认证 —— 文件访问也安全
-- 🔄 SSE 认证 —— Agent 对话等 SSE 请求携带认证
-
-**Bug 修复**
-- 修复 TypeScript 编译失败
-- 恢复 GZipMiddleware 响应压缩
-- 恢复 logging_setup 统一日志格式
-
-<details>
-<summary>查看历史版本</summary>
-
-### v3.0 (2026-02-28) — 稳定性全面升级
-### v2.8 — 后端重构 + Agent 智能化
-### v2.7 — 多源引用 + 相似度地图
-### v2.5 — 知识图谱可视化
-### v2.0 — Agent 对话系统
-### v1.0 — 基础论文管理
-
-</details>
-
----
-
-## 🔧 开发
-
-```bash
-# 后端 lint
-python -m ruff check .
-
-# 前端类型检查
-cd frontend && npx tsc --noEmit
-
-# 数据库迁移（详见 infra/migrations/README.md）
-alembic revision --autogenerate -m "描述"  # 修改模型后生成迁移
-alembic upgrade head                       # 新库建表
-alembic stamp head                         # 现有库纳入管理（不执行 DDL）
-```
-
----
+## 📚 文档
+
+- [1.x → 2.0 迁移说明](docs/README-1.x.md)
+- [API 速览](docs/README-1.x.md#-api-速览)（兼容 1.x）
+- 发布页：https://color2333.github.io/PaperMind/
 
 ## 🙏 致谢
 
-- **[awesome-ai-research-writing](https://github.com/Leey21/awesome-ai-research-writing)** — 写作助手 Prompt 模板来源
-- **[ArXiv](https://arxiv.org)** — 开放论文平台
-- **[Semantic Scholar](https://www.semanticscholar.org)** — 引用数据来源
-- **[CSFeeds](https://csarxiv.org)** — 论文源订阅服务
-- **[learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)** — Agent Harness 工程体系启发，s01-s12 渐进式解构：Loop → Tools → Planning → Subagents → Skills → Context → Tasks → Background → Teams → Protocols → Autonomous
-- **[PaperSenseMaking](https://github.com/edu-ai-builders/paper-sense-making)** — 论文阅读「阅读→理解→重构」工作流设计灵感
+- [pi](https://github.com/earendil-works/pi)（@earendil-works）—— Pi agent 内核与 pi-ai / pi-tui 底座
 
----
+## 📄 License
 
-<div align="center">
-
-**Built with ❤️ by [Color2333](https://github.com/Color2333)**
-
-*PaperMind — 让 AI 帮你读论文，让知识触手可及。*
-
-[![Star](https://img.shields.io/github/stars/Color2333/PaperMind?style=social)](https://github.com/Color2333/PaperMind/stargazers)
-
-</div>
+MIT

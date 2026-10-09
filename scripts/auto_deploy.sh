@@ -113,4 +113,6 @@ fi
 rm -f "$TMP_TGZ"
 rm -rf "$TMP_DIR"
 docker image prune -f >> "$LOG_FILE" 2>&1
+# 发布页刷新（frontend 容器内静态页）
+docker cp "$PROJECT_DIR/release/index.html" papermind-frontend:/usr/share/nginx/html/release.html >> "$LOG_FILE" 2>&1 || true
 log "清理完成"
