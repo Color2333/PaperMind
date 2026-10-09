@@ -2,7 +2,7 @@
 // 数据全在服务端（agent_conversations）——CLI 零 LLM 依赖、零本地会话文件。
 // 确认卡 v1：自动拒绝 + 显式提示（Web 端可批准）；键盘交互确认留 v2。
 
-import { Markdown, ProcessTerminal, Text, TuiMainScreen } from "@earendil-works/pi-tui";
+import { Container, Markdown, ProcessTerminal, Text, TuiMainScreen } from "@earendil-works/pi-tui";
 import { chatStream, loadAgentConversationId, saveAgentConversationId } from "./remote.js";
 
 const DIM = (s) => `\x1b[2m${s}\x1b[0m`;
