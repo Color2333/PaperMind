@@ -1,7 +1,7 @@
 # PaperMind Go API（绞杀者入口 → Phase 7 终态唯一 API）
 # Phase 4 起：agent chat 在 Go 侧 spawn pm（Pi 引擎）——镜像烘焙 Node 22 + pm_agent
 # 注意：build context 是仓库根（compose 里 context: .，dockerfile: server/Dockerfile）
-FROM golang:1.23-alpine AS build
+FROM golang:1.26-alpine AS build
 # 大陆构建环境：Go 模块走国内代理
 ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /src
