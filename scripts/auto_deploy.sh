@@ -109,7 +109,8 @@ else
     echo "$REMOTE_SHA" > "$SHA_FILE"
 fi
 
-# 8. 清理
+# 8. 清理（悬空镜像随构建累积——每次部署后清理，磁盘满会让 PG 崩）
 rm -f "$TMP_TGZ"
 rm -rf "$TMP_DIR"
+docker image prune -f >> "$LOG_FILE" 2>&1
 log "清理完成"
