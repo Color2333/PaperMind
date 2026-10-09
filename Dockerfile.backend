@@ -20,8 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Node 22（pm 依赖用 fs.globSync 等 Node≥22 API；Debian apt 的 18 不够）。
 # 走 npmmirror 二进制镜像（大陆可达）
-RUN curl -fsSL https://registry.npmmirror.com/-/binary/node/v22.14.0/node-v22.23.3-linux-x64.tar.xz \
-    | tar -xJ --strip-components=1 -C /usr/local \
+RUN curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+    -o /tmp/node.tar.xz \
+    https://registry.npmmirror.com/-/binary/node/v22.23.3/node-v22.23.3-linux-x64.tar.xz \
+    && tar -xJf /tmp/node.tar.xz --strip-components=1 -C /usr/local \
+    && rm /tmp/node.tar.xz \
     && node --version
 
 # 复制项目文件
