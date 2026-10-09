@@ -65,24 +65,43 @@ def test_exec_pool_split():
 
     orch = set(capabilities_in_pool("orchestration"))
     comp = set(capabilities_in_pool("compute"))
+    go = set(capabilities_in_pool("go"))
     executor_caps = {n for n, s in TASK_CAPABILITIES.items() if s.trigger == "executor"}
 
-    # 两池不相交，且覆盖全部 executor 触发能力
+    # 三池两两不相交，且覆盖全部 executor 触发能力
     assert not (orch & comp)
-    assert orch | comp == executor_caps
+    assert not (go & orch) and not (go & comp)
+    assert orch | comp | go == executor_caps
     # 编排器池必须包含已知 submit+poll 编排器（run_topic_ingest/weekly/cs/daily 链）
     assert {
-        "fetch_topic_papers",
         "topic_dispatch",
         "weekly_graph_maintenance",
         "daily_ingest_and_brief",
-        "cs_feed_dispatch",
         "batch_process_unread",
         "skim_papers_batch",
     } <= orch
+    # Phase 3：16 个已移植能力归 Go worker 池（Python 池不再领取）
+    assert {
+        "skim_paper",
+        "deep_read_paper",
+        "extract_claims",
+        "embed_paper",
+        "download_source",
+        "upsert_paper",
+        "fetch_topic_papers",
+        "ingest_arxiv_query",
+        "import_selected",
+        "ingest_ieee",
+        "import_references",
+        "cs_feed_fetch_category",
+        "cs_feed_dispatch",
+        "sync_citations_paper",
+        "sync_citations_incremental",
+        "sync_citations_topic",
+    } == go
     # compute 池不得混入编排器（它们会 submit+poll 等子任务）
     assert "fetch_topic_papers" not in comp
-    assert EXEC_POOLS == ("compute", "orchestration")
+    assert EXEC_POOLS == ("compute", "orchestration", "go")
 
 
 def test_worker_host_dual_pool_wiring():
