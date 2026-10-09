@@ -64,4 +64,4 @@ src-tauri/binaries/
 # PyInstaller
 *.spec
 tmp/
-server/
+server/server
