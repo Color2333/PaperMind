@@ -7,7 +7,11 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -23,11 +27,38 @@ func NewScheduler(store *CoreStore) *Scheduler {
 
 // Start 阻塞运行全部调度循环直至 ctx 取消。
 func (s *Scheduler) Start(ctx context.Context) {
-	go s.reconcileLoop(ctx)      // 15s：过期 lease 回收 + dead_letter 兜底
+	go s.reconcileLoop(ctx)      // 60s：过期 lease 回收 + dead_letter 兜底
 	go s.topicDispatchLoop(ctx)  // 每小时：到点主题抓取
 	go s.csFeedDispatchLoop(ctx) // 每小时：CS 分类表同步 + 到点订阅抓取
 	go s.idleLoop(ctx)           // 10min：未读批处理 + skimmed 精读补偿
+	go s.dailyBriefLoop(ctx)     // 每日：简报生成（cron 读 daily_report_configs）
+	go s.weeklyGraphLoop(ctx)    // 每周日 22:00 UTC：引用图维护
+	go s.heartbeatLoop(ctx)      // 60s：worker_heartbeat.json（system/worker 观察面）
 	<-ctx.Done()
+}
+
+// heartbeatLoop 写心跳文件（pm_data 共享卷，system/worker 读 ts 判时效）。
+func (s *Scheduler) heartbeatLoop(ctx context.Context) {
+	path := envOr("WORKER_HEARTBEAT_FILE", "/app/data/worker_heartbeat.json")
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	write := func() {
+		payload := fmt.Sprintf(`{"ts":%d,"error":null}`, time.Now().Unix())
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, []byte(payload), 0o644); err != nil {
+			return
+		}
+		_ = os.Rename(tmp, path)
+	}
+	write()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			write()
+		}
+	}
 }
 
 // reconcileLoop 过期 lease 回收（ReclaimExpired 由 core 主进程也可调用，
@@ -49,6 +80,89 @@ func (s *Scheduler) reconcileLoop(ctx context.Context) {
 		if len(reclaimed) > 0 {
 			log.Printf("[scheduler] reclaimed %d expired tasks", len(reclaimed))
 		}
+	}
+}
+
+// ---------- 每日简报（原 brief_job cron） ----------
+
+// parseDailyCronHour 从 cron 表达式取小时（"0 4 * * *" → 4）；解析失败默认 4。
+func parseDailyCronHour(cron string) int {
+	fields := strings.Fields(strings.TrimSpace(cron))
+	if len(fields) >= 2 {
+		if h, err := strconv.Atoi(fields[1]); err == nil && h >= 0 && h < 24 {
+			return h
+		}
+	}
+	return 4
+}
+
+func (s *Scheduler) dailyBriefLoop(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	lastFired := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		now := time.Now().UTC()
+		dayKey := now.Format("2006-01-02") + "T" + strconv.Itoa(now.Hour())
+		if dayKey == lastFired {
+			continue
+		}
+		// cron 从配置读（默认 04:00 UTC = 北京 12:00）
+		hour := 4
+		var cronExpr string
+		var sendEmail bool
+		if err := s.store.DB.QueryRow(
+			`SELECT COALESCE(cron_expression,''), COALESCE(send_email_report,false) FROM daily_report_configs LIMIT 1`,
+		).Scan(&cronExpr, &sendEmail); err == nil && cronExpr != "" {
+			hour = parseDailyCronHour(cronExpr)
+		}
+		if now.Hour() != hour {
+			continue
+		}
+		lastFired = dayKey
+		input := "{}"
+		if sendEmail {
+			input = `{"recipient":""}` // recipient 空串触发配置读取
+		}
+		if _, _, _, err := s.store.SubmitCoreTask("daily_brief_publish", input, "", 1800); err != nil {
+			log.Printf("[scheduler] daily_brief submit failed: %v", err)
+			continue
+		}
+		log.Printf("[scheduler] daily_brief submitted (hour=%d)", hour)
+	}
+}
+
+// ---------- 每周图谱维护（原 weekly_graph_job cron） ----------
+
+func (s *Scheduler) weeklyGraphLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+	lastFired := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		now := time.Now().UTC()
+		// 周日 22:00 UTC（= 北京周一 06:00，与 Python weekly_cron 默认一致）
+		if now.Weekday() != time.Sunday || now.Hour() != 22 {
+			continue
+		}
+		weekKey := now.Format("2006-W02") // 近似周标识，防同周重复
+		if weekKey == lastFired {
+			continue
+		}
+		lastFired = weekKey
+		if _, _, _, err := s.store.SubmitCoreTask("weekly_graph_maintenance", "{}", "", 3600); err != nil {
+			log.Printf("[scheduler] weekly_graph submit failed: %v", err)
+			continue
+		}
+		log.Printf("[scheduler] weekly_graph_maintenance submitted")
 	}
 }
 
@@ -93,8 +207,8 @@ func (s *Scheduler) topicDispatchLoop(ctx context.Context) {
 			continue
 		}
 		type topic struct {
-			id, name, freq    string
-			timeUTC           int
+			id, name, freq string
+			timeUTC        int
 		}
 		var due []topic
 		for rows.Next() {

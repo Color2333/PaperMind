@@ -357,10 +357,10 @@ func HandleImportReferences(ctx context.Context, env *HandlerEnv, task *Task) (m
 	}
 	return map[string]any{
 		"proposal": map[string]any{
-			"kind":              "reference_import",
-			"source_paper_id":   sourcePaperID,
+			"kind":               "reference_import",
+			"source_paper_id":    sourcePaperID,
 			"source_paper_title": sourcePaperTitle,
-			"papers":            papers,
+			"papers":             papers,
 		},
 	}, nil
 }
@@ -415,7 +415,7 @@ func HandleCsFeedDispatch(ctx context.Context, env *HandlerEnv, task *Task) (map
 		return nil, err
 	}
 	type sub struct {
-		code, status string
+		code, status  string
 		coolDownUntil *time.Time
 		lastRunAt     *time.Time
 		lastRunCount  int

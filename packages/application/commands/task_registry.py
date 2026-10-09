@@ -45,6 +45,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         # ---------- 来源与文档 ----------
         CapabilitySpec(
             name="fetch_feed",
+            exec_pool="go",
             handler="packages.integrations.arxiv_client:ArxivClient.fetch_latest",
             side_effect="无写库——返回候选 PaperCreate 列表供 upsert",
             input_keys=("query", "max_results", "sort_by", "days_back"),
@@ -144,6 +145,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         # ---------- 生成 ----------
         CapabilitySpec(
             name="generate_topic_wiki",
+            exec_pool="go",
             handler="packages.ai.graph_service:GraphService.topic_wiki",
             side_effect="Wiki 文本（含 LLM；HTTP 语义下另写 generated_contents）",
             input_keys=("keyword", "limit"),
@@ -155,6 +157,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="build_daily_brief",
+            exec_pool="go",
             handler="packages.ai.brief_service:DailyBriefService.publish",
             side_effect="generated_contents + 简报 HTML 文件 + 可选邮件",
             input_keys=("recipient", "limit"),
@@ -166,6 +169,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="send_brief_email",
+            exec_pool="go",
             handler="packages.ai.task_handlers:send_brief_email_effect",
             side_effect="外部邮件发送（不可撤回；effect ledger 幂等去重）",
             input_keys=("recipient", "subject", "content_id"),
@@ -188,7 +192,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=3600,
             max_attempts=2,
             resource_class="llm",
-            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
+            exec_pool="go",  # submit+poll 子任务——必须独立领取池
             produces=("generated_contents",),
         ),
         CapabilitySpec(
@@ -200,11 +204,12 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=3600,
             max_attempts=2,
             resource_class="network",
-            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
+            exec_pool="go",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
             name="daily_report_workflow",
+            exec_pool="go",
             handler="packages.ai.task_handlers:daily_report_workflow",
             side_effect="每日报告工作流（精读 + 生成 + 发邮件）",
             input_keys=(),
@@ -218,6 +223,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="daily_report_send_only",
+            exec_pool="go",
             handler="packages.ai.task_handlers:daily_report_send_only",
             side_effect="快速生成简报并发邮件（不可撤回）",
             input_keys=("recipient",),
@@ -237,7 +243,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=5400,
             max_attempts=1,  # 单篇失败已在 handler 内计数，整批重试会重复 LLM 成本
             resource_class="llm",
-            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
+            exec_pool="go",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -249,7 +255,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=3600,
             max_attempts=1,
             resource_class="llm",
-            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
+            exec_pool="go",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -261,7 +267,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=3600,
             max_attempts=1,  # 单主题失败在 handler 内记录，不整批重试
             resource_class="network",
-            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
+            exec_pool="go",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
@@ -374,6 +380,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="topic_wiki_save",
+            exec_pool="go",
             handler="packages.ai.task_handlers:topic_wiki_save",
             side_effect="主题 Wiki 生成 + generated_contents 落库",
             input_keys=("keyword", "limit"),
@@ -385,6 +392,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="daily_brief_publish",
+            exec_pool="go",
             handler="packages.ai.task_handlers:daily_brief_publish",
             side_effect="每日简报生成 + generated_contents（HTTP 语义含 content_id）",
             input_keys=("recipient",),
@@ -396,6 +404,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="analyze_figures",
+            exec_pool="go",
             handler="packages.ai.task_handlers:analyze_figures",
             side_effect="图表提取与解读（ImageAnalysis + 图片文件）",
             input_keys=("paper_id", "max_figures"),
@@ -407,6 +416,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="translate_bilingual_pdf",
+            exec_pool="go",
             handler="packages.ai.task_handlers:translate_bilingual_pdf",
             side_effect="双语 PDF 翻译（PaperTranslation 落库）",
             input_keys=("paper_id", "target_lang", "mode"),
