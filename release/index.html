@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PaperMind 2.0 — AI 驱动的个人研究终端</title>
+<style>
+  :root {
+    --bg: #0b0d12; --bg2: #10131b; --card: #141822; --border: #1f2534;
+    --text: #e8eaf2; --muted: #8b93a7; --accent: #6c5ce7; --accent2: #00d2c6;
+    --grad: linear-gradient(135deg, #6c5ce7 0%, #00d2c6 100%);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.6; overflow-x: hidden;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent2); text-decoration: none; }
+
+  /* ---- hero ---- */
+  .hero { text-align: center; padding: 110px 0 70px; position: relative; }
+  .hero::before {
+    content: ""; position: absolute; inset: -140px 0;
+    background: radial-gradient(600px 300px at 50% 0%, rgba(108,92,231,.22), transparent 70%);
+    pointer-events: none;
+  }
+  .badge {
+    display: inline-block; padding: 5px 16px; border-radius: 99px; font-size: 13px;
+    border: 1px solid var(--border); color: var(--muted); margin-bottom: 26px;
+    background: var(--bg2);
+  }
+  .badge b { color: var(--accent2); }
+  h1 { font-size: clamp(40px, 7vw, 68px); font-weight: 800; letter-spacing: -1px; }
+  h1 .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .tagline { font-size: 20px; color: var(--muted); margin: 18px 0 40px; }
+  .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    padding: 13px 32px; border-radius: 12px; font-size: 16px; font-weight: 600;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .btn:hover { transform: translateY(-2px); }
+  .btn.primary { background: var(--grad); color: #fff; box-shadow: 0 8px 30px rgba(108,92,231,.35); }
+  .btn.ghost { border: 1px solid var(--border); color: var(--text); background: var(--bg2); }
+
+  /* ---- metrics ---- */
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 70px 0; }
+  .metric {
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    padding: 28px 22px; text-align: center;
+  }
+  .metric .num { font-size: 34px; font-weight: 800; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .metric .label { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  /* ---- sections ---- */
+  section { padding: 60px 0; }
+  h2 { font-size: 30px; font-weight: 800; margin-bottom: 10px; }
+  .sub { color: var(--muted); margin-bottom: 36px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    padding: 28px; transition: border-color .2s, transform .2s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-3px); }
+  .card .icon { font-size: 26px; margin-bottom: 14px; }
+  .card h3 { font-size: 18px; margin-bottom: 10px; }
+  .card p { font-size: 14.5px; color: var(--muted); }
+  .card code { background: var(--bg2); padding: 2px 8px; border-radius: 6px; font-size: 13px; color: var(--accent2); }
+
+  /* ---- terminal ---- */
+  .term {
+    background: #0a0c10; border: 1px solid var(--border); border-radius: 14px;
+    overflow: hidden; margin: 30px 0; box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .term-bar { background: #14171f; padding: 10px 16px; display: flex; gap: 8px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .term-body { padding: 22px 24px; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13.5px; line-height: 1.9; }
+  .c-prompt { color: var(--accent2); font-weight: 700; }
+  .c-cmd { color: var(--text); }
+  .c-out { color: var(--muted); }
+  .c-accent { color: var(--accent2); }
+  .c-dim { color: #4a5163; }
+
+  /* ---- arch ---- */
+  .arch { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-top: 30px; }
+  .arch .node {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
+    text-align: center; font-size: 14px;
+  }
+  .arch .node b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .arch .node span { color: var(--muted); font-size: 12.5px; }
+  .arch .node.go { border-color: var(--accent); }
+  .flow { text-align: center; color: var(--accent); font-size: 20px; padding: 8px 0; }
+
+  footer { text-align: center; padding: 50px 0 60px; color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--border); margin-top: 60px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="badge">🚀 <b>PaperMind 2.0</b> · 全面重构正式发布</div>
+    <h1>你的个人<br><span class="grad">研究终端</span></h1>
+    <p class="tagline">Go 权威执行面 · Pi Agent 单网关 · 云端 CLI —— 论文库被一个全天候的研究智能体持续消化</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/Color2333/PaperMind">GitHub 仓库</a>
+      <a class="btn ghost" href="https://github.com/Color2333/PaperMind/releases/tag/v2.0.0">Release Notes</a>
+    </div>
+  </div>
+
+  <div class="metrics">
+    <div class="metric"><div class="num">10.1ms</div><div class="label">任务编排开销（submit→apply）</div></div>
+    <div class="metric"><div class="num">2,096</div><div class="label">论文持续消化中</div></div>
+    <div class="metric"><div class="num">995</div><div class="label">累计深度精读</div></div>
+    <div class="metric"><div class="num">21 项</div><div class="label">Go 单事务权威能力</div></div>
+  </div>
+
+  <section>
+    <h2>2.0 改了什么</h2>
+    <p class="sub">不是加功能——是把地基整个换掉：执行、智能、终端三层全部重构。</p>
+    <div class="grid">
+      <div class="card">
+        <div class="icon">🏛️</div>
+        <h3>Go 权威执行面</h3>
+        <p>Job / Task / Attempt 与领域写入收敛到 <code>Go 单事务</code>。fencing 令牌防脑裂、崩溃可恢复、死信可追溯——任务系统从"尽力而为"变成"必达且可审计"。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🧠</div>
+        <h3>Pi Agent 单网关</h3>
+        <p>所有 LLM 调用统一经 <code>Pi 网关</code>（pi-ai 底座）。provider 换型零改码、配置热生效。Agent 循环同时驱动网页聊天与终端。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🖥️</div>
+        <h3>云端 CLI 终端</h3>
+        <p><code>pm</code> 三形态：全屏 TUI · 一次性问答 · 确定性命令面。零本地依赖——登录即用，换机器续接同一会话。</p>
+      </div>
+      <div class="card">
+        <div class="icon">⚡</div>
+        <h3>双执行池 + 闲时补偿</h3>
+        <p>compute / orchestration 双池隔离长短任务；闲时自动补偿精读，在途去重、PDF 不可用自动标记——不重复计费，不无限重试。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🛡️</div>
+        <h3>持久化且可审计</h3>
+        <p>每次 LLM 调用有 token 与成本记录，每个任务有 Attempt 历史。2.0 的信条：<b>执行过的必须留下证据</b>。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔄</div>
+        <h3>与 Web 同源</h3>
+        <p>终端里的会话与网页聊天共享同一存储——CLI 里聊到一半，打开网页接着聊。你的研究上下文不再被客户端割裂。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>终端里的研究终端</h2>
+    <p class="sub">pm —— 一次登录，三形态。agent 循环、工具、LLM 全在服务端，CLI 零本地依赖。</p>
+    <div class="term">
+      <div class="term-bar">
+        <span class="dot" style="background:#ff5f57"></span>
+        <span class="dot" style="background:#febc2e"></span>
+        <span class="dot" style="background:#28c840"></span>
+      </div>
+      <div class="term-body">
+        <div><span class="c-dim">$</span> <span class="c-cmd">pm login --endpoint https://your-server/api</span></div>
+        <div><span class="c-out">✓ 已登录</span></div>
+        <div>&nbsp;</div>
+        <div><span class="c-dim">$</span> <span class="c-cmd">pm</span></div>
+        <div><span class="c-accent">pm 云端会话（续接 conv-9）— 数据存于服务端</span></div>
+        <div><span class="c-prompt">你 › </span><span class="c-cmd">库里最近有什么新论文？</span></div>
+        <div><span class="c-dim">⚙ pm_library_overview …</span></div>
+        <div><span class="c-dim">✓ pm_library_overview 完成</span></div>
+        <div><span class="c-out">库里共 <b>2,096</b> 篇论文，近 7 天新增 155 篇。最近入库：</span></div>
+        <div><span class="c-out">…</span></div>
+        <div>&nbsp;</div>
+        <div><span class="c-dim">$</span> <span class="c-cmd">pm -p "精读第一篇并给出三条核心主张"</span></div>
+        <div><span class="c-accent">⚙ deep_read → claims → evidence ✓</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>架构</h2>
+    <p class="sub">双语言各司其职：Go 管执行与权威，Python 管智能与编排，Node 管终端与网关。</p>
+    <div class="arch">
+      <div class="node"><b>🌐 Web 工作台 / pm CLI</b><span>React · Go+Node 终端</span></div>
+      <div class="flow">→</div>
+      <div class="node go"><b>Go Core</b><span>权威 Job/Task/Attempt<br>21 项单事务 apply</span></div>
+      <div class="flow">→</div>
+      <div class="node"><b>🐍 Worker 双执行池</b><span>纯计算 proposal<br>双池隔离 · 闲时补偿</span></div>
+      <div class="flow">→</div>
+      <div class="node"><b>🧠 Pi 网关</b><span>OpenAI 兼容面<br>配置热生效</span></div>
+      <div class="flow">→</div>
+      <div class="node"><b>🤖 LLM</b><span>MiMo / Zhipu<br>OpenAI / Anthropic</span></div>
+    </div>
+    <div class="arch" style="margin-top:14px">
+      <div class="node"><b>🐘 PostgreSQL</b><span>领域数据 + 权威任务（同库）</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>快速开始</h2>
+    <p class="sub">一条命令拉起整个 2.0。</p>
+    <div class="term">
+      <div class="term-body">
+        <div><span class="c-dim">$</span> <span class="c-cmd">git clone https://github.com/Color2333/PaperMind.git && cd PaperMind</span></div>
+        <div><span class="c-dim">$</span> <span class="c-cmd">cp .env.example .env && $EDITOR .env</span></div>
+        <div><span class="c-dim">$</span> <span class="c-cmd">docker compose up -d --build</span></div>
+        <div><span class="c-accent">🌐 http://localhost:3002</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    PaperMind 2.0 · MIT License · 由 Go / Python / Node 与一只叫 π 的 agent 共同构建<br>
+    <a href="https://github.com/Color2333/PaperMind">github.com/Color2333/PaperMind</a>
+  </footer>
+</div>
+
+</body>
+</html>
