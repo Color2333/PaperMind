@@ -39,6 +39,33 @@ func main() {
 	mux.HandleFunc("PATCH /papers/{paper_id}/favorite", s.requireAuth(s.handleToggleFavorite))
 	mux.HandleFunc("PATCH /papers/{paper_id}/reject", s.requireAuth(s.handleToggleReject))
 
+	// ---- Phase 2：jobs/tasks/queue 管理面 ----
+	mux.HandleFunc("GET /jobs", s.requireAuth(s.handleListJobs))
+	mux.HandleFunc("GET /jobs/{job_id}", s.requireAuth(s.handleGetJob))
+	mux.HandleFunc("POST /jobs/durable", s.requireAuth(s.handleSubmitDurable))
+	mux.HandleFunc("POST /jobs/{job_id}/cancel", s.requireAuth(s.handleCancelJob))
+	mux.HandleFunc("POST /jobs/{job_id}/retry", s.requireAuth(s.handleRetryJob))
+	mux.HandleFunc("POST /tasks/{task_id}/retry", s.requireAuth(s.handleRetryTask))
+	mux.HandleFunc("POST /queue/pause", s.requireAuth(s.handlePauseQueue))
+	mux.HandleFunc("POST /queue/resume", s.requireAuth(s.handleResumeQueue))
+
+	// ---- Phase 2：topics 12 端点 ----
+	mux.HandleFunc("GET /topics", s.requireAuth(s.handleListTopics))
+	mux.HandleFunc("POST /topics", s.requireAuth(s.handleUpsertTopic))
+	mux.HandleFunc("PATCH /topics/{topic_id}", s.requireAuth(s.handleUpdateTopic))
+	mux.HandleFunc("DELETE /topics/{topic_id}", s.requireAuth(s.handleDeleteTopic))
+	mux.HandleFunc("POST /topics/{topic_id}/fetch", s.requireAuth(s.handleManualFetchTopic))
+	mux.HandleFunc("GET /topics/stats", s.requireAuth(s.handleTopicStats))
+	mux.HandleFunc("POST /ingest/arxiv", s.requireAuth(s.handleIngestArxiv))
+
+	// ---- Phase 2：cs_feeds 6 端点 ----
+	mux.HandleFunc("GET /cs/categories", s.requireAuth(s.handleCSCategories))
+	mux.HandleFunc("GET /cs/feeds", s.requireAuth(s.handleCSFeeds))
+	mux.HandleFunc("POST /cs/feeds", s.requireAuth(s.handleCSSubscribe))
+	mux.HandleFunc("DELETE /cs/feeds/{category_code}", s.requireAuth(s.handleCSUnsubscribe))
+	mux.HandleFunc("PATCH /cs/feeds/{category_code}", s.requireAuth(s.handleCSUpdateFeed))
+	mux.HandleFunc("POST /cs/feeds/{category_code}/fetch", s.requireAuth(s.handleCSFetch))
+
 	// ---- Phase 1：tags 8 端点 ----
 	mux.HandleFunc("GET /tags", s.requireAuth(s.handleListTags))
 	mux.HandleFunc("POST /tags", s.requireAuth(s.handleCreateTag))
