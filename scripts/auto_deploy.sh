@@ -102,6 +102,10 @@ log "等待健康检查 (40s)..."
 sleep 40
 if curl -sf --max-time 10 http://localhost:8002/health >/dev/null 2>&1; then
     log "OK: backend 健康检查通过"
+# frontend nginx 启动时解析 upstream IP 并缓存——goserver/core 容器重建后
+# 旧 IP 失效（502 Connection refused 实证），每次部署后重启重新解析
+docker compose restart frontend >/dev/null 2>&1 || true
+log "frontend 已重启（刷新 upstream DNS）"
     echo "$REMOTE_SHA" > "$SHA_FILE"
     log "=== 部署成功! SHA=$REMOTE_SHA_SHORT 已记录 ==="
 else

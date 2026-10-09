@@ -605,3 +605,8 @@ func clampInt(v, lo, hi int) int {
 	}
 	return v
 }
+
+// ExtractPDFTextPublic 供 goserver 等外部调用方使用（PDF 文本层提取）。
+func ExtractPDFTextPublic(pdfPath string, maxPages int) string {
+	return extractPDFText(pdfPath, maxPages)
+}
