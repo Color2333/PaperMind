@@ -67,12 +67,6 @@ func (s *Server) handleFolderStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePapersLatest：v0 透明反代到 Python backend（list_papers 查询面较大，
-// 后续 capability-by-capability 移植）。
-func (s *Server) handlePapersLatest(w http.ResponseWriter, r *http.Request) {
-	s.proxyLegacy(w, r)
-}
-
 // requireAuth：CLI/API 令牌 或 Web JWT 二选一通过（Phase 0 仅校验有效性）。
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

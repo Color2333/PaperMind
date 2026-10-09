@@ -35,6 +35,25 @@ func main() {
 	mux.HandleFunc("POST /auth/device/{code}/deny", s.requireWebSession(s.handleDeviceDeny))
 	mux.HandleFunc("GET /papers/folder-stats", s.requireAuth(s.handleFolderStats))
 	mux.HandleFunc("GET /papers/latest", s.requireAuth(s.handlePapersLatest))
+	mux.HandleFunc("GET /papers/{paper_id}", s.requireAuth(s.handlePaperDetail))
+	mux.HandleFunc("PATCH /papers/{paper_id}/favorite", s.requireAuth(s.handleToggleFavorite))
+	mux.HandleFunc("PATCH /papers/{paper_id}/reject", s.requireAuth(s.handleToggleReject))
+
+	// ---- Phase 1：tags 8 端点 ----
+	mux.HandleFunc("GET /tags", s.requireAuth(s.handleListTags))
+	mux.HandleFunc("POST /tags", s.requireAuth(s.handleCreateTag))
+	mux.HandleFunc("PATCH /tags/{tag_id}", s.requireAuth(s.handleUpdateTag))
+	mux.HandleFunc("DELETE /tags/{tag_id}", s.requireAuth(s.handleDeleteTag))
+	mux.HandleFunc("GET /papers/{paper_id}/tags", s.requireAuth(s.handleGetPaperTags))
+	mux.HandleFunc("POST /papers/{paper_id}/tags", s.requireAuth(s.handleAddPaperTag))
+	mux.HandleFunc("DELETE /papers/{paper_id}/tags/{tag_id}", s.requireAuth(s.handleRemovePaperTag))
+	mux.HandleFunc("POST /papers/{paper_id}/tags/batch", s.requireAuth(s.handleBatchPaperTags))
+
+	// ---- Phase 1：research 读面 5 端点 ----
+	mux.HandleFunc("GET /research/questions/{question_id}", s.requireAuth(s.handleResearchQuestion))
+	mux.HandleFunc("GET /research/questions/{question_id}/claims", s.requireAuth(s.handleListClaims))
+	mux.HandleFunc("GET /research/claims/{claim_id}/evidence", s.requireAuth(s.handleClaimEvidence))
+	mux.HandleFunc("GET /research/questions/{question_id}/diff", s.requireAuth(s.handleDiffResearchState))
 
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
 	// "/" 兜底：/whoami /jobs /papers/search 等未注册路径全部进反代
