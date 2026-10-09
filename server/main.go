@@ -200,6 +200,13 @@ func main() {
 	mux.HandleFunc("POST /jobs/daily-report/run-once", s.requireAuth(s.handleDailyReportRunOnce))
 	mux.HandleFunc("POST /jobs/daily-report/send-only", s.requireAuth(s.handleDailyReportSendOnly))
 	mux.HandleFunc("POST /jobs/daily-report/generate-only", s.requireAuth(s.handleDailyReportGenerateOnly))
+	mux.HandleFunc("GET /topics/{topic_id}/fetch-status", s.requireAuth(s.handleFetchTopicStatus))
+	mux.HandleFunc("POST /topics/suggest-keywords", s.requireAuth(s.handleSuggestKeywords))
+	mux.HandleFunc("POST /ingest/references", s.requireAuth(s.handleIngestReferences))
+	mux.HandleFunc("GET /ingest/references/status/{task_id}", s.requireAuth(s.handleIngestReferencesStatus))
+	mux.HandleFunc("POST /graph/auto-link", s.requireAuth(s.handleGraphAutoLink))
+	mux.HandleFunc("GET /actions/{action_id}", s.requireAuth(s.handleGetAction))
+	mux.HandleFunc("GET /actions/{action_id}/papers", s.requireAuth(s.handleGetActionPapers))
 
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
 	// "/" 兜底：/whoami /jobs /papers/search 等未注册路径全部进反代
