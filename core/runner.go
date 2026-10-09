@@ -27,6 +27,7 @@ type HandlerEnv struct {
 	Embed   *EmbedClient
 	Arxiv   *ArxivClient
 	Scholar *ScholarClient
+	SMTP    *SMTPConfig
 	PDFRoot string
 }
 
@@ -56,17 +57,17 @@ var classConcurrencyDefaults = map[string]int{
 	"default":   4,
 }
 
-// classCapabilities 各资源类别的领取能力集合（Phase 3 v1 移植面）。
-// analyze_figures / translate_bilingual_pdf / wiki / brief / 邮件暂留 Python
-// worker 领取（双方 CAS 共存安全），逐项移植后退役。
+// classCapabilities 各资源类别的领取能力集合（Phase 3.5 全量执行面）。
 var classCapabilities = map[string][]string{
-	"llm":       {"skim_paper", "deep_read_paper", "extract_claims"},
+	"llm":       {"skim_paper", "deep_read_paper", "extract_claims", "topic_wiki_save", "daily_brief_publish", "analyze_figures", "translate_bilingual_pdf"},
 	"embedding": {"embed_paper"},
 	"network": {
 		"download_source", "ingest_arxiv_query", "import_selected", "ingest_ieee",
 		"import_references", "cs_feed_fetch_category", "cs_feed_dispatch",
 		"sync_citations_paper", "sync_citations_incremental", "sync_citations_topic",
-		"fetch_topic_papers",
+		"fetch_topic_papers", "send_brief_email",
+		"batch_process_unread", "skim_papers_batch", "weekly_graph_maintenance",
+		"daily_ingest_and_brief", "daily_report_workflow", "daily_report_send_only",
 	},
 	"default": {"upsert_paper"},
 }

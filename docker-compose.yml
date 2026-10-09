@@ -168,64 +168,6 @@ services:
           memory: 256M
 
   # ==========================================
-  # Worker 服务 (定时任务 + 闲时处理)
-  # ==========================================
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-    container_name: papermind-worker
-    command: python -m apps.worker.main
-    volumes:
-      - pm_data:/app/data
-      - pm_logs:/app/logs
-      - pm_pip_cache:/.pip-cache
-      - pm_agent_dir:/data
-    env_file:
-      - ./.env
-    environment:
-      - APP_ENV=production
-      - SITE_URL=https://pm.vibingu.cn
-      - DATABASE_URL=${PAPER_PG_DSN:-postgresql+psycopg2://papermind:papermind@postgres:5432/papermind}
-      # Executor 宿主（C7）：经 Go Core 领取执行；未配置则仅调度提交
-      - CORE_ADDR=core:8081
-      - CORE_TOKEN=${CORE_TOKEN:-}
-      # compute 池 Runner 副本数（deep_read 等长任务占线时轻任务的吞吐保障）
-      - WORKER_COMPUTE_CONCURRENCY=${WORKER_COMPUTE_CONCURRENCY:-2}
-      # 观察面客户端（idle_processor/queries）与执行器同令牌——缺它全部 401
-      - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
-      - PAPERMIND_CORE_URL=http://core:8081
-      # Pi LLM 网关（sidecar）：同 backend
-      - PAPERMIND_LLM_GATEWAY=1
-      - PAPERMIND_GATEWAY_URL=http://gateway:8765
-      - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
-      - PAPERMIND_AGENT_DIR=/data
-      - WORKER_EXECUTOR_ID=worker-1
-      # Phase 3 过渡：主题/CS 调度 + 闲时补偿由 worker-go 承接（防双调度重复提交）；
-      # 本进程保留 daily_brief / weekly_graph / workflow 展开 cron 与执行器。
-      - WORKER_SCHEDULE_MODE=go
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_started
-      core:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    # worker 共用 Dockerfile.backend（含 HEALTHCHECK curl 8000/health），但 worker
-    # 不跑 uvicorn，继承的 healthcheck 会误判 unhealthy。显式禁用 worker healthcheck。
-    healthcheck:
-      test: ["NONE"]
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 256M
-
-  # ==========================================
   # Go Worker (Phase 3)：嵌入式执行器 + 调度器（单二进制，无 Python 运行时）
   # claim/heartbeat/apply 同进程直调 CoreStore（零 HTTP）；主题/CS 定时调度 +
   # 闲时补偿内联为 scheduler 循环。与 Python worker 经 CAS 领取安全共存，

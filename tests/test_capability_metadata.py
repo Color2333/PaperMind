@@ -72,35 +72,10 @@ def test_exec_pool_split():
     assert not (orch & comp)
     assert not (go & orch) and not (go & comp)
     assert orch | comp | go == executor_caps
-    # 编排器池必须包含已知 submit+poll 编排器（run_topic_ingest/weekly/cs/daily 链）
-    assert {
-        "topic_dispatch",
-        "weekly_graph_maintenance",
-        "daily_ingest_and_brief",
-        "batch_process_unread",
-        "skim_papers_batch",
-    } <= orch
-    # Phase 3：16 个已移植能力归 Go worker 池（Python 池不再领取）
-    assert {
-        "skim_paper",
-        "deep_read_paper",
-        "extract_claims",
-        "embed_paper",
-        "download_source",
-        "upsert_paper",
-        "fetch_topic_papers",
-        "ingest_arxiv_query",
-        "import_selected",
-        "ingest_ieee",
-        "import_references",
-        "cs_feed_fetch_category",
-        "cs_feed_dispatch",
-        "sync_citations_paper",
-        "sync_citations_incremental",
-        "sync_citations_topic",
-    } == go
-    # compute 池不得混入编排器（它们会 submit+poll 等子任务）
-    assert "fetch_topic_papers" not in comp
+    # Phase 3.5 终态：全部 executor 能力归 Go worker（Python 池清空退役）
+    assert comp == set(), "compute 池应已清空（全部能力归 Go）"
+    assert orch == set(), "orchestration 池应已清空（Go 无 submit+wait 编排器）"
+    assert executor_caps == go
     assert EXEC_POOLS == ("compute", "orchestration", "go")
 
 

@@ -101,20 +101,30 @@ func toMeta(v any) (map[string]any, bool) {
 // extractPDFText PDF 文本提取：pdftotext（poppler）优先，缺失时回退空串。
 // 与 Python PdfTextExtractor 的可选降级语义一致（无解析器 → stub）。
 func extractPDFText(pdfPath string, maxPages int) string {
+	out := extractPDFTextRaw(pdfPath, maxPages)
+	if out == "" {
+		return ""
+	}
+	// 去分页符（deep_read prompt 用）
+	return strings.ReplaceAll(out, "\f", "\n\n")
+}
+
+// extractPDFTextRaw 保留 \f 分页符的原始提取（figures/translate 按页切分用）。
+func extractPDFTextRaw(pdfPath string, maxPages int) string {
 	if pdfPath == "" {
 		return ""
 	}
 	if _, err := os.Stat(pdfPath); err != nil {
 		return ""
 	}
-	pdfinfo, err := exec.LookPath("pdftotext")
+	pdftotext, err := exec.LookPath("pdftotext")
 	if err != nil {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	pages := fmt.Sprintf("1-%d", maxPages)
-	out, err := exec.CommandContext(ctx, pdfinfo, "-f", "1", "-l", pages, "-layout", pdfPath, "-").Output()
+	out, err := exec.CommandContext(ctx, pdftotext, "-f", "1", "-l", pages, "-layout", pdfPath, "-").Output()
 	if err != nil {
 		return ""
 	}
@@ -197,11 +207,11 @@ func buildSkimStructured(abstract, llmText string, parsed map[string]any) map[st
 			oneLiner = truncateStr(llmText, 140)
 		}
 		return map[string]any{
-			"one_liner": truncateStr(oneLiner, 280),
-			"innovations": clampList(innovations, 5, 180),
-			"keywords":    clampList(keywords, 8, 60),
-			"title_zh":    truncateStr(titleZh, 500),
-			"abstract_zh": truncateStr(abstractZh, 3000),
+			"one_liner":       truncateStr(oneLiner, 280),
+			"innovations":     clampList(innovations, 5, 180),
+			"keywords":        clampList(keywords, 8, 60),
+			"title_zh":        truncateStr(titleZh, 500),
+			"abstract_zh":     truncateStr(abstractZh, 3000),
 			"relevance_score": score,
 		}
 	}
@@ -221,11 +231,11 @@ func buildSkimStructured(abstract, llmText string, parsed map[string]any) map[st
 	}
 	score := math.Min(math.Max(float64(len(abstract))/3000.0, 0.2), 0.95)
 	return map[string]any{
-		"one_liner": truncateStr(llmText, 140),
-		"innovations": innovations,
-		"keywords":    []string{},
-		"title_zh":    "",
-		"abstract_zh": "",
+		"one_liner":       truncateStr(llmText, 140),
+		"innovations":     innovations,
+		"keywords":        []string{},
+		"title_zh":        "",
+		"abstract_zh":     "",
 		"relevance_score": score,
 	}
 }
@@ -352,7 +362,7 @@ func buildDeepStructured(llmText string, parsed map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{
-		"method_summary":    "Method extraction: " + truncateStr(llmText, 240),
+		"method_summary":      "Method extraction: " + truncateStr(llmText, 240),
 		"experiments_summary": "Experiments indicate consistent improvements against baselines.",
 		"ablation_summary":    "Ablation shows each core module contributes measurable gains.",
 		"reviewer_risks": []string{
@@ -579,10 +589,10 @@ func HandleFetchTopicPapers(ctx context.Context, env *HandlerEnv, task *Task) (m
 	}
 	log.Printf("[runner] fetch_topic_papers %s → submitted ingest %s", topicID[:8], subTaskID[:8])
 	return map[string]any{
-		"proposal":   nil,
-		"topic_id":   topicID,
-		"submitted":  subTaskID,
-		"kind":       "topic_fetch_dispatched",
+		"proposal":  nil,
+		"topic_id":  topicID,
+		"submitted": subTaskID,
+		"kind":      "topic_fetch_dispatched",
 	}, nil
 }
 

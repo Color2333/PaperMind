@@ -51,10 +51,14 @@ func main() {
 		Embed:   core.NewEmbedClient(),
 		Arxiv:   core.NewArxivClient(),
 		Scholar: core.NewScholarClient(),
+		SMTP:    core.LoadSMTPConfig(),
 		PDFRoot: pdfRoot,
 	}
 	if env.Embed == nil {
 		log.Printf("[worker] EMBEDDING_API_KEY 未配置——embed_paper 任务将失败（原 Python 伪向量已弃用）")
+	}
+	if env.SMTP == nil {
+		log.Printf("[worker] SMTP 未配置——邮件发送类任务将按失败处理（可重试）")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -77,7 +81,7 @@ func main() {
 	log.Printf("[worker] stopped")
 }
 
-// registerHandlers 注册 Phase 3 v1 能力面（其余能力暂由 Python worker 承接）。
+// registerHandlers 注册全量执行面（Phase 3.5 后 Go worker 承接全部能力）。
 func registerHandlers(r *core.Runner) {
 	r.Register("skim_paper", core.HandleSkimPaper)
 	r.Register("deep_read_paper", core.HandleDeepReadPaper)
@@ -95,4 +99,15 @@ func registerHandlers(r *core.Runner) {
 	r.Register("sync_citations_paper", core.HandleSyncCitationsPaper)
 	r.Register("sync_citations_incremental", core.HandleSyncCitationsIncremental)
 	r.Register("sync_citations_topic", core.HandleSyncCitationsTopic)
+	r.Register("topic_wiki_save", core.HandleTopicWikiSave)
+	r.Register("daily_brief_publish", core.HandleDailyBriefPublish)
+	r.Register("send_brief_email", core.HandleSendBriefEmailEffect)
+	r.Register("analyze_figures", core.HandleAnalyzeFigures)
+	r.Register("translate_bilingual_pdf", core.HandleTranslateBilingualPDF)
+	r.Register("batch_process_unread", core.HandleBatchProcessUnread)
+	r.Register("skim_papers_batch", core.HandleSkimPapersBatch)
+	r.Register("weekly_graph_maintenance", core.HandleWeeklyGraphMaintenance)
+	r.Register("daily_ingest_and_brief", core.HandleDailyIngestAndBrief)
+	r.Register("daily_report_workflow", core.HandleDailyReportWorkflow)
+	r.Register("daily_report_send_only", core.HandleDailyReportSendOnly)
 }
