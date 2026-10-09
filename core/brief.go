@@ -158,7 +158,7 @@ type todaySummary struct {
 	TotalPapers, TodayNew, WeekNew int
 }
 
-func (e *HandlerEnv) todaySummary() todaySummary {
+func (e *HandlerEnv) TodaySummary() todaySummary {
 	today := userTodayStartUTC()
 	week := today.AddDate(0, 0, -7)
 	var s todaySummary
@@ -175,7 +175,7 @@ type hotKeyword struct {
 	Count   int    `json:"count"`
 }
 
-func (e *HandlerEnv) hotKeywords(days, topK int) []hotKeyword {
+func (e *HandlerEnv) HotKeywords(days, topK int) []hotKeyword {
 	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05.000000")
 	rows, err := e.Store.DB.Query(
 		`SELECT metadata FROM papers WHERE created_at >= $1 LIMIT 500`, cutoff)
@@ -447,9 +447,9 @@ func (e *HandlerEnv) BuildDailyBrief(ctx context.Context, limit int) (html strin
 	if limit <= 0 {
 		limit = 30
 	}
-	sum = e.todaySummary()
+	sum = e.TodaySummary()
 	papers := e.selectPapersForBrief(limit)
-	hot := e.hotKeywords(7, 10)
+	hot := e.HotKeywords(7, 10)
 	ai := e.generateAISummary(ctx, 20)
 	siteURL := envOr("SITE_URL", "http://localhost:3002")
 	return e.renderBriefHTML(papers, sum, ai, hot, siteURL), sum

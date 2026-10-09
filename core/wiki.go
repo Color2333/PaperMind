@@ -5,7 +5,9 @@ package core
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -118,7 +120,7 @@ func (e *HandlerEnv) milestonesForTopic(topicID string, limit int) []milestone {
 		var title string
 		var pubDate string
 		pubExpr := `COALESCE(publication_date,'')`
-		if e.Store.isPG {
+		if e.Store.pg() {
 			pubExpr = `COALESCE(TO_CHAR(publication_date,'YYYY-MM-DD'),'')`
 		}
 		err := e.Store.DB.QueryRow(
@@ -279,4 +281,221 @@ func HandleTopicWikiSave(ctx context.Context, e *HandlerEnv, task *Task) (map[st
 			"keyword": keyword, "metadata_json": metadata,
 		},
 	}, nil
+}
+
+// PaperWikiMarkdown 论文 Wiki 生成（goserver /wiki/paper 复用）：
+// 论文 + 分析 + 引用邻接 → LLM 结构化 wiki markdown。
+func (e *HandlerEnv) PaperWikiMarkdown(ctx context.Context, paperID string) (string, map[string]any, error) {
+	var title, abstract, arxivID, analysis string
+	pubExpr := `COALESCE(publication_date,'')`
+	if e.Store.pg() {
+		pubExpr = `COALESCE(TO_CHAR(publication_date,'YYYY-MM-DD'),'')`
+	}
+	err := e.Store.DB.QueryRow(
+		`SELECT title, COALESCE(abstract,''), COALESCE(arxiv_id,''), `+pubExpr+`,
+		        COALESCE(ar.summary_md,'') FROM papers p
+		 LEFT JOIN analysis_reports ar ON ar.paper_id = p.id WHERE p.id=$1`, paperID,
+	).Scan(&title, &abstract, &arxivID, &analysis)
+	if err != nil {
+		return "", nil, fmt.Errorf("论文 %s 不存在", paperID)
+	}
+	// 引用邻接（引用/被引各取 8）
+	var ancestors, descendants []string
+	rows, err := e.Store.DB.Query(
+		`SELECT 'ref', p2.title FROM citations c JOIN papers p2 ON p2.id = c.target_paper_id WHERE c.source_paper_id=$1
+		 UNION ALL
+		 SELECT 'cite', p2.title FROM citations c JOIN papers p2 ON p2.id = c.source_paper_id WHERE c.target_paper_id=$1
+		 LIMIT 16`, paperID)
+	if err == nil {
+		for rows.Next() {
+			var dir, t string
+			if rows.Scan(&dir, &t) == nil {
+				if dir == "ref" {
+					descendants = append(descendants, t)
+				} else {
+					ancestors = append(ancestors, t)
+				}
+			}
+		}
+		rows.Close()
+	}
+	prompt := "你是学术百科编辑。请为以下论文生成结构化 Wiki，输出严格 JSON：\n" +
+		`{"overview":"论文概述（300-500字，中文）","sections":[{"title":"章节","content":"内容（引用上文）"}],"key_findings":["要点"]}` + "\n\n" +
+		fmt.Sprintf("标题: %s\narXiv: %s\n摘要: %s\n粗读分析: %s\n引用的上游论文: %s\n被引用于: %s\n",
+			title, arxivID, truncateRunes2(abstract, 1200), truncateRunes2(analysis, 800),
+			strings.Join(ancestors, "; "), strings.Join(descendants, "; "))
+	parsed, _, err := e.Gateway.CompleteJSON(ctx, "deep", prompt)
+	if err != nil {
+		return "", nil, err
+	}
+	var b strings.Builder
+	if overview := stringOf(parsed["overview"]); overview != "" {
+		fmt.Fprintf(&b, "# %s\n\n%s\n\n", title, overview)
+	}
+	if sections, ok := parsed["sections"].([]any); ok {
+		for _, sAny := range sections {
+			s, ok := sAny.(map[string]any)
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(&b, "## %s\n\n%s\n\n", stringOf(s["title"]), stringOf(s["content"]))
+		}
+	}
+	if findings, ok := parsed["key_findings"].([]any); ok && len(findings) > 0 {
+		b.WriteString("## 关键发现\n\n")
+		for _, f := range findings {
+			fmt.Fprintf(&b, "- %s\n", stringOf(f))
+		}
+	}
+	metadata := map[string]any{"paper_id": paperID, "arxiv_id": arxivID}
+	return b.String(), metadata, nil
+}
+
+func truncateRunes2(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// RecommendationItem 推荐条目（/papers/recommended 与 /today 复用）。
+type RecommendationItem struct {
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	ArxivID  string   `json:"arxiv_id"`
+	Abstract string   `json:"abstract"`
+	Score    float64  `json:"similarity"`
+	TitleZh  string   `json:"title_zh,omitempty"`
+	Keywords []string `json:"keywords,omitempty"`
+}
+
+// cosine 相似度（维度不齐返回 0）。
+func cosine(a, b []float64) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := range a {
+		dot += a[i] * b[i]
+		na += a[i] * a[i]
+		nb += b[i] * b[i]
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
+}
+
+// Recommendations 多兴趣推荐（已读 embedding 质心 × 未读候选，主题加权 1.2）。
+func (e *HandlerEnv) Recommendations(topK int) []RecommendationItem {
+	if topK <= 0 {
+		topK = 5
+	}
+	// 兴趣质心：已读论文 embedding 均值
+	rows, err := e.Store.DB.Query(
+		`SELECT embedding_vec FROM papers WHERE read_status IN ('skimmed','deep_read') AND embedding_vec IS NOT NULL LIMIT 200`)
+	if err != nil {
+		return nil
+	}
+	var readVecs [][]float64
+	for rows.Next() {
+		var raw []byte
+		if rows.Scan(&raw) != nil {
+			continue
+		}
+		var v []float64
+		if json.Unmarshal(raw, &v) == nil && len(v) > 0 {
+			readVecs = append(readVecs, v)
+		}
+	}
+	rows.Close()
+	if len(readVecs) == 0 {
+		return nil
+	}
+	dim := len(readVecs[0])
+	centroid := make([]float64, dim)
+	n := 0
+	for _, v := range readVecs {
+		if len(v) != dim {
+			continue
+		}
+		for i := range v {
+			centroid[i] += v[i]
+		}
+		n++
+	}
+	if n == 0 {
+		return nil
+	}
+	for i := range centroid {
+		centroid[i] /= float64(n)
+	}
+	// 订阅主题论文加权集
+	topicPapers := map[string]bool{}
+	trows, err := e.Store.DB.Query(
+		`SELECT pt.paper_id FROM paper_topics pt JOIN topic_subscriptions t ON t.id=pt.topic_id WHERE t.enabled = true`)
+	if err == nil {
+		for trows.Next() {
+			var pid string
+			if trows.Scan(&pid) == nil {
+				topicPapers[pid] = true
+			}
+		}
+		trows.Close()
+	}
+	// 未读候选
+	crows, err := e.Store.DB.Query(
+		`SELECT p.id, p.title, COALESCE(p.arxiv_id,''), COALESCE(p.abstract,''), COALESCE(p.metadata,'{}'),
+		        p.embedding_vec, rejected FROM papers p
+		 WHERE p.read_status='unread' AND p.embedding_vec IS NOT NULL AND p.rejected = false
+		 ORDER BY p.created_at DESC LIMIT 500`)
+	if err != nil {
+		return nil
+	}
+	defer crows.Close()
+	type scored struct {
+		item  RecommendationItem
+		score float64
+	}
+	var candidates []scored
+	for crows.Next() {
+		var id, title, arxivID, abstract, metaRaw string
+		var embRaw []byte
+		var rejected bool
+		if err := crows.Scan(&id, &title, &arxivID, &abstract, &metaRaw, &embRaw, &rejected); err != nil {
+			continue
+		}
+		var vec []float64
+		if json.Unmarshal(embRaw, &vec) != nil {
+			continue
+		}
+		sim := cosine(vec, centroid)
+		if topicPapers[id] {
+			sim *= 1.2
+		}
+		item := RecommendationItem{
+			ID: id, Title: title, ArxivID: arxivID,
+			Abstract: truncateRunes2(abstract, 300), Score: sim,
+		}
+		var meta map[string]any
+		if json.Unmarshal([]byte(metaRaw), &meta) == nil {
+			item.TitleZh = stringOf(meta["title_zh"])
+			if kws, ok := meta["keywords"].([]any); ok {
+				for _, k := range kws {
+					item.Keywords = append(item.Keywords, stringOf(k))
+				}
+			}
+		}
+		candidates = append(candidates, scored{item, sim})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].score > candidates[j].score })
+	out := make([]RecommendationItem, 0, topK)
+	for _, c := range candidates {
+		if len(out) >= topK {
+			break
+		}
+		out = append(out, c.item)
+	}
+	return out
 }
