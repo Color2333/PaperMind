@@ -56,7 +56,7 @@ func (s *Server) handlePapersLatest(w http.ResponseWriter, r *http.Request) {
 		where = append(where, "p.created_at >= "+dayStart+"::date AND p.created_at < "+dayStart+"::date + interval '1 day'")
 	}
 	if category != "" {
-		where = append(where, "p.metadata_json->'categories' ? "+addArg(category))
+		where = append(where, "p.metadata->'categories' ? "+addArg(category))
 	}
 
 	joinClause := ""
@@ -97,11 +97,11 @@ func (s *Server) handlePapersLatest(w http.ResponseWriter, r *http.Request) {
 		`SELECT p.id, p.title, p.arxiv_id, p.abstract,
 			TO_CHAR(p.publication_date, 'YYYY-MM-DD'), p.read_status, p.pdf_path,
 			p.embedding IS NOT NULL, p.favorited, p.rejected,
-			COALESCE(p.metadata_json->>'categories', '[]'),
-			COALESCE(p.metadata_json->>'keywords', '[]'),
-			COALESCE(p.metadata_json->>'title_zh', ''),
-			COALESCE(p.metadata_json->>'abstract_zh', ''),
-			COALESCE(p.metadata_json::text, '{}')
+			COALESCE(p.metadata->>'categories', '[]'),
+			COALESCE(p.metadata->>'keywords', '[]'),
+			COALESCE(p.metadata->>'title_zh', ''),
+			COALESCE(p.metadata->>'abstract_zh', ''),
+			COALESCE(p.metadata::text, '{}')
 		FROM papers p`+joinClause+" WHERE "+whereSQL+
 			" ORDER BY "+sortCol+" "+order+" NULLS LAST LIMIT $"+itoa(argN+1)+" OFFSET $"+itoa(argN+2),
 		append(args, pageSize, offset)...,
@@ -161,7 +161,7 @@ func (s *Server) handlePaperDetail(w http.ResponseWriter, r *http.Request) {
 	err := s.db.QueryRow(
 		`SELECT id, title, arxiv_id, abstract, read_status,
 			TO_CHAR(publication_date, 'YYYY-MM-DD'), pdf_path,
-			COALESCE(metadata_json::text, '{}'), favorited, rejected,
+			COALESCE(metadata::text, '{}'), favorited, rejected,
 			embedding IS NOT NULL
 		FROM papers WHERE id = $1`, id,
 	).Scan(&pid, &title, &arxivID, &abstract, &readStatus,
