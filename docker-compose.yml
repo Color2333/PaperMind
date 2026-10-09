@@ -130,10 +130,10 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 2G
+          memory: 768M
         reservations:
           cpus: '0.5'
-          memory: 512M
+          memory: 256M
 
   # ==========================================
   # Worker 服务 (定时任务 + 闲时处理)
@@ -185,10 +185,10 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 2G
+          memory: 1G
         reservations:
           cpus: '0.5'
-          memory: 512M
+          memory: 256M
 
   # ==========================================
   # 数据库服务 (PostgreSQL + pgvector)
