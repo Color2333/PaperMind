@@ -58,6 +58,14 @@ func main() {
 	mux.HandleFunc("GET /topics/stats", s.requireAuth(s.handleTopicStats))
 	mux.HandleFunc("POST /ingest/arxiv", s.requireAuth(s.handleIngestArxiv))
 
+	// ---- Phase 2：cs_feeds 6 端点 ----
+	mux.HandleFunc("GET /cs/categories", s.requireAuth(s.handleCSCategories))
+	mux.HandleFunc("GET /cs/feeds", s.requireAuth(s.handleCSFeeds))
+	mux.HandleFunc("POST /cs/feeds", s.requireAuth(s.handleCSSubscribe))
+	mux.HandleFunc("DELETE /cs/feeds/{category_code}", s.requireAuth(s.handleCSUnsubscribe))
+	mux.HandleFunc("PATCH /cs/feeds/{category_code}", s.requireAuth(s.handleCSUpdateFeed))
+	mux.HandleFunc("POST /cs/feeds/{category_code}/fetch", s.requireAuth(s.handleCSFetch))
+
 	// ---- Phase 1：tags 8 端点 ----
 	mux.HandleFunc("GET /tags", s.requireAuth(s.handleListTags))
 	mux.HandleFunc("POST /tags", s.requireAuth(s.handleCreateTag))
