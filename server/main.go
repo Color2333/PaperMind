@@ -183,6 +183,24 @@ func main() {
 	mux.HandleFunc("GET /graph/survey", s.requireAuth(s.handleGraphSurvey))
 	mux.HandleFunc("GET /graph/research-gaps", s.requireAuth(s.handleResearchGaps))
 
+	// ---- Phase 7 收尾：剩余前端面（Python 依赖清零） ----
+	mux.HandleFunc("GET /papers/recommended", s.requireAuth(s.handleRecommendedGo))
+	mux.HandleFunc("POST /papers/search-multi", s.requireAuth(s.handleSearchMulti))
+	mux.HandleFunc("GET /papers/suggest-channels", s.requireAuth(s.handleSuggestChannels))
+	mux.HandleFunc("GET /papers/{paper_id}/similar", s.requireAuth(s.handlePaperSimilar))
+	mux.HandleFunc("GET /papers/{paper_id}/duplicates", s.requireAuth(s.handlePaperDuplicates))
+	mux.HandleFunc("GET /papers/{paper_id}/figures", s.requireAuth(s.handlePaperFigures))
+	mux.HandleFunc("POST /papers/{paper_id}/figures/analyze", s.requireAuth(s.handleAnalyzeFiguresTask))
+	mux.HandleFunc("POST /papers/{paper_id}/reasoning", s.requireAuth(s.handlePaperReasoning))
+	mux.HandleFunc("GET /papers/{paper_id}/pdf", s.requireAuth(s.handlePaperPDF))
+	mux.HandleFunc("POST /papers/{paper_id}/download-pdf", s.requireAuth(s.handleDownloadPaperPDF))
+	mux.HandleFunc("POST /jobs/daily/run-once", s.requireAuth(s.handleDailyRunOnce))
+	mux.HandleFunc("POST /jobs/graph/weekly-run-once", s.requireAuth(s.handleWeeklyRunOnce))
+	mux.HandleFunc("POST /jobs/batch-process-unread", s.requireAuth(s.handleBatchProcessUnreadTask))
+	mux.HandleFunc("POST /jobs/daily-report/run-once", s.requireAuth(s.handleDailyReportRunOnce))
+	mux.HandleFunc("POST /jobs/daily-report/send-only", s.requireAuth(s.handleDailyReportSendOnly))
+	mux.HandleFunc("POST /jobs/daily-report/generate-only", s.requireAuth(s.handleDailyReportGenerateOnly))
+
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
 	// "/" 兜底：/whoami /jobs /papers/search 等未注册路径全部进反代
 	// （Go 1.22 ServeMux 中精确/具体 pattern 优先于 "/"）
