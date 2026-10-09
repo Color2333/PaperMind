@@ -113,6 +113,9 @@ services:
       - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
       - PAPERMIND_AGENT_DIR=/data
       - PAPERMIND_CORE_TOKEN=${CORE_TOKEN:-}
+      # Pi agent 桥：spawn 的 Node pm 定位（镜像内 /opt/pm-agent）
+      - PAPERMIND_PM_BIN=/opt/pm-agent/bin/pm.js
+      - PAPERMIND_SERVER_URL=http://127.0.0.1:8000
     restart: unless-stopped
     depends_on:
       postgres:

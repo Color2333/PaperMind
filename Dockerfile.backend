@@ -15,6 +15,8 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     sqlite3 \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制项目文件
@@ -35,6 +37,15 @@ RUN pip install --cache-dir=/.pip-cache ".[llm,pdf,graph]" \
         supervisor \
     -i https://mirrors.cloud.tencent.com/pypi/simple \
     --timeout 60 --retries 5
+
+# Pi agent 桥：Node 版 pm（webchat spawn `pm -p --json` 的执行体）。
+# pip 装的 apps/cli Python pm 占了 /usr/local/bin/pm——Node 版符号链接必须覆盖它
+# （host.py spawn `pm -p --json`，Python pm 不认识 → exit 2，生产实证）。
+COPY pm_agent/ /opt/pm-agent/
+RUN cd /opt/pm-agent \
+    && npm install --omit=dev --registry=https://registry.npmmirror.com \
+    && ln -sf /opt/pm-agent/bin/pm.js /usr/local/bin/pm \
+    && pm --version | grep -q papermind/cli
 
 # 创建数据目录和日志目录
 RUN mkdir -p /app/data/papers /app/data/briefs /app/logs
