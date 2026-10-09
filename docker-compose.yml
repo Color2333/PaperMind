@@ -12,6 +12,38 @@
 
 services:
   # ==========================================
+  # Go API Server（2.1 绞杀者入口）：已移植路由直接执行，未移植反代 backend。
+  # frontend 的 /api/ upstream 经挂载的 nginx.goserver.conf 指向本服务。
+  # ==========================================
+  goserver:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: papermind-goserver
+    environment:
+      - DATABASE_URL=${PAPER_PG_DSN:-postgresql://papermind:papermind@postgres:5432/papermind?sslmode=disable}
+      - BACKEND_ORIGIN=http://backend:8000
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-}
+      - AUTH_SECRET_KEY=${AUTH_SECRET_KEY:-}
+      - SITE_URL=${SITE_URL:-https://pm.vibingu.cn}
+      - LISTEN_ADDR=:8080
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 128M
+
+  # ==========================================
   # Pi LLM 网关（sidecar）：OpenAI 兼容 HTTP 面（pi-ai 底座）。
   # models.json 由 backend/worker 经共享卷物化（DB 单一事实源），本容器无 DB。
   # ==========================================
@@ -224,6 +256,9 @@ services:
     container_name: papermind-frontend
     ports:
       - "3002:80"  # 映射到 3002（避免 3001 冲突）
+    volumes:
+      # 绞杀者接缝：/api/ upstream 指向 Go API Server（未移植路由由其反代 backend）
+      - ./infra/nginx.goserver.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:80"]
