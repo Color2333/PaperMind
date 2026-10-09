@@ -49,6 +49,15 @@ func main() {
 	mux.HandleFunc("POST /queue/pause", s.requireAuth(s.handlePauseQueue))
 	mux.HandleFunc("POST /queue/resume", s.requireAuth(s.handleResumeQueue))
 
+	// ---- Phase 2：topics 12 端点 ----
+	mux.HandleFunc("GET /topics", s.requireAuth(s.handleListTopics))
+	mux.HandleFunc("POST /topics", s.requireAuth(s.handleUpsertTopic))
+	mux.HandleFunc("PATCH /topics/{topic_id}", s.requireAuth(s.handleUpdateTopic))
+	mux.HandleFunc("DELETE /topics/{topic_id}", s.requireAuth(s.handleDeleteTopic))
+	mux.HandleFunc("POST /topics/{topic_id}/fetch", s.requireAuth(s.handleManualFetchTopic))
+	mux.HandleFunc("GET /topics/stats", s.requireAuth(s.handleTopicStats))
+	mux.HandleFunc("POST /ingest/arxiv", s.requireAuth(s.handleIngestArxiv))
+
 	// ---- Phase 1：tags 8 端点 ----
 	mux.HandleFunc("GET /tags", s.requireAuth(s.handleListTags))
 	mux.HandleFunc("POST /tags", s.requireAuth(s.handleCreateTag))
