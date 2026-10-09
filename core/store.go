@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -56,6 +57,18 @@ func isPGDSN(dsn string) bool {
 	return strings.Contains(dsn, "postgres://") ||
 		strings.Contains(dsn, "postgresql://") ||
 		strings.Contains(dsn, "host=")
+}
+
+// DescribeDSN 日志安全的 DSN 摘要（隐藏凭证）。
+func DescribeDSN(dsn string) string {
+	if isPGDSN(dsn) {
+		if u, err := url.Parse(dsn); err == nil {
+			u.User = url.User("****")
+			return u.String()
+		}
+		return "postgres"
+	}
+	return dsn
 }
 
 // nowParam Go 侧时间参数（字符串格式，跨方言可比）
@@ -616,14 +629,20 @@ func (s *CoreStore) CancelExecution(taskID, executorID, leaseToken string) (stri
 // ---------- 领域查询 ----------
 
 func (s *CoreStore) GetPaper(paperID string) (map[string]any, error) {
-	row := s.DB.QueryRow(
-		`SELECT id, title, arxiv_id, abstract, read_status, metadata, pdf_path, created_at
-		 FROM papers WHERE id=$1`, paperID)
+	// created_at 双方言：PG timestamptz CAST 文本；SQLite TEXT 直接扫
+	createdExpr := "created_at"
+	if s.isPG {
+		createdExpr = `COALESCE(TO_CHAR(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '')`
+	}
 	var id, title, readStatus string
 	var arxivID, abstract, pdfPath sql.NullString
 	var metadata []byte
-	var createdAt time.Time
-	if err := row.Scan(&id, &title, &arxivID, &abstract, &readStatus, &metadata, &pdfPath, &createdAt); err != nil {
+	var createdAtStr sql.NullString
+	err := s.DB.QueryRow(
+		`SELECT id, title, arxiv_id, abstract, read_status, metadata, pdf_path, `+createdExpr+`
+		 FROM papers WHERE id=$1`, paperID,
+	).Scan(&id, &title, &arxivID, &abstract, &readStatus, &metadata, &pdfPath, &createdAtStr)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -635,7 +654,7 @@ func (s *CoreStore) GetPaper(paperID string) (map[string]any, error) {
 		"id": id, "title": title, "arxiv_id": arxivID.String,
 		"abstract": abstract.String, "read_status": readStatus,
 		"metadata_json": meta, "pdf_path": pdfPath.String,
-		"created_at": createdAt.Format(time.RFC3339),
+		"created_at": createdAtStr.String,
 	}, nil
 }
 

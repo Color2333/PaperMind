@@ -282,23 +282,32 @@ def run_worker() -> None:
 
     settings = get_settings()
 
-    # 每整点检查主题调度（UTC 时间）—— 整点第 0 分钟
-    scheduler.add_job(
-        topic_dispatch_job,
-        trigger=CronTrigger(minute=0),
-        id="topic_dispatch",
-        **_job_kwargs,
-    )
-    logger.info("✅ 已添加：主题分发任务（每小时整点，UTC）")
+    # Phase 3 过渡（Go worker 共存）：WORKER_SCHEDULE_MODE=go 时主题调度/
+    # CS 分类调度/闲时补偿由 Go worker 的 scheduler 承接——本进程保留
+    # daily_brief / weekly_graph / workflow 展开 cron 与 Executor 宿主，
+    # 避免双调度器重复提交（Go 侧同能力 CAS 领取安全，调度提交不去重）。
+    schedule_mode_go = os.environ.get("WORKER_SCHEDULE_MODE", "").lower() == "go"
 
-    # CS 分类订阅调度 —— 错开 5 分钟，避免与 topic_dispatch 同分钟抢线程
-    scheduler.add_job(
-        cs_feed_dispatch_job,
-        trigger=CronTrigger(minute=5),
-        id="cs_feed_dispatch",
-        **_job_kwargs,
-    )
-    logger.info("✅ 已添加：CS分类订阅调度任务（每小时 :05，UTC）")
+    if not schedule_mode_go:
+        # 每整点检查主题调度（UTC 时间）—— 整点第 0 分钟
+        scheduler.add_job(
+            topic_dispatch_job,
+            trigger=CronTrigger(minute=0),
+            id="topic_dispatch",
+            **_job_kwargs,
+        )
+        logger.info("✅ 已添加：主题分发任务（每小时整点，UTC）")
+
+        # CS 分类订阅调度 —— 错开 5 分钟，避免与 topic_dispatch 同分钟抢线程
+        scheduler.add_job(
+            cs_feed_dispatch_job,
+            trigger=CronTrigger(minute=5),
+            id="cs_feed_dispatch",
+            **_job_kwargs,
+        )
+        logger.info("✅ 已添加：CS分类订阅调度任务（每小时 :05，UTC）")
+    else:
+        logger.info("⏭️ WORKER_SCHEDULE_MODE=go：主题/CS 调度与闲时补偿由 Go worker 承接")
 
     # 每日简报（从数据库读取 cron 表达式）
     from packages.storage.db import session_scope
@@ -373,8 +382,12 @@ def run_worker() -> None:
     _write_heartbeat()
 
     # 启动闲时处理器（空闲时提交 durable 批处理任务——不直接执行）
-    logger.info("🤖 启动闲时自动处理器...")
-    start_idle_processor()
+    # WORKER_SCHEDULE_MODE=go 时由 Go worker 的 idleLoop 承接（防双补偿重复提交）
+    if schedule_mode_go:
+        logger.info("⏭️ 闲时处理器由 Go worker 承接（WORKER_SCHEDULE_MODE=go）")
+    else:
+        logger.info("🤖 启动闲时自动处理器...")
+        start_idle_processor()
 
     # C11 退出口：batch_jobs 消费者已删除——批处理入口全部走 durable 任务，
     # 由下方 Executor 宿主（或独立 executor 进程）执行。

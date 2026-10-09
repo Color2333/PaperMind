@@ -1,4 +1,5 @@
 # PaperMind Go Core — 纯 stdlib 静态二进制（多阶段构建，最终镜像无工具链）
+# 产物：papermind-core（权威 API）+ papermind-worker（嵌入式执行器，Phase 3）
 FROM golang:1.26-alpine AS build
 # 大陆构建环境：proxy.golang.org 不可达（真机部署实证 i/o timeout），走国内代理
 ENV GOPROXY=https://goproxy.cn,direct
@@ -7,7 +8,9 @@ COPY go.mod ./
 COPY cmd ./cmd
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/papermind-core ./cmd/papermind-core
+RUN CGO_ENABLED=0 go build -o /out/papermind-worker ./cmd/papermind-worker
 
+# core：权威面镜像（保持最小——无 PDF 工具，不承担执行面）
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget
 COPY --from=build /out/papermind-core /usr/local/bin/papermind-core
@@ -15,3 +18,10 @@ COPY --from=build /out/papermind-core /usr/local/bin/papermind-core
 ENV CORE_ADDR=0.0.0.0:8081
 EXPOSE 8081
 ENTRYPOINT ["papermind-core"]
+
+# worker：执行面镜像（独立 target——poppler 供 deep_read 文本层提取）
+FROM alpine:3.20 AS worker
+RUN apk add --no-cache ca-certificates poppler-utils
+COPY --from=build /out/papermind-worker /usr/local/bin/papermind-worker
+ENV PDF_STORAGE_ROOT=/app/data/papers
+ENTRYPOINT ["papermind-worker"]
