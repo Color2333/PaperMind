@@ -54,6 +54,7 @@ func main() {
 	mux.HandleFunc("GET /research/questions/{question_id}/claims", s.requireAuth(s.handleListClaims))
 	mux.HandleFunc("GET /research/claims/{claim_id}/evidence", s.requireAuth(s.handleClaimEvidence))
 	mux.HandleFunc("GET /research/questions/{question_id}/diff", s.requireAuth(s.handleDiffResearchState))
+	mux.HandleFunc("GET /research/questions/{question_id}/export", s.requireAuth(s.handleResearchExport))
 
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
 	// "/" 兜底：/whoami /jobs /papers/search 等未注册路径全部进反代

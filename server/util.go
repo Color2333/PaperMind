@@ -3,9 +3,11 @@ package main
 // util.go：papers/research 共用的小工具（JSON 形状对齐 Python 序列化）。
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func atoiOr(s string, def int) int {
@@ -104,4 +106,11 @@ func (s *Server) tagsForPaper(paperID string) []map[string]any {
 		}
 	}
 	return out
+}
+
+func isoNullTime(nt sql.NullTime) any {
+	if !nt.Valid {
+		return nil
+	}
+	return nt.Time.UTC().Format(time.RFC3339Nano)
 }
