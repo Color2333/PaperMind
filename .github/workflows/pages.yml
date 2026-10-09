@@ -1,0 +1,39 @@
+# PaperMind 2.0 发布页 → GitHub Pages
+# 部署 release/index.html 到 https://color2333.github.io/PaperMind/
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "release/index.html"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 组装站点
+        run: |
+          mkdir -p site
+          cp release/index.html site/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

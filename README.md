@@ -13,7 +13,7 @@
 > 2.0 全面重构：**Go 权威执行面 + Pi Agent 单网关 + 云端 CLI 终端**。
 > 论文库不只是被检索——它被一个持久化、可审计、全天候的研究智能体持续消化。
 
-🌐 **[在线发布页](release/index.html)** · 📦 [1.x 历史文档](docs/README-1.x.md)
+🌐 **[在线发布页](https://color2333.github.io/PaperMind/)** · 📦 [1.x 历史文档](docs/README-1.x.md)
 
 ---
 
@@ -107,7 +107,7 @@ pm                               # 进入云端研究终端
 
 - [1.x → 2.0 迁移说明](docs/README-1.x.md)
 - [API 速览](docs/README-1.x.md#-api-速览)（兼容 1.x）
-- 发布页：[release/index.html](release/index.html)
+- 发布页：https://color2333.github.io/PaperMind/
 
 ## 🙏 致谢
 
