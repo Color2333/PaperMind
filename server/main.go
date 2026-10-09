@@ -39,6 +39,16 @@ func main() {
 	mux.HandleFunc("PATCH /papers/{paper_id}/favorite", s.requireAuth(s.handleToggleFavorite))
 	mux.HandleFunc("PATCH /papers/{paper_id}/reject", s.requireAuth(s.handleToggleReject))
 
+	// ---- Phase 2：jobs/tasks/queue 管理面 ----
+	mux.HandleFunc("GET /jobs", s.requireAuth(s.handleListJobs))
+	mux.HandleFunc("GET /jobs/{job_id}", s.requireAuth(s.handleGetJob))
+	mux.HandleFunc("POST /jobs/durable", s.requireAuth(s.handleSubmitDurable))
+	mux.HandleFunc("POST /jobs/{job_id}/cancel", s.requireAuth(s.handleCancelJob))
+	mux.HandleFunc("POST /jobs/{job_id}/retry", s.requireAuth(s.handleRetryJob))
+	mux.HandleFunc("POST /tasks/{task_id}/retry", s.requireAuth(s.handleRetryTask))
+	mux.HandleFunc("POST /queue/pause", s.requireAuth(s.handlePauseQueue))
+	mux.HandleFunc("POST /queue/resume", s.requireAuth(s.handleResumeQueue))
+
 	// ---- Phase 1：tags 8 端点 ----
 	mux.HandleFunc("GET /tags", s.requireAuth(s.handleListTags))
 	mux.HandleFunc("POST /tags", s.requireAuth(s.handleCreateTag))
