@@ -267,3 +267,8 @@ func truncStr(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// submitCoreTaskQuiet 静默提交（auto-link 批量循环用）。
+func (s *Server) submitCoreTaskQuiet(capability string, inputRef map[string]any, timeoutS int) (jobID, taskID string, err error) {
+	return s.submitCoreTask(capability, inputRef, timeoutS)
+}
