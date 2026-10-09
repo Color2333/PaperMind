@@ -212,6 +212,10 @@ def _start_executor_host(core_addr: str) -> None:
     except ValueError:
         compute_concurrency = 2
     for pool in EXEC_POOLS:
+        if pool == "go":
+            # go 池是 Go worker 二进制（papermind-worker）的专属执行面——
+            # Python 宿主领取即与绞杀者切换意图相悖（worker-1-go 与 go-worker-1 竞速）
+            continue
         capabilities = capabilities_in_pool(pool)
         if not capabilities:
             continue
