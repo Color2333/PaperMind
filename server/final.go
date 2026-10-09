@@ -4,6 +4,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -206,3 +207,82 @@ func (s *Server) handleGetActionPapers(w http.ResponseWriter, r *http.Request) {
 
 // jsonMarshalSafe 安全序列化（占位引用）。
 var _ = json.Marshal
+
+// handleListActionsGo GET /actions —— 收集行动列表（Phase 2 遗漏项，backend 退役后暴露）。
+func (s *Server) handleListActionsGo(w http.ResponseWriter, r *http.Request) {
+	actionType := r.URL.Query().Get("action_type")
+	topicID := r.URL.Query().Get("topic_id")
+	limit := queryInt(r, "limit", 50)
+	offset := queryInt(r, "offset", 0)
+	query := `SELECT id, action_type, COALESCE(title,''), COALESCE(query,''), topic_id, paper_count,
+	                 TO_CHAR(created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"'), COUNT(*) OVER() AS total
+	          FROM collection_actions WHERE 1=1`
+	args := []any{}
+	if actionType != "" {
+		args = append(args, actionType)
+		query += fmt.Sprintf(" AND action_type=$%d", len(args))
+	}
+	if topicID != "" {
+		args = append(args, topicID)
+		query += fmt.Sprintf(" AND topic_id=$%d", len(args))
+	}
+	args = append(args, limit, offset)
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT %d OFFSET %d", len(args)-1, len(args))
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	total := 0
+	for rows.Next() {
+		var id, aType, title, createdAt string
+		var q, topicID sql.NullString
+		var paperCount, t int
+		if rows.Scan(&id, &aType, &title, &q, &topicID, &paperCount, &createdAt, &t) == nil {
+			total = t
+			items = append(items, map[string]any{
+				"id": id, "action_type": aType, "title": title,
+				"query": nullStr(q), "topic_id": nullStr(topicID),
+				"paper_count": paperCount, "created_at": createdAt,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// handlePaperDistribution GET /topics/distribution —— 年份 + 来源分布。
+func (s *Server) handlePaperDistribution(w http.ResponseWriter, r *http.Request) {
+	// 年份分布
+	yearRows, err := s.db.Query(
+		`SELECT COALESCE(TO_CHAR(publication_date,'YYYY'),'unknown') AS yr, COUNT(*)
+		 FROM papers GROUP BY yr ORDER BY yr DESC`)
+	byYear := []map[string]any{}
+	if err == nil {
+		for yearRows.Next() {
+			var yr string
+			var c int
+			if yearRows.Scan(&yr, &c) == nil {
+				byYear = append(byYear, map[string]any{"year": yr, "count": c})
+			}
+		}
+		yearRows.Close()
+	}
+	// 来源分布（metadata->>'source' 缺失按 arxiv 计）
+	srcRows, err2 := s.db.Query(
+		`SELECT COALESCE(metadata->>'source', CASE WHEN source IS NOT NULL AND source != '' THEN source ELSE 'arxiv' END) AS src, COUNT(*)
+		 FROM papers GROUP BY src ORDER BY COUNT(*) DESC`)
+	bySource := []map[string]any{}
+	if err2 == nil {
+		for srcRows.Next() {
+			var src string
+			var c int
+			if srcRows.Scan(&src, &c) == nil {
+				bySource = append(bySource, map[string]any{"source": src, "count": c})
+			}
+		}
+		srcRows.Close()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"by_year": byYear, "by_source": bySource})
+}

@@ -207,6 +207,8 @@ func main() {
 	mux.HandleFunc("POST /graph/auto-link", s.requireAuth(s.handleGraphAutoLink))
 	mux.HandleFunc("GET /actions/{action_id}", s.requireAuth(s.handleGetAction))
 	mux.HandleFunc("GET /actions/{action_id}/papers", s.requireAuth(s.handleGetActionPapers))
+	mux.HandleFunc("GET /actions", s.requireAuth(s.handleListActionsGo))
+	mux.HandleFunc("GET /topics/distribution", s.requireAuth(s.handlePaperDistribution))
 
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
 	// "/" 兜底：/whoami /jobs /papers/search 等未注册路径全部进反代
