@@ -171,6 +171,33 @@ class IdleProcessor:
         self._is_processing = False
         self._papers_processed = 0
 
+    @staticmethod
+    def _in_flight_paper_ids(capability: str) -> set[str]:
+        """Go 权威任务表中该 capability 仍在排队/执行中的 paper_id 集合。
+
+        闲时循环每轮都会重提同一批"卡住"的论文——若不查在途集合，同一篇论文
+        会被反复提交（生产实证：deep_read 排队堆积到 63、embed/skim 大量重复
+        LLM 调用）。表查询失败（如测试库无 core_tasks）返回空集不阻塞。
+        """
+        try:
+            from sqlalchemy import text
+
+            with session_scope() as session:
+                rows = (
+                    session.execute(
+                        text(
+                            "SELECT input_ref->>'paper_id' FROM core_tasks "
+                            "WHERE capability = :cap AND status IN ('queued','leased','running')"
+                        ),
+                        {"cap": capability},
+                    )
+                    .scalars()
+                    .all()
+                )
+                return {r for r in rows if r}
+        except Exception:  # noqa: BLE001
+            return set()
+
     def _get_unread_papers(self, limit: int = 10) -> list[tuple[str, str]]:
         """
         获取未读且未处理的论文
@@ -222,6 +249,11 @@ class IdleProcessor:
         from packages.application.commands.jobs import submit_job
         from packages.application.commands.task_registry import get_spec
 
+        # 上一批 batch_process_unread 仍在途 → 本轮跳过（防重复提交）
+        if self._in_flight_paper_ids("batch_process_unread"):
+            logger.info("上一批闲时批处理仍在途，本轮跳过")
+            return 0
+
         papers = self._get_unread_papers(limit=self.batch_size)
         if not papers:
             logger.info("没有需要处理的未读论文")
@@ -261,6 +293,9 @@ class IdleProcessor:
             return 0
 
         stuck = self._get_stuck_skimmed_papers(limit=quota)
+        # 排除已有在途 deep_read 任务的论文（否则每轮重提，重复 LLM 成本）
+        inflight = self._in_flight_paper_ids("deep_read_paper")
+        stuck = [(pid, title) for pid, title in stuck if pid not in inflight]
         if not stuck:
             return 0
 
