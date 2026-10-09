@@ -227,7 +227,7 @@ func (s *Server) handleListActionsGo(w http.ResponseWriter, r *http.Request) {
 		query += fmt.Sprintf(" AND topic_id=$%d", len(args))
 	}
 	args = append(args, limit, offset)
-	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT %d OFFSET %d", len(args)-1, len(args))
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
