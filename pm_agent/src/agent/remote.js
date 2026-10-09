@@ -68,19 +68,14 @@ async function answerConfirm(client, data, interactive) {
 }
 
 /**
- * 远程 agent 一次性对话：POST /agent/chat SSE → 渲染 + 确认应答。
- * 返回 { conversationId, ok }——conversationId 供后续续接；ok=false 表示流内报错。
+ * 远程 agent 对话核心：POST /agent/chat SSE → 事件分派（渲染无关）。
+ * handlers: {onConversationInit, onTextDelta, onToolStart, onToolResult,
+ *            onConfirm(async), onError, onDone}
+ * onConfirm 缺省时自动拒绝（安全默认）。返回 {conversationId, ok}。
  */
-export async function runRemotePrompt({
-	client,
-	message,
-	conversationId = null,
-	interactive = Boolean(stdin.isTTY),
-}) {
+export async function chatStream({ client, message, conversationId = null, handlers = {} }) {
 	let convId = conversationId;
-	let convIdSeen = false;
 	let errored = false;
-
 	await client.postStream(
 		"/agent/chat",
 		{
@@ -93,37 +88,85 @@ export async function runRemotePrompt({
 			const { event, data } = parsed;
 			switch (event) {
 				case "conversation_init":
-					if (data.conversation_id && !convIdSeen) {
-						convId = data.conversation_id;
-						convIdSeen = true;
-					}
+					if (data.conversation_id) convId = data.conversation_id;
+					handlers.onConversationInit?.(data.conversation_id);
 					break;
 				case "text_delta":
-					stdout.write(data.content || "");
+					handlers.onTextDelta?.(data.content || "");
 					break;
 				case "tool_start":
-					stdout.write(`\n${DIM}⚙ ${data.tool || "tool"} …${RESET}\n`);
+					handlers.onToolStart?.(data.tool || "tool", data);
 					break;
 				case "tool_result":
-					stdout.write(`${DIM}✓ ${data.tool || "tool"} 完成${RESET}\n`);
+					handlers.onToolResult?.(data.tool || "tool", data);
 					break;
 				case "action_confirm":
-					void answerConfirm(client, data, interactive);
+					if (handlers.onConfirm) void handlers.onConfirm(data);
+					else
+						void client
+							.post(`/agent/reject/${data.id}`)
+							.catch(() => {});
 					break;
 				case "error":
 					errored = true;
-					stderr.write(`\n${RED}错误: ${data.message || "未知"}${RESET}\n`);
+					handlers.onError?.(data.message || "未知");
 					break;
 				case "done":
-					stdout.write("\n");
+					handlers.onDone?.();
 					break;
 				default:
 					break;
 			}
 		},
 	);
-	if (convId) await saveAgentConversationId(convId).catch(() => {});
 	return { conversationId: convId, ok: !errored };
+}
+
+/**
+ * 远程 agent 一次性对话（行式渲染，pm -p 用）：chatStream + stdout 处理器。
+ */
+export async function runRemotePrompt({
+	client,
+	message,
+	conversationId = null,
+	interactive = Boolean(stdin.isTTY),
+}) {
+	let answerConfirm = null;
+	const { conversationId: convId, ok } = await chatStream({
+		client,
+		message,
+		conversationId,
+		handlers: {
+			onConversationInit: () => {},
+			onTextDelta: (delta) => stdout.write(delta),
+			onToolStart: (tool) => stdout.write(`\n${DIM}⚙ ${tool} …${RESET}\n`),
+			onToolResult: (tool) => stdout.write(`${DIM}✓ ${tool} 完成${RESET}\n`),
+			onConfirm: (data) => {
+				answerConfirm = answerConfirmOrNote(client, data, interactive);
+			},
+			onError: (msg) => stderr.write(`\n${RED}错误: ${msg}${RESET}\n`),
+			onDone: () => stdout.write("\n"),
+		},
+	});
+	await answerConfirm;
+	if (convId) await saveAgentConversationId(convId).catch(() => {});
+	return { conversationId: convId, ok };
+}
+
+async function answerConfirmOrNote(client, data, interactive) {
+	const desc = data.description || data.tool || "";
+	stdout.write(`\n${BOLD}⚠ 确认请求（${data.tool || "tool"}）${RESET}: ${desc}\n`);
+	if (!interactive) {
+		stdout.write(`${DIM}非交互环境，自动拒绝（可在 TTY 下重跑以批准）${RESET}\n`);
+		await client.post(`/agent/reject/${data.id}`).catch(() => {});
+		return;
+	}
+	const rl = createInterface({ input: stdin, output: stdout });
+	const answer = (await rl.question("批准执行? [y/N] ")).trim().toLowerCase();
+	rl.close();
+	const ok = answer === "y" || answer === "yes";
+	stdout.write(`${DIM}${ok ? "✓ 已批准" : "✗ 已拒绝"}${RESET}\n`);
+	await client.post(`/agent/${ok ? "confirm" : "reject"}/${data.id}`).catch(() => {});
 }
 
 /**

@@ -135,6 +135,47 @@ export function papermindTools() {
 	const tools = [];
 
 	tools.push({
+		name: "pm_library_overview",
+		label: "library overview",
+		description:
+			"获取用户 PaperMind 库的基础概况：论文总数、近 7 天新增、阅读状态、主题分布与最近入库论文（真实 id）。任何关于'库里有多少/最近有什么/库概况'的问题必须先用这个。",
+		promptSnippet: "- pm_library_overview(): 库概况（总数/近 7 天/主题分布/最近论文）",
+		parameters: Type.Object({}),
+		async execute(_id, _params) {
+			const client = await getClient();
+			const [stats, latest] = await Promise.all([
+				client.get("/papers/folder-stats").catch(() => null),
+				client.get("/papers/latest?page_size=8").catch(() => null),
+			]);
+			const items = latest?.items || latest?.papers || [];
+			const lines = [];
+			if (stats) {
+				lines.push(
+					`论文总数 ${stats.total} · 近 7 天新增 ${stats.recent_7d} · 未分类 ${stats.unclassified}`,
+				);
+				const topics = (stats.by_topic || []).slice(0, 5);
+				if (topics.length) {
+					lines.push(
+						"主题 Top: " + topics.map((tp) => `${tp.topic_name}(${tp.count})`).join("、"),
+					);
+				}
+			}
+			if (items.length) {
+				lines.push("最近入库:");
+				for (const p of items) {
+					lines.push(`- [${p.id}] ${p.title}（${p.read_status || "unread"}）`);
+				}
+			}
+			return textResult(lines.join("\n") || "库为空", { stats, latest: items });
+		},
+		renderCall: callLine("overview", () => "library"),
+		renderResult: resultRenderer("读取库概况…", (result, theme) => {
+			const first = result?.details?.latest?.[0];
+			return new Text(first ? renderPaperCard(first, theme) : theme.fg("muted", "库概况已读取"), 0, 0);
+		}),
+	});
+
+	tools.push({
 		name: "pm_search_papers",
 		label: "search papers",
 		description: "在用户的 PaperMind 库与 arXiv 等渠道搜索论文，返回候选列表（id/标题/作者/摘要片段）。用户提到找论文时先用这个。",
