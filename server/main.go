@@ -24,14 +24,17 @@ func main() {
 	mux := http.NewServeMux()
 
 	// ---- 已移植：Go 直接执行 ----
-	mux.HandleFunc("GET /api/health", s.handleHealth)
-	mux.HandleFunc("POST /api/auth/device/start", s.handleDeviceStart)
-	mux.HandleFunc("POST /api/auth/device/poll", s.handleDevicePoll)
-	mux.HandleFunc("GET /api/auth/device/{code}", s.handleDeviceInfo)
-	mux.HandleFunc("POST /api/auth/device/{code}/authorize", s.requireWebSession(s.handleDeviceAuthorize))
-	mux.HandleFunc("POST /api/auth/device/{code}/deny", s.requireWebSession(s.handleDeviceDeny))
-	mux.HandleFunc("GET /api/papers/folder-stats", s.requireAuth(s.handleFolderStats))
-	mux.HandleFunc("GET /api/papers/latest", s.requireAuth(s.handlePapersLatest))
+	// 注意：frontend nginx 已剥掉 /api/ 前缀（rewrite ^/api/(.*) /$1）——
+	// 本服务收到的路径与 Python backend 同形状（无 /api/ 前缀）
+	mux.HandleFunc("GET /api/health", s.handleHealth) // 直连巡检入口（nginx /health 由其自答）
+	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("POST /auth/device/start", s.handleDeviceStart)
+	mux.HandleFunc("POST /auth/device/poll", s.handleDevicePoll)
+	mux.HandleFunc("GET /auth/device/{code}", s.handleDeviceInfo)
+	mux.HandleFunc("POST /auth/device/{code}/authorize", s.requireWebSession(s.handleDeviceAuthorize))
+	mux.HandleFunc("POST /auth/device/{code}/deny", s.requireWebSession(s.handleDeviceDeny))
+	mux.HandleFunc("GET /papers/folder-stats", s.requireAuth(s.handleFolderStats))
+	mux.HandleFunc("GET /papers/latest", s.requireAuth(s.handlePapersLatest))
 
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
 	mux.HandleFunc("/api/", s.proxyLegacy)
