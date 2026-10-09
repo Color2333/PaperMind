@@ -201,6 +201,9 @@ services:
       - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
       - PAPERMIND_AGENT_DIR=/data
       - WORKER_EXECUTOR_ID=worker-1
+      # Phase 3 过渡：主题/CS 调度 + 闲时补偿由 worker-go 承接（防双调度重复提交）；
+      # 本进程保留 daily_brief / weekly_graph / workflow 展开 cron 与执行器。
+      - WORKER_SCHEDULE_MODE=go
     restart: unless-stopped
     depends_on:
       backend:
@@ -221,6 +224,49 @@ services:
         reservations:
           cpus: '0.5'
           memory: 256M
+
+  # ==========================================
+  # Go Worker (Phase 3)：嵌入式执行器 + 调度器（单二进制，无 Python 运行时）
+  # claim/heartbeat/apply 同进程直调 CoreStore（零 HTTP）；主题/CS 定时调度 +
+  # 闲时补偿内联为 scheduler 循环。与 Python worker 经 CAS 领取安全共存，
+  # 未移植能力（wiki/brief/figures/translate/email）仍由 Python worker 领取。
+  # ==========================================
+  worker-go:
+    build:
+      context: ./core
+      dockerfile: Dockerfile.core
+      target: worker
+    container_name: papermind-worker-go
+    env_file:
+      - ./.env
+    environment:
+      - CORE_DB_PATH=${CORE_PG_DSN:-postgresql://papermind:papermind@postgres:5432/papermind?sslmode=disable}
+      - WORKER_EXECUTOR_ID=go-worker-1
+      # Pi LLM 网关（skim/deep 语义模型映射在网关侧）
+      - PAPERMIND_GATEWAY_URL=http://gateway:8765
+      - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
+      # embedding 独立 provider（SiliconFlow bge-m3 等，读 .env）
+      - PDF_STORAGE_ROOT=/app/data/papers
+      - S2_API_KEY=${S2_API_KEY:-}
+      - IEEE_API_KEY=${IEEE_API_KEY:-}
+    volumes:
+      - pm_data:/app/data
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    healthcheck:
+      test: ["NONE"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
 
   # ==========================================
   # 数据库服务 (PostgreSQL + pgvector)
