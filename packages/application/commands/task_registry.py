@@ -37,7 +37,7 @@ RESOURCE_CLASSES = ("default", "network", "llm", "embedding")
 
 # 执行池（Executor 宿主按池分领取器——编排器 handler 会 submit+poll 等待自己的
 # 子任务，与子任务同池串行领取即自死锁，实证见 dedup-9 真机复跑）
-EXEC_POOLS = ("compute", "orchestration")
+EXEC_POOLS = ("compute", "orchestration", "go")  # go=Phase 3 Go worker 专属（Python 池不再领取）
 
 TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
     spec.name: spec
@@ -57,6 +57,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="upsert_paper",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:upsert_paper_data",
             side_effect="papers 行 + v1 SourceVersion + SourceAdded/SourceVersionDetected 事件（同事务）",
             input_keys=("arxiv_id", "title", "abstract"),
@@ -68,6 +69,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="download_source",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:download_source_data",
             side_effect="PDF 文件落盘 + set_pdf_path",
             input_keys=("arxiv_id",),
@@ -80,6 +82,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         # ---------- 研究流水线 ----------
         CapabilitySpec(
             name="skim_paper",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:skim_paper_proposal",
             side_effect="AnalysisReport（summary_md/skim_score）+ PromptTrace 成本 + pipeline_runs",
             input_keys=("paper_id",),
@@ -91,6 +94,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="deep_read_paper",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:deep_read_paper_proposal",
             side_effect="AnalysisReport（deep_dive_md）+ ImageAnalysis + 同事务 ClaimExtraction",
             input_keys=("paper_id",),
@@ -102,6 +106,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="extract_claims",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:extract_claims_proposal",
             side_effect="ResearchRun + papermind Claims + Evidence（幂等指纹去重）",
             input_keys=("paper_id", "source_text"),
@@ -113,6 +118,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="embed_paper",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:embed_paper_proposal",
             side_effect="papers.embedding 列更新",
             input_keys=("paper_id",),
@@ -125,6 +131,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         # ---------- 引用图谱 ----------
         CapabilitySpec(
             name="sync_citations_paper",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.graph_service:GraphService.sync_citations_for_paper",
             side_effect="citations 边写入（外部引用 API 副作用）",
             input_keys=("paper_id", "limit"),
@@ -259,6 +266,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="cs_feed_dispatch",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:cs_feed_dispatch",
             side_effect="CS 分类表同步（proposal）+ 到点订阅抓取任务提交",
             input_keys=(),
@@ -266,11 +274,11 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=1800,
             max_attempts=2,
             resource_class="network",
-            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
             name="fetch_topic_papers",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:fetch_topic_papers",
             side_effect="单个订阅主题抓取入库（papers + SourceAdded）",
             input_keys=("topic_id",),
@@ -278,11 +286,11 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
             timeout_s=1800,
             max_attempts=2,
             resource_class="network",
-            exec_pool="orchestration",  # submit+poll 子任务——必须独立领取池
             produces=(),
         ),
         CapabilitySpec(
             name="ingest_arxiv_query",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:ingest_arxiv_query_proposal",
             side_effect="按关键词 arXiv 搜索入库（papers + action）",
             input_keys=("query", "max_results", "topic_id", "sort_by", "days_back", "action_type"),
@@ -294,6 +302,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="import_selected",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:import_selected_proposal",
             side_effect="按选中 ID 批量入库 + embed/skim（papers + action）",
             input_keys=("arxiv_ids", "query"),
@@ -305,6 +314,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="ingest_ieee",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:ingest_ieee_proposal",
             side_effect="IEEE 关键词搜索入库（papers + action）",
             input_keys=("query", "max_results", "topic_id", "action_type"),
@@ -316,6 +326,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="import_references",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:import_references",
             side_effect="参考文献批量导入（papers + citations）",
             input_keys=("source_paper_id", "source_paper_title", "entries", "topic_ids"),
@@ -327,6 +338,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="cs_feed_fetch_category",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:cs_feed_fetch_category",
             side_effect="单个 CS 分类抓取入库（papers + csfeed 主题 + 订阅运行状态）",
             input_keys=("category_code",),
@@ -338,6 +350,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="sync_citations_incremental",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:sync_citations_incremental",
             side_effect="增量引用边同步（citations 写入）",
             input_keys=("paper_limit", "edge_limit_per_paper"),
@@ -349,6 +362,7 @@ TASK_CAPABILITIES: dict[str, CapabilitySpec] = {
         ),
         CapabilitySpec(
             name="sync_citations_topic",
+            exec_pool="go",  # Phase 3 已移植 Go worker
             handler="packages.ai.task_handlers:sync_citations_topic",
             side_effect="主题引用边同步（citations 写入）",
             input_keys=("topic_id", "paper_limit", "edge_limit_per_paper"),
