@@ -12,22 +12,6 @@ import (
 	"time"
 )
 
-// handleRecommended：GET /papers/recommended —— 反代 Python（LLM 推荐）。
-func (s *Server) handleRecommended(w http.ResponseWriter, r *http.Request) {
-	s.proxyLegacy(w, r)
-}
-
-// handleSearchMulti：POST /papers/search-multi —— 多渠道并行搜索。
-// Phase 1 v0：反代 Python（渠道聚合器涉及 5 个 HTTP client 移植，Phase 3 收编）。
-func (s *Server) handleSearchMulti(w http.ResponseWriter, r *http.Request) {
-	s.proxyLegacy(w, r)
-}
-
-// handleSuggestChannels：GET /papers/suggest-channels —— 反代 Python。
-func (s *Server) handleSuggestChannels(w http.ResponseWriter, r *http.Request) {
-	s.proxyLegacy(w, r)
-}
-
 // handleProxyArxivPDF：GET /papers/proxy-arxiv-pdf/{arxiv_id} —— Go 原生 HTTP 代理。
 func (s *Server) handleProxyArxivPDF(w http.ResponseWriter, r *http.Request) {
 	arxivID := r.PathValue("arxiv_id")
