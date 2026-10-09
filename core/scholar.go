@@ -189,3 +189,48 @@ func stringOf(v any) string {
 	}
 	return ""
 }
+
+// SearchPapers S2 标题检索（search-multi 渠道用）。
+func (s *ScholarClient) SearchPapers(ctx context.Context, query string, limit int) ([]map[string]any, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	data, err := s.get(ctx, "/paper/search", url.Values{
+		"query": {query}, "limit": {fmt.Sprint(limit)},
+		"fields": {"title,abstract,year,externalIds,venue"},
+	})
+	if err != nil || data == nil {
+		return nil, err
+	}
+	list, ok := data["data"].([]any)
+	if !ok {
+		return nil, nil
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		title := stringOf(m["title"])
+		if title == "" {
+			continue
+		}
+		abstract := stringOf(m["abstract"])
+		year := 0
+		if f, ok := m["year"].(float64); ok {
+			year = int(f)
+		}
+		arxivID := ""
+		if ext, ok := m["externalIds"].(map[string]any); ok {
+			arxivID = stringOf(ext["ArXiv"])
+		}
+		out = append(out, map[string]any{
+			"arxiv_id": arxivID, "title": title,
+			"abstract": truncateStr(abstract, 500),
+			"year":     year, "venue": stringOf(m["venue"]),
+			"metadata": map[string]any{"source": "semantic_scholar"},
+		})
+	}
+	return out, nil
+}
