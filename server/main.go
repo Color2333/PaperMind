@@ -117,6 +117,33 @@ func main() {
 	mux.HandleFunc("GET /agent/conversations/{conversation_id}", s.requireAuth(s.handleGetConversation))
 	mux.HandleFunc("DELETE /agent/conversations/{conversation_id}", s.requireAuth(s.handleDeleteConversation))
 
+	// ---- Phase 5：认证全量 + settings + system + metrics ----
+	mux.HandleFunc("POST /auth/login", s.handleLogin)
+	mux.HandleFunc("GET /auth/status", s.handleAuthStatus)
+	mux.HandleFunc("GET /auth/me", s.requireAuth(s.handleMe))
+	mux.HandleFunc("POST /auth/tokens", s.requireWebSession(s.handleCreateToken))
+	mux.HandleFunc("GET /auth/tokens", s.requireWebSession(s.handleListTokens))
+	mux.HandleFunc("DELETE /auth/tokens/{token_id}", s.requireAuth(s.handleRevokeToken))
+	mux.HandleFunc("GET /settings/llm-providers", s.requireAuth(s.handleListLLMProviders))
+	mux.HandleFunc("GET /settings/llm-providers/active", s.requireAuth(s.handleActiveLLMProvider))
+	mux.HandleFunc("POST /settings/llm-providers/deactivate", s.requireAuth(s.handleDeactivateLLMProviders))
+	mux.HandleFunc("POST /settings/llm-providers", s.requireAuth(s.handleCreateLLMProvider))
+	mux.HandleFunc("PATCH /settings/llm-providers/{config_id}", s.requireAuth(s.handleUpdateLLMProvider))
+	mux.HandleFunc("DELETE /settings/llm-providers/{config_id}", s.requireAuth(s.handleDeleteLLMProvider))
+	mux.HandleFunc("POST /settings/llm-providers/{config_id}/activate", s.requireAuth(s.handleActivateLLMProvider))
+	mux.HandleFunc("GET /settings/email-configs", s.requireAuth(s.handleListEmailConfigs))
+	mux.HandleFunc("POST /settings/email-configs", s.requireAuth(s.handleCreateEmailConfig))
+	mux.HandleFunc("PATCH /settings/email-configs/{config_id}", s.requireAuth(s.handleUpdateEmailConfig))
+	mux.HandleFunc("DELETE /settings/email-configs/{config_id}", s.requireAuth(s.handleDeleteEmailConfig))
+	mux.HandleFunc("POST /settings/email-configs/{config_id}/activate", s.requireAuth(s.handleActivateEmailConfig))
+	mux.HandleFunc("POST /settings/email-configs/{config_id}/test", s.requireAuth(s.handleTestEmailConfig))
+	mux.HandleFunc("GET /settings/daily-report-config", s.requireAuth(s.handleGetDailyReportConfig))
+	mux.HandleFunc("PUT /settings/daily-report-config", s.requireAuth(s.handleUpdateDailyReportConfig))
+	mux.HandleFunc("GET /settings/smtp-presets", s.requireAuth(s.handleSMTPPresets))
+	mux.HandleFunc("GET /system/worker", s.requireAuth(s.handleSystemWorker))
+	mux.HandleFunc("GET /system/status", s.requireAuth(s.handleSystemStatus))
+	mux.HandleFunc("GET /metrics/costs", s.requireAuth(s.handleMetricsCosts))
+
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
 	// "/" 兜底：/whoami /jobs /papers/search 等未注册路径全部进反代
 	// （Go 1.22 ServeMux 中精确/具体 pattern 优先于 "/"）
