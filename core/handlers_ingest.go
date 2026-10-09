@@ -288,6 +288,15 @@ func HandleImportReferences(ctx context.Context, env *HandlerEnv, task *Task) (m
 	if sourcePaperID == "" {
 		return nil, errors.New("缺少 source_paper_id")
 	}
+	// 前置校验：源论文必须存在 + entries 非空（空批次在 apply 层会被拒——
+	// 任务层重试到 dead_letter 只是噪音，快失败更干净）
+	var exists string
+	if err := env.Store.DB.QueryRow(`SELECT id FROM papers WHERE id=$1`, sourcePaperID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("源论文 %s 不存在", sourcePaperID)
+	}
+	if len(entries) == 0 {
+		return nil, errors.New("entries 为空——无参考文献可导入")
+	}
 
 	var arxivEntries, ssEntries []map[string]any
 	for _, e := range entries {
