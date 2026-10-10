@@ -144,14 +144,13 @@ services:
       - PAPERMIND_GATEWAY_TOKEN=${PAPERMIND_GATEWAY_TOKEN:-pm-gateway-internal}
       # embedding 独立 provider（SiliconFlow bge-m3 等，读 .env）
       - PDF_STORAGE_ROOT=/app/data/papers
+      - PAPERMIND_AGENT_DIR=/data
       - S2_API_KEY=${S2_API_KEY:-}
       - IEEE_API_KEY=${IEEE_API_KEY:-}
     volumes:
       - pm_data:/app/data
       # Pi 网关 models.json 物化（Python worker 退役后由本容器承担）
       - pm_agent_dir:/data
-    environment:
-      - PAPERMIND_AGENT_DIR=/data
     restart: unless-stopped
     depends_on:
       postgres:
