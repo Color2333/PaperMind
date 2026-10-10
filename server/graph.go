@@ -592,7 +592,7 @@ func (s *Server) handleCitationDetail(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"paper_id": paperID, "references": references, "citations": citations,
+		"paper_id": paperID, "references": references, "cited_by": citations,
 		"reference_count": len(references), "citation_count": len(citations),
 	})
 }
