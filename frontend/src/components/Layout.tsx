@@ -17,7 +17,12 @@ function CenterPane() {
   useEffect(() => {
     setView(pathname.replace(/^\//, "").split("/")[0] || "papers");
   }, [pathname, setView]);
-  return <Outlet />;
+  // 路由切换过渡：key=pathname 触发淡入
+  return (
+    <div key={pathname} className="page-enter min-h-full">
+      <Outlet />
+    </div>
+  );
 }
 
 
