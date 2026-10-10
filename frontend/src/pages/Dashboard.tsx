@@ -357,7 +357,7 @@ export default function Dashboard() {
                           {run.kind}
                         </p>
                         <span className="text-ink-tertiary shrink-0 text-[10px]">
-                          {run.authority === "go_core" ? "Go" : "Py"}
+                          {run.authority === "go_core" ? "Go" : "存档"}
                         </span>
                       </div>
                       <div className="text-ink-tertiary flex items-center gap-2 text-[10px]">

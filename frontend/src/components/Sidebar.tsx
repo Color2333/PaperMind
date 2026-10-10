@@ -66,10 +66,14 @@ const TOOL_GROUPS: { label: string; items: { to: string; icon: typeof Search; la
 function useDarkMode() {
   const [dark, setDark] = useState(() => {
     if (typeof window === "undefined") return false;
-    return localStorage.getItem("theme") === "dark";
+    const saved = localStorage.getItem("theme");
+    if (saved) return saved === "dark";
+    // 首次访问跟随系统偏好
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
   });
   useEffect(() => {
     const root = document.documentElement;
+    root.classList.add("theme-transition");
     if (dark) {
       root.classList.add("dark");
       localStorage.setItem("theme", "dark");
@@ -77,6 +81,8 @@ function useDarkMode() {
       root.classList.remove("dark");
       localStorage.setItem("theme", "light");
     }
+    const t = setTimeout(() => root.classList.remove("theme-transition"), 300);
+    return () => clearTimeout(t);
   }, [dark]);
   return [dark, () => setDark((d) => !d)] as const;
 }
@@ -181,7 +187,7 @@ export default function Sidebar() {
           </div>
           <button
             onClick={handleNewChat}
-            className="flex w-full items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-sm font-medium text-ink transition-all hover:bg-hover hover:shadow-sm"
+            className="gradient-primary flex w-full items-center gap-2 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-white shadow-warm-xs transition-all hover:shadow-warm-md active:scale-[0.98]"
           >
             <Plus className="h-4 w-4" />
             {!collapsed && "新对话"}
@@ -234,7 +240,7 @@ export default function Sidebar() {
                       cn(
                         "relative flex flex-col items-center gap-1 rounded-xl px-1 py-2.5 text-center transition-all",
                         isActive
-                          ? "bg-primary-light text-primary shadow-sm"
+                          ? "nav-active-indicator bg-primary-light text-primary shadow-warm-xs"
                           : "text-ink-secondary hover:bg-hover hover:text-ink",
                       )
                     }
@@ -261,7 +267,7 @@ export default function Sidebar() {
               设置
             </button>
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-ink-tertiary">v0.2.0</span>
+              <span className="text-[10px] text-ink-tertiary">v2.1</span>
               <button
                 onClick={() => { clearAuth(); window.location.reload(); }}
                 className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-tertiary transition-colors hover:bg-hover hover:text-red-500"
