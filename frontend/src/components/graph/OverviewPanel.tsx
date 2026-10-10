@@ -17,6 +17,7 @@ import type {
   FrontierResponse, CocitationResponse, SimilarityMapData, ClusterMapData,
 } from "@/types";
 import { Section, StatCard } from "./shared";
+import { cn } from "@/lib/utils";
 import SimilarityMap from "./SimilarityMap";
 
 export default function OverviewPanel() {
