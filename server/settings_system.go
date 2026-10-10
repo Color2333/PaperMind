@@ -735,67 +735,69 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMetricsCosts GET /metrics/costs?days=。
+// 契约：CostMetrics{window_days, calls, input_tokens, output_tokens, total_cost_usd,
+// by_stage:[{stage,calls,total_cost_usd,input_tokens,output_tokens}], by_model:[...]}。
 func (s *Server) handleMetricsCosts(w http.ResponseWriter, r *http.Request) {
 	days := queryInt(r, "days", 7)
 	filter := ""
 	if days > 0 {
 		filter = fmt.Sprintf(` WHERE created_at >= NOW() - INTERVAL '%d days'`, days)
 	}
-	var total int
+	var calls int
 	var inTok, outTok int64
 	var totalCost float64
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_cost_usd),0)
-		 FROM prompt_traces`+filter).Scan(&total, &inTok, &outTok, &totalCost); err != nil {
+		 FROM prompt_traces`+filter).Scan(&calls, &inTok, &outTok, &totalCost); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		return
 	}
-	type agg struct {
-		Stage    string  `json:"stage"`
-		Count    int     `json:"count"`
-		Cost     float64 `json:"total_cost"`
-		InTok    int64   `json:"input_tokens"`
-		OutTok   int64   `json:"output_tokens"`
-	}
-	byStage := []agg{}
+	byStage := []map[string]any{}
 	rows, err := s.db.Query(
 		`SELECT stage, COUNT(*), COALESCE(SUM(total_cost_usd),0), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0)
-		 FROM prompt_traces` + filter + ` GROUP BY stage`)
+		 FROM prompt_traces` + filter + ` GROUP BY stage ORDER BY COUNT(*) DESC`)
 	if err == nil {
 		for rows.Next() {
-			var a agg
-			if rows.Scan(&a.Stage, &a.Count, &a.Cost, &a.InTok, &a.OutTok) == nil {
-				byStage = append(byStage, a)
+			var stage string
+			var c int
+			var cost float64
+			var inT, outT int64
+			if rows.Scan(&stage, &c, &cost, &inT, &outT) == nil {
+				byStage = append(byStage, map[string]any{
+					"stage": stage, "calls": c, "total_cost_usd": cost,
+					"input_tokens": inT, "output_tokens": outT,
+				})
 			}
 		}
 		rows.Close()
 	}
-	type mAgg struct {
-		Provider string  `json:"provider"`
-		Model    string  `json:"model"`
-		Count    int     `json:"count"`
-		Cost     float64 `json:"total_cost"`
-	}
-	byModel := []mAgg{}
+	byModel := []map[string]any{}
 	rows, err = s.db.Query(
-		`SELECT provider, model, COUNT(*), COALESCE(SUM(total_cost_usd),0)
-		 FROM prompt_traces` + filter + ` GROUP BY provider, model`)
+		`SELECT provider, model, COUNT(*), COALESCE(SUM(total_cost_usd),0), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0)
+		 FROM prompt_traces` + filter + ` GROUP BY provider, model ORDER BY COUNT(*) DESC`)
 	if err == nil {
 		for rows.Next() {
-			var a mAgg
-			if rows.Scan(&a.Provider, &a.Model, &a.Count, &a.Cost) == nil {
-				byModel = append(byModel, a)
+			var provider, model string
+			var c int
+			var cost float64
+			var inT, outT int64
+			if rows.Scan(&provider, &model, &c, &cost, &inT, &outT) == nil {
+				byModel = append(byModel, map[string]any{
+					"provider": provider, "model": model, "calls": c,
+					"total_cost_usd": cost, "input_tokens": inT, "output_tokens": outT,
+				})
 			}
 		}
 		rows.Close()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"days": days,
-		"total": map[string]any{
-			"count": total, "input_tokens": inTok, "output_tokens": outTok,
-			"total_cost_usd": totalCost,
-		},
-		"by_stage": byStage, "by_model": byModel,
+		"window_days":    days,
+		"calls":          calls,
+		"input_tokens":   inTok,
+		"output_tokens":  outTok,
+		"total_cost_usd": totalCost,
+		"by_stage":       byStage,
+		"by_model":       byModel,
 	})
 }
 

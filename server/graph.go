@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -166,11 +167,11 @@ func edgePairs(edges []graphEdge) [][2]string {
 }
 
 // handleGraphTimeline GET /graph/timeline?keyword=&limit= —— PageRank 里程碑。
+// 契约：TimelineResponse{keyword, timeline[], seminal[], milestones[]}。
 func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 	keyword := r.URL.Query().Get("keyword")
 	limit := queryInt(r, "limit", 100)
-	_ = limit
-	papers := s.loadGraphPapers(500)
+	papers := s.loadGraphPapers(2000)
 	edges := s.loadGraphEdges()
 	idSet := map[string]bool{}
 	for _, p := range papers {
@@ -183,59 +184,77 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pr := core.PageRank(keys(idSet), edgePairs(valid))
-	// keyword 过滤（标题/摘要匹配；空 = 全部）
-	kw := strings.ToLower(keyword)
-	type item struct {
-		paper  graphPaper
-		score  float64
-		inDeg  int
-	}
-	inDeg := map[string]int{}
+	inDeg, outDeg := map[string]int{}, map[string]int{}
 	for _, e := range valid {
 		inDeg[e.Target]++
+		outDeg[e.Source]++
+	}
+	kw := strings.ToLower(keyword)
+	type item struct {
+		paper         graphPaper
+		score         float64
+		inDeg, outDeg int
 	}
 	var items []item
 	for _, p := range papers {
-		if kw != "" && !matchKeyword(p, kw) {
+		if kw != "" && !strings.Contains(strings.ToLower(p.Title), kw) {
 			continue
 		}
-		items = append(items, item{p, pr[p.ID], inDeg[p.ID]})
+		items = append(items, item{p, pr[p.ID], inDeg[p.ID], outDeg[p.ID]})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].score > items[j].score })
-	result := []map[string]any{}
-	for _, it := range items {
-		result = append(result, map[string]any{
-			"id": it.paper.ID, "title": it.paper.Title, "arxiv_id": it.paper.ArxivID,
-			"year": it.paper.Year, "pagerank": math.Round(it.score*1e4)/1e4,
-			"in_degree": it.inDeg, "score": math.Round(it.score*1e3)/1e3,
-			"why_seminal": fmt.Sprintf("indegree=%d, pagerank=%.4f", it.inDeg, it.score),
-		})
+	toEntry := func(it item) map[string]any {
+		year := 0
+		if it.paper.Year != nil {
+			year = *it.paper.Year
+		}
+		return map[string]any{
+			"paper_id": it.paper.ID, "title": it.paper.Title, "year": year,
+			"indegree": it.inDeg, "outdegree": it.outDeg,
+			"pagerank":      math.Round(it.score*1e4) / 1e4,
+			"seminal_score": math.Round(it.score*1e3) / 1e3,
+			"why_seminal":   fmt.Sprintf("indegree=%d, pagerank=%.4f", it.inDeg, it.score),
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": result, "total": len(result)})
-}
-
-// matchKeyword 标题匹配（全文匹配省略——keyword 过滤在标题层已覆盖前端场景）。
-func matchKeyword(p graphPaper, kw string) bool {
-	if kw == "" {
-		return true
+	timeline := []map[string]any{}
+	n := len(items)
+	if n > limit {
+		n = limit
 	}
-	if strings.Contains(strings.ToLower(p.Title), kw) {
-		return true
+	for i := 0; i < n; i++ {
+		timeline = append(timeline, toEntry(items[i]))
 	}
-	// 摘要匹配（逐篇查太贵——批量场景由调用方限定）
-	return true
-}
-
-func keys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+	seminal := timeline
+	if len(seminal) > 20 {
+		seminal = seminal[:20]
 	}
-	return out
+	best := map[int]map[string]any{}
+	var years []int
+	for _, e := range timeline {
+		y, _ := e["year"].(int)
+		if y == 0 {
+			continue
+		}
+		if _, ok := best[y]; !ok {
+			years = append(years, y)
+			best[y] = e
+		}
+	}
+	sort.Ints(years)
+	milestones := []map[string]any{}
+	for _, y := range years {
+		milestones = append(milestones, best[y])
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"keyword": keyword, "timeline": timeline,
+		"seminal": seminal, "milestones": milestones,
+	})
 }
 
 // handleGraphQuality GET /graph/quality?keyword=&limit=。
+// 契约：GraphQuality{keyword, node_count, edge_count, density, connected_node_ratio, publication_date_coverage}。
 func (s *Server) handleGraphQuality(w http.ResponseWriter, r *http.Request) {
+	keyword := r.URL.Query().Get("keyword")
 	limit := queryInt(r, "limit", 120)
 	papers := s.loadGraphPapers(limit)
 	edges := s.loadGraphEdges()
@@ -267,14 +286,17 @@ func (s *Server) handleGraphQuality(w http.ResponseWriter, r *http.Request) {
 	if n > 0 {
 		connRatio = math.Round(float64(len(connected))/float64(n)*1e4) / 1e4
 	}
-	pubRatio := 0.0
+	pubCoverage := 0.0
 	if n > 0 {
-		pubRatio = math.Round(float64(withPub)/float64(n)*1e4) / 1e4
+		pubCoverage = math.Round(float64(withPub)/float64(n)*1e4) / 1e4
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total_papers": n, "total_edges": ie, "density": density,
-		"connected_node_ratio": connRatio, "publication_date_ratio": pubRatio,
-		"message": map[bool]string{true: "图谱数据充足", false: "论文或引用边较少，建议先运行引用同步"}[ie > 0],
+		"keyword":                   keyword,
+		"node_count":                n,
+		"edge_count":                ie,
+		"density":                   density,
+		"connected_node_ratio":      connRatio,
+		"publication_date_coverage": pubCoverage,
 	})
 }
 
@@ -307,6 +329,7 @@ func bfsEdges(start string, graph map[string][]string, depth int) []map[string]a
 }
 
 // handleCitationTree GET /graph/citation-tree/{paper_id}。
+// 契约：CitationTree{root, root_title, ancestors:[CitationEdge], descendants:[CitationEdge], nodes:[CitationNode], edge_count}。
 func (s *Server) handleCitationTree(w http.ResponseWriter, r *http.Request) {
 	paperID := r.PathValue("paper_id")
 	depth := queryInt(r, "depth", 2)
@@ -317,7 +340,6 @@ func (s *Server) handleCitationTree(w http.ResponseWriter, r *http.Request) {
 	}
 	ancestors := bfsEdges(paperID, outEdges, depth)
 	descendants := bfsEdges(paperID, inEdges, depth)
-	// 节点信息
 	nodeInfo := map[string]map[string]any{}
 	fetch := func(pid string) {
 		if _, ok := nodeInfo[pid]; ok {
@@ -327,14 +349,14 @@ func (s *Server) handleCitationTree(w http.ResponseWriter, r *http.Request) {
 		var year sql.NullString
 		if err := s.db.QueryRow(
 			`SELECT COALESCE(title,''), TO_CHAR(publication_date,'YYYY') FROM papers WHERE id=$1`, pid,
-		).Scan(&title, &year); err == nil {
+		).Scan(&title, &year); err == nil && title != "" {
 			var yr any
 			if year.Valid && year.String != "" {
-				yr = year.String
+				if y, e := strconv.Atoi(year.String); e == nil {
+					yr = y
+				}
 			}
-			nodeInfo[pid] = map[string]any{"id": pid, "title": strOrNull(title), "year": yr}
-		} else {
-			nodeInfo[pid] = map[string]any{"id": pid, "title": nil, "year": nil}
+			nodeInfo[pid] = map[string]any{"id": pid, "title": title, "year": yr}
 		}
 	}
 	fetch(paperID)
@@ -346,9 +368,15 @@ func (s *Server) handleCitationTree(w http.ResponseWriter, r *http.Request) {
 	for _, info := range nodeInfo {
 		nodes = append(nodes, info)
 	}
+	var rootTitle string
+	_ = s.db.QueryRow(`SELECT COALESCE(title,'') FROM papers WHERE id=$1`, paperID).Scan(&rootTitle)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"root": nodeInfo[paperID], "nodes": nodes,
-		"ancestor_edges": ancestors, "descendant_edges": descendants,
+		"root":         paperID,
+		"root_title":   rootTitle,
+		"ancestors":    ancestors,
+		"descendants":  descendants,
+		"nodes":        nodes,
+		"edge_count":   len(ancestors) + len(descendants),
 	})
 }
 
@@ -360,22 +388,29 @@ func strOrNull(s string) any {
 }
 
 // handleTopicCitationNetwork GET /graph/citation-network/topic/{topic_id}。
+// 契约：TopicCitationNetwork{topic_id, topic_name, nodes:[NetworkNode], edges, stats{...}}。
 func (s *Server) handleTopicCitationNetwork(w http.ResponseWriter, r *http.Request) {
 	topicID := r.PathValue("topic_id")
 	rows, err := s.db.Query(
-		`SELECT p.id, COALESCE(p.title,'') FROM papers p
-		 JOIN paper_topics pt ON pt.paper_id = p.id WHERE pt.topic_id=$1 LIMIT 500`, topicID)
+		`SELECT p.id, COALESCE(p.title,''), COALESCE(p.arxiv_id,''),
+		        COALESCE(TO_CHAR(p.publication_date,'YYYY'),'')
+		 FROM papers p JOIN paper_topics pt ON pt.paper_id = p.id
+		 WHERE pt.topic_id=$1 LIMIT 500`, topicID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		return
 	}
-	members := map[string]string{}
+	type node struct {
+		id, title, arxiv, year string
+		inDeg, outDeg          int
+	}
+	members := map[string]*node{}
 	var order []string
 	for rows.Next() {
-		var id, title string
-		if rows.Scan(&id, &title) == nil {
-			members[id] = title
-			order = append(order, id)
+		n := &node{}
+		if rows.Scan(&n.id, &n.title, &n.arxiv, &n.year) == nil {
+			members[n.id] = n
+			order = append(order, n.id)
 		}
 	}
 	rows.Close()
@@ -384,16 +419,54 @@ func (s *Server) handleTopicCitationNetwork(w http.ResponseWriter, r *http.Reque
 		if _, okS := members[e.Source]; okS {
 			if _, okT := members[e.Target]; okT {
 				edges = append(edges, map[string]any{"source": e.Source, "target": e.Target})
+				members[e.Target].inDeg++
+				members[e.Source].outDeg++
 			}
 		}
 	}
+	var topicName string
+	_ = s.db.QueryRow(`SELECT COALESCE(name,'') FROM topic_subscriptions WHERE id=$1`, topicID).Scan(&topicName)
 	nodes := make([]map[string]any, 0, len(order))
+	hubPapers := 0
+	maxIn := 0
+	for _, n := range members {
+		if n.inDeg > maxIn {
+			maxIn = n.inDeg
+		}
+	}
 	for _, id := range order {
-		nodes = append(nodes, map[string]any{"id": id, "title": members[id]})
+		n := members[id]
+		y := 0
+		fmt.Sscanf(n.year, "%d", &y)
+		isHub := n.inDeg >= 3 && (maxIn == 0 || n.inDeg >= maxIn/2)
+		if isHub {
+			hubPapers++
+		}
+		var yr any
+		if y > 0 {
+			yr = y
+		}
+		nodes = append(nodes, map[string]any{
+			"id": n.id, "title": n.title, "year": yr,
+			"arxiv_id": strOrNull(n.arxiv), "in_degree": n.inDeg, "out_degree": n.outDeg,
+			"is_hub": isHub, "is_external": false,
+		})
+	}
+	totalPapers := len(nodes)
+	totalEdges := len(edges)
+	density := 0.0
+	if totalPapers > 1 {
+		density = math.Round(float64(totalEdges)/float64(totalPapers*(totalPapers-1))*1e6) / 1e6
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"topic_id": topicID, "nodes": nodes, "edges": edges,
-		"total_papers": len(nodes), "total_edges": len(edges),
+		"topic_id": topicID, "topic_name": topicName,
+		"nodes": nodes, "edges": edges,
+		"stats": map[string]any{
+			"total_papers": totalPapers, "total_edges": totalEdges,
+			"density": density, "hub_papers": hubPapers,
+			"internal_papers": totalPapers, "external_papers": 0,
+			"internal_edges": totalEdges,
+		},
 	})
 }
 
@@ -411,6 +484,20 @@ func (s *Server) handleTopicDeepTrace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"task_id": taskID, "job_id": jobID, "status": "queued"})
 }
 
+// richEntry RichCitationEntry 形状（库内条目 scholar 字段为 null，in_library=true）。
+func (s *Server) richEntry(paperID, title, arxiv, ctx string) map[string]any {
+	var contextAny any
+	if ctx != "" {
+		contextAny = ctx
+	}
+	return map[string]any{
+		"scholar_id": nil, "title": title, "year": nil, "venue": nil,
+		"citation_count": nil, "arxiv_id": strOrNull(arxiv), "abstract": nil,
+		"in_library": true, "library_paper_id": paperID,
+		"context": contextAny,
+	}
+}
+
 // handleCitationDetail GET /graph/citation-detail/{paper_id} —— 库内引用详情。
 func (s *Server) handleCitationDetail(w http.ResponseWriter, r *http.Request) {
 	paperID := r.PathValue("paper_id")
@@ -418,15 +505,13 @@ func (s *Server) handleCitationDetail(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(
 		`SELECT p.id, COALESCE(p.title,''), COALESCE(p.arxiv_id,''), c.context
 		 FROM citations c JOIN papers p ON p.id = c.target_paper_id
-		 WHERE c.source_paper_id=$1`, paperID)
+		 WHERE c.source_paper_id=$1 ORDER BY c.created_at DESC`, paperID)
 	if err == nil {
 		for rows.Next() {
-			var id, title, arxivID string
+			var id, title, arxiv string
 			var ctx sql.NullString
-			if rows.Scan(&id, &title, &arxivID, &ctx) == nil {
-				references = append(references, map[string]any{
-					"id": id, "title": title, "arxiv_id": arxivID, "context": nullStr(ctx),
-				})
+			if rows.Scan(&id, &title, &arxiv, &ctx) == nil {
+				references = append(references, s.richEntry(id, title, arxiv, ctx.String))
 			}
 		}
 		rows.Close()
@@ -435,15 +520,13 @@ func (s *Server) handleCitationDetail(w http.ResponseWriter, r *http.Request) {
 	rows, err = s.db.Query(
 		`SELECT p.id, COALESCE(p.title,''), COALESCE(p.arxiv_id,''), c.context
 		 FROM citations c JOIN papers p ON p.id = c.source_paper_id
-		 WHERE c.target_paper_id=$1`, paperID)
+		 WHERE c.target_paper_id=$1 ORDER BY c.created_at DESC`, paperID)
 	if err == nil {
 		for rows.Next() {
-			var id, title, arxivID string
+			var id, title, arxiv string
 			var ctx sql.NullString
-			if rows.Scan(&id, &title, &arxivID, &ctx) == nil {
-				citations = append(citations, map[string]any{
-					"id": id, "title": title, "arxiv_id": arxivID, "context": nullStr(ctx),
-				})
+			if rows.Scan(&id, &title, &arxiv, &ctx) == nil {
+				citations = append(citations, s.richEntry(id, title, arxiv, ctx.String))
 			}
 		}
 		rows.Close()
@@ -457,6 +540,8 @@ func (s *Server) handleCitationDetail(w http.ResponseWriter, r *http.Request) {
 // ---------- 桥接 / 前沿 / 共引 ----------
 
 // handleGraphBridges GET /graph/bridges —— 跨主题桥接论文。
+// 契约：BridgesResponse{bridges:[{id,title,arxiv_id,topics_citing,cross_topic_count,own_topics}], total}。
+// 语义：被「其他主题」的论文引用的桥接节点（跨主题入边视角）。
 func (s *Server) handleGraphBridges(w http.ResponseWriter, r *http.Request) {
 	// paper → topics
 	paperTopics := map[string][]string{}
@@ -472,88 +557,137 @@ func (s *Server) handleGraphBridges(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 	}
+	// source_paper_id → {title, arxiv_id}
+	paperMeta := map[string][2]string{}
+	metaRows, err := s.db.Query(`SELECT id, COALESCE(title,''), COALESCE(arxiv_id,'') FROM papers`)
+	if err == nil {
+		for metaRows.Next() {
+			var id, title, arxiv string
+			if metaRows.Scan(&id, &title, &arxiv) == nil {
+				paperMeta[id] = [2]string{title, arxiv}
+			}
+		}
+		metaRows.Close()
+	}
 	type bridge struct {
-		pid      string
-		title    string
-		topics   []string
-		crossDeg int
+		id, title, arxiv string
+		citingTopics     map[string]bool
+		ownTopics        []string
+		crossCount       int
 	}
 	bridges := map[string]*bridge{}
 	for _, e := range s.loadGraphEdges() {
-		srcTopics, dstTopics := paperTopics[e.Source], paperTopics[e.Target]
-		cross := false
+		dstTopics := paperTopics[e.Target]
+		srcTopics := paperTopics[e.Source]
+		if len(dstTopics) == 0 || len(srcTopics) == 0 {
+			continue
+		}
+		// source 的主题与 target 的主题无交集 → target 是被外域引用的桥
+		cross := true
 		for _, st := range srcTopics {
 			for _, dt := range dstTopics {
-				if st != dt {
-					cross = true
+				if st == dt {
+					cross = false
 				}
 			}
 		}
 		if !cross {
 			continue
 		}
-		for _, pid := range []string{e.Source, e.Target} {
-			if bridges[pid] == nil {
-				bridges[pid] = &bridge{pid: pid, topics: paperTopics[pid]}
+		b := bridges[e.Target]
+		if b == nil {
+			meta := paperMeta[e.Target]
+			b = &bridge{id: e.Target, title: meta[0], arxiv: meta[1],
+				citingTopics: map[string]bool{}, ownTopics: dstTopics}
+			bridges[e.Target] = b
+		}
+		for _, st := range srcTopics {
+			if !containsStr(dstTopics, st) {
+				b.citingTopics[st] = true
 			}
-			bridges[pid].crossDeg++
+		}
+		b.crossCount++
+	}
+	items := make([]bridge, 0, len(bridges))
+	for _, b := range bridges {
+		items = append(items, *b)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].crossCount > items[j].crossCount })
+	if len(items) > 20 {
+		items = items[:20]
+	}
+	out := make([]map[string]any, len(items))
+	for i, b := range items {
+		topicsCiting := []string{}
+		for t := range b.citingTopics {
+			topicsCiting = append(topicsCiting, t)
+		}
+		sort.Strings(topicsCiting)
+		out[i] = map[string]any{
+			"id": b.id, "title": b.title, "arxiv_id": b.arxiv,
+			"topics_citing":     topicsCiting,
+			"cross_topic_count": len(b.citingTopics),
+			"own_topics":        orSlice(b.ownTopics),
 		}
 	}
-	var list []*bridge
-	for _, b := range bridges {
-		list = append(list, b)
+	writeJSON(w, http.StatusOK, map[string]any{"bridges": out, "total": len(out)})
+}
+
+func containsStr(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].crossDeg > list[j].crossDeg })
-	if len(list) > 20 {
-		list = list[:20]
-	}
-	// 补标题
-	items := []map[string]any{}
-	for _, b := range list {
-		var title string
-		_ = s.db.QueryRow(`SELECT COALESCE(title,'') FROM papers WHERE id=$1`, b.pid).Scan(&title)
-		items = append(items, map[string]any{
-			"id": b.pid, "title": title, "topics": orSlice(b.topics),
-			"cross_degree": b.crossDeg,
-		})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	return false
 }
 
 // handleGraphFrontier GET /graph/frontier?days= —— 研究前沿（近期高被引新论文）。
+// 契约：FrontierResponse{period_days, total_recent, frontier:[...]}。
 func (s *Server) handleGraphFrontier(w http.ResponseWriter, r *http.Request) {
 	days := queryInt(r, "days", 90)
 	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05.000000")
 	rows, err := s.db.Query(
-		`SELECT c.target_paper_id, COUNT(*) AS cites FROM citations c
-		 JOIN papers p ON p.id = c.target_paper_id
+		`SELECT p.id, COALESCE(p.title,''), COALESCE(p.arxiv_id,''),
+		        COALESCE(TO_CHAR(p.publication_date,'YYYY'),''), COALESCE(TO_CHAR(p.publication_date,'YYYY-MM-DD'),''),
+		        p.read_status, COUNT(c.id) AS cites
+		 FROM papers p LEFT JOIN citations c ON c.target_paper_id = p.id
 		 WHERE p.created_at >= $1
-		 GROUP BY c.target_paper_id ORDER BY cites DESC LIMIT 20`, cutoff)
+		 GROUP BY p.id, p.title, p.arxiv_id, p.publication_date, p.read_status
+		 ORDER BY cites DESC LIMIT 20`, cutoff)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		return
 	}
 	defer rows.Close()
-	items := []map[string]any{}
+	var totalRecent int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM papers WHERE created_at >= $1`, cutoff).Scan(&totalRecent)
+	frontier := []map[string]any{}
 	for rows.Next() {
-		var pid string
+		var id, title, arxiv, year, pubDate, readStatus string
 		var cites int
-		if rows.Scan(&pid, &cites) == nil {
-			var title, arxivID string
-			_ = s.db.QueryRow(`SELECT COALESCE(title,''), COALESCE(arxiv_id,'') FROM papers WHERE id=$1`, pid).Scan(&title, &arxivID)
-			items = append(items, map[string]any{
-				"id": pid, "title": title, "arxiv_id": arxivID,
-				"citation_count": cites, "window_days": days,
+		if rows.Scan(&id, &title, &arxiv, &year, &pubDate, &readStatus, &cites) == nil {
+			y := 0
+			fmt.Sscanf(year, "%d", &y)
+			velocity := float64(cites) / float64(days) * 7 // 每周引用速度
+			frontier = append(frontier, map[string]any{
+				"id": id, "title": title, "arxiv_id": arxiv,
+				"year": y, "publication_date": pubDate,
+				"citations_in_library": cites,
+				"citation_velocity":    math.Round(velocity*100) / 100,
+				"read_status":          readStatus,
 			})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"period_days": days, "total_recent": totalRecent, "frontier": frontier,
+	})
 }
 
 // handleCocitationClusters GET /graph/cocitation-clusters —— 共引配对聚类。
+// 契约：CocitationResponse{total_clusters, clusters:[{size, papers:[{id,title,arxiv_id}]}], cocitation_pairs}。
 func (s *Server) handleCocitationClusters(w http.ResponseWriter, r *http.Request) {
 	minCocite := queryInt(r, "min_cocite", 2)
-	// target → 引它的 sources；两 target 共享 ≥minCocite 个 source 即共引对
 	targetSources := map[string]map[string]bool{}
 	for _, e := range s.loadGraphEdges() {
 		if targetSources[e.Target] == nil {
@@ -571,6 +705,7 @@ func (s *Server) handleCocitationClusters(w http.ResponseWriter, r *http.Request
 		n    int
 	}
 	var pairs []pair
+	pairCount := 0
 	for i := 0; i < len(targets); i++ {
 		for j := i + 1; j < len(targets); j++ {
 			shared := 0
@@ -579,12 +714,14 @@ func (s *Server) handleCocitationClusters(w http.ResponseWriter, r *http.Request
 					shared++
 				}
 			}
+			if shared > 0 {
+				pairCount++
+			}
 			if shared >= minCocite {
 				pairs = append(pairs, pair{targets[i], targets[j], shared})
 			}
 		}
 	}
-	// 并查集聚类
 	parent := map[string]string{}
 	var find func(string) string
 	find = func(x string) string {
@@ -602,36 +739,28 @@ func (s *Server) handleCocitationClusters(w http.ResponseWriter, r *http.Request
 	}
 	clusters := map[string][]string{}
 	for t := range parent {
-		clusters[find(t)] = append(clusters[find(t)], t)
+		root := find(t)
+		clusters[root] = append(clusters[root], t)
 	}
-	var out []map[string]any
-	for root, members := range clusters {
+	out := []map[string]any{}
+	for _, members := range clusters {
 		if len(members) < 2 {
 			continue
 		}
-		// 主题标签：成员最多主题
-		name := ""
-		counts := map[string]int{}
-		for _, m := range members {
-			var tn string
-			if err := s.db.QueryRow(
-				`SELECT COALESCE(t.name,'') FROM paper_topics pt LEFT JOIN topic_subscriptions t ON t.id=pt.topic_id WHERE pt.paper_id=$1 LIMIT 1`, m,
-			).Scan(&tn); err == nil && tn != "" {
-				counts[tn]++
-			}
+		papers := make([]map[string]any, len(members))
+		for i, m := range members {
+			var title, arxiv string
+			_ = s.db.QueryRow(`SELECT COALESCE(title,''), COALESCE(arxiv_id,'') FROM papers WHERE id=$1`, m).Scan(&title, &arxiv)
+			papers[i] = map[string]any{"id": m, "title": title, "arxiv_id": arxiv}
 		}
-		maxN := 0
-		for tn, c := range counts {
-			if c > maxN {
-				maxN, name = c, tn
-			}
-		}
-		if name == "" {
-			name = "cluster-" + root[:8]
-		}
-		out = append(out, map[string]any{"label": name, "paper_ids": members, "size": len(members)})
+		out = append(out, map[string]any{"size": len(members), "papers": papers})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"clusters": orSliceAny(toAny(out)), "total": len(out)})
+	sort.Slice(out, func(i, j int) bool { return out[i]["size"].(int) > out[j]["size"].(int) })
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_clusters":   len(out),
+		"clusters":         out,
+		"cocitation_pairs": pairCount,
+	})
 }
 
 func toAny(v any) any { return v }
@@ -776,6 +905,7 @@ func pca2(vecs [][]float64) [][2]float64 {
 }
 
 // handleSimilarityMap GET /graph/similarity-map —— PCA 2D 散点。
+// 契约：SimilarityMapPoint{id,title,x,y,year,read_status,topics,topic,arxiv_id}。
 func (s *Server) handleSimilarityMap(w http.ResponseWriter, r *http.Request) {
 	topicID := r.URL.Query().Get("topic_id")
 	limit := queryInt(r, "limit", 200)
@@ -790,16 +920,31 @@ func (s *Server) handleSimilarityMap(w http.ResponseWriter, r *http.Request) {
 	proj := pca2(vecs)
 	points := make([]map[string]any, len(ids))
 	for i, id := range ids {
-		p := map[string]any{"id": id, "x": proj[i][0], "y": proj[i][1], "topics": orSlice(topicOf[id])}
-		var title string
-		_ = s.db.QueryRow(`SELECT COALESCE(title,'') FROM papers WHERE id=$1`, id).Scan(&title)
-		p["title"] = title
-		points[i] = p
+		var title, arxiv, readStatus string
+		var year sql.NullString
+		_ = s.db.QueryRow(
+			`SELECT COALESCE(title,''), COALESCE(arxiv_id,''), COALESCE(read_status,'unread'), TO_CHAR(publication_date,'YYYY')
+			 FROM papers WHERE id=$1`, id).Scan(&title, &arxiv, &readStatus, &year)
+		var yr any
+		if year.Valid && year.String != "" {
+			if y, e := strconv.Atoi(year.String); e == nil {
+				yr = y
+			}
+		}
+		topic := ""
+		if len(topicOf[id]) > 0 {
+			topic = topicOf[id][0]
+		}
+		points[i] = map[string]any{
+			"id": id, "title": title, "x": proj[i][0], "y": proj[i][1],
+			"year": yr, "read_status": readStatus,
+			"topics": orSlice(topicOf[id]), "topic": topic,
+			"arxiv_id": arxiv,
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"points": points, "total": len(points), "method": "pca"})
 }
 
-// kmeans 加权 k-means（与 Python _kmeans 语义对齐，固定种子可复现）。
 func kmeans(vecs [][]float64, k, maxIter int) []int {
 	n := len(vecs)
 	if n == 0 || k < 1 {
@@ -875,6 +1020,7 @@ func cosineSim(a, b []float64) float64 {
 }
 
 // handleClusterMap GET /graph/cluster-map —— 全库 k-means 研究领域地图。
+// 契约：ClusterMapData{clusters:[ClusterGroup{cluster_id, name, keywords[], size, papers}], total_clusters, total_papers}。
 func (s *Server) handleClusterMap(w http.ResponseWriter, r *http.Request) {
 	nClusters := queryInt(r, "n_clusters", 12)
 	limit := queryInt(r, "limit", 5000)
@@ -885,48 +1031,64 @@ func (s *Server) handleClusterMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	assign := kmeans(vecs, nClusters, 10)
-	groups := map[int][]string{}
+	groups := map[int][]int{}
 	for i, c := range assign {
-		groups[c] = append(groups[c], ids[i])
+		groups[c] = append(groups[c], i)
 	}
 	clusters := []map[string]any{}
-	for _, members := range groups {
+	clusterID := 0
+	totalPapers := 0
+	for _, idxs := range groups {
+		clusterID++
 		// 主题标签（成员多数主题）
 		counts := map[string]int{}
-		for _, m := range members {
-			for _, tn := range topicOf[m] {
+		for _, i := range idxs {
+			for _, tn := range topicOf[ids[i]] {
 				counts[tn]++
 			}
 		}
-		label := "未命名领域"
+		name := "未命名领域"
+		keywords := []string{}
 		maxN := 0
 		for tn, c := range counts {
 			if c > maxN {
-				maxN, label = c, tn
+				maxN, name = c, tn
 			}
+		}
+		if name != "未命名领域" {
+			keywords = append(keywords, name)
 		}
 		papers := make([]map[string]any, 0, perCluster)
-		for i, m := range members {
-			if i >= perCluster {
+		for k, i := range idxs {
+			if k >= perCluster {
 				break
 			}
-			var title string
-			_ = s.db.QueryRow(`SELECT COALESCE(title,'') FROM papers WHERE id=$1`, m).Scan(&title)
-			papers = append(papers, map[string]any{"id": m, "title": title})
+			var title, arxiv, abstract string
+			_ = s.db.QueryRow(`SELECT COALESCE(title,''), COALESCE(arxiv_id,''), COALESCE(abstract,'') FROM papers WHERE id=$1`, ids[i]).Scan(&title, &arxiv, &abstract)
+			if len(abstract) > 200 {
+				abstract = abstract[:200]
+			}
+			papers = append(papers, map[string]any{
+				"id": ids[i], "title": title, "arxiv_id": arxiv, "abstract": abstract,
+			})
 		}
+		totalPapers += len(idxs)
 		clusters = append(clusters, map[string]any{
-			"label": label, "size": len(members), "papers": papers,
+			"cluster_id": clusterID, "name": name, "keywords": keywords,
+			"size": len(idxs), "papers": papers,
 		})
 	}
 	sort.Slice(clusters, func(i, j int) bool { return clusters[i]["size"].(int) > clusters[j]["size"].(int) })
-	writeJSON(w, http.StatusOK, map[string]any{"clusters": clusters, "total": len(clusters)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"clusters": clusters, "total_clusters": len(clusters), "total_papers": totalPapers,
+	})
 }
 
 // handleSimilarViaCitation GET /graph/similar-via-citation/{paper_id}。
+// 契约：SimilarViaCitationResponse{paper_id, items:[SimilarityItem{id,title,arxiv_id,similarity}], count}。
 func (s *Server) handleSimilarViaCitation(w http.ResponseWriter, r *http.Request) {
 	paperID := r.PathValue("paper_id")
 	topK := queryInt(r, "top_k", 5)
-	// 共引：引用同一 target 的其他 source 论文
 	rows, err := s.db.Query(
 		`SELECT c2.source_paper_id, COUNT(*) AS shared FROM citations c1
 		 JOIN citations c2 ON c2.target_paper_id = c1.target_paper_id
@@ -938,127 +1100,292 @@ func (s *Server) handleSimilarViaCitation(w http.ResponseWriter, r *http.Request
 	}
 	defer rows.Close()
 	items := []map[string]any{}
+	maxShared := 1
 	for rows.Next() {
 		var pid string
 		var shared int
 		if rows.Scan(&pid, &shared) == nil {
-			var title string
-			_ = s.db.QueryRow(`SELECT COALESCE(title,'') FROM papers WHERE id=$1`, pid).Scan(&title)
-			items = append(items, map[string]any{"id": pid, "title": title, "shared_references": shared})
+			if shared > maxShared {
+				maxShared = shared
+			}
+			var title, arxiv string
+			_ = s.db.QueryRow(`SELECT COALESCE(title,''), COALESCE(arxiv_id,'') FROM papers WHERE id=$1`, pid).Scan(&title, &arxiv)
+			items = append(items, map[string]any{
+				"id": pid, "title": title, "arxiv_id": strOrNull(arxiv),
+				"similarity": 0, // 占位——下面归一化
+				"_shared":    shared,
+			})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"paper_id": paperID, "items": items, "total": len(items)})
+	for _, it := range items {
+		shared := it["_shared"].(int)
+		it["similarity"] = math.Round(float64(shared)/float64(maxShared)*100) / 100
+		delete(it, "_shared")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"paper_id": paperID, "items": items, "count": len(items)})
 }
 
-// ---------- LLM 图谱端点（survey / weekly evolution / research gaps） ----------
+// ---------- LLM 图谱端点（survey / evolution / researchGaps）----------
 
-// timelineContextForLLM 主题论文上下文（survey 系共用）。
-func (s *Server) timelineContextForLLM(keyword string, limit int) (string, []map[string]any) {
+// graphPaperLite 轻量论文条目（上下文构造用）。
+type graphPaperLite struct {
+	id, title, year, summary string
+}
+
+// papersForLLM 关键词匹配论文（标题+摘要 LIKE），带精读摘要。
+func (s *Server) papersForLLM(keyword string, limit int) []graphPaperLite {
 	pattern := "%" + keyword + "%"
 	rows, err := s.db.Query(
-		`SELECT p.id, p.title, TO_CHAR(p.publication_date,'YYYY'), COALESCE(ar.summary_md,'')
+		`SELECT p.id, p.title, COALESCE(TO_CHAR(p.publication_date,'YYYY'),''), COALESCE(ar.summary_md,'')
 		 FROM papers p LEFT JOIN analysis_reports ar ON ar.paper_id = p.id
 		 WHERE LOWER(p.title) LIKE LOWER($1)
 		 ORDER BY p.created_at DESC LIMIT $2`, pattern, limit)
 	if err != nil {
-		return "", nil
+		return nil
 	}
 	defer rows.Close()
-	var lines []string
-	var milestones []map[string]any
+	var out []graphPaperLite
 	for rows.Next() {
-		var id, title, year, summary string
-		if rows.Scan(&id, &title, &year, &summary) == nil {
-			if len(summary) > 300 {
-				summary = summary[:300]
+		var p graphPaperLite
+		if rows.Scan(&p.id, &p.title, &p.year, &p.summary) == nil {
+			if len(p.summary) > 300 {
+				p.summary = p.summary[:300]
 			}
-			if year == "" {
-				year = "?"
-			}
-			lines = append(lines, fmt.Sprintf("- [%s] %s: %s", year, title, summary))
-			milestones = append(milestones, map[string]any{"id": id, "title": title, "year": year})
+			out = append(out, p)
 		}
 	}
-	return strings.Join(lines, "\n"), milestones
+	return out
 }
 
-// handleGraphSurvey GET /graph/survey —— 领域综述（LLM）。
+// paperIDsForKeyword 关键词命中的论文 ID 集（network_stats 用）。
+func (s *Server) paperIDsForKeyword(keyword string, limit int) []string {
+	pattern := "%" + keyword + "%"
+	rows, err := s.db.Query(
+		`SELECT id FROM papers WHERE LOWER(title) LIKE LOWER($1) LIMIT $2`, pattern, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// networkStats 前端 network_stats 契约。
+func (s *Server) networkStats(ids []string) map[string]any {
+	idSet := map[string]bool{}
+	for _, id := range ids {
+		idSet[id] = true
+	}
+	edgeCount := 0
+	connected := map[string]bool{}
+	for _, e := range s.loadGraphEdges() {
+		if idSet[e.Source] && idSet[e.Target] {
+			edgeCount++
+			connected[e.Source], connected[e.Target] = true, true
+		}
+	}
+	isolated := len(ids) - len(connected)
+	n := len(ids)
+	density := 0.0
+	if n > 1 {
+		density = math.Round(float64(edgeCount)/float64(n*(n-1))*1e6) / 1e6
+	}
+	ratio := 0.0
+	if n > 0 {
+		ratio = math.Round(float64(len(connected))/float64(n)*1e4) / 1e4
+	}
+	return map[string]any{
+		"total_papers": n, "edge_count": edgeCount, "density": density,
+		"connected_ratio": ratio, "isolated_count": isolated,
+	}
+}
+
+// handleGraphSurvey GET /graph/survey。
+// 契约：SurveyResponse{keyword, summary{overview, stages:string[], reading_list[], open_questions[]}, milestones, seminal}。
 func (s *Server) handleGraphSurvey(w http.ResponseWriter, r *http.Request) {
 	keyword := r.URL.Query().Get("keyword")
 	if keyword == "" {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "keyword required"})
 		return
 	}
-	limit := queryInt(r, "limit", 120)
-	ctxText, _ := s.timelineContextForLLM(keyword, limit)
+	papers := s.papersForLLM(keyword, 30)
+	var lines []string
+	for _, p := range papers {
+		lines = append(lines, fmt.Sprintf("- [%s] %s: %s", p.year, p.title, p.summary))
+	}
 	prompt := fmt.Sprintf(`你是科研综述作者。请基于以下论文列表，为主题「%s」生成领域综述，输出严格 JSON：
-{"overview":"领域概述（300-600字）","stages":[{"name":"发展阶段","description":"说明"}],"reading_list":["必读论文标题"],"open_questions":["开放问题"]}
+{"overview":"领域概述（300-600字）","stages":["发展阶段一（1990-2005）：说明","发展阶段二：说明"],"reading_list":["必读论文标题1"],"open_questions":["开放问题1"]}
 
 论文列表:
-%s`, keyword, ctxText)
-	parsed, _, err := s.GW().CompleteJSON(r.Context(), "deep", prompt)
-	if err != nil || parsed == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "LLM 生成失败"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"keyword": keyword,
-		"overview": strOf(parsed["overview"]),
-		"stages":         orSliceAny(parsed["stages"]),
-		"reading_list":   orSliceAny(parsed["reading_list"]),
-		"open_questions": orSliceAny(parsed["open_questions"]),
-	})
-}
-
-// handleWeeklyEvolution GET /graph/evolution/weekly —— 周演化（LLM）。
-func (s *Server) handleWeeklyEvolution(w http.ResponseWriter, r *http.Request) {
-	keyword := r.URL.Query().Get("keyword")
-	if keyword == "" {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "keyword required"})
-		return
-	}
-	_ = queryInt(r, "limit", 160)
-	// 近 7 天新论文
-	cutoff := time.Now().UTC().AddDate(0, 0, -7).Format("2006-01-02 15:04:05.000000")
-	rows, err := s.db.Query(
-		`SELECT p.title, COALESCE(ar.summary_md,'') FROM papers p
-		 LEFT JOIN analysis_reports ar ON ar.paper_id = p.id
-		 WHERE p.created_at >= $1 AND (LOWER(p.title) LIKE LOWER($2) OR $2 = '%%')
-		 ORDER BY p.created_at DESC LIMIT 30`, cutoff, "%"+keyword+"%")
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
-		return
-	}
-	defer rows.Close()
-	var lines []string
-	for rows.Next() {
-		var title, summary string
-		if rows.Scan(&title, &summary) == nil {
-			if len(summary) > 200 {
-				summary = summary[:200]
-			}
-			lines = append(lines, "- "+title+": "+summary)
-		}
-	}
-	prompt := fmt.Sprintf(`你是研究趋势分析师。请分析主题「%s」近一周的新论文动态，输出严格 JSON：
-{"weekly_summary":"本周动态总结（200-400字）","emerging_directions":["新方向1"],"hot_papers":["热点论文标题"]}
-
-本周新论文:
 %s`, keyword, strings.Join(lines, "\n"))
 	parsed, _, err := s.GW().CompleteJSON(r.Context(), "deep", prompt)
 	if err != nil || parsed == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "LLM 生成失败"})
 		return
 	}
+	tl := s.buildTimeline(keyword, 20)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"keyword": keyword,
-		"weekly_summary": strOf(parsed["weekly_summary"]),
-		"emerging_directions": orSliceAny(parsed["emerging_directions"]),
-		"hot_papers":          orSliceAny(parsed["hot_papers"]),
+		"summary": map[string]any{
+			"overview":       strOf(parsed["overview"]),
+			"stages":         orSliceAny(parsed["stages"]),
+			"reading_list":   orSliceAny(parsed["reading_list"]),
+			"open_questions": orSliceAny(parsed["open_questions"]),
+		},
+		"milestones": tl["milestones"],
+		"seminal":    tl["seminal"],
 	})
 }
 
-// handleResearchGaps GET /graph/research-gaps —— 研究空白（timeline + LLM）。
+// buildTimeline 构造 TimelineResponse 主体（survey 复用）。
+func (s *Server) buildTimeline(keyword string, limit int) map[string]any {
+	_ = keyword
+	papers := s.loadGraphPapers(2000)
+	edges := s.loadGraphEdges()
+	idSet := map[string]bool{}
+	for _, p := range papers {
+		idSet[p.ID] = true
+	}
+	valid := []graphEdge{}
+	for _, e := range edges {
+		if idSet[e.Source] && idSet[e.Target] {
+			valid = append(valid, e)
+		}
+	}
+	pr := core.PageRank(keys(idSet), edgePairs(valid))
+	inDeg := map[string]int{}
+	for _, e := range valid {
+		inDeg[e.Target]++
+	}
+	type item struct {
+		paper graphPaper
+		score float64
+		inDeg int
+	}
+	var items []item
+	for _, p := range papers {
+		items = append(items, item{p, pr[p.ID], inDeg[p.ID]})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].score > items[j].score })
+	toEntry := func(it item) map[string]any {
+		year := 0
+		if it.paper.Year != nil {
+			year = *it.paper.Year
+		}
+		return map[string]any{
+			"paper_id": it.paper.ID, "title": it.paper.Title, "year": year,
+			"indegree": it.inDeg, "outdegree": 0,
+			"pagerank":      math.Round(it.score*1e4) / 1e4,
+			"seminal_score": math.Round(it.score*1e3) / 1e3,
+		}
+	}
+	timeline := []map[string]any{}
+	n := len(items)
+	if n > limit {
+		n = limit
+	}
+	for i := 0; i < n; i++ {
+		timeline = append(timeline, toEntry(items[i]))
+	}
+	seminal := timeline
+	if len(seminal) > 20 {
+		seminal = seminal[:20]
+	}
+	best := map[int]map[string]any{}
+	var years []int
+	for _, e := range timeline {
+		y, _ := e["year"].(int)
+		if y == 0 {
+			continue
+		}
+		if _, ok := best[y]; !ok {
+			years = append(years, y)
+			best[y] = e
+		}
+	}
+	sort.Ints(years)
+	milestones := []map[string]any{}
+	for _, y := range years {
+		milestones = append(milestones, best[y])
+	}
+	return map[string]any{"timeline": timeline, "seminal": seminal, "milestones": milestones}
+}
+
+// handleWeeklyEvolution GET /graph/evolution/weekly。
+// 契约：EvolutionResponse{keyword, year_buckets:[YearBucket], summary{trend_summary, phase_shift_signals, next_week_focus}}。
+func (s *Server) handleWeeklyEvolution(w http.ResponseWriter, r *http.Request) {
+	keyword := r.URL.Query().Get("keyword")
+	if keyword == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "keyword required"})
+		return
+	}
+	papers := s.papersForLLM(keyword, 60)
+	// year_buckets：按年聚合
+	bucket := map[int][]graphPaperLite{}
+	var years []int
+	for _, p := range papers {
+		y := 0
+		fmt.Sscanf(p.year, "%d", &y)
+		if y == 0 {
+			continue
+		}
+		if _, ok := bucket[y]; !ok {
+			years = append(years, y)
+		}
+		bucket[y] = append(bucket[y], p)
+	}
+	sort.Ints(years)
+	yearBuckets := []map[string]any{}
+	var contextLines []string
+	for _, y := range years {
+		list := bucket[y]
+		topTitles := []string{}
+		for i, p := range list {
+			if i >= 3 {
+				break
+			}
+			topTitles = append(topTitles, p.title)
+		}
+		yearBuckets = append(yearBuckets, map[string]any{
+			"year": y, "paper_count": len(list),
+			"avg_seminal_score": 0, "top_titles": topTitles,
+		})
+		for i, p := range list {
+			if i >= 2 {
+				break
+			}
+			contextLines = append(contextLines, fmt.Sprintf("- [%s] %s", p.year, p.title))
+		}
+	}
+	prompt := fmt.Sprintf(`你是研究趋势分析师。请分析主题「%s」的论文时间分布与动态，输出严格 JSON：
+{"trend_summary":"趋势总结（200-400字）","phase_shift_signals":"阶段转变信号说明","next_week_focus":"下一步建议关注的焦点"}
+
+论文时间线:
+%s`, keyword, strings.Join(contextLines, "\n"))
+	parsed, _, err := s.GW().CompleteJSON(r.Context(), "deep", prompt)
+	if err != nil || parsed == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "LLM 生成失败"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"keyword":      keyword,
+		"year_buckets": yearBuckets,
+		"summary": map[string]any{
+			"trend_summary":       strOf(parsed["trend_summary"]),
+			"phase_shift_signals": strOf(parsed["phase_shift_signals"]),
+			"next_week_focus":     strOf(parsed["next_week_focus"]),
+		},
+	})
+}
+
+// handleResearchGaps GET /graph/research-gaps。
+// 契约：ResearchGapsResponse{keyword, network_stats, analysis{research_gaps[ResearchGap], method_comparison, trend_analysis, overall_summary}}。
 func (s *Server) handleResearchGaps(w http.ResponseWriter, r *http.Request) {
 	keyword := r.URL.Query().Get("keyword")
 	if keyword == "" {
@@ -1066,27 +1393,47 @@ func (s *Server) handleResearchGaps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := queryInt(r, "limit", 120)
-	ctxText, milestones := s.timelineContextForLLM(keyword, limit)
-	prompt := fmt.Sprintf(`你是研究策略顾问。请基于主题「%s」的论文时间线，识别研究空白与机会，输出严格 JSON：
-{"gaps":["研究空白1（引用具体论文佐证）"],"opportunities":["机会点1"],"suggested_questions":["值得探索的问题1"]}
+	ids := s.paperIDsForKeyword(keyword, limit)
+	stats := s.networkStats(ids)
+	papers := s.papersForLLM(keyword, 30)
+	var lines []string
+	for _, p := range papers {
+		lines = append(lines, fmt.Sprintf("- [%s] %s: %s", p.year, p.title, p.summary))
+	}
+	prompt := fmt.Sprintf(`你是研究策略顾问。请基于主题「%s」的论文列表识别研究空白，输出严格 JSON：
+{"research_gaps":[{"gap_title":"空白标题","description":"描述","evidence":"佐证（引用具体论文）","potential_impact":"潜在影响","suggested_approach":"建议方法","difficulty":"easy|medium|hard","confidence":0.8}],
+ "method_comparison":{"dimensions":["维度1"],"methods":[{"name":"方法名","scores":{"维度1":"高"},"papers":["论文名"]}],"underexplored_combinations":["未充分探索的组合"]},
+ "trend_analysis":{"hot_directions":["热点方向"],"declining_areas":["衰退领域"],"emerging_opportunities":["新兴机会"]},
+ "overall_summary":"总体总结（150-300字）"}
 
-论文时间线:
-%s`, keyword, ctxText)
+论文列表:
+%s`, keyword, strings.Join(lines, "\n"))
 	parsed, _, err := s.GW().CompleteJSON(r.Context(), "deep", prompt)
 	if err != nil || parsed == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "LLM 生成失败"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"keyword": keyword,
-		"gaps":              orSliceAny(parsed["gaps"]),
-		"opportunities":     orSliceAny(parsed["opportunities"]),
-		"suggested_questions": orSliceAny(parsed["suggested_questions"]),
-		"milestones":        milestones,
+		"keyword":       keyword,
+		"network_stats": stats,
+		"analysis": map[string]any{
+			"research_gaps":     orSliceAny(parsed["research_gaps"]),
+			"method_comparison": parsed["method_comparison"],
+			"trend_analysis":    parsed["trend_analysis"],
+			"overall_summary":   strOf(parsed["overall_summary"]),
+		},
 	})
 }
 
-// ---------- citations/sync 提交 ----------
+
+// keys map 键切片。
+func keys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
 
 // handleSyncCitationsIncremental POST /citations/sync/incremental。
 func (s *Server) handleSyncCitationsIncremental(w http.ResponseWriter, r *http.Request) {
