@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { BookOpen, Download } from "lucide-react";
 import { researchApi, type ClaimItem, type DiffEntry, type EvidenceItem } from "@/services/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
@@ -116,19 +117,30 @@ export default function ResearchState() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-bold">Research State</h1>
+    <div className="animate-fade-in space-y-6">
+      {/* 页头（与全站 page-hero 一致） */}
+      <div className="page-hero rounded-2xl p-6">
+        <div className="flex items-center gap-3">
+          <div className="bg-primary/10 rounded-xl p-2.5">
+            <BookOpen className="text-primary h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-ink text-2xl font-bold">Research State</h1>
+            <p className="text-ink-secondary mt-0.5 text-sm">研究问题状态、主张与证据链查询</p>
+          </div>
+        </div>
+      </div>
 
       {/* 问题 ID 输入 */}
-      <div className="flex gap-2">
+      <div className="card-refined flex gap-3 p-4">
         <input
-          className="border rounded px-3 py-2 flex-1"
+          className="border-border bg-surface text-ink placeholder:text-ink-placeholder focus:border-primary flex-1 rounded-lg border px-3 py-2 text-sm outline-none transition-colors"
           placeholder="输入 Research Question ID"
           value={questionId}
           onChange={(e) => setQuestionId(e.target.value)}
         />
         <button
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+          className="gradient-primary shadow-warm-xs text-white px-5 py-2 rounded-lg text-sm font-medium transition-all hover:shadow-warm-md disabled:opacity-50"
           disabled={!questionId.trim() || loading}
           onClick={() => loadQuestion(questionId.trim())}
         >
@@ -136,7 +148,7 @@ export default function ResearchState() {
         </button>
       </div>
 
-      {error && <div className="text-red-600">{error}</div>}
+      {error && <div className="text-error bg-error-light rounded-lg px-4 py-3 text-sm">{error}</div>}
 
       {question && (
         <>
