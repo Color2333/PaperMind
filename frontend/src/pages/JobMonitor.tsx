@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { jobApi, type DurableJobItem, type DurableJobGraph } from "@/services/api";
+import { ListTodo } from "lucide-react";
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "bg-hover text-ink-secondary",
