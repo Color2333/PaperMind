@@ -148,6 +148,10 @@ services:
       - IEEE_API_KEY=${IEEE_API_KEY:-}
     volumes:
       - pm_data:/app/data
+      # Pi 网关 models.json 物化（Python worker 退役后由本容器承担）
+      - pm_agent_dir:/data
+    environment:
+      - PAPERMIND_AGENT_DIR=/data
     restart: unless-stopped
     depends_on:
       postgres:

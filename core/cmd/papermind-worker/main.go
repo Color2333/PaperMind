@@ -61,6 +61,14 @@ func main() {
 		log.Printf("[worker] SMTP 未配置——邮件发送类任务将按失败处理（可重试）")
 	}
 
+	// Pi 网关 models.json 物化（Python worker 退役后由本容器承担——
+	// 网关 502 "models.json 未物化" 的根治）
+	if pk, cm, ok := core.MaterializePiModelConfig(store, "/data"); ok {
+		log.Printf("[worker] Pi 网关配置已物化: provider=%s model=%s", pk, cm)
+	} else {
+		log.Printf("[worker] 无可用 LLM 配置——LLM 类任务将失败（请在 Settings 配置或 .env 提供 key）")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

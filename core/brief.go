@@ -10,6 +10,7 @@ import (
 	"html"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -541,3 +542,70 @@ func HandleSendBriefEmailEffect(ctx context.Context, e *HandlerEnv, task *Task) 
 
 // UserTodayStartUTC 用户时区当日 0 点 UTC（goserver 复用）。
 func UserTodayStartUTC() time.Time { return userTodayStartUTC() }
+
+// MaterializePiModelConfig 把 DB active LLM 配置物化为 Pi 网关的
+// models.json/settings.json（Python worker 的 materialize_model_config 移植）。
+// worker-go 启动时调用——Python worker 退役后网关配置的唯一物化方。
+func MaterializePiModelConfig(store *CoreStore, agentDir string) (providerKey, chatModel string, ok bool) {
+	var provider, name, apiKey, apiBase, modelSkim, modelDeep, modelVision string
+	err := store.DB.QueryRow(
+		`SELECT provider, name, api_key, COALESCE(api_base_url,''), model_skim, model_deep, COALESCE(model_vision,'')
+		 FROM llm_provider_configs WHERE is_active = true LIMIT 1`,
+	).Scan(&provider, &name, &apiKey, &apiBase, &modelSkim, &modelDeep, &modelVision)
+	if err != nil {
+		// env 回退（生产 .env 形态：XIAOMI_API_KEY 等）
+		provider = envOr("LLM_PROVIDER", "")
+		apiKey = envOr("XIAOMI_API_KEY", "")
+		if apiKey == "" {
+			apiKey = envOr("OPENAI_API_KEY", "")
+		}
+		if apiKey == "" {
+			return "", "", false
+		}
+		if provider == "" {
+			provider = "xiaomi"
+		}
+		name = provider + "-env"
+		modelSkim = envOr("LLM_MODEL_SKIM", "mimo-v2.5")
+		modelDeep = envOr("LLM_MODEL_DEEP", "mimo-v2.5-pro")
+		modelVision = envOr("LLM_MODEL_VISION", "")
+		if provider == "xiaomi" {
+			apiBase = "https://token-plan-cn.xiaomimimo.com/v1"
+		}
+	}
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		return "", "", false
+	}
+	key := providerKeyOf(provider)
+	api := "openai-completions"
+	if provider == "anthropic" {
+		api = "anthropic-messages"
+	} else if provider == "google" {
+		api = "google-generative-ai"
+	}
+	models := []map[string]string{}
+	for _, m := range []string{modelSkim, modelDeep, modelVision} {
+		if m != "" {
+			models = append(models, map[string]string{"id": m, "name": m})
+		}
+	}
+	entry := map[string]any{"name": name, "apiKey": apiKey, "api": api, "models": models}
+	if apiBase != "" {
+		entry["baseUrl"] = strings.TrimRight(apiBase, "/")
+	}
+	modelsJSON, _ := json.Marshal(map[string]any{"providers": map[string]any{key: entry}})
+	settingsJSON, _ := json.Marshal(map[string]string{"defaultProvider": key, "defaultModel": modelSkim})
+	_ = os.WriteFile(filepath.Join(agentDir, "models.json"), modelsJSON, 0o644)
+	_ = os.WriteFile(filepath.Join(agentDir, "settings.json"), settingsJSON, 0o644)
+	return key, modelSkim, true
+}
+
+// providerKeyOf DB provider 名 → Pi providers key。
+func providerKeyOf(provider string) string {
+	reg := regexp.MustCompile(`[^a-z0-9-]+`)
+	k := strings.Trim(reg.ReplaceAllString(strings.ToLower(strings.TrimSpace(provider)), "-"), "-")
+	if k == "" {
+		return "custom"
+	}
+	return k
+}
