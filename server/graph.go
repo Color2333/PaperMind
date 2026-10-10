@@ -593,7 +593,12 @@ func (s *Server) handleCitationDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"paper_id": paperID, "references": references, "cited_by": citations,
-		"reference_count": len(references), "citation_count": len(citations),
+		"stats": map[string]any{
+			"total_references":        len(references),
+			"total_cited_by":          len(citations),
+			"in_library_references":   len(references),
+			"in_library_cited_by":     len(citations),
+		},
 	})
 }
 
