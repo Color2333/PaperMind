@@ -94,8 +94,8 @@ func (s *Server) handleAIExplain(w http.ResponseWriter, r *http.Request) {
 		prompt = prompts["explain"]
 	}
 
-	// 调 Pi 网关 LLM
-	gwURL := envOr("GATEWAY_URL", "http://gateway:8080") + "/v1/chat/completions"
+	// 调 Pi 网关 LLM（env 名与全仓库对齐：PAPERMIND_GATEWAY_URL，端口 8765）
+	gwURL := envOr("PAPERMIND_GATEWAY_URL", "http://gateway:8765") + "/v1/chat/completions"
 	gwTok := envOr("PAPERMIND_GATEWAY_TOKEN", "pm-gateway-internal")
 	payload := map[string]any{
 		"model":    "skim",
