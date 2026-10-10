@@ -538,3 +538,6 @@ func HandleSendBriefEmailEffect(ctx context.Context, e *HandlerEnv, task *Task) 
 	RegisterEffect(e.Store, effectKey, "mail_send", task.TaskID)
 	return map[string]any{"sent": true, "effect_key": effectKey}, nil
 }
+
+// UserTodayStartUTC 用户时区当日 0 点 UTC（goserver 复用）。
+func UserTodayStartUTC() time.Time { return userTodayStartUTC() }
