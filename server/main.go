@@ -19,7 +19,7 @@ func main() {
 	}
 	defer db.Close()
 
-	s := &Server{cfg: cfg, db: db}
+	s := &Server{cfg: cfg, db: db, lastPoll: map[string]time.Time{}}
 
 	mux := http.NewServeMux()
 

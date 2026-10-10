@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -210,10 +211,24 @@ func (s *Server) handleRagAsk(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ragAsk 词法+语义混合检索 → 上下文拼装 → 网关 skim 模型作答。
+// ragAsk 双路检索（词法 + pgvector 语义召回）→ 上下文拼装 → 网关 skim 模型作答。
+// R18：恢复语义召回（原 Go 版仅 LIKE，自然语言问句召回失效）。
 func (s *Server) ragAsk(ctx context.Context, question string, topK int) (string, []string, []map[string]any, error) {
+	type candidate struct {
+		id, title, abstract, summary, deep string
+	}
+	candidates := map[string]candidate{}
+	var order []string
+	addCandidate := func(id, title, abstract, summary, deep string) {
+		if _, ok := candidates[id]; !ok {
+			candidates[id] = candidate{id, title, abstract, summary, deep}
+			order = append(order, id)
+		}
+	}
+
+	// 路径一：词法（标题/摘要 LIKE）
 	pattern := "%" + question + "%"
-	rows, err := s.db.Query(
+	lexRows, err := s.db.Query(
 		`SELECT p.id, p.title, COALESCE(p.abstract,''),
 		        COALESCE(ar.summary_md,''), COALESCE(ar.deep_dive_md,'')
 		 FROM papers p
@@ -223,23 +238,53 @@ func (s *Server) ragAsk(ctx context.Context, question string, topK int) (string,
 	if err != nil {
 		return "", nil, nil, err
 	}
-	defer rows.Close()
-	type cand struct {
-		id, title, abstract, summary, deep string
+	for lexRows.Next() {
+		var c candidate
+		if lexRows.Scan(&c.id, &c.title, &c.abstract, &c.summary, &c.deep) == nil {
+			addCandidate(c.id, c.title, c.abstract, c.summary, c.deep)
+		}
 	}
-	var cands []cand
-	for rows.Next() {
-		var c cand
-		if rows.Scan(&c.id, &c.title, &c.abstract, &c.summary, &c.deep) == nil {
-			cands = append(cands, c)
+	lexRows.Close()
+
+	// 路径二：语义召回——query 向量化 → pgvector 近邻（HNSW 索引）
+	if env := s.workerEnv(); env != nil && env.Embed != nil {
+		if qvec, qerr := env.Embed.Embed(ctx, question); qerr == nil && len(qvec) > 0 {
+			parts := make([]string, len(qvec))
+			for i, v := range qvec {
+				parts[i] = strconv.FormatFloat(v, 'f', 6, 64)
+			}
+			vecLit := "[" + strings.Join(parts, ",") + "]"
+			semRows, serr := s.db.Query(
+				`SELECT p.id, p.title, COALESCE(p.abstract,''),
+				        COALESCE(ar.summary_md,''), COALESCE(ar.deep_dive_md,'')
+				 FROM papers p
+				 LEFT JOIN analysis_reports ar ON ar.paper_id = p.id
+				 WHERE p.embedding_vec IS NOT NULL
+				 ORDER BY p.embedding_vec <=> $1::vector LIMIT $2`, vecLit, topK+3)
+			if serr == nil {
+				for semRows.Next() {
+					var c candidate
+					if semRows.Scan(&c.id, &c.title, &c.abstract, &c.summary, &c.deep) == nil {
+						addCandidate(c.id, c.title, c.abstract, c.summary, c.deep)
+					}
+				}
+				semRows.Close()
+			}
+		}
+	}
+
+	// 上下文拼装（词法命中优先，语义补充）
+	cands := make([]candidate, 0, topK)
+	for _, id := range order {
+		cands = append(cands, candidates[id])
+		if len(cands) >= topK {
+			break
 		}
 	}
 	if len(cands) == 0 {
 		return "当前知识库没有足够上下文。", []string{}, []map[string]any{}, nil
 	}
-	if len(cands) > topK {
-		cands = cands[:topK]
-	}
+
 	var ctxParts []string
 	cited := []string{}
 	evidence := []map[string]any{}
@@ -256,7 +301,7 @@ func (s *Server) ragAsk(ctx context.Context, question string, topK int) (string,
 			"snippet": strings.TrimSpace(snippet), "source": "abstract+analysis",
 		})
 	}
-	// build_rag_prompt 对齐
+
 	var joined []string
 	for i, p := range ctxParts {
 		joined = append(joined, fmt.Sprintf("[ctx%d] %s", i+1, p))

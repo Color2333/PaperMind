@@ -28,7 +28,7 @@ COPY --from=build /out/papermind-api /usr/local/bin/papermind-api
 # Pi agent 桥：Node 版 pm（webchat spawn `pm -p --json` 的执行体）
 COPY pm_agent/ /opt/pm-agent/
 RUN cd /opt/pm-agent \
-    && npm install --omit=dev --registry=https://registry.npmmirror.com \
+    && npm ci --omit=dev --registry=https://registry.npmmirror.com \
     && ln -sf /opt/pm-agent/bin/pm.js /usr/local/bin/pm \
     && pm --version | grep -q papermind/cli
 RUN mkdir -p /app/data/papers /app/data/briefs

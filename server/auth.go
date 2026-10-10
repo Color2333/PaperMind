@@ -143,7 +143,7 @@ func (s *Server) handleDevicePoll(w http.ResponseWriter, r *http.Request) {
 	var approvedAt sql.NullTime
 	var expiresAt time.Time
 	err := s.db.QueryRow(
-		`SELECT id, status, COALESCE(api_token_id::text,''), client_name, user_code, approved_at, expires_at::timestamp
+		`SELECT id, status, api_token_id::text, client_name, user_code, approved_at, expires_at::timestamp
 		 FROM device_auth_requests WHERE device_code_hash = $1`,
 		hashToken(code),
 	).Scan(&requestID, &status, &tokenID, &clientName, &userCode, &approvedAt, &expiresAt)
@@ -169,8 +169,13 @@ func (s *Server) handleDevicePoll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "expired"})
 	default:
 		// approved：首次 poll 创建 API 令牌并交付明文；之后 delivered
-		if !tokenID.Valid {
-			raw, name := s.createDeviceAPIToken(clientName, userCode, requestID)
+		// R02：api_token_id NULL 才签发（COALESCE 曾吞掉 NULL 导致直接 delivered 无 token）
+		if !tokenID.Valid || tokenID.String == "" {
+			raw, name, terr := s.createDeviceAPIToken(clientName, userCode, requestID)
+			if terr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": terr.Error()})
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":       "approved",
 				"access_token": raw,
@@ -183,16 +188,27 @@ func (s *Server) handleDevicePoll(w http.ResponseWriter, r *http.Request) {
 }
 
 // createDeviceAPIToken：设备流批准后的 API 令牌签发（scopes=[read,write]）。
-func (s *Server) createDeviceAPIToken(clientName, userCode, deviceRequestID string) (raw, name string) {
+// R02：签发错误不再吞掉；token id 回写设备请求行——重试不会重复签发。
+func (s *Server) createDeviceAPIToken(clientName, userCode, deviceRequestID string) (raw, name string, err error) {
 	name = fmt.Sprintf("%s (%s)", clientName, userCode)
 	raw = apiTokenPrefix + randomURLSafe(32)
 	tokenHash := hashToken(raw)
-	_, _ = s.db.Exec(
+	tokenID := newUUID()
+	_, err = s.db.Exec(
 		`INSERT INTO api_tokens (id, name, token_prefix, token_hash, scopes, created_by, device_request_id, created_at)
-		 VALUES (gen_random_uuid()::text, $1, $2, $3, '["read","write"]', 'device', $4, now()::timestamp)`,
-		name, raw[:12], tokenHash, deviceRequestID,
+		 VALUES ($1, $2, $3, $4, '["read","write"]', 'device', $5, now()::timestamp)`,
+		tokenID, name, raw[:12], tokenHash, deviceRequestID,
 	)
-	return raw, name
+	if err != nil {
+		return "", "", err
+	}
+	if _, err = s.db.Exec(
+		`UPDATE device_auth_requests SET api_token_id=$1 WHERE id=$2`,
+		tokenID, deviceRequestID,
+	); err != nil {
+		return "", "", err
+	}
+	return raw, name, nil
 }
 
 var _ = deviceCodeExpireSeconds
