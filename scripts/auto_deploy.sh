@@ -102,20 +102,28 @@ if ! docker compose up -d 2>&1 | tee -a "$LOG_FILE" | tail -10; then
     exit 1
 fi
 
-# 7. 健康检查
+# 7. 健康检查（R28：frontend restart 前置——旧 upstream IP 正是 502 根因；
+# 失败分支不记录 SHA，保留下轮重试与回滚依据）
 log "等待健康检查 (40s)..."
 sleep 40
-if curl -skf --max-time 10 https://pm.vibingu.cn/api/health >/dev/null 2>&1; then
-    log "OK: backend 健康检查通过"
-# frontend nginx 启动时解析 upstream IP 并缓存——goserver/core 容器重建后
-# 旧 IP 失效（502 Connection refused 实证），每次部署后重启重新解析
+# frontend nginx 缓存 upstream IP——容器重建后必须重启刷新（先重启再探测）
 docker compose restart frontend >/dev/null 2>&1 || true
-log "frontend 已重启（刷新 upstream DNS）"
+sleep 5
+if curl -skf --max-time 10 https://pm.vibingu.cn/api/health >/dev/null 2>&1; then
+    log "OK: 公网健康检查通过"
     echo "$REMOTE_SHA" > "$SHA_FILE"
     log "=== 部署成功! SHA=$REMOTE_SHA_SHORT 已记录 ==="
 else
-    log "WARN: backend 健康检查未通过 (可能还在启动)，但已记录 SHA"
-    echo "$REMOTE_SHA" > "$SHA_FILE"
+    # 二次机会：可能还在启动——再等 30s 复查一次
+    sleep 30
+    if curl -skf --max-time 10 https://pm.vibingu.cn/api/health >/dev/null 2>&1; then
+        log "OK: 公网健康检查通过（二次探测）"
+        echo "$REMOTE_SHA" > "$SHA_FILE"
+        log "=== 部署成功! SHA=$REMOTE_SHA_SHORT 已记录 ==="
+    else
+        log "FAIL: 公网健康检查未通过——不记录 SHA，保留旧版本回滚依据"
+        exit 1
+    fi
 fi
 
 # 8. 清理（悬空镜像随构建累积——每次部署后清理，磁盘满会让 PG 崩）

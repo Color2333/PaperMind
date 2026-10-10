@@ -249,6 +249,8 @@ services:
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - AUTH_PASSWORD=  # Demo 免密（DemoMode 中间件拦截写接口）
+      # V01：独立 JWT 签名密钥——Demo 签发的令牌对个人主服务无效（跨信任域切断）
+      - AUTH_SECRET_KEY=${DEMO_AUTH_SECRET_KEY:-demo-only-secret-rotate-me}
     restart: unless-stopped
     depends_on:
       postgres:

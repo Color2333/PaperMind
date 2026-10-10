@@ -96,9 +96,9 @@ func (s *Server) handlePapersLatest(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(
 		`SELECT p.id, p.title, p.arxiv_id, p.abstract,
 			TO_CHAR(p.publication_date, 'YYYY-MM-DD'), p.read_status, p.pdf_path,
-			p.embedding IS NOT NULL, p.favorited, p.rejected,
-			COALESCE(p.metadata->>'categories', '[]'),
-			COALESCE(p.metadata->>'keywords', '[]'),
+			p.embedding_vec IS NOT NULL, p.favorited, p.rejected,
+			COALESCE(p.metadata->'categories', '[]'),
+			COALESCE(p.metadata->'keywords', '[]'),
 			COALESCE(p.metadata->>'title_zh', ''),
 			COALESCE(p.metadata->>'abstract_zh', ''),
 			COALESCE(p.metadata::text, '{}')
