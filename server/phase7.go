@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	core "github.com/Color2333/PaperMind/core"
 )
@@ -307,6 +308,35 @@ func (s *Server) handleSearchMulti(w http.ResponseWriter, r *http.Request) {
 	if channelEnabled(body.Channels, "semantic_scholar") {
 		channels["semantic_scholar"] = s.searchS2(ctx, body.Query, body.MaxResults)
 	}
+	// openalex / dblp / ieee
+	if channelEnabled(body.Channels, "openalex") {
+		channels["openalex"] = s.searchOpenAlex(ctx, body.Query, body.MaxResults)
+	}
+	if channelEnabled(body.Channels, "dblp") {
+		channels["dblp"] = s.searchDBLP(ctx, body.Query, body.MaxResults)
+	}
+	if channelEnabled(body.Channels, "ieee") {
+		if key := envOr("IEEE_API_KEY", ""); key != "" {
+			if papers, err := core.FetchIEEE(ctx, key, body.Query, body.MaxResults); err == nil {
+				items := make([]map[string]any, len(papers))
+				for i, p := range papers {
+					items[i] = map[string]any{
+						"title": p.Title, "abstract": p.Abstract,
+						"publication_date": p.PublicationDate,
+						"metadata":         map[string]any{"source": "ieee"},
+					}
+				}
+				channels["ieee"] = items
+			} else {
+				channels["ieee"] = map[string]any{"error": err.Error()}
+			}
+		} else {
+			channels["ieee"] = map[string]any{"error": "IEEE_API_KEY 未配置"}
+		}
+	}
+	if channelEnabled(body.Channels, "biorxiv") {
+		channels["biorxiv"] = map[string]any{"error": "bioRxiv 渠道暂不支持关键词检索"}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"query": body.Query, "channels": channels})
 }
 
@@ -425,3 +455,110 @@ func (s *Server) handleDailyReportGenerateOnly(w http.ResponseWriter, r *http.Re
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task_id": taskID, "job_id": jobID, "status": "queued"})
 }
+
+// searchOpenAlex OpenAlex works 检索（无 key，礼貌池）。
+func (s *Server) searchOpenAlex(ctx context.Context, query string, limit int) any {
+	u := fmt.Sprintf("https://api.openalex.org/works?search=%s&per-page=%d&select=id,title,abstract_inverted_index,publication_year,doi",
+		urlQueryEscape(query), limit)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req.Header.Set("User-Agent", "PaperMind/2.1 (mailto:papermind@local)")
+	resp, err := httpDefaultClient.Do(req)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+	var parsed struct {
+		Results []struct {
+			ID       string `json:"id"`
+			Title    string `json:"title"`
+			Year     int    `json:"publication_year"`
+			DOI      string `json:"doi"`
+			Abstract map[string][]int `json:"abstract_inverted_index"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	items := []map[string]any{}
+	for _, w := range parsed.Results {
+		if w.Title == "" {
+			continue
+		}
+		// 倒排索引 → 摘要文本
+		words := make(map[int]string)
+		for word, poss := range w.Abstract {
+			for _, pos := range poss {
+				words[pos] = word
+			}
+		}
+		abstract := make([]string, 0, len(words))
+		for i := 0; i < len(words); i++ {
+			if v, ok := words[i]; ok {
+				abstract = append(abstract, v)
+			}
+		}
+		abstractText := strings.Join(abstract, " ")
+		if len(abstractText) > 400 {
+			abstractText = abstractText[:400]
+		}
+		out := map[string]any{
+			"title": w.Title, "abstract": abstractText,
+			"year": w.Year, "metadata": map[string]any{"source": "openalex"},
+		}
+		if w.DOI != "" {
+			out["doi"] = strings.TrimPrefix(w.DOI, "https://doi.org/")
+		}
+		items = append(items, out)
+	}
+	return items
+}
+
+// searchDBLP DBLP 出版物检索。
+func (s *Server) searchDBLP(ctx context.Context, query string, limit int) any {
+	u := fmt.Sprintf("https://dblp.org/search/publ/api?q=%s&h=%d&format=json",
+		urlQueryEscape(query), limit)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req.Header.Set("User-Agent", "PaperMind/2.1")
+	resp, err := httpDefaultClient.Do(req)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+	var parsed struct {
+		Result struct {
+			Hits struct {
+				Hit []struct {
+					Info struct {
+						Title  string `json:"title"`
+						Venue  string `json:"venue"`
+						Year   string `json:"year"`
+						DOI    string `json:"doi"`
+						EE     string `json:"ee"`
+					} `json:"info"`
+				} `json:"hit"`
+			} `json:"hits"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	items := []map[string]any{}
+	for _, h := range parsed.Result.Hits.Hit {
+		if h.Info.Title == "" {
+			continue
+		}
+		title := strings.TrimRight(h.Info.Title, ".")
+		items = append(items, map[string]any{
+			"title": title, "abstract": "",
+			"year": h.Info.Year, "venue": h.Info.Venue,
+			"metadata": map[string]any{"source": "dblp", "ee": h.Info.EE},
+		})
+	}
+	return items
+}
+
+func urlQueryEscape(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, " ", "+"), "&", "%26")
+}
+
+var httpDefaultClient = &http.Client{Timeout: 30 * time.Second}

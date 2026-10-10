@@ -193,7 +193,7 @@ func HandleIngestIEEE(ctx context.Context, env *HandlerEnv, task *Task) (map[str
 	if query == "" {
 		return nil, errors.New("缺少 query")
 	}
-	papers, err := fetchIEEE(ctx, apiKey, query, maxResults)
+	papers, err := FetchIEEE(ctx, apiKey, query, maxResults)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func HandleIngestIEEE(ctx context.Context, env *HandlerEnv, task *Task) (map[str
 }
 
 // fetchIEEE IEEE Xplore 检索（元数据，无 PDF——权限限制维持原状）。
-func fetchIEEE(ctx context.Context, apiKey, query string, maxResults int) ([]ArxivPaper, error) {
+func FetchIEEE(ctx context.Context, apiKey, query string, maxResults int) ([]ArxivPaper, error) {
 	payload := map[string]any{
 		"queryString": fmt.Sprintf(`("article_title":"%s" OR "abstract":"%s")`, query, query),
 		"maxRecords":  maxResults,
