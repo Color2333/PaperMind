@@ -95,6 +95,8 @@ function OverviewContent({
   const graphRef = useRef<HTMLDivElement>(null);
   const [gw, setGw] = useState(800);
   const gh = 500;
+  const [topicFilter, setTopicFilter] = useState<string | null>(null);
+  const [hoverNode, setHoverNode] = useState<(OverviewNode & { val: number }) | null>(null);
 
   useEffect(() => {
     if (!graphRef.current) return;
@@ -105,10 +107,20 @@ function OverviewContent({
     return () => obs.disconnect();
   }, []);
 
-  const graphData = useMemo(() => ({
-    nodes: overview.nodes.map((n) => ({ ...n, val: Math.max(n.pagerank * 500, 3) })),
-    links: overview.edges,
-  }), [overview]);
+  const allTopics = useMemo(
+    () => Object.keys(overview.topic_stats).sort((a, b) => overview.topic_stats[b].count - overview.topic_stats[a].count),
+    [overview],
+  );
+  const graphData = useMemo(() => {
+    const nodes = overview.nodes
+      .filter((n) => !topicFilter || n.topics.includes(topicFilter))
+      .map((n) => ({ ...n, val: Math.max(n.pagerank * 500, 3) }));
+    const idSet = new Set(nodes.map((n) => n.id));
+    return {
+      nodes,
+      links: overview.edges.filter((e) => idSet.has(e.source) && idSet.has(e.target)),
+    };
+  }, [overview, topicFilter]);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -122,6 +134,30 @@ function OverviewContent({
 
       {/* 全局力导向图 */}
       <Section title="全局引用网络" icon={<Share2 className="h-4 w-4 text-primary" />} desc="节点大小 = PageRank 影响力，颜色 = 主题">
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setTopicFilter(null)}
+            className={cn(
+              "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+              !topicFilter ? "bg-primary text-white" : "bg-hover text-ink-secondary hover:text-ink",
+            )}
+          >
+            全部
+          </button>
+          {allTopics.slice(0, 8).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTopicFilter(topicFilter === t ? null : t)}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+                topicFilter === t ? "bg-primary text-white" : "bg-hover text-ink-secondary hover:text-ink",
+              )}
+            >
+              {t}
+              <span className="ml-1 opacity-60">{overview.topic_stats[t].count}</span>
+            </button>
+          ))}
+        </div>
         <div ref={graphRef} className="relative overflow-hidden rounded-xl bg-page" style={{ height: gh }}>
           <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="h-5 w-5 animate-spin text-ink-tertiary" /></div>}>
             <ForceGraph2D
@@ -141,9 +177,28 @@ function OverviewContent({
               linkColor={() => "rgba(148,163,184,0.15)"}
               linkWidth={0.5}
               onNodeClick={(node) => { navigate(`/papers/${(node as OverviewNode).id}`); }}
+              onNodeHover={(node) => setHoverNode((node as OverviewNode & { val: number }) ?? null)}
               cooldownTicks={80}
               enableZoomInteraction
             />
+            {/* 悬浮信息卡 */}
+            {hoverNode && (
+              <div className="bg-surface/95 border-border shadow-warm-md pointer-events-none absolute left-3 top-3 max-w-xs rounded-xl border p-3">
+                <p className="text-ink line-clamp-2 text-xs font-semibold">{hoverNode.title}</p>
+                <p className="text-ink-tertiary tnum mt-1 text-[10px]">
+                  PageRank {hoverNode.pagerank.toFixed(4)} · 被引 {hoverNode.in_degree} · 引出 {hoverNode.out_degree}
+                </p>
+                {hoverNode.topics.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {hoverNode.topics.slice(0, 3).map((t) => (
+                      <span key={t} className="bg-primary-light text-primary rounded px-1.5 py-0.5 text-[10px]">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </Suspense>
           <button onClick={onRefresh} className="absolute right-3 top-3 rounded-lg bg-surface/80 p-2 text-ink-tertiary hover:text-primary transition-colors" title="刷新">
             <RotateCw className="h-4 w-4" />

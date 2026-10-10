@@ -220,17 +220,17 @@ function MonthlyTrend({ data }: { data: PaperDistributionResponse }) {
         <div className="flex gap-6">
           <div className="flex min-w-[140px] flex-col justify-between">
             <div>
-              <p className="text-ink text-3xl font-bold">{total.toLocaleString()}</p>
+              <p className="text-ink tnum text-3xl font-bold">{total.toLocaleString()}</p>
               <p className="text-ink-tertiary text-xs">近{months.length}月总计</p>
             </div>
             <div className="space-y-2">
               <div className="flex items-baseline gap-2">
-                <span className="text-ink text-lg font-semibold">{avg}</span>
+                <span className="text-ink tnum text-lg font-semibold">{avg}</span>
                 <span className="text-ink-tertiary text-xs">月均</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span
-                  className={`text-sm font-semibold ${trend >= 0 ? "text-success" : "text-error"}`}
+                  className={`tnum text-sm font-semibold ${trend >= 0 ? "text-success" : "text-error"}`}
                 >
                   {trend >= 0 ? "+" : ""}
                   {trend}%
@@ -239,35 +239,44 @@ function MonthlyTrend({ data }: { data: PaperDistributionResponse }) {
               </div>
             </div>
           </div>
-          <div className="flex h-32 flex-1 items-end gap-1.5">
-            {months.map((m, i) => {
-              const heightPct = (m.count / maxCount) * 100;
-              const isLatest = i === months.length - 1;
-              return (
-                <div
-                  key={m.month}
-                  className="group relative flex h-full flex-1 flex-col items-center justify-end"
-                >
-                  <div
-                    className={`w-full rounded-t transition-all duration-500 ${
-                      isLatest ? "bg-primary" : "bg-primary/30 hover:bg-primary/50"
-                    }`}
-                    style={{ height: `${Math.max(heightPct, 4)}%` }}
-                  />
-                  <div className="absolute bottom-full z-10 mb-2 hidden group-hover:block">
-                    <div className="bg-ink text-surface rounded-lg px-2 py-1 text-xs whitespace-nowrap">
-                      <p className="font-semibold">{m.count} 篇</p>
-                      <p className="text-[10px] opacity-70">{m.month}</p>
-                    </div>
-                  </div>
-                  {isLatest && (
-                    <span className="text-primary absolute -top-5 text-[10px] font-semibold">
-                      {m.count}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+          <div className="h-40 flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={months} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="monthFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--color-primary)" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="var(--color-primary)" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" vertical={false} />
+                <XAxis
+                  dataKey="month"
+                  tick={{ fontSize: 10, fill: "var(--color-ink-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  interval="preserveStartEnd"
+                />
+                <YAxis hide />
+                <Tooltip
+                  contentStyle={{
+                    background: "var(--color-surface)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: 10,
+                    fontSize: 12,
+                    boxShadow: "var(--shadow-md)",
+                  }}
+                  formatter={(v) => [`${v} 篇`, "入库"]}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="count"
+                  stroke="var(--color-primary)"
+                  strokeWidth={2}
+                  fill="url(#monthFill)"
+                  animationDuration={700}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
       )}
@@ -278,40 +287,46 @@ function MonthlyTrend({ data }: { data: PaperDistributionResponse }) {
 function YearDistribution({ data }: { data: PaperDistributionResponse }) {
   const years = data.by_year
     .filter((y) => y.year !== "未知")
-    .sort((a, b) => b.year.localeCompare(a.year));
-  const maxCount = Math.max(...years.map((y) => y.count), 1);
-
-  const colors = [
-    "bg-primary",
-    "bg-info",
-    "bg-success",
-    "bg-warning",
-    "bg-pink-500",
-    "bg-purple-500",
-  ];
+    .sort((a, b) => a.year.localeCompare(b.year));
+  const chartData = years.map((y) => ({ ...y, year: y.year }));
 
   return (
-    <SectionCard title="论文年份分布" icon={<Calendar className="text-primary h-4 w-4" />}>
-      {years.length === 0 ? (
-        <div className="text-ink-tertiary py-8 text-center text-sm">暂无年份数据</div>
+    <SectionCard title="论文年份分布" icon={<CalendarDays className="text-success h-4 w-4" />}>
+      {chartData.length === 0 ? (
+        <div className="text-ink-tertiary py-8 text-center text-sm">暂无数据</div>
       ) : (
-        <div className="space-y-3">
-          {years.slice(0, 6).map((y, i) => (
-            <div key={y.year} className="flex items-center gap-3">
-              <span className="text-ink-tertiary w-10 shrink-0 font-mono text-sm">
-                {y.year}
-              </span>
-              <div className="bg-page relative h-7 flex-1 overflow-hidden rounded-lg shadow-inner">
-                <div
-                  className={`h-full ${colors[i % colors.length]} bar-animate rounded-lg`}
-                  style={{ width: `${(y.count / maxCount) * 100}%` }}
-                />
-                <span className="text-ink absolute top-1/2 right-3 -translate-y-1/2 text-xs font-bold">
-                  {y.count}
-                </span>
-              </div>
-            </div>
-          ))}
+        <div className="h-44">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" vertical={false} />
+              <XAxis
+                dataKey="year"
+                tick={{ fontSize: 10, fill: "var(--color-ink-tertiary)" }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis hide />
+              <Tooltip
+                cursor={{ fill: "var(--color-hover)" }}
+                contentStyle={{
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: 10,
+                  fontSize: 12,
+                }}
+                formatter={(v) => [`${v} 篇`, "论文"]}
+              />
+              <Bar dataKey="count" radius={[6, 6, 0, 0]} animationDuration={700}>
+                {chartData.map((_, i) => (
+                  <Cell
+                    key={i}
+                    fill={i === chartData.length - 1 ? "var(--color-primary)" : "var(--color-primary-soft)"}
+                    opacity={i === chartData.length - 1 ? 1 : 0.75}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       )}
     </SectionCard>
@@ -327,25 +342,55 @@ function SourceDistribution({ data }: { data: PaperDistributionResponse }) {
       {sources.length === 0 ? (
         <div className="text-ink-tertiary py-8 text-center text-sm">暂无来源数据</div>
       ) : (
-        <div className="space-y-3">
-          {sources.map((s) => {
-            const pct = total > 0 ? ((s.count / total) * 100).toFixed(0) : 0;
-            return (
-              <div key={s.raw_source} className="flex items-center gap-3">
-                <div
-                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${SOURCE_COLORS[s.raw_source] || "bg-gray-500"}`}
+        <div className="flex items-center gap-4">
+          <div className="relative h-36 w-36 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={sources}
+                  dataKey="count"
+                  nameKey="source"
+                  innerRadius={44}
+                  outerRadius={66}
+                  paddingAngle={2}
+                  strokeWidth={0}
+                  animationDuration={700}
+                >
+                  {sources.map((_, i) => (
+                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{
+                    background: "var(--color-surface)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: 10,
+                    fontSize: 12,
+                  }}
+                  formatter={(v, name) => [`${v} 篇`, name]}
                 />
-                <span className="flex-1 truncate text-sm">{s.source}</span>
-                <div className="bg-page h-1.5 w-20 shrink-0 overflow-hidden rounded-full shadow-inner">
-                  <div
-                    className={`h-full ${SOURCE_COLORS[s.raw_source] || "bg-gray-500"} bar-animate rounded-full`}
-                    style={{ width: `${pct}%` }}
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-ink tnum text-xl font-bold">{total.toLocaleString()}</span>
+              <span className="text-ink-tertiary text-[10px]">总篇数</span>
+            </div>
+          </div>
+          <div className="min-w-0 flex-1 space-y-2">
+            {sources.map((s, i) => {
+              const pct = total > 0 ? ((s.count / total) * 100).toFixed(0) : 0;
+              return (
+                <div key={s.raw_source} className="flex items-center gap-2 text-xs">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}
                   />
+                  <span className="text-ink min-w-0 flex-1 truncate">{s.source}</span>
+                  <span className="text-ink-secondary tnum shrink-0 font-semibold">{pct}%</span>
                 </div>
-                <span className="w-10 shrink-0 text-right text-xs font-bold">{pct}%</span>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
     </SectionCard>
