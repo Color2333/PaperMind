@@ -113,14 +113,17 @@ func HasEffect(store *CoreStore, effectKey string) bool {
 }
 
 // RegisterEffect 登记副作用（唯一约束兜底并发；已存在返回 false）。
+// R13：task_effects.task_id 外键指向旧 tasks.id(32)——core_tasks 的 36 位 UUID
+// 写入必然 FK 失败且被忽略，导致邮件去重键永不登记。改为不关联旧执行体系，
+// 幂等键本身已足够去重。
 func RegisterEffect(store *CoreStore, effectKey, kind string, taskID string) bool {
 	if HasEffect(store, effectKey) {
 		return false
 	}
 	_, err := store.DB.Exec(
-		`INSERT INTO task_effects (id, task_id, effect_key, kind, payload, committed_at)
-		 VALUES ($1, $2, $3, $4, '{}', $5)`,
-		newCoreID(), nullIfEmpty(taskID), effectKey, kind, nowParam())
+		`INSERT INTO task_effects (id, effect_key, kind, payload, committed_at)
+		 VALUES ($1, $2, $3, '{}', $4)`,
+		newCoreID(), effectKey, kind, nowParam())
 	return err == nil
 }
 

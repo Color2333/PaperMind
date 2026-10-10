@@ -4,6 +4,7 @@ package main
 // Go Core 本身拥有 Job/Task/Attempt 权威数据——大部分端点直接查 PG core_jobs/core_tasks。
 
 import (
+	core "github.com/Color2333/PaperMind/core"
 	"encoding/json"
 	"net/http"
 )
@@ -70,6 +71,30 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	attempts := []map[string]any{}
+	attemptRows, err := s.db.Query(
+		`SELECT a.id, a.task_id, a.attempt_no, a.executor_id, a.status,
+			COALESCE(a.error_class,''), COALESCE(a.error_message,''), a.started_at::text,
+			COALESCE(TO_CHAR(a.finished_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"'),'')
+		 FROM core_attempts a JOIN core_tasks t ON t.id = a.task_id
+		 WHERE t.job_id=$1 ORDER BY a.started_at DESC LIMIT 200`, jobID)
+	if err == nil {
+		for attemptRows.Next() {
+			var aid, tid, executor, aStatus, started, finished, errClass, errMsg string
+			var attemptNo int
+			if err := attemptRows.Scan(&aid, &tid, &attemptNo, &executor, &aStatus,
+				&errClass, &errMsg, &started, &finished); err == nil {
+				attempts = append(attempts, map[string]any{
+					"id": aid, "task_id": tid, "attempt_no": attemptNo,
+					"executor_id": executor, "status": aStatus,
+					"error_class": errClass, "error_message": errMsg,
+					"started_at": started, "finished_at": finished,
+				})
+			}
+		}
+		attemptRows.Close()
+	}
+
 	tasks := []map[string]any{}
 	taskRows, err := s.db.Query(
 		`SELECT id, capability, status, attempt_count, max_attempts,
@@ -96,7 +121,7 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal([]byte(payload), &payloadObj)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": jid, "kind": kind, "capability": capability, "status": jobStatus,
-		"created_at": createdAt, "payload": payloadObj, "tasks": tasks,
+		"created_at": createdAt, "payload": payloadObj, "tasks": tasks, "attempts": attempts,
 	})
 }
 
@@ -145,18 +170,15 @@ func (s *Server) handleSubmitDurable(w http.ResponseWriter, r *http.Request) {
 // handleCancelJob：POST /jobs/{id}/cancel。
 func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("job_id")
-	res, err := s.db.Exec(
-		`UPDATE core_jobs SET status='cancelled', finished_at=now()::timestamp
-		 WHERE id=$1 AND status IN ('queued','running')`, jobID)
+	// R09：复用 CoreStore.CancelJob 权威状态机——leased 子任务进入 cancelling，
+	// Runner 心跳探测到 cancel_requested 后安全点退出，而不是只取消 queued。
+	store := &core.CoreStore{DB: s.db, IsPG: true}
+	counts, err := store.CancelJob(jobID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		return
 	}
-	n, _ := res.RowsAffected()
-	// 取消未领取的子任务
-	_, _ = s.db.Exec(
-		`UPDATE core_tasks SET status='cancelled' WHERE job_id=$1 AND status='queued'`, jobID)
-	writeJSON(w, http.StatusOK, map[string]int{"cancelled": int(n)})
+	writeJSON(w, http.StatusOK, counts)
 }
 
 // handleRetryJob：POST /jobs/{id}/retry。
@@ -200,14 +222,14 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 // handlePauseQueue / handleResumeQueue：队列暂停/恢复（system_flags 持久化）。
 func (s *Server) handlePauseQueue(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.db.Exec(
-		`INSERT INTO system_flags (key, value, updated_at) VALUES ('queue_paused', 'true', now()::timestamp)
+		`INSERT INTO system_flags (key, value, updated_at) VALUES ('queue_paused', '1', now()::timestamp) ON CONFLICT (key) DO UPDATE SET value='1', updated_at=now()::timestamp
 		 ON CONFLICT (key) DO UPDATE SET value='true', updated_at=now()::timestamp`)
 	writeJSON(w, http.StatusOK, map[string]bool{"paused": true})
 }
 
 func (s *Server) handleResumeQueue(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.db.Exec(
-		`INSERT INTO system_flags (key, value, updated_at) VALUES ('queue_paused', 'false', now()::timestamp)
+		`INSERT INTO system_flags (key, value, updated_at) VALUES ('queue_paused', '0', now()::timestamp) ON CONFLICT (key) DO UPDATE SET value='0', updated_at=now()::timestamp
 		 ON CONFLICT (key) DO UPDATE SET value='false', updated_at=now()::timestamp`)
 	writeJSON(w, http.StatusOK, map[string]bool{"paused": false})
 }

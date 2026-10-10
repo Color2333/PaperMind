@@ -402,10 +402,28 @@ func (s *Server) handleListSenseSessions(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, items)
 }
 
+// makeActHandler 显式绑定 act 字面路由（PathValue 无通配）。
+func (s *Server) makeActHandler(act string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.updateAct(w, r, act)
+	}
+}
+
+// makeActGenerateHandler act 生成路由绑定。
+func (s *Server) makeActGenerateHandler(act string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.generateAct(w, r, act)
+	}
+}
+
 // handleUpdateAct PATCH /sensemaking/sessions/{session_id}/act{1|2|3}。
 func (s *Server) handleUpdateAct(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("session_id")
 	act := r.PathValue("act")
+	s.updateAct(w, r, act)
+}
+
+func (s *Server) updateAct(w http.ResponseWriter, r *http.Request, act string) {
+	sessionID := r.PathValue("session_id")
 	var data map[string]any
 	if err := readBody(r, &data); err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "invalid body"})
@@ -438,8 +456,12 @@ func (s *Server) handleUpdateAct(w http.ResponseWriter, r *http.Request) {
 
 // handleGenerateAct POST /sensemaking/sessions/{session_id}/act{1|2|3}/generate。
 func (s *Server) handleGenerateAct(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("session_id")
 	act := r.PathValue("act")
+	s.generateAct(w, r, act)
+}
+
+func (s *Server) generateAct(w http.ResponseWriter, r *http.Request, act string) {
+	sessionID := r.PathValue("session_id")
 	// 上下文加载：论文 + schema + 前序 act
 	var paperID, schemaID string
 	var act1Raw, act2Raw []byte

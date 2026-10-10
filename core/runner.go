@@ -158,11 +158,9 @@ func (r *Runner) runTask(ctx context.Context, task *Task, pool *classPool) {
 	hbWG.Add(1)
 	go func() {
 		defer hbWG.Done()
-		// 续约节奏：lease 的 1/3（Python 同语义），至少 30s
-		interval := time.Duration(task.TimeoutS) * time.Second / 3
-		if interval < 30*time.Second {
-			interval = 30 * time.Second
-		}
+		// 续约节奏：HeartbeatTask 固定续约 +600s——周期必须明显小于续约窗口，
+		// 否则长任务第二次心跳前 lease 已被 reclaim（R27）。取 200s（600/3）。
+		interval := 200 * time.Second
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
