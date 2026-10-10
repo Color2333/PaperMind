@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 
 const STATUS_COLORS: Record<string, string> = {
-  unread: "bg-slate-400",
+  unread: "bg-ink-tertiary",
   skimmed: "bg-yellow-500",
   deep_read: "bg-primary",
 };
@@ -30,7 +30,7 @@ const SOURCE_COLORS: Record<string, string> = {
   arxiv: "bg-red-500",
   semantic_scholar: "bg-blue-500",
   reference_import: "bg-green-500",
-  unknown: "bg-gray-500",
+  unknown: "bg-page0",
   initial_import: "bg-purple-500",
   manual_collect: "bg-orange-500",
   auto_collect: "bg-cyan-500",
@@ -153,7 +153,7 @@ const TopicCard = memo(function TopicCard({ stat }: { stat: TopicStats }) {
                 style={{ width: `${(stat.status_dist.skimmed / total) * 100}%` }}
               />
               <div
-                className="h-full rounded-r-full bg-slate-300 dark:bg-slate-600"
+                className="h-full rounded-r-full bg-active dark:bg-ink-tertiary"
                 style={{ width: `${(stat.status_dist.unread / total) * 100}%` }}
               />
             </>
@@ -169,7 +169,7 @@ const TopicCard = memo(function TopicCard({ stat }: { stat: TopicStats }) {
             粗读 {stat.status_dist.skimmed}
           </span>
           <span className="flex items-center gap-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-slate-300 dark:bg-slate-600" />
+            <span className="h-1.5 w-1.5 rounded-full bg-active dark:bg-ink-tertiary" />
             未读 {stat.status_dist.unread}
           </span>
         </div>
@@ -401,7 +401,7 @@ function VenueDistribution({ data }: { data: PaperDistributionResponse }) {
   const venues = data.by_venue;
   const maxCount = Math.max(...venues.map((v) => v.count), 1);
 
-  const medals = ["text-amber-500", "text-slate-400", "text-orange-400"];
+  const medals = ["text-amber-500", "text-ink-tertiary", "text-orange-400"];
 
   return (
     <SectionCard title="顶会/期刊分布" icon={<Layers className="text-warning h-4 w-4" />}>
@@ -447,12 +447,12 @@ function ActionSourceStats({ data }: { data: PaperDistributionResponse }) {
             return (
               <div key={a.raw_source} className="flex items-center gap-3">
                 <div
-                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${SOURCE_COLORS[a.raw_source] || "bg-gray-500"}`}
+                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${SOURCE_COLORS[a.raw_source] || "bg-page0"}`}
                 />
                 <span className="flex-1 truncate text-sm">{a.source}</span>
                 <div className="bg-page h-1.5 w-20 shrink-0 overflow-hidden rounded-full shadow-inner">
                   <div
-                    className={`h-full ${SOURCE_COLORS[a.raw_source] || "bg-gray-500"} bar-animate rounded-full`}
+                    className={`h-full ${SOURCE_COLORS[a.raw_source] || "bg-page0"} bar-animate rounded-full`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
@@ -480,7 +480,7 @@ function ReadStatusOverview({ data }: { data: PaperDistributionResponse }) {
             {statuses.map((s) => (
               <div
                 key={s.raw_status}
-                className={`${STATUS_COLORS[s.raw_status] || "bg-gray-500"} h-full`}
+                className={`${STATUS_COLORS[s.raw_status] || "bg-page0"} h-full`}
                 style={{ width: `${total > 0 ? (s.count / total) * 100 : 0}%` }}
               />
             ))}
@@ -494,11 +494,11 @@ function ReadStatusOverview({ data }: { data: PaperDistributionResponse }) {
                       ? "bg-primary/10"
                       : s.raw_status === "skimmed"
                         ? "bg-yellow-500/10"
-                        : "bg-slate-100 dark:bg-slate-800"
+                        : "bg-hover dark:bg-hover"
                   }`}
                 >
                   <div
-                    className={`h-2 w-2 rounded-full ${STATUS_COLORS[s.raw_status] || "bg-gray-500"}`}
+                    className={`h-2 w-2 rounded-full ${STATUS_COLORS[s.raw_status] || "bg-page0"}`}
                   />
                   <span className="text-xs font-medium">{s.status}</span>
                 </div>

@@ -77,7 +77,7 @@ export default function DeviceAuthorize() {
   // 未认证：内嵌登录页（登录成功后回到本页授权流程）
   if (!checked) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#1B1917] via-[#141210] to-[#1B1917]">
         <Spinner />
       </div>
     );
@@ -90,17 +90,17 @@ export default function DeviceAuthorize() {
   const finalized = decision !== null || info?.status === "denied" || expired;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#1B1917] via-[#141210] to-[#1B1917]">
       <div className="w-full max-w-md px-4">
         <div className="mb-8 text-center">
           <div className="bg-primary/10 mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl">
             <MonitorSmartphone className="text-primary h-8 w-8" />
           </div>
           <h1 className="mb-2 text-2xl font-bold text-white">设备登录授权</h1>
-          <p className="text-sm text-slate-400">确认下面设备码与你终端 pm login 显示的一致</p>
+          <p className="text-sm text-[#A2988C]">确认下面设备码与你终端 pm login 显示的一致</p>
         </div>
 
-        <div className="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6 shadow-xl backdrop-blur-sm">
+        <div className="rounded-2xl border border-[#2E2A25]/60 bg-[#201D1A]/70 p-6 shadow-xl backdrop-blur-sm">
           {/* 设备码输入（URL 未带或需要更正时） */}
           {!info && !loadError && (
             <div className="space-y-3">
@@ -108,7 +108,7 @@ export default function DeviceAuthorize() {
                 value={userCode}
                 onChange={(e) => setUserCode(e.target.value.toUpperCase())}
                 placeholder="输入设备码，如 ABKQ-WERT"
-                className="w-full rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-3 text-center font-mono text-lg tracking-widest text-white placeholder-slate-500 outline-none focus:border-primary"
+                className="w-full rounded-xl border border-[#2E2A25] bg-[#131110]/60 px-4 py-3 text-center font-mono text-lg tracking-widest text-white placeholder-[#575047] outline-none focus:border-primary"
                 maxLength={9}
               />
               <Button
@@ -131,7 +131,7 @@ export default function DeviceAuthorize() {
                   setLoadError("");
                   setUserCode("");
                 }}
-                className="mt-2 block w-full text-xs text-slate-400 underline"
+                className="mt-2 block w-full text-xs text-[#A2988C] underline"
               >
                 重新输入设备码
               </button>
@@ -142,14 +142,14 @@ export default function DeviceAuthorize() {
           {info && !finalized && (
             <div className="space-y-5">
               <div className="text-center">
-                <div className="rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-4 font-mono text-3xl font-bold tracking-widest text-white">
+                <div className="rounded-xl border border-[#2E2A25] bg-[#131110]/60 px-4 py-4 font-mono text-3xl font-bold tracking-widest text-white">
                   {info.user_code}
                 </div>
-                <p className="mt-3 text-sm text-slate-300">
+                <p className="mt-3 text-sm text-[#EBE5DC]">
                   设备 <span className="font-medium text-white">{info.client_name}</span> 请求登录
                   PaperMind
                 </p>
-                <p className="mt-1 flex items-center justify-center gap-1 text-xs text-slate-500">
+                <p className="mt-1 flex items-center justify-center gap-1 text-xs text-[#A2988C]">
                   <Clock className="h-3 w-3" />
                   {Math.floor(info.expires_in / 60)} 分{" "}
                   {String(info.expires_in % 60).padStart(2, "0")} 秒后过期
@@ -206,14 +206,14 @@ export default function DeviceAuthorize() {
           )}
           {expired && (
             <ResultPanel
-              icon={<Clock className="h-10 w-10 text-slate-400" />}
+              icon={<Clock className="h-10 w-10 text-[#A2988C]" />}
               title="已过期"
               desc="授权请求超时，请在终端重新执行 pm login"
             />
           )}
         </div>
 
-        <p className="mt-6 text-center text-xs text-slate-500">
+        <p className="mt-6 text-center text-xs text-[#A2988C]">
           PaperMind · 设备码授权（类似 GitHub CLI 登录流程）
         </p>
       </div>
@@ -226,7 +226,7 @@ function ResultPanel({ icon, title, desc }: { icon: React.ReactNode; title: stri
     <div className="py-6 text-center">
       <div className="mb-3 flex justify-center">{icon}</div>
       <h2 className="text-lg font-semibold text-white">{title}</h2>
-      <p className="mt-1 text-sm text-slate-400">{desc}</p>
+      <p className="mt-1 text-sm text-[#A2988C]">{desc}</p>
     </div>
   );
 }
