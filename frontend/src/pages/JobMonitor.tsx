@@ -86,7 +86,7 @@ export default function JobMonitor() {
             className="gradient-primary shadow-warm-xs text-white px-3 py-1.5 rounded-lg text-sm transition-all hover:shadow-warm-md"
             onClick={refresh}
           >
-            Refresh
+            刷新
           </button>
         </div>
       </div>
