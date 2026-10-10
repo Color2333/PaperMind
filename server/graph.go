@@ -12,10 +12,48 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	core "github.com/Color2333/PaperMind/core"
 )
+
+// llmCache LLM 洞察端点的进程内 TTL 缓存（Python 语义对齐：survey/evolution
+// 300s、gaps 600s——重生成成本高，短缓存避免每次点击重跑 2 次 LLM）。
+var (
+	llmCacheMu sync.Mutex
+	llmCache   = map[string]llmCacheEntry{}
+)
+
+type llmCacheEntry struct {
+	data     map[string]any
+	expires  time.Time
+}
+
+func llmCacheGet(key string) (map[string]any, bool) {
+	llmCacheMu.Lock()
+	defer llmCacheMu.Unlock()
+	e, ok := llmCache[key]
+	if !ok || time.Now().After(e.expires) {
+		return nil, false
+	}
+	return e.data, true
+}
+
+func llmCacheSet(key string, data map[string]any, ttl time.Duration) {
+	llmCacheMu.Lock()
+	defer llmCacheMu.Unlock()
+	// 简单防膨胀：超 256 条清空过期项
+	if len(llmCache) > 256 {
+		now := time.Now()
+		for k, v := range llmCache {
+			if now.After(v.expires) {
+				delete(llmCache, k)
+			}
+		}
+	}
+	llmCache[key] = llmCacheEntry{data: data, expires: time.Now().Add(ttl)}
+}
 
 // graphEdge 引用边。
 type graphEdge struct{ Source, Target string }
@@ -1244,6 +1282,7 @@ func (s *Server) handleGraphSurvey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "keyword required"})
 		return
 	}
+	limit := queryInt(r, "limit", 120)
 	papers := s.papersForLLM(keyword, 30)
 	var lines []string
 	for _, p := range papers {
@@ -1254,13 +1293,18 @@ func (s *Server) handleGraphSurvey(w http.ResponseWriter, r *http.Request) {
 
 论文列表:
 %s`, keyword, strings.Join(lines, "\n"))
+	cacheKey := "survey:" + keyword + ":" + fmt.Sprint(limit)
+	if cached, ok := llmCacheGet(cacheKey); ok {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
 	parsed, _, err := s.GW().CompleteJSON(r.Context(), "deep", prompt)
 	if err != nil || parsed == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "LLM 生成失败"})
 		return
 	}
 	tl := s.buildTimeline(keyword, 20)
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"keyword": keyword,
 		"summary": map[string]any{
 			"overview":       strOf(parsed["overview"]),
@@ -1270,7 +1314,9 @@ func (s *Server) handleGraphSurvey(w http.ResponseWriter, r *http.Request) {
 		},
 		"milestones": tl["milestones"],
 		"seminal":    tl["seminal"],
-	})
+	}
+	llmCacheSet(cacheKey, resp, 5*time.Minute)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // buildTimeline 构造 TimelineResponse 主体（survey 复用）。
@@ -1355,6 +1401,8 @@ func (s *Server) handleWeeklyEvolution(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "keyword required"})
 		return
 	}
+	limit := queryInt(r, "limit", 160)
+	_ = limit
 	papers := s.papersForLLM(keyword, 60)
 	// year_buckets：按年聚合
 	bucket := map[int][]graphPaperLite{}
@@ -1398,12 +1446,17 @@ func (s *Server) handleWeeklyEvolution(w http.ResponseWriter, r *http.Request) {
 
 论文时间线:
 %s`, keyword, strings.Join(contextLines, "\n"))
+	cacheKey := "evolution:" + keyword + ":" + fmt.Sprint(limit)
+	if cached, ok := llmCacheGet(cacheKey); ok {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
 	parsed, _, err := s.GW().CompleteJSON(r.Context(), "deep", prompt)
 	if err != nil || parsed == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "LLM 生成失败"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"keyword":      keyword,
 		"year_buckets": yearBuckets,
 		"summary": map[string]any{
@@ -1411,7 +1464,9 @@ func (s *Server) handleWeeklyEvolution(w http.ResponseWriter, r *http.Request) {
 			"phase_shift_signals": strOf(parsed["phase_shift_signals"]),
 			"next_week_focus":     strOf(parsed["next_week_focus"]),
 		},
-	})
+	}
+	llmCacheSet(cacheKey, resp, 5*time.Minute)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleResearchGaps GET /graph/research-gaps。
@@ -1438,12 +1493,17 @@ func (s *Server) handleResearchGaps(w http.ResponseWriter, r *http.Request) {
 
 论文列表:
 %s`, keyword, strings.Join(lines, "\n"))
+	cacheKey := "gaps:" + keyword + ":" + fmt.Sprint(limit)
+	if cached, ok := llmCacheGet(cacheKey); ok {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
 	parsed, _, err := s.GW().CompleteJSON(r.Context(), "deep", prompt)
 	if err != nil || parsed == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "LLM 生成失败"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"keyword":       keyword,
 		"network_stats": stats,
 		"analysis": map[string]any{
@@ -1452,7 +1512,9 @@ func (s *Server) handleResearchGaps(w http.ResponseWriter, r *http.Request) {
 			"trend_analysis":    parsed["trend_analysis"],
 			"overall_summary":   strOf(parsed["overall_summary"]),
 		},
-	})
+	}
+	llmCacheSet(cacheKey, resp, 10*time.Minute)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 
