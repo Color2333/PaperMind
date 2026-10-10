@@ -263,7 +263,22 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGraphQuality(w http.ResponseWriter, r *http.Request) {
 	keyword := r.URL.Query().Get("keyword")
 	limit := queryInt(r, "limit", 120)
-	papers := s.loadGraphPapers(limit)
+	var papers []graphPaper
+	if kw := strings.TrimSpace(keyword); kw != "" {
+		// 按关键词命中的论文统计（标题/分类/主题）
+		ids := s.paperIDsForKeyword(kw, limit)
+		idSet := map[string]bool{}
+		for _, id := range ids {
+			idSet[id] = true
+		}
+		for _, p := range s.loadGraphPapers(limit * 3) {
+			if idSet[p.ID] {
+				papers = append(papers, p)
+			}
+		}
+	} else {
+		papers = s.loadGraphPapers(limit)
+	}
 	edges := s.loadGraphEdges()
 	idSet := map[string]bool{}
 	for _, p := range papers {
