@@ -85,7 +85,9 @@ function hourOptions(): { value: number; label: string }[] {
 }
 
 function relativeTime(iso: string): string {
+  if (!iso) return "从未";
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return "从未";
   const diff = Date.now() - d.getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "刚刚";
