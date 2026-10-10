@@ -3,9 +3,24 @@
  * @author Color2333
  */
 import { useEffect, useState, useCallback, memo } from "react";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { topicApi } from "@/services/api";
 import type { TopicStats, TopicStatsResponse, PaperDistributionResponse } from "@/types";
 import {
+  CalendarDays,
   BookOpen,
   Quote,
   TrendingUp,
@@ -25,6 +40,8 @@ const STATUS_COLORS: Record<string, string> = {
   skimmed: "bg-yellow-500",
   deep_read: "bg-primary",
 };
+
+const PIE_COLORS = ["#BC5A32", "#2C6BC9", "#0E8A63", "#C77E10", "#8B5CF6", "#64748B"];
 
 const SOURCE_COLORS: Record<string, string> = {
   arxiv: "bg-red-500",
