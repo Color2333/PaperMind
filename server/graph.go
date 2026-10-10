@@ -189,7 +189,14 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 		inDeg[e.Target]++
 		outDeg[e.Source]++
 	}
-	kw := strings.ToLower(keyword)
+	// 关键词匹配：标题/分类/主题名（洞察面板传主题名）
+	var kwIDs map[string]bool
+	if kw := strings.TrimSpace(keyword); kw != "" {
+		kwIDs = map[string]bool{}
+		for _, id := range s.paperIDsForKeyword(kw, 2000) {
+			kwIDs[id] = true
+		}
+	}
 	type item struct {
 		paper         graphPaper
 		score         float64
@@ -197,7 +204,7 @@ func (s *Server) handleGraphTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	var items []item
 	for _, p := range papers {
-		if kw != "" && !strings.Contains(strings.ToLower(p.Title), kw) {
+		if kwIDs != nil && !kwIDs[p.ID] {
 			continue
 		}
 		items = append(items, item{p, pr[p.ID], inDeg[p.ID], outDeg[p.ID]})
@@ -1132,14 +1139,21 @@ type graphPaperLite struct {
 	id, title, year, summary string
 }
 
-// papersForLLM 关键词匹配论文（标题+摘要 LIKE），带精读摘要。
+// keywordFilterSQL 关键词匹配：标题/摘要 LIKE + 分类标签 + 订阅主题名。
+// 洞察面板用主题名（如 cs.AI）当关键词——只匹配标题会得到空集。
+const keywordFilterSQL = `(LOWER(p.title) LIKE LOWER($%d) OR LOWER(p.abstract) LIKE LOWER($%d)
+		   OR p.metadata->'categories' ? $%d
+		   OR EXISTS (SELECT 1 FROM paper_topics pt JOIN topic_subscriptions t ON t.id = pt.topic_id
+		              WHERE pt.paper_id = p.id AND LOWER(t.name) = LOWER($%d)))`
+
+// papersForLLM 关键词匹配论文（标题/摘要/分类/主题），带精读摘要。
 func (s *Server) papersForLLM(keyword string, limit int) []graphPaperLite {
 	pattern := "%" + keyword + "%"
 	rows, err := s.db.Query(
 		`SELECT p.id, p.title, COALESCE(TO_CHAR(p.publication_date,'YYYY'),''), COALESCE(ar.summary_md,'')
 		 FROM papers p LEFT JOIN analysis_reports ar ON ar.paper_id = p.id
-		 WHERE LOWER(p.title) LIKE LOWER($1)
-		 ORDER BY p.created_at DESC LIMIT $2`, pattern, limit)
+		 WHERE `+fmt.Sprintf(keywordFilterSQL, 1, 2, 3, 4)+`
+		 ORDER BY p.created_at DESC LIMIT $5`, pattern, pattern, keyword, keyword, limit)
 	if err != nil {
 		return nil
 	}
@@ -1161,7 +1175,8 @@ func (s *Server) papersForLLM(keyword string, limit int) []graphPaperLite {
 func (s *Server) paperIDsForKeyword(keyword string, limit int) []string {
 	pattern := "%" + keyword + "%"
 	rows, err := s.db.Query(
-		`SELECT id FROM papers WHERE LOWER(title) LIKE LOWER($1) LIMIT $2`, pattern, limit)
+		`SELECT id FROM papers p WHERE `+fmt.Sprintf(keywordFilterSQL, 1, 2, 3, 4)+` LIMIT $5`,
+		pattern, pattern, keyword, keyword, limit)
 	if err != nil {
 		return nil
 	}
