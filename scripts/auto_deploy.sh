@@ -85,6 +85,11 @@ rsync -a --delete \
 log "代码已更新"
 
 # 6. 重建 + 重启
+# 构建前自动清理：build cache + 悬空镜像（40G 盘三次 100% 打满实证）
+docker builder prune -f >/dev/null 2>&1 || true
+docker image prune -f >/dev/null 2>&1 || true
+log "构建前 prune 完成"
+
 log "docker compose build..."
 if ! docker compose build 2>&1 | tee -a "$LOG_FILE" | tail -5; then
     log "FAIL: 构建失败，保留旧 SHA (下次重试)"
