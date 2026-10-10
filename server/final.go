@@ -4,10 +4,13 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
+
+	core "github.com/Color2333/PaperMind/core"
 )
 
 // handleFetchTopicStatus GET /topics/{topic_id}/fetch-status —— 观察面轮询。
@@ -35,7 +38,7 @@ func (s *Server) handleFetchTopicStatus(w http.ResponseWriter, r *http.Request) 
 		 ORDER BY created_at DESC LIMIT 1`, topicID).Scan(&doneID, &doneStatus)
 	if err == nil && (doneStatus == "succeeded" || doneStatus == "failed" || doneStatus == "dead_letter") {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": map[bool]string{true: "completed", false: "failed"}[doneStatus == "succeeded"],
+			"status":  map[bool]string{true: "completed", false: "failed"}[doneStatus == "succeeded"],
 			"task_id": doneID, "finished": true, "success": doneStatus == "succeeded",
 		})
 		return
@@ -78,10 +81,10 @@ func (s *Server) handleSuggestKeywords(w http.ResponseWriter, r *http.Request) {
 // handleIngestReferences POST /ingest/references —— 一键导入参考文献（任务提交）。
 func (s *Server) handleIngestReferences(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		SourcePaperID    string         `json:"source_paper_id"`
-		SourcePaperTitle string         `json:"source_paper_title"`
+		SourcePaperID    string           `json:"source_paper_id"`
+		SourcePaperTitle string           `json:"source_paper_title"`
 		Entries          []map[string]any `json:"entries"`
-		TopicIDs         []string       `json:"topic_ids"`
+		TopicIDs         []string         `json:"topic_ids"`
 	}
 	if err := readBody(r, &body); err != nil || body.SourcePaperID == "" {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "source_paper_id required"})
@@ -252,37 +255,124 @@ func (s *Server) handleListActionsGo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
-// handlePaperDistribution GET /topics/distribution —— 年份 + 来源分布。
+// handlePaperDistribution GET /topics/distribution。
+// 契约：PaperDistributionResponse{by_year, by_source(raw_source), by_status, by_month, by_venue, by_action_source}。
 func (s *Server) handlePaperDistribution(w http.ResponseWriter, r *http.Request) {
-	// 年份分布
-	yearRows, err := s.db.Query(
-		`SELECT COALESCE(TO_CHAR(publication_date,'YYYY'),'unknown') AS yr, COUNT(*)
-		 FROM papers GROUP BY yr ORDER BY yr DESC`)
 	byYear := []map[string]any{}
+	rows, err := s.db.Query(
+		`SELECT COALESCE(TO_CHAR(publication_date,'YYYY'),'未知') AS yr, COUNT(*)
+		 FROM papers GROUP BY yr ORDER BY yr DESC`)
 	if err == nil {
-		for yearRows.Next() {
+		for rows.Next() {
 			var yr string
 			var c int
-			if yearRows.Scan(&yr, &c) == nil {
+			if rows.Scan(&yr, &c) == nil {
 				byYear = append(byYear, map[string]any{"year": yr, "count": c})
 			}
 		}
-		yearRows.Close()
+		rows.Close()
 	}
-	// 来源分布（metadata->>'source' 缺失按 arxiv 计）
-	srcRows, err2 := s.db.Query(
-		`SELECT COALESCE(metadata->>'source', CASE WHEN source IS NOT NULL AND source != '' THEN source ELSE 'arxiv' END) AS src, COUNT(*)
-		 FROM papers GROUP BY src ORDER BY COUNT(*) DESC`)
 	bySource := []map[string]any{}
-	if err2 == nil {
-		for srcRows.Next() {
-			var src string
+	sourceLabel := map[string]string{
+		"arxiv": "arXiv", "semantic_scholar": "Semantic Scholar",
+		"reference_import": "参考文献导入", "unknown": "未知来源",
+	}
+	rows, err = s.db.Query(
+		`SELECT COALESCE(metadata->>'source', CASE WHEN source IS NOT NULL AND source != '' THEN source ELSE 'unknown' END) AS src, COUNT(*)
+		 FROM papers GROUP BY src ORDER BY COUNT(*) DESC`)
+	if err == nil {
+		for rows.Next() {
+			var raw string
 			var c int
-			if srcRows.Scan(&src, &c) == nil {
-				bySource = append(bySource, map[string]any{"source": src, "count": c})
+			if rows.Scan(&raw, &c) == nil {
+				label := raw
+				if l, ok := sourceLabel[raw]; ok {
+					label = l
+				}
+				bySource = append(bySource, map[string]any{"source": label, "raw_source": raw, "count": c})
 			}
 		}
-		srcRows.Close()
+		rows.Close()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"by_year": byYear, "by_source": bySource})
+	statusLabel := map[string]string{"unread": "未读", "skimmed": "已粗读", "deep_read": "已精读"}
+	byStatus := []map[string]any{}
+	rows, err = s.db.Query(`SELECT COALESCE(read_status,'unread'), COUNT(*) FROM papers GROUP BY read_status ORDER BY COUNT(*) DESC`)
+	if err == nil {
+		for rows.Next() {
+			var raw string
+			var c int
+			if rows.Scan(&raw, &c) == nil {
+				label := raw
+				if l, ok := statusLabel[raw]; ok {
+					label = l
+				}
+				byStatus = append(byStatus, map[string]any{"status": label, "raw_status": raw, "count": c})
+			}
+		}
+		rows.Close()
+	}
+	byMonth := []map[string]any{}
+	now := time.Now().UTC()
+	todayStart := userTodayStartUTCServer()
+	for i := 11; i >= 0; i-- {
+		monthStart := todayStart.AddDate(0, 0, -30*i)
+		monthEnd := monthStart.AddDate(0, 1, 0)
+		if monthEnd.After(now) {
+			monthEnd = now.Add(time.Second)
+		}
+		var c int
+		_ = s.db.QueryRow(
+			`SELECT COUNT(*) FROM papers WHERE created_at >= $1 AND created_at < $2`,
+			monthStart.Format("2006-01-02 15:04:05.000000"),
+			monthEnd.Format("2006-01-02 15:04:05.000000")).Scan(&c)
+		byMonth = append(byMonth, map[string]any{"month": monthStart.Format("2006-01"), "count": c})
+	}
+	byVenue := []map[string]any{}
+	rows, err = s.db.Query(
+		`SELECT metadata->>'venue' AS v, COUNT(*) FROM papers
+		 WHERE metadata->>'venue' IS NOT NULL AND metadata->>'venue' != ''
+		 GROUP BY v ORDER BY COUNT(*) DESC LIMIT 15`)
+	if err == nil {
+		for rows.Next() {
+			var venue string
+			var c int
+			if rows.Scan(&venue, &c) == nil {
+				byVenue = append(byVenue, map[string]any{"venue": venue, "count": c})
+			}
+		}
+		rows.Close()
+	}
+	actionLabel := map[string]string{
+		"initial_import": "初始导入", "manual_collect": "手动收集",
+		"auto_collect": "自动收集", "agent_collect": "Agent收集",
+		"subscription_ingest": "订阅抓取", "reference_import": "参考文献",
+	}
+	byAction := []map[string]any{}
+	rows, err = s.db.Query(
+		`SELECT action_type, COALESCE(SUM(paper_count),0) FROM collection_actions
+		 GROUP BY action_type ORDER BY SUM(paper_count) DESC`)
+	if err == nil {
+		for rows.Next() {
+			var raw string
+			var c int
+			if rows.Scan(&raw, &c) == nil {
+				label := raw
+				if l, ok := actionLabel[raw]; ok {
+					label = l
+				}
+				byAction = append(byAction, map[string]any{"source": label, "raw_source": raw, "count": c})
+			}
+		}
+		rows.Close()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"by_year": byYear, "by_source": bySource, "by_status": byStatus,
+		"by_month": byMonth, "by_venue": byVenue, "by_action_source": byAction,
+	})
 }
+
+// jsonMarshalSafe 安全序列化（占位引用）。
+var _ = json.Marshal
+
+// userTodayStartUTCServer core 包用户时区当日 0 点（goserver 侧复用）。
+func userTodayStartUTCServer() time.Time { return core.UserTodayStartUTC() }
