@@ -209,6 +209,8 @@ func main() {
 	mux.HandleFunc("GET /actions/{action_id}/papers", s.requireAuth(s.handleGetActionPapers))
 	mux.HandleFunc("GET /actions", s.requireAuth(s.handleListActionsGo))
 	mux.HandleFunc("GET /topics/distribution", s.requireAuth(s.handlePaperDistribution))
+	mux.HandleFunc("POST /papers/{paper_id}/ai/explain", s.requireAuth(s.handleAIExplain))
+	mux.HandleFunc("GET /papers/{paper_id}/figures/{figure_id}/image", s.requireAuth(s.handleFigureImage))
 
 	// ---- 未移植：透明反代到 Python backend（绞杀者回退） ----
 	// "/" 兜底：/whoami /jobs /papers/search 等未注册路径全部进反代
