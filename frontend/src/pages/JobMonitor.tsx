@@ -3,7 +3,7 @@ import { jobApi, type DurableJobItem, type DurableJobGraph } from "@/services/ap
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "bg-hover text-ink-secondary",
-  running: "bg-blue-100 text-blue-700",
+  running: "bg-info-light text-info",
   succeeded: "bg-green-100 text-green-800",
   partially_succeeded: "bg-yellow-100 text-yellow-800",
   failed: "bg-red-100 text-red-700",
@@ -65,11 +65,11 @@ export default function JobMonitor() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Job Monitor</h1>
+        <h1 className="text-ink text-2xl font-bold">任务监控</h1>
         <div className="flex gap-2">
           {paused ? (
             <button
-              className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700"
+              className="bg-success text-white px-3 py-1.5 rounded-lg text-sm hover:bg-success/85 transition-colors"
               onClick={doResume}
             >
               恢复队列
@@ -83,7 +83,7 @@ export default function JobMonitor() {
             </button>
           )}
           <button
-            className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700"
+            className="gradient-primary shadow-warm-xs text-white px-3 py-1.5 rounded-lg text-sm transition-all hover:shadow-warm-md"
             onClick={refresh}
           >
             Refresh
@@ -109,7 +109,7 @@ export default function JobMonitor() {
             <div
               key={j.id}
               className={`border rounded p-3 cursor-pointer hover:border-blue-400 ${
-                selected?.id === j.id ? "border-blue-500 bg-blue-50" : ""
+                selected?.id === j.id ? "border-primary bg-primary-50" : ""
               }`}
               onClick={() => openGraph(j.id)}
             >
@@ -231,7 +231,7 @@ export default function JobMonitor() {
                     <span className="text-red-500 text-xs truncate max-w-48">{t.last_error}</span>
                   )}
                   <button
-                    className="text-blue-600 hover:underline"
+                    className="text-primary hover:underline"
                     onClick={async (e) => {
                       e.stopPropagation();
                       await jobApi.retryTask(t.id);
