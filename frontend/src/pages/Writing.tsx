@@ -307,7 +307,7 @@ export default function Writing() {
             href="https://github.com/Leey21/awesome-ai-research-writing"
             target="_blank"
             rel="noopener noreferrer"
-            className="border-border text-ink-secondary hover:bg-hover hover:text-ink flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
+            className="border-border text-ink-secondary hover:bg-hover hover:text-ink flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
           >
             <ExternalLink className="h-3 w-3" />
             Prompt 来源
