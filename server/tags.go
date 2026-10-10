@@ -103,7 +103,7 @@ func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sets = append(sets, "updated_at=now()::timestamp")
-	res, err := s.db.Exec("UPDATE tags SET "+strings.Join(sets, ", ")+" WHERE id=$"+itoa(len(sets)+1),
+	res, err := s.db.Exec("UPDATE tags SET "+strings.Join(sets, ", ")+" WHERE id=$"+itoa(len(args)+1),
 		append(args, id)...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
@@ -151,8 +151,8 @@ func (s *Server) handleAddPaperTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.Exec(
-		`INSERT INTO paper_tags (paper_id, tag_id) VALUES ($1, $2)
-		 ON CONFLICT DO NOTHING`, paperID, tagID,
+		`INSERT INTO paper_tags (id, paper_id, tag_id, created_at) VALUES ($1, $2, $3, now()::timestamp)
+		 ON CONFLICT DO NOTHING`, newUUID(), paperID, tagID,
 	); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		return
@@ -181,18 +181,29 @@ func (s *Server) handleBatchPaperTags(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"detail": "bad json"})
 		return
 	}
-	if _, err := s.db.Exec("DELETE FROM paper_tags WHERE paper_id=$1", paperID); err != nil {
+	// R05：整批替换必须事务化——删除后插入失败要回滚
+	tx, err := s.db.Begin()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM paper_tags WHERE paper_id=$1", paperID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		return
 	}
 	for _, tagID := range tagIDs {
-		if _, err := s.db.Exec(
-			"INSERT INTO paper_tags (paper_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-			paperID, tagID,
+		if _, err := tx.Exec(
+			"INSERT INTO paper_tags (id, paper_id, tag_id, created_at) VALUES ($1, $2, $3, now()::timestamp) ON CONFLICT DO NOTHING",
+			newUUID(), paperID, tagID,
 		); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": s.tagsForPaper(paperID)})
 }

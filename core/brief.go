@@ -532,9 +532,8 @@ func HandleSendBriefEmailEffect(ctx context.Context, e *HandlerEnv, task *Task) 
 		).Scan(&htmlContent)
 	}
 	if !SendEmailHTML(e.SMTP, recipient, subject, htmlContent) {
-		return map[string]any{
-			"sent": false, "error": "SMTP 未配置或发送失败（账本未登记，可重试）", "effect_key": effectKey,
-		}, nil
+		// R22：发送失败必须以 error 结束任务——nil error 会让任务假成功终结
+		return nil, fmt.Errorf("SMTP 未配置或发送失败（账本未登记，可重试）")
 	}
 	RegisterEffect(e.Store, effectKey, "mail_send", task.TaskID)
 	return map[string]any{"sent": true, "effect_key": effectKey}, nil

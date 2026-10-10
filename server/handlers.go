@@ -3,6 +3,7 @@ package main
 // handlers.go：已移植路由的业务处理（folder-stats / 设备信息与授权决策）。
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 )
@@ -80,7 +81,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		// API 令牌（SHA-256 查表）优先；Web JWT 兜底
-		if s.validAPIToken(token) {
+		if s.validAPITokenScoped(token, r.Method) {
 			next(w, r)
 			return
 		}
@@ -117,6 +118,34 @@ func (s *Server) validAPIToken(raw string) bool {
 		hashToken(raw),
 	).Scan(&id)
 	return err == nil
+}
+
+// validAPITokenScoped：API 令牌 + 方法级 scope 校验（R01——写方法需 write scope）。
+func (s *Server) validAPITokenScoped(raw string, method string) bool {
+	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+		return s.validAPIToken(raw)
+	}
+	var id string
+	var scopes []byte
+	err := s.db.QueryRow(
+		`SELECT id, scopes FROM api_tokens
+		 WHERE token_hash = $1 AND revoked_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > now()::timestamp)`,
+		hashToken(raw),
+	).Scan(&id, &scopes)
+	if err != nil {
+		return false
+	}
+	var list []string
+	if json.Unmarshal(scopes, &list) != nil {
+		return false
+	}
+	for _, sc := range list {
+		if sc == "write" {
+			return true
+		}
+	}
+	return false
 }
 
 func validWebJWT(token, secret string) bool {

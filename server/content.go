@@ -264,7 +264,7 @@ func (s *Server) ragAsk(ctx context.Context, question string, topK int) (string,
 	prompt := "请基于上下文回答问题，输出严格 JSON：" +
 		`{"answer":"...", "confidence":0.0}` + "\n" +
 		fmt.Sprintf("问题: %s\n上下文:\n%s", question, strings.Join(joined, "\n\n"))
-	parsed, res, err := s.gateway.CompleteJSON(ctx, "skim", prompt)
+	parsed, res, err := s.GW().CompleteJSON(ctx, "skim", prompt)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -629,7 +629,7 @@ func (s *Server) handleWritingProcessMultimodal(w http.ResponseWriter, r *http.R
 
 // gatewayChat 网关单轮补全（writing 等简单场景）。
 func (s *Server) gatewayChat(ctx context.Context, prompt string) (string, error) {
-	res, err := s.gateway.Chat(ctx, "deep", prompt, 2048)
+	res, err := s.GW().Chat(ctx, "deep", prompt, 2048)
 	if err != nil {
 		return "", err
 	}

@@ -835,16 +835,13 @@ func toAny(v any) any { return v }
 // loadVectors 加载论文 embedding（limit 篇，含 topic 标签）。
 func (s *Server) loadVectors(limit int, topicID string) ([]string, [][]float64, map[string][]string) {
 	query := `SELECT p.id, p.embedding_vec FROM papers p`
-	if topicID != "" {
-		query += ` JOIN paper_topics pt ON pt.paper_id = p.id AND pt.topic_id=$2`
-	}
-	query += fmt.Sprintf(` WHERE p.embedding_vec IS NOT NULL ORDER BY p.created_at DESC LIMIT $%d`, map[bool]int{true: 1, false: 2}[topicID != ""])
 	args := []any{}
 	if topicID != "" {
-		args = append(args, 50000, topicID)
-	} else {
-		args = append(args, limit)
+		query += ` JOIN paper_topics pt ON pt.paper_id = p.id AND pt.topic_id=$1`
+		args = append(args, topicID)
 	}
+	args = append(args, limit)
+	query += fmt.Sprintf(` WHERE p.embedding_vec IS NOT NULL ORDER BY p.created_at DESC LIMIT $%d`, len(args))
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, nil, nil

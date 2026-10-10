@@ -279,7 +279,20 @@ func (s *Server) handleSearchMulti(w http.ResponseWriter, r *http.Request) {
 		MaxResults int    `json:"max_results"`
 		Channels   []string `json:"channels"`
 	}
-	if err := readBody(r, &body); err != nil || strings.TrimSpace(body.Query) == "" {
+	// 契约（R16）：前端把 query/channels 放 URL query 且无 JSON body——两种都接受
+	if err := readBody(r, &body); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "invalid body"})
+		return
+	}
+	if strings.TrimSpace(body.Query) == "" {
+		body.Query = r.URL.Query().Get("query")
+	}
+	if len(body.Channels) == 0 {
+		if ch := r.URL.Query().Get("channels"); ch != "" {
+			body.Channels = strings.Split(ch, ",")
+		}
+	}
+	if strings.TrimSpace(body.Query) == "" {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"detail": "query required"})
 		return
 	}
@@ -337,7 +350,35 @@ func (s *Server) handleSearchMulti(w http.ResponseWriter, r *http.Request) {
 	if channelEnabled(body.Channels, "biorxiv") {
 		channels["biorxiv"] = map[string]any{"error": "bioRxiv 渠道暂不支持关键词检索"}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"query": body.Query, "channels": channels})
+	// 契约（R16）：MultiSourceSearchResult{papers:[MultiSourcePaper], channel_stats}
+	papers := []map[string]any{}
+	channelStats := map[string]any{}
+	for ch, raw := range channels {
+		if errObj, isErr := raw.(map[string]any); isErr {
+			if _, onlyErr := errObj["error"]; onlyErr {
+				channelStats[ch] = map[string]any{"total": 0, "new": 0, "duplicates": 0, "error": errObj["error"]}
+				continue
+			}
+		}
+		list, _ := raw.([]any)
+		channelStats[ch] = map[string]any{"total": len(list), "new": len(list), "duplicates": 0}
+		for _, it := range list {
+			m, ok := it.(map[string]any)
+			if !ok {
+				continue
+			}
+			papers = append(papers, map[string]any{
+				"id":          firstNonEmptyStr(strOf(m["arxiv_id"]), strOf(m["doi"])),
+				"title":       strOf(m["title"]),
+				"authors":     []any{},
+				"abstract":    strOf(m["abstract"]),
+				"year":        m["year"],
+				"venue":       m["venue"],
+				"sources":     []any{map[string]any{"channel": ch}},
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"papers": papers, "channel_stats": channelStats})
 }
 
 func channelEnabled(channels []string, name string) bool {
@@ -562,3 +603,12 @@ func urlQueryEscape(s string) string {
 }
 
 var httpDefaultClient = &http.Client{Timeout: 30 * time.Second}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}

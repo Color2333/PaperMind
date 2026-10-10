@@ -230,33 +230,61 @@ func (s *Server) handleManualFetchTopic(w http.ResponseWriter, r *http.Request) 
 
 // handleTopicStats：GET /topics/stats。
 func (s *Server) handleTopicStats(w http.ResponseWriter, r *http.Request) {
+	// 契约：TopicStatsResponse{topics:[TopicStats{topic_id,topic_name,paper_count,total_citations,recent_30d,status_dist}]}
 	rows, err := s.db.Query(
-		`SELECT ts.name, COUNT(pt.paper_id) AS cnt,
-			COALESCE(ts.last_error,''), ts.enabled
+		`SELECT ts.id, ts.name, COUNT(DISTINCT pt.paper_id),
+			COALESCE((SELECT COUNT(*) FROM citations c
+			  JOIN paper_topics pt2 ON pt2.paper_id = c.source_paper_id
+			  WHERE pt2.topic_id = ts.id), 0) AS total_citations,
+			COALESCE((SELECT COUNT(*) FROM paper_topics pt3 JOIN papers p3 ON p3.id = pt3.paper_id
+			  WHERE pt3.topic_id = ts.id AND p3.created_at >= NOW() - INTERVAL '30 days'), 0)
 		 FROM topic_subscriptions ts
 		 LEFT JOIN paper_topics pt ON pt.topic_id = ts.id
-		 GROUP BY ts.id, ts.name, ts.last_error, ts.enabled
-		 ORDER BY cnt DESC`)
+		 GROUP BY ts.id, ts.name ORDER BY COUNT(DISTINCT pt.paper_id) DESC`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 		return
 	}
 	defer rows.Close()
-	items := []map[string]any{}
+	topics := []map[string]any{}
+	ids := []string{}
 	for rows.Next() {
-		var name string
-		var cnt int
-		var lastErr *string
-		var enabled bool
-		if err := rows.Scan(&name, &cnt, &lastErr, &enabled); err != nil {
+		var id, name string
+		var paperCount, citations, recent int
+		if err := rows.Scan(&id, &name, &paperCount, &citations, &recent); err != nil {
 			continue
 		}
-		items = append(items, map[string]any{
-			"name": name, "paper_count": cnt, "enabled": enabled,
-			"last_error": jsonStrOrNull(lastErr),
+		ids = append(ids, id)
+		topics = append(topics, map[string]any{
+			"topic_id": id, "topic_name": name, "paper_count": paperCount,
+			"total_citations": citations, "recent_30d": recent,
+			"status_dist": map[string]int{"unread": 0, "skimmed": 0, "deep_read": 0},
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	rows.Close()
+	// 每主题的阅读状态分布
+	for _, t := range topics {
+		tid := t["topic_id"].(string)
+		sd := map[string]int{"unread": 0, "skimmed": 0, "deep_read": 0}
+		srows, err := s.db.Query(
+			`SELECT p.read_status, COUNT(*) FROM papers p
+			 JOIN paper_topics pt ON pt.paper_id = p.id
+			 WHERE pt.topic_id=$1 GROUP BY p.read_status`, tid)
+		if err == nil {
+			for srows.Next() {
+				var rs string
+				var c int
+				if srows.Scan(&rs, &c) == nil {
+					if _, ok := sd[rs]; ok {
+						sd[rs] = c
+					}
+				}
+			}
+			srows.Close()
+			t["status_dist"] = sd
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"topics": topics})
 }
 
 // handleIngestArxiv：POST /ingest/arxiv —— 提交 ingest_arxiv_query 任务到 Go Core。

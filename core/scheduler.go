@@ -114,11 +114,16 @@ func (s *Scheduler) dailyBriefLoop(ctx context.Context) {
 		// cron 从配置读（默认 04:00 UTC = 北京 12:00）
 		hour := 4
 		var cronExpr string
-		var sendEmail bool
+		var sendEmail, enabled bool
 		if err := s.store.DB.QueryRow(
-			`SELECT COALESCE(cron_expression,''), COALESCE(send_email_report,false) FROM daily_report_configs LIMIT 1`,
-		).Scan(&cronExpr, &sendEmail); err == nil && cronExpr != "" {
+			`SELECT COALESCE(cron_expression,''), COALESCE(send_email_report,false), COALESCE(enabled,false)
+			 FROM daily_report_configs LIMIT 1`,
+		).Scan(&cronExpr, &sendEmail, &enabled); err == nil && cronExpr != "" {
 			hour = parseDailyCronHour(cronExpr)
+		}
+		// R14：日报开关关闭则完全不生成
+		if !enabled {
+			continue
 		}
 		if now.Hour() != hour {
 			continue
