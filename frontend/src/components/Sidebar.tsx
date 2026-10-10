@@ -9,6 +9,7 @@ import { useConversationCtx } from "@/contexts/ConversationContext";
 import { useGlobalTasks } from "@/contexts/GlobalTaskContext";
 import { groupByDate } from "@/hooks/useConversations";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import CommandPalette from "@/components/CommandPalette";
 import LogoIcon from "@/assets/logo-icon.svg?react";
 import {
   FileText,
@@ -93,7 +94,47 @@ export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const navigate = useNavigate();
+
+  // 全局快捷键：⌘K/Ctrl+K 命令面板；g+字母 序列跳转
+  useEffect(() => {
+    let seqTimer: ReturnType<typeof setTimeout> | null = null;
+    let seqPending = false;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const inInput =
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      if (inInput || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.toLowerCase() === "g" && !seqPending) {
+        seqPending = true;
+        if (seqTimer) clearTimeout(seqTimer);
+        seqTimer = setTimeout(() => (seqPending = false), 1200);
+        return;
+      }
+      if (seqPending) {
+        seqPending = false;
+        if (seqTimer) clearTimeout(seqTimer);
+        const map: Record<string, string> = {
+          p: "/papers", c: "/collect", g: "/graph", d: "/dashboard",
+          a: "/", j: "/jobs", s: "/settings", w: "/writing",
+          b: "/brief", k: "/wiki", r: "/research", t: "/statistics",
+        };
+        const to = map[e.key.toLowerCase()];
+        if (to) {
+          e.preventDefault();
+          navigate(to);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigate]);
   const location = useLocation();
   const { activeTasks, hasRunning } = useGlobalTasks();
 
@@ -190,7 +231,14 @@ export default function Sidebar() {
             className="gradient-primary flex w-full items-center gap-2 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-white shadow-warm-xs transition-all hover:shadow-warm-md active:scale-[0.98]"
           >
             <Plus className="h-4 w-4" />
-            {!collapsed && "新对话"}
+            {!collapsed && (
+              <span className="flex flex-1 items-center justify-between">
+                新对话
+                <kbd className="border-border text-ink-tertiary rounded border px-1 text-[10px]">
+                  ⌘K
+                </kbd>
+              </span>
+            )}
           </button>
         </div>
 
@@ -290,6 +338,12 @@ export default function Sidebar() {
           </div>
         </div>
       </aside>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onToggleTheme={toggleDark}
+      />
 
       <ConfirmDialog
         open={!!deleteId}
