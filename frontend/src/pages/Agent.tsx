@@ -532,18 +532,15 @@ const EmptyState = memo(function EmptyState({ onSelect }: { onSelect: (p: string
   }, []);
 
   return (
-    <div className="flex h-full flex-col items-center overflow-y-auto px-4 pt-12 pb-4">
-      <div className="bg-primary/10 mb-6 flex h-16 w-16 items-center justify-center rounded-2xl">
-        <Sparkles className="text-primary h-8 w-8" />
+    <div className="flex h-full flex-col items-center overflow-y-auto px-4 pt-8 pb-4">
+      <div className="bg-primary/10 mb-3 flex h-10 w-10 items-center justify-center rounded-xl">
+        <Sparkles className="text-primary h-5 w-5" />
       </div>
-      <h2 className="text-ink mb-1 text-2xl font-bold">PaperMind Agent</h2>
-      <p className="text-ink-secondary mb-1 text-center text-sm leading-relaxed">
+      <h2 className="text-ink mb-0.5 text-lg font-bold">PaperMind Agent</h2>
+      <p className="text-ink-tertiary mb-5 max-w-md text-center text-xs leading-relaxed">
         {engine === "python"
           ? "由 Python 引擎驱动（pm 未部署）。"
-          : "由 Pi agent core 驱动——与终端 pm 同一循环、同一工具集。"}
-      </p>
-      <p className="text-ink-tertiary mb-6 max-w-lg text-center text-sm leading-relaxed">
-        告诉我你的研究需求，我会自动规划执行步骤：搜索论文、下载、分析、生成综述。
+          : "由 Pi agent core 驱动，与终端 pm 同一循环、同一工具集。描述研究需求，我会自动规划：搜索 → 下载 → 分析 → 综述。"}
       </p>
 
       {/* 今日研究速览 */}
@@ -552,7 +549,7 @@ const EmptyState = memo(function EmptyState({ onSelect }: { onSelect: (p: string
           {/* 统计卡片 */}
           <div className="grid grid-cols-3 gap-3">
             <div className="border-border bg-surface rounded-xl border p-3 text-center">
-              <div className="text-primary text-2xl font-bold">{today.total_papers}</div>
+              <div className="text-primary tnum text-xl font-bold">{today.total_papers}</div>
               <div className="text-ink-tertiary text-xs">论文总量</div>
             </div>
             <div className="border-border bg-surface rounded-xl border p-3 text-center">

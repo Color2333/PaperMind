@@ -2,12 +2,12 @@ import { useEffect, useState, useCallback } from "react";
 import { jobApi, type DurableJobItem, type DurableJobGraph } from "@/services/api";
 
 const STATUS_COLORS: Record<string, string> = {
-  queued: "bg-gray-100 text-gray-600",
+  queued: "bg-hover text-ink-secondary",
   running: "bg-blue-100 text-blue-700",
   succeeded: "bg-green-100 text-green-800",
   partially_succeeded: "bg-yellow-100 text-yellow-800",
   failed: "bg-red-100 text-red-700",
-  cancelled: "bg-gray-100 text-gray-400",
+  cancelled: "bg-hover text-ink-tertiary",
   dead_letter: "bg-red-200 text-red-900",
   manual_recovery: "bg-purple-100 text-purple-800",
 };
@@ -102,7 +102,7 @@ export default function JobMonitor() {
 
       {/* Jobs 列表 */}
       {loading && !jobs.length ? (
-        <p className="text-gray-500">Loading...</p>
+        <p className="text-ink-tertiary">Loading...</p>
       ) : (
         <div className="space-y-2">
           {jobs.map((j) => (
@@ -116,7 +116,7 @@ export default function JobMonitor() {
               <div className="flex items-center gap-2">
                 <span
                   className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    STATUS_COLORS[j.status] ?? "bg-gray-100"
+                    STATUS_COLORS[j.status] ?? "bg-hover"
                   }`}
                 >
                   {j.status}
@@ -133,13 +133,13 @@ export default function JobMonitor() {
                     {(j as any).authority === "go_core" ? "Go" : "存档"}
                   </span>
                 )}
-                <span className="text-xs text-gray-400 ml-auto">{j.id}</span>
+                <span className="text-xs text-ink-tertiary ml-auto">{j.id}</span>
               </div>
               {j.progress?.message && (
-                <p className="text-xs text-gray-600 mt-1">{j.progress.message}</p>
+                <p className="text-xs text-ink-secondary mt-1">{j.progress.message}</p>
               )}
               <div className="flex items-center gap-2 mt-1">
-                <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                <div className="flex-1 bg-active rounded-full h-1.5">
                   <div
                     className="bg-blue-500 rounded-full h-1.5"
                     style={{
@@ -150,7 +150,7 @@ export default function JobMonitor() {
                     }}
                   />
                 </div>
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-ink-tertiary">
                   {j.progress?.current ?? 0}/{j.progress?.total ?? 0}
                 </span>
               </div>
@@ -176,7 +176,7 @@ export default function JobMonitor() {
               </div>
             </div>
           ))}
-          {!jobs.length && <p className="text-gray-400 text-sm">No jobs found.</p>}
+          {!jobs.length && <p className="text-ink-tertiary text-sm">No jobs found.</p>}
         </div>
       )}
 
@@ -202,7 +202,7 @@ export default function JobMonitor() {
               </span>
             )}
             <button
-              className="text-gray-400 text-sm ml-auto hover:text-gray-600"
+              className="text-ink-tertiary text-sm ml-auto hover:text-ink-secondary"
               onClick={() => setSelected(null)}
             >
               ✕
@@ -211,7 +211,7 @@ export default function JobMonitor() {
 
           {/* Tasks */}
           <div>
-            <h4 className="text-sm font-medium text-gray-600 mb-2">
+            <h4 className="text-sm font-medium text-ink-secondary mb-2">
               Tasks ({selected.tasks.length})
             </h4>
             <div className="space-y-1">
@@ -219,14 +219,14 @@ export default function JobMonitor() {
                 <div key={t.id} className="flex items-center gap-2 text-xs border rounded p-2">
                   <span
                     className={`px-1.5 py-0.5 rounded ${
-                      STATUS_COLORS[t.status] ?? "bg-gray-100"
+                      STATUS_COLORS[t.status] ?? "bg-hover"
                     }`}
                   >
                     {t.status}
                   </span>
                   <span className="font-mono">{t.capability}</span>
-                  <span className="text-gray-400 ml-auto">attempt {t.attempt_count}</span>
-                  <span className="text-gray-400">{t.resource_class}</span>
+                  <span className="text-ink-tertiary ml-auto">attempt {t.attempt_count}</span>
+                  <span className="text-ink-tertiary">{t.resource_class}</span>
                   {t.last_error && (
                     <span className="text-red-500 text-xs truncate max-w-48">{t.last_error}</span>
                   )}
@@ -248,17 +248,17 @@ export default function JobMonitor() {
           {/* Attempts */}
           {selected.attempts.length > 0 && (
             <div>
-              <h4 className="text-sm font-medium text-gray-600 mb-2">
+              <h4 className="text-sm font-medium text-ink-secondary mb-2">
                 Attempts ({selected.attempts.length})
               </h4>
               <div className="space-y-1">
                 {selected.attempts.map((a) => (
-                  <div key={a.id} className="flex items-center gap-2 text-xs text-gray-600">
+                  <div key={a.id} className="flex items-center gap-2 text-xs text-ink-secondary">
                     <span className="font-mono">#{a.attempt_no}</span>
                     <span>{a.status}</span>
-                    <span className="text-gray-400">{a.executor_id}</span>
+                    <span className="text-ink-tertiary">{a.executor_id}</span>
                     {a.fencing_token > 0 && (
-                      <span className="text-gray-300">fence:{a.fencing_token}</span>
+                      <span className="text-ink-placeholder">fence:{a.fencing_token}</span>
                     )}
                     {a.error_message && (
                       <span className="text-red-500 truncate max-w-48">{a.error_message}</span>

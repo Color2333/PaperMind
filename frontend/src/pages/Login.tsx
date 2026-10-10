@@ -59,7 +59,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#1B1917] via-[#141210] to-[#1B1917]">
       <div className="w-full max-w-md px-4">
         {/* Logo 和标题 */}
         <div className="mb-8 text-center">
@@ -67,13 +67,13 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
             <Lock className="text-primary h-8 w-8" />
           </div>
           <h1 className="mb-2 text-2xl font-bold text-white">PaperMind</h1>
-          <p className="text-sm text-slate-400">请输入访问密码</p>
+          <p className="text-sm text-[#A2988C]">请输入访问密码</p>
         </div>
 
         {/* 登录表单 */}
         <form
           onSubmit={handleSubmit}
-          className="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6 shadow-xl backdrop-blur-sm"
+          className="rounded-2xl border border-[#2E2A25]/60 bg-[#201D1A]/70 p-6 shadow-xl backdrop-blur-sm"
         >
           <div className="relative">
             <input
@@ -81,14 +81,14 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="访问密码"
-              className="focus:ring-primary w-full rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-3 pr-12 text-white placeholder-slate-500 transition-all focus:border-transparent focus:ring-2 focus:outline-none"
+              className="focus:ring-primary w-full rounded-xl border border-[#2E2A25] bg-[#131110]/60 px-4 py-3 pr-12 text-white placeholder-[#575047] transition-all focus:border-transparent focus:ring-2 focus:outline-none"
               disabled={loading || checkingAuth}
               autoFocus
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-500 transition-colors hover:text-slate-300"
+              className="absolute top-1/2 right-3 -translate-y-1/2 text-[#A2988C] transition-colors hover:text-[#EBE5DC]"
             >
               {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
             </button>
@@ -99,7 +99,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
           <button
             type="submit"
             disabled={loading || checkingAuth}
-            className="bg-primary hover:bg-primary-hover mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-medium text-white transition-colors disabled:bg-slate-600"
+            className="bg-primary hover:bg-primary-hover mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-medium text-white transition-colors disabled:bg-[#575047]"
           >
             {checkingAuth ? (
               <>
@@ -118,7 +118,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
         </form>
 
         {/* 底部提示 */}
-        <p className="mt-6 text-center text-xs text-slate-500">
+        <p className="mt-6 text-center text-xs text-[#A2988C]">
           PaperMind · AI 驱动的学术论文研究平台
         </p>
       </div>

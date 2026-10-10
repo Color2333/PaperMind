@@ -13,7 +13,7 @@ interface QuestionInfo {
 const STATUS_COLORS: Record<string, string> = {
   confirmed: "bg-green-100 text-green-800",
   pending_verification: "bg-yellow-100 text-yellow-800",
-  draft: "bg-gray-100 text-gray-600",
+  draft: "bg-hover text-ink-secondary",
   superseded: "bg-orange-100 text-orange-700",
   invalidated: "bg-red-100 text-red-700",
 };
@@ -143,13 +143,13 @@ export default function ResearchState() {
           {/* 问题概览 */}
           <div className="bg-white rounded-lg shadow p-4">
             <h2 className="text-lg font-semibold">{question.title}</h2>
-            <p className="text-gray-600 mt-1">{question.question}</p>
+            <p className="text-ink-secondary mt-1">{question.question}</p>
             <div className="flex gap-2 mt-3 flex-wrap">
               {Object.entries(question.claim_counts.by_status).map(([s, n]) => (
                 <span
                   key={s}
                   className={`px-2 py-1 rounded text-xs font-medium ${
-                    STATUS_COLORS[s] ?? "bg-gray-100 text-gray-600"
+                    STATUS_COLORS[s] ?? "bg-hover text-ink-secondary"
                   }`}
                 >
                   {s}: {n}
@@ -187,20 +187,20 @@ export default function ResearchState() {
                   <div className="flex items-center gap-2">
                     <span
                       className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        STATUS_COLORS[c.status] ?? "bg-gray-100"
+                        STATUS_COLORS[c.status] ?? "bg-hover"
                       }`}
                     >
                       {c.status}
                     </span>
-                    <span className="text-xs text-gray-500">{c.certainty}</span>
-                    <span className="text-xs text-gray-400">origin: {c.origin}</span>
-                    <span className="text-xs text-gray-400 ml-auto">
+                    <span className="text-xs text-ink-tertiary">{c.certainty}</span>
+                    <span className="text-xs text-ink-tertiary">origin: {c.origin}</span>
+                    <span className="text-xs text-ink-tertiary ml-auto">
                       证据: {c.evidence_count}
                     </span>
                   </div>
                   <p className="mt-2 text-sm">{c.statement}</p>
                   {c.statement_zh && (
-                    <p className="text-xs text-gray-500 mt-1">{c.statement_zh}</p>
+                    <p className="text-xs text-ink-tertiary mt-1">{c.statement_zh}</p>
                   )}
                 </div>
               ))}
@@ -223,17 +223,17 @@ export default function ResearchState() {
                             ? "bg-green-100 text-green-700"
                             : ev.stance === "contradicts"
                               ? "bg-red-100 text-red-700"
-                              : "bg-gray-100"
+                              : "bg-hover"
                         }`}
                       >
                         {ev.stance}
                       </span>
-                      <span className="text-xs text-gray-500">
+                      <span className="text-xs text-ink-tertiary">
                         {ev.source_version.paper.title} v{ev.source_version.version_label}
                       </span>
                     </div>
-                    {ev.quote && <p className="mt-1 italic text-gray-700">"{ev.quote}"</p>}
-                    <p className="text-xs text-gray-400 mt-1">
+                    {ev.quote && <p className="mt-1 italic text-ink">"{ev.quote}"</p>}
+                    <p className="text-xs text-ink-tertiary mt-1">
                       {JSON.stringify(ev.locator)}
                     </p>
                   </div>
@@ -260,8 +260,8 @@ export default function ResearchState() {
                     >
                       {DIFF_LABELS[d.diff_kind] ?? d.diff_kind}
                     </span>
-                    <span className="text-gray-600">{d.event}</span>
-                    <span className="text-gray-400 ml-auto text-xs">
+                    <span className="text-ink-secondary">{d.event}</span>
+                    <span className="text-ink-tertiary ml-auto text-xs">
                       {d.occurred_at?.slice(0, 19)}
                     </span>
                   </div>
