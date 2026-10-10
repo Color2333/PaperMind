@@ -848,6 +848,10 @@ export interface DiffEntry {
 }
 
 export const researchApi = {
+  list: (limit = 20) =>
+    get<{ items: { id: string; title: string; status: string; claims: number; created_at: string }[] }>(
+      `/research/questions?limit=${limit}`,
+    ),
   getQuestion: (id: string) =>
     get<{
       id: string; title: string; question: string; status: string;
