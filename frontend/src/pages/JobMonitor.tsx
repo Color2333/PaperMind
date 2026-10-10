@@ -72,14 +72,14 @@ export default function JobMonitor() {
               className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700"
               onClick={doResume}
             >
-              Resume Queue
+              恢复队列
             </button>
           ) : (
             <button
-              className="bg-yellow-600 text-white px-3 py-1.5 rounded text-sm hover:bg-yellow-700"
+              className="bg-warning text-white px-3 py-1.5 rounded-lg text-sm hover:bg-warning/85 transition-colors"
               onClick={doPause}
             >
-              Pause Queue
+              暂停队列
             </button>
           )}
           <button
@@ -141,7 +141,7 @@ export default function JobMonitor() {
               <div className="flex items-center gap-2 mt-1">
                 <div className="flex-1 bg-active rounded-full h-1.5">
                   <div
-                    className="bg-blue-500 rounded-full h-1.5"
+                    className="bg-primary rounded-full h-1.5"
                     style={{
                       width:
                         j.progress?.total
@@ -156,7 +156,7 @@ export default function JobMonitor() {
               </div>
               <div className="flex gap-2 mt-2">
                 <button
-                  className="text-red-600 text-xs hover:underline"
+                  className="text-error text-xs hover:underline"
                   onClick={(e) => {
                     e.stopPropagation();
                     doCancel(j.id);
@@ -165,7 +165,7 @@ export default function JobMonitor() {
                   Cancel
                 </button>
                 <button
-                  className="text-blue-600 text-xs hover:underline"
+                  className="text-primary text-xs hover:underline"
                   onClick={(e) => {
                     e.stopPropagation();
                     doRetry(j.id);

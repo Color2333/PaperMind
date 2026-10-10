@@ -85,7 +85,7 @@ export default function GlobalTaskBar() {
         className={cn(
           "fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full px-4 py-2.5 shadow-xl transition-all duration-300",
           hasRunning
-            ? "bg-gradient-to-r from-primary to-info text-white"
+            ? "gradient-primary text-white"
             : "bg-surface border border-border text-ink hover:bg-hover",
           expanded ? "rounded-br-none" : ""
         )}
@@ -116,7 +116,7 @@ export default function GlobalTaskBar() {
           "bg-surface border border-border shadow-2xl",
           "flex flex-col"
         )}>
-          <div className="flex items-center justify-between border-b border-border px-4 py-3 bg-gradient-to-r from-primary/5 to-info/5">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3 bg-gradient-to-r from-primary/5 to-primary/10">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-ink">任务中心</span>
               {runningCount > 0 && (
