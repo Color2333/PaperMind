@@ -66,7 +66,7 @@ func (s *CoreStore) applyTerminalOnlyResult(taskID, executorID, leaseToken strin
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 	if err := finalizeTask(tx, taskID, result); err != nil {
@@ -79,14 +79,23 @@ func (s *CoreStore) applyTerminalOnlyResult(taskID, executorID, leaseToken strin
 }
 
 // fencingGuard 在事务内校验 lease 持有者 + attempt 匹配；返回 attempt fencing token。
-func fencingGuard(tx *sql.Tx, taskID, executorID, leaseToken string) (int, error) {
+func fencingGuard(tx *sql.Tx, taskID, executorID, leaseToken string, isPG bool) (int, error) {
 	var status string
 	var attemptCount int
 	var leaseTokenDB sql.NullString
+	var expiredFlag bool
+	// V09：过期判定下推 SQL（NULL 字符串跨格式比较不可靠——lib/pq 返回 RFC3339
+	// 而 nowParam 是空格分隔，字符串序永不相交，过期检查在 PG 上静默失效）
+	expiredExpr := "(lease_expires_at IS NOT NULL AND lease_expires_at < datetime('now'))"
+	if isPG {
+		expiredExpr = "(lease_expires_at IS NOT NULL AND lease_expires_at < NOW())"
+	}
 	err := tx.QueryRow(
-		`SELECT status, attempt_count, lease_token FROM core_tasks WHERE id=$1`,
+		`SELECT status, attempt_count, lease_token,
+		        (CASE WHEN `+expiredExpr+` THEN 1 ELSE 0 END) AS expired
+		 FROM core_tasks WHERE id=$1`,
 		taskID,
-	).Scan(&status, &attemptCount, &leaseTokenDB)
+	).Scan(&status, &attemptCount, &leaseTokenDB, &expiredFlag)
 	if err == sql.ErrNoRows {
 		return 0, fmt.Errorf("task %s not found", taskID)
 	}
@@ -99,13 +108,8 @@ func fencingGuard(tx *sql.Tx, taskID, executorID, leaseToken string) (int, error
 	if !leaseTokenDB.Valid || leaseTokenDB.String != leaseToken {
 		return 0, fmt.Errorf("task %s lease token 不匹配（迟到写入被拒绝）", taskID)
 	}
-	// 第四轮 P1：校验 lease 未过期（此前注释声称校验但未读取）——Reconciler
-	// 扫描前，过期 Attempt 不再能提交
-	var expiresAt sql.NullString
-	if err := tx.QueryRow(`SELECT lease_expires_at FROM core_tasks WHERE id=$1`, taskID).Scan(&expiresAt); err == nil {
-		if !expiresAt.Valid || expiresAt.String == "" || expiresAt.String <= nowParam() {
-			return 0, fmt.Errorf("task %s lease 已过期（迟到提交被拒绝）", taskID)
-		}
+	if expiredFlag {
+		return 0, fmt.Errorf("task %s lease 已过期（迟到提交被拒绝）", taskID)
 	}
 	var attemptExecutor string
 	err = tx.QueryRow(
@@ -182,7 +186,7 @@ func (s *CoreStore) applySkimResult(taskID, executorID, leaseToken string, resul
 	defer tx.Rollback()
 
 	// ---- 1. fencing 校验（行锁内）----
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -298,7 +302,7 @@ func (s *CoreStore) applyDeepReadResult(taskID, executorID, leaseToken string, r
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -386,7 +390,7 @@ func (s *CoreStore) applyEmbedResult(taskID, executorID, leaseToken string, resu
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -436,7 +440,7 @@ func (s *CoreStore) applyIngestPapersResult(taskID, executorID, leaseToken strin
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -532,7 +536,7 @@ func (s *CoreStore) applyCsCategoriesSyncResult(taskID, executorID, leaseToken s
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -663,7 +667,7 @@ func (s *CoreStore) applyCsFeedFetchResult(taskID, executorID, leaseToken string
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -771,7 +775,7 @@ func (s *CoreStore) applySaveGeneratedContentResult(taskID, executorID, leaseTok
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -861,7 +865,7 @@ func (s *CoreStore) applyCitationEdgesResult(taskID, executorID, leaseToken stri
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -891,9 +895,9 @@ func (s *CoreStore) applyCitationEdgesResult(taskID, executorID, leaseToken stri
 		).Scan(&existing)
 		if err == sql.ErrNoRows {
 			if _, err = tx.Exec(
-				`INSERT INTO citations (id, source_paper_id, target_paper_id, context, created_at)
-				 VALUES ($1, $2, $3, $4, $5)`,
-				newCoreID(), srcID, dstID, nullIfEmpty(context), nowParam(),
+				`INSERT INTO citations (id, source_paper_id, target_paper_id, context)
+				 VALUES ($1, $2, $3, $4)`,
+				newCoreID(), srcID, dstID, nullIfEmpty(context),
 			); err != nil {
 				return "", fmt.Errorf("citations insert: %w", err)
 			}
@@ -935,7 +939,7 @@ func (s *CoreStore) applyFigureAnalysesResult(taskID, executorID, leaseToken str
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -1000,7 +1004,7 @@ func (s *CoreStore) applyPaperTranslationResult(taskID, executorID, leaseToken s
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -1060,7 +1064,7 @@ func (s *CoreStore) applyReferenceImportResult(taskID, executorID, leaseToken st
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -1296,7 +1300,7 @@ func (s *CoreStore) applyUpsertPaperResult(taskID, executorID, leaseToken string
 	}
 	defer tx.Rollback()
 
-	attemptCount, err := fencingGuard(tx, taskID, executorID, leaseToken)
+	attemptCount, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg())
 	if err != nil {
 		return "", err
 	}
@@ -1397,7 +1401,7 @@ func (s *CoreStore) applyDownloadSourceResult(taskID, executorID, leaseToken str
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -1442,7 +1446,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 	}
 	defer tx.Rollback()
 
-	if _, err := fencingGuard(tx, taskID, executorID, leaseToken); err != nil {
+	if _, err := fencingGuard(tx, taskID, executorID, leaseToken, s.pg()); err != nil {
 		return "", err
 	}
 
@@ -1455,8 +1459,8 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		}
 	}
 	if _, err = tx.Exec(
-		`INSERT INTO research_runs (id, kind, trigger, paper_ids, model_policy, status, started_at)
-		 VALUES ($1, 'claim_extraction', 'api', $2, $3, 'succeeded', $4)`,
+		`INSERT INTO research_runs (id, kind, trigger, paper_ids, model_policy, status, started_at, cost_refs, artifact_refs)
+		 VALUES ($1, 'claim_extraction', 'api', $2, $3, 'succeeded', $4, '{}'::json, '{}'::json)`,
 		runID, mustJSON([]string{paperID}), modelPolicy, nowParam(),
 	); err != nil {
 		return "", fmt.Errorf("research_runs insert: %w", err)
@@ -1564,11 +1568,15 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		// Evidence（quote+locator 存在时创建，fingerprint 去重）
 		if quote != "" {
 			fingerprint := evidenceFingerprint(claimID, svID, "text_passage", locator, quote)
+			// R12/V12：locator 生产列为 NOT NULL json——空值落 '{}'
+			if strings.TrimSpace(locator) == "" {
+				locator = "{}"
+			}
 			evID := newCoreID()
 			if _, err = tx.Exec(
-				`INSERT INTO evidence (id, claim_id, source_version_id, kind, stance, locator, quote, fingerprint, run_id, created_at)
-				 VALUES ($1, $2, $3, 'text_passage', 'supports', $4, $5, $6, $7, $8)`,
-				evID, claimID, svID, locator, quote, fingerprint, runID, nowParam(),
+				`INSERT INTO evidence (id, claim_id, source_version_id, kind, stance, locator, quote, extracted_by, fingerprint, run_id, created_at)
+				 VALUES ($1, $2, $3, 'text_passage', 'supports', $4, $5, 'papermind', $6, $7, $8, $9)`,
+				evID, claimID, svID, locator, quote, "papermind", fingerprint, runID, nowParam(),
 			); err != nil {
 				return "", fmt.Errorf("evidence insert: %w", err)
 			}
