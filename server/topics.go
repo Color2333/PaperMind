@@ -27,9 +27,9 @@ func (s *Server) handleListTopics(w http.ResponseWriter, r *http.Request) {
 		`SELECT t.id, t.name, t.query, t.enabled, t.max_results_per_run, t.retry_limit,
 			COALESCE(t.schedule_frequency,'daily'), COALESCE(t.schedule_time_utc,21),
 			COALESCE(t.enable_date_filter,false), COALESCE(t.date_filter_days,7),
-			TO_CHAR(t.last_run_at, 'YYYY-MM-DD"T"HH24:MI:SSOF'), COALESCE(t.last_error,''),
+			TO_CHAR(t.last_run_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), COALESCE(t.last_error,''),
 			(SELECT COUNT(*) FROM paper_topics pt WHERE pt.topic_id = t.id) AS paper_count,
-			(SELECT MAX(ca.created_at)::text FROM collection_actions ca WHERE ca.topic_id = t.id) AS last_action_at,
+			(SELECT COALESCE(TO_CHAR(MAX(ca.created_at) AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),'') FROM collection_actions ca WHERE ca.topic_id = t.id) AS last_action_at,
 			(SELECT COALESCE(MAX(ca.paper_count),0) FROM collection_actions ca WHERE ca.topic_id = t.id) AS last_run_count
 		 FROM topic_subscriptions t WHERE ` + where + ` ORDER BY t.created_at`)
 	if err != nil {
