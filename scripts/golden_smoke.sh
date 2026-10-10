@@ -101,6 +101,7 @@ check "pipelines embed" POST "/pipelines/embed/$PID" "" "200,404,422,500"
 check "rag ask" POST /rag/ask '{"question":"multi-agent"}' "200,500"
 check "translate selection" POST /translate/selection '{"text":"Hello world","target_lang":"zh"}' "200,500"
 check "writing templates" GET /writing/templates
+check "ai explain" POST "/papers/$PID/ai/explain" '{"text":"attention mechanism","action":"explain"}' "200,500"
 check "ingest references" POST /ingest/references '{"source_paper_id":"test","entries":[]}' "200,422,500"
 check "graph auto-link" POST /graph/auto-link '[]' "200,422"
 
