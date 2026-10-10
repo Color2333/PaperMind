@@ -9,10 +9,15 @@ PASS=0; FAIL=0; FAILED_LIST=""
 
 code() { # method path [json_body]
   local m="$1" p="$2" b="${3:-}"
+  # LLM 端点生成耗时 10-120s，放宽超时
+  local t=30
+  case "$p" in
+    *ai/explain*|*suggest-channels*|*suggest-keywords*|*rag/ask*|*research-gaps*|*evolution*|*survey*) t=150 ;;
+  esac
   if [ -n "$b" ]; then
-    curl -sk -o /dev/null -w '%{http_code}' -X "$m" "$BASE/api$p" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$b" --max-time 30
+    curl -sk -o /dev/null -w '%{http_code}' -X "$m" "$BASE/api$p" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$b" --max-time "$t"
   else
-    curl -sk -o /dev/null -w '%{http_code}' -X "$m" "$BASE/api$p" -H "Authorization: Bearer $TOKEN" --max-time 30
+    curl -sk -o /dev/null -w '%{http_code}' -X "$m" "$BASE/api$p" -H "Authorization: Bearer $TOKEN" --max-time "$t"
   fi
 }
 
