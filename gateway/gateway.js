@@ -75,7 +75,9 @@ function buildModel(cfg, modelId) {
 		baseUrl: entry.baseUrl || cfg.providerCfg?.baseUrl,
 		provider: cfg.defaultProvider,
 		reasoning: false,
-		input: ["text"],
+		// V08：声明图片输入——否则 pi-ai 把图片块替换为 "(image omitted)"，
+		// 图表解读/视觉分析静默降级（skim/deep 现代供应商模型均支持视觉）
+		input: ["text", "image"],
 		// pi-ai 1.1.0 calculateCost 无兜底地读 model.cost.tiers——自定义 provider
 		// 模型不在其定价目录里，必须带零成本形状（网关不定价，成本由 Python 侧
 		// prompt_traces 按自身费率记录）
