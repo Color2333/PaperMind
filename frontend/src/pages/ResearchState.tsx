@@ -42,6 +42,20 @@ const DIFF_LABELS: Record<string, string> = {
 
 export default function ResearchState() {
   const [questionId, setQuestionId] = useState("");
+  const [recent, setRecent] = useState<
+    { id: string; title: string; status: string; claims: number; created_at: string }[]
+  >([]);
+
+  // 最近研究问题 + ?id= 直载
+  useEffect(() => {
+    researchApi.list(10).then((r) => setRecent(r.items ?? [])).catch(() => {});
+    const fromUrl = new URLSearchParams(window.location.search).get("id");
+    if (fromUrl) {
+      setQuestionId(fromUrl);
+      loadQuestion(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [question, setQuestion] = useState<QuestionInfo | null>(null);
   const [claims, setClaims] = useState<ClaimItem[]>([]);
   const [selectedClaim, setSelectedClaim] = useState<ClaimItem | null>(null);
@@ -149,6 +163,37 @@ export default function ResearchState() {
       </div>
 
       {error && <div className="text-error bg-error-light rounded-lg px-4 py-3 text-sm">{error}</div>}
+
+      {/* 最近研究问题 */}
+      {!question && (
+        <div className="card-refined p-4">
+          <p className="text-ink mb-3 text-sm font-semibold">最近研究问题</p>
+          {recent.length === 0 ? (
+            <div className="text-ink-tertiary py-6 text-center text-sm">
+              库中暂无研究问题。可在 Agent 对话中使用 seed 研究工具创建，或输入 ID 查询。
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {recent.map((q) => (
+                <button
+                  key={q.id}
+                  onClick={() => {
+                    setQuestionId(q.id);
+                    loadQuestion(q.id);
+                  }}
+                  className="hover:border-primary/40 hover:bg-hover flex w-full items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors"
+                >
+                  <span className="bg-primary-light text-primary shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium">
+                    {q.claims} 主张
+                  </span>
+                  <span className="text-ink min-w-0 flex-1 truncate text-sm">{q.title}</span>
+                  <span className="text-ink-tertiary shrink-0 text-[10px]">{q.status}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {question && (
         <>

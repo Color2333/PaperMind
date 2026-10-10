@@ -310,3 +310,29 @@ func derefStrPtr(sp **string) any {
 	}
 	return **sp
 }
+
+// handleListResearchQuestions GET /research/questions —— 最近研究问题列表。
+func (s *Server) handleListResearchQuestions(w http.ResponseWriter, r *http.Request) {
+	limit := queryInt(r, "limit", 20)
+	rows, err := s.db.Query(
+		`SELECT q.id, COALESCE(q.title,''), q.status, TO_CHAR(q.created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		        (SELECT COUNT(*) FROM claims c WHERE c.research_question_id = q.id) AS claims
+		 FROM research_questions q ORDER BY q.created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, title, status, createdAt string
+		var claims int
+		if rows.Scan(&id, &title, &status, &createdAt, &claims) == nil {
+			items = append(items, map[string]any{
+				"id": id, "title": title, "status": status,
+				"claims": claims, "created_at": createdAt,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+}

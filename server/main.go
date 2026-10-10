@@ -77,6 +77,7 @@ func main() {
 	mux.HandleFunc("POST /papers/{paper_id}/tags/batch", s.requireAuth(s.handleBatchPaperTags))
 
 	// ---- Phase 1：research 读面 5 端点 ----
+	mux.HandleFunc("GET /research/questions", s.requireAuth(s.handleListResearchQuestions))
 	mux.HandleFunc("GET /research/questions/{question_id}", s.requireAuth(s.handleResearchQuestion))
 	mux.HandleFunc("GET /research/questions/{question_id}/claims", s.requireAuth(s.handleListClaims))
 	mux.HandleFunc("GET /research/claims/{claim_id}/evidence", s.requireAuth(s.handleClaimEvidence))
