@@ -494,10 +494,12 @@ func HandleExtractClaims(ctx context.Context, env *HandlerEnv, task *Task) (map[
 				"quote":         stringOf(m["quote"]),
 				"kind":          "text_passage",
 			}
-			if cert := stringOf(m["certainty"]); cert == "tentative" || cert == "supported" {
+			// 生产 PG claim_certainty 枚举
+			if cert := stringOf(m["certainty"]); cert == "established" || cert == "conditional" ||
+				cert == "conflicted" || cert == "unknown" {
 				norm["certainty"] = cert
 			} else {
-				norm["certainty"] = "tentative"
+				norm["certainty"] = "insufficient_evidence"
 			}
 			items = append(items, norm)
 		}
@@ -524,9 +526,9 @@ func HandleExtractClaims(ctx context.Context, env *HandlerEnv, task *Task) (map[
 func buildClaimsPrompt(title, text string) string {
 	return "你是研究助理。请从以下论文文本中抽取最多 6 条可验证的核心判断（claims）。" +
 		"输出严格 JSON：\n" +
-		`{"claims":[{"statement":"英文判断句","statement_zh":"中文表述","certainty":"tentative|supported","quote":"原文逐字摘录","kind":"text_passage"}]}` + "\n" +
+		`{"claims":[{"statement":"英文判断句","statement_zh":"中文表述","certainty":"established|conditional|conflicted|insufficient_evidence|unknown","quote":"原文逐字摘录","kind":"text_passage"}]}` + "\n" +
 		"要求：statement 必须是论文明确支持的可检验判断；quote 必须是文本中逐字出现的原句（用于定位验证）；" +
-		"certainty 只能是 tentative 或 supported。\n" +
+		"certainty 只能是 established、conditional、conflicted、insufficient_evidence 或 unknown。\n" +
 		fmt.Sprintf("论文标题: %s\n文本: %s\n", title, truncateStr(text, 6000))
 }
 
