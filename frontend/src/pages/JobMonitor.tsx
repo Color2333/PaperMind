@@ -130,7 +130,7 @@ export default function JobMonitor() {
                         : "bg-orange-100 text-orange-700"
                     }`}
                   >
-                    {(j as any).authority === "go_core" ? "Go" : "Py"}
+                    {(j as any).authority === "go_core" ? "Go" : "存档"}
                   </span>
                 )}
                 <span className="text-xs text-gray-400 ml-auto">{j.id}</span>
