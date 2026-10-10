@@ -1,0 +1,389 @@
+{
+  "meta": {
+    "port": 8010,
+    "rounds": 10,
+    "confirm_rounds": [
+      3,
+      6,
+      9
+    ]
+  },
+  "scenario_a": {
+    "v1": {
+      "conversation_id": "1637f790-a389-4f36-98aa-9e143885c8a3",
+      "rounds": [
+        {
+          "round": 1,
+          "ttft": 2.4018136660452,
+          "e2e": 2.767772000050172,
+          "tools": 0
+        },
+        {
+          "round": 2,
+          "ttft": 2.47390041698236,
+          "e2e": 2.711828291998245,
+          "tools": 0
+        },
+        {
+          "round": 3,
+          "ttft": 2.9220507909776643,
+          "e2e": 3.1877369579742663,
+          "tools": 0
+        },
+        {
+          "round": 4,
+          "ttft": 2.1809585420414805,
+          "e2e": 2.471492708020378,
+          "tools": 0
+        },
+        {
+          "round": 5,
+          "ttft": 2.2961385829839855,
+          "e2e": 2.5308422920061275,
+          "tools": 0
+        },
+        {
+          "round": 6,
+          "ttft": 7.423461915983353,
+          "e2e": 7.713431915966794,
+          "tools": 0
+        },
+        {
+          "round": 7,
+          "ttft": 2.904719208017923,
+          "e2e": 3.1492603750084527,
+          "tools": 0
+        },
+        {
+          "round": 8,
+          "ttft": 1.1259079999872483,
+          "e2e": 1.3386068749823608,
+          "tools": 0
+        },
+        {
+          "round": 9,
+          "ttft": 3.7313514999696054,
+          "e2e": 3.9223812500131316,
+          "tools": 0
+        },
+        {
+          "round": 10,
+          "ttft": 1.010800542018842,
+          "e2e": 1.2687780420528725,
+          "tools": 0
+        }
+      ]
+    },
+    "v2": {
+      "conversation_id": "419a6d3e-88c4-469c-8bf9-aaa03dd799dc",
+      "rounds": [
+        {
+          "round": 1,
+          "ttft": 2.2245851670159027,
+          "e2e": 2.6234712500008754,
+          "tools": 0
+        },
+        {
+          "round": 2,
+          "ttft": 2.642457000038121,
+          "e2e": 2.9748362920363434,
+          "tools": 0
+        },
+        {
+          "round": 3,
+          "ttft": 2.5241709579713643,
+          "e2e": 4.095833415980451,
+          "tools": 0
+        },
+        {
+          "round": 4,
+          "ttft": 1.400473250017967,
+          "e2e": 1.671949541021604,
+          "tools": 0
+        },
+        {
+          "round": 5,
+          "ttft": 1.8753184580127709,
+          "e2e": 2.125364541017916,
+          "tools": 0
+        },
+        {
+          "round": 6,
+          "ttft": 2.2454150000121444,
+          "e2e": 2.525912375014741,
+          "tools": 0
+        },
+        {
+          "round": 7,
+          "ttft": 2.9294890420278534,
+          "e2e": 3.2137596670072526,
+          "tools": 0
+        },
+        {
+          "round": 8,
+          "ttft": 5.062698042020202,
+          "e2e": 5.430085457977839,
+          "tools": 0
+        },
+        {
+          "round": 9,
+          "ttft": 4.580970417009667,
+          "e2e": 4.8434485829784535,
+          "tools": 0
+        },
+        {
+          "round": 10,
+          "ttft": 1.5492298330063932,
+          "e2e": 1.7937244579661638,
+          "tools": 0
+        }
+      ]
+    }
+  },
+  "scenario_b": {
+    "v1": {
+      "conversation_id": "4b905fc6-2efe-4661-bc4f-eff8488eeb2d",
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "chat",
+          "ttft": 1.6364063329529017,
+          "e2e": 2.0799893329967745,
+          "tools": 0
+        },
+        {
+          "round": 2,
+          "kind": "chat",
+          "ttft": 1.4594426670228131,
+          "e2e": 1.64233325002715,
+          "tools": 0
+        },
+        {
+          "round": 3,
+          "kind": "confirm",
+          "e2e_trigger": null,
+          "e2e_confirm": 7.994094584020786,
+          "e2e_total": 7.994094584020786,
+          "action_id": "act_cb526e5cfcf0"
+        },
+        {
+          "round": 4,
+          "kind": "chat",
+          "ttft": 15.222034415986855,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 5,
+          "kind": "chat",
+          "ttft": 2.0101505829952657,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 6,
+          "kind": "confirm",
+          "e2e_trigger": null,
+          "e2e_confirm": 3.8107287090388127,
+          "e2e_total": 3.8107287090388127,
+          "action_id": "act_74d19a6f956e"
+        },
+        {
+          "round": 7,
+          "kind": "chat",
+          "ttft": 8.390591208008118,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 8,
+          "kind": "chat",
+          "ttft": 4.68907208298333,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 9,
+          "kind": "confirm",
+          "e2e_trigger": null,
+          "e2e_confirm": 1.7330587499891408,
+          "e2e_total": 1.7330587499891408,
+          "action_id": "act_a0a4e8a982c9"
+        },
+        {
+          "round": 10,
+          "kind": "chat",
+          "ttft": 1.310637290996965,
+          "e2e": null,
+          "tools": 0
+        }
+      ]
+    },
+    "v2": {
+      "conversation_id": "fc674236-2d6c-46f6-9239-5aa63db0747b",
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "chat",
+          "ttft": 2.6034820830100216,
+          "e2e": 2.8759770420147106,
+          "tools": 0
+        },
+        {
+          "round": 2,
+          "kind": "chat",
+          "ttft": 1.1268966249772348,
+          "e2e": 1.440718707977794,
+          "tools": 0
+        },
+        {
+          "round": 3,
+          "kind": "confirm",
+          "e2e_trigger": 3.3048010420170613,
+          "e2e_confirm": 4.475161959009711,
+          "e2e_total": 7.779963001026772,
+          "action_id": "act_3d78a3e9_72750bd5"
+        },
+        {
+          "round": 4,
+          "kind": "chat",
+          "ttft": null,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 5,
+          "kind": "chat",
+          "ttft": null,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 6,
+          "kind": "confirm_failed",
+          "ttft": null,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 7,
+          "kind": "chat",
+          "ttft": null,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 8,
+          "kind": "chat",
+          "ttft": null,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 9,
+          "kind": "confirm_failed",
+          "ttft": null,
+          "e2e": null,
+          "tools": 0
+        },
+        {
+          "round": 10,
+          "kind": "chat",
+          "ttft": null,
+          "e2e": null,
+          "tools": 0
+        }
+      ]
+    }
+  },
+  "efficiency_case": {
+    "v1": {
+      "backend": "v1",
+      "total_e2e": 10.082133167015854,
+      "ttft": 1.878548500011675,
+      "tool_calls": [
+        {
+          "name": "search_papers"
+        },
+        {
+          "name": "get_system_status"
+        }
+      ],
+      "tool_call_count": 2,
+      "tool_call_sequence": [
+        "search_papers",
+        "get_system_status"
+      ],
+      "has_action_confirm": false,
+      "action_confirm_count": 0,
+      "event_type_counts": {
+        "done": 1,
+        "text_delta": 57,
+        "conversation_init": 1,
+        "tool_result": 2,
+        "tool_start": 2
+      },
+      "tokens": [
+        {
+          "input_tokens": 5045,
+          "output_tokens": 115,
+          "created_at": "2026-07-19T15:19:40.535077"
+        },
+        {
+          "input_tokens": 5376,
+          "output_tokens": 223,
+          "created_at": "2026-07-19T15:19:44.006081"
+        },
+        {
+          "input_tokens": 5719,
+          "output_tokens": 284,
+          "created_at": "2026-07-19T15:19:48.220432"
+        }
+      ]
+    },
+    "v2": {
+      "backend": "v2",
+      "total_e2e": 10.017962375015486,
+      "ttft": 8.939336500014178,
+      "tool_calls": [
+        {
+          "name": "search_papers"
+        },
+        {
+          "name": "get_system_status"
+        }
+      ],
+      "tool_call_count": 2,
+      "tool_call_sequence": [
+        "search_papers",
+        "get_system_status"
+      ],
+      "has_action_confirm": false,
+      "action_confirm_count": 0,
+      "event_type_counts": {
+        "done": 1,
+        "text_delta": 30,
+        "conversation_init": 1,
+        "tool_result": 2,
+        "tool_start": 2
+      },
+      "tokens": [
+        {
+          "input_tokens": 5045,
+          "output_tokens": 94,
+          "created_at": "2026-07-19T15:19:50.285235"
+        },
+        {
+          "input_tokens": 5329,
+          "output_tokens": 206,
+          "created_at": "2026-07-19T15:19:53.456118"
+        },
+        {
+          "input_tokens": 5628,
+          "output_tokens": 223,
+          "created_at": "2026-07-19T15:19:58.403319"
+        }
+      ]
+    }
+  }
+}
