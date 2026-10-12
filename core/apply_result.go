@@ -1601,6 +1601,21 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 
 		// Evidence（quote+locator 存在时创建，fingerprint 去重）
 		if quote != "" {
+			// V12：引用真实性硬规则——quote 逐字出现在源文本（空白归一后）；
+			// 模型伪造的引用不形成 Evidence（design① §5 硬规则）
+			normSpace := func(x string) string {
+				return strings.Join(strings.Fields(x), " ")
+			}
+			var srcText string
+			_ = tx.QueryRow(
+				`SELECT COALESCE(p.abstract,'') || ' ' || COALESCE(ar.deep_dive_md,'') || ' ' || COALESCE(ar.summary_md,'')
+				 FROM papers p LEFT JOIN analysis_reports ar ON ar.paper_id = p.id
+				 WHERE p.id = (SELECT paper_id FROM source_versions WHERE id=$1)`,
+				svID,
+			).Scan(&srcText)
+			if srcText == "" || !strings.Contains(normSpace(srcText), normSpace(quote)) {
+				continue // 引用不可核实 → 不形成证据
+			}
 			fingerprint := evidenceFingerprint(claimID, svID, "text_passage", locator, quote)
 			// R12/V12：locator 生产列为 NOT NULL json——空值落 '{}'
 			if strings.TrimSpace(locator) == "" {
