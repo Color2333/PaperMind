@@ -315,8 +315,18 @@ func HandleDeepReadPaper(ctx context.Context, env *HandlerEnv, task *Task) (map[
 	} else {
 		combined = "[TextLayer]\n" + combined
 	}
+	// V13：预算 override——当日 LLM 成本超过阈值时 deep 降级 skim（CostGuard 语义）
+	model := "deep"
+	var todayCost float64
+	_ = env.Store.DB.QueryRow(
+		`SELECT COALESCE(SUM(total_cost_usd),0) FROM prompt_traces
+		 WHERE created_at >= date_trunc('day', NOW())`).Scan(&todayCost)
+	if budget := budgetUSD(); todayCost >= budget {
+		model = "skim"
+		log.Printf("[deep_read] 日成本 %.2f≥%.2f —— 降级 skim", todayCost, budget)
+	}
 	prompt := promptDeep(paper.Title, combined)
-	parsed, res, err := env.Gateway.CompleteJSON(ctx, "deep", prompt)
+	parsed, res, err := env.Gateway.CompleteJSON(ctx, model, prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +344,17 @@ func HandleDeepReadPaper(ctx context.Context, env *HandlerEnv, task *Task) (map[
 			"deep": deep, "trace": trace,
 		},
 	}, nil
+}
+
+// budgetUSD 日预算阈值（环境变量 DAILY_COST_BUDGET_USD，默认 5.0）。
+func budgetUSD() float64 {
+	v := 5.0
+	if s := os.Getenv("DAILY_COST_BUDGET_USD"); s != "" {
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			v = f
+		}
+	}
+	return v
 }
 
 // buildDeepStructured LLM 输出 → DeepDiveReport 形态。

@@ -1466,12 +1466,15 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		return "", fmt.Errorf("research_runs insert: %w", err)
 	}
 
-	// ---- SourceVersion 幂等回补（get_current → 无则 create v1）----
+	// ---- SourceVersion 幂等回补（get_current → 无则 create v1；V16 内容变化开新版本）----
 	svID := ""
+	var currentHash string
 	err = tx.QueryRow(
-		`SELECT id FROM source_versions WHERE paper_id=$1 AND is_current=true LIMIT 1`, paperID,
-	).Scan(&svID)
-	if err == sql.ErrNoRows {
+		`SELECT id, COALESCE(content_hash,'') FROM source_versions WHERE paper_id=$1 AND is_current=true LIMIT 1`, paperID,
+	).Scan(&svID, &currentHash)
+	switch {
+	case err == sql.ErrNoRows:
+		// 无当前版本——创建 v1
 		svID = newCoreID()
 		// identity_hash: sha256(json({abstract, arxiv_id, title}, sort_keys))
 		var abstract, arxivID, title string
@@ -1495,7 +1498,7 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		}
 		if _, err = tx.Exec(
 			`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, fetched_at, is_current, created_at)
-			 VALUES ($1, $2, $3, $4, 'ingest', $5, 1, $6)`,
+			 VALUES ($1, $2, $3, $4, 'ingest', $5, true, $6)`,
 			svID, paperID, maxLabel+1, contentHash, nowParam(), nowParam(),
 		); err != nil {
 			return "", fmt.Errorf("source_versions insert: %w", err)
@@ -1508,8 +1511,39 @@ func (s *CoreStore) applyExtractClaimsResult(taskID, executorID, leaseToken stri
 		); err != nil {
 			return "", err
 		}
-	} else if err != nil {
+	case err != nil:
 		return "", err
+	default:
+		// V16：当前版本存在但 identity_hash 变化（原文/标题更新）——开新版本，
+		// 不覆盖历史 Evidence 锚点
+		var abstract, arxivID, title string
+		_ = tx.QueryRow(
+			`SELECT abstract, arxiv_id, title FROM papers WHERE id=$1`, paperID,
+		).Scan(&abstract, &arxivID, &title)
+		identityJSON := mustJSON(map[string]string{
+			"abstract": abstract, "arxiv_id": arxivID, "title": title,
+		})
+		newHash := sha256Hex(identityJSON)
+		if newHash != currentHash {
+			newSv := newCoreID()
+			var maxLabel int
+			_ = tx.QueryRow(
+				`SELECT COALESCE(MAX(version_label), 0) FROM source_versions WHERE paper_id=$1`, paperID,
+			).Scan(&maxLabel)
+			if _, err = tx.Exec(
+				`INSERT INTO source_versions (id, paper_id, version_label, content_hash, detected_by, fetched_at, is_current, created_at)
+				 VALUES ($1, $2, $3, $4, 'ingest', $5, true, $6)`,
+				newSv, paperID, maxLabel+1, newHash, nowParam(), nowParam(),
+			); err != nil {
+				return "", fmt.Errorf("source_versions new version: %w", err)
+			}
+			if _, err = tx.Exec(
+				`UPDATE source_versions SET is_current=false WHERE paper_id=$1 AND id != $2`, paperID, newSv,
+			); err != nil {
+				return "", err
+			}
+			svID = newSv
+		}
 	}
 
 	// ---- Claims + Evidence（quote 幂等 + fingerprint SHA256）----
