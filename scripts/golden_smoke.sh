@@ -15,9 +15,9 @@ code() { # method path [json_body]
     *ai/explain*|*suggest-channels*|*suggest-keywords*|*rag/ask*|*research-gaps*|*evolution*|*survey*) t=150 ;;
   esac
   if [ -n "$b" ]; then
-    curl -sk -o /dev/null -w '%{http_code}' -X "$m" "$BASE/api$p" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$b" --max-time "$t"
+    curl -sk --resolve ${BASE#https://}:443:127.0.0.1 -o /dev/null -w '%{http_code}' -X "$m" "$BASE/api$p" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$b" --max-time "$t"
   else
-    curl -sk -o /dev/null -w '%{http_code}' -X "$m" "$BASE/api$p" -H "Authorization: Bearer $TOKEN" --max-time "$t"
+    curl -sk --resolve ${BASE#https://}:443:127.0.0.1 -o /dev/null -w '%{http_code}' -X "$m" "$BASE/api$p" -H "Authorization: Bearer $TOKEN" --max-time "$t"
   fi
 }
 
@@ -32,7 +32,7 @@ check() { # name method path [body] [allowed_codes]
 }
 
 # ---------- 认证 ----------
-TOKEN=$(curl -sk -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' -d "{\"password\":\"$PASSWORD\"}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)
+TOKEN=$(curl -sk --resolve ${BASE#https://}:443:127.0.0.1 -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' -d "{\"password\":\"$PASSWORD\"}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)
 if [ -z "$TOKEN" ]; then echo "✗ 登录失败"; exit 1; fi
 echo "== auth =="
 check "auth status" GET /auth/status
@@ -80,7 +80,7 @@ check "sensemaking sessions" GET /sensemaking/sessions
 check "research export" GET "/research/questions/00000000-0000-0000-0000-000000000000/export" "" "404,200"
 
 echo "== 动态 ID 面（取真实 ID）=="
-PID=$(curl -sk "$BASE/api/papers/latest?limit=1" -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["items"][0]["id"] if d.get("items") else "")' 2>/dev/null)
+PID=$(curl -sk --resolve ${BASE#https://}:443:127.0.0.1 "$BASE/api/papers/latest?limit=1" -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["items"][0]["id"] if d.get("items") else "")' 2>/dev/null)
 if [ -n "$PID" ]; then
   check "paper detail" GET "/papers/$PID"
   check "paper similar" GET "/papers/$PID/similar?top_k=3"
@@ -94,7 +94,7 @@ if [ -n "$PID" ]; then
 else
   echo "  (无论文可测动态面)"
 fi
-TID=$(curl -sk "$BASE/api/topics" -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json; d=json.load(sys.stdin); its=d.get("items") or d.get("topics") or []; print(its[0]["id"] if its else "")' 2>/dev/null)
+TID=$(curl -sk --resolve ${BASE#https://}:443:127.0.0.1 "$BASE/api/topics" -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json; d=json.load(sys.stdin); its=d.get("items") or d.get("topics") or []; print(its[0]["id"] if its else "")' 2>/dev/null)
 if [ -n "$TID" ]; then
   check "topic citation-network" GET "/graph/citation-network/topic/$TID"
 else
@@ -107,7 +107,7 @@ check "rag ask" POST /rag/ask '{"question":"multi-agent"}' "200,500"
 check "translate selection" POST /translate/selection '{"text":"Hello world","target_lang":"zh"}' "200,500"
 check "writing templates" GET /writing/templates
 check "ai explain" POST "/papers/$PID/ai/explain" '{"text":"attention mechanism","action":"explain"}' "200,500"
-check "ingest references" POST /ingest/references '{"source_paper_id":"test","entries":[]}' "200,422,500"
+check "ingest references" POST /ingest/references "{\"source_paper_id\":\"$PID\",\"entries\":[]}" "200,422,500"
 check "graph auto-link" POST /graph/auto-link '[]' "200,422"
 
 echo
