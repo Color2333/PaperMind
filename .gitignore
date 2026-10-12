@@ -51,9 +51,10 @@ node_modules/
 frontend/node_modules/
 frontend/dist/
 
-# Package manager
-package-lock.json
-frontend/package-lock.json
+# Package manager（pm_agent/package-lock.json 必须入库——npm ci 可复现安装，V21）
+node_modules/
+frontend/node_modules/
+frontend/dist/
 
 # Tauri / Desktop build
 src-tauri/target/
