@@ -1,0 +1,1023 @@
+{
+  "scenarios": [
+    {
+      "name": "普通对话",
+      "kind": "chat",
+      "prompt": "用一句话介绍你自己",
+      "backends": {
+        "v1": {
+          "runs": [
+            {
+              "ttft": 2.8441478749737144,
+              "e2e": 3.546868374978658,
+              "tool_roundtrips": [],
+              "conversation_id": "c4c8e1ce-addd-4073-b0a7-090a2b977b12",
+              "action_id": null
+            },
+            {
+              "ttft": 1.2075348329963163,
+              "e2e": 1.9169147910433821,
+              "tool_roundtrips": [],
+              "conversation_id": "40873af0-2138-4561-8229-b50e7172a3df",
+              "action_id": null
+            },
+            {
+              "ttft": 2.269104207982309,
+              "e2e": 2.644523750001099,
+              "tool_roundtrips": [],
+              "conversation_id": "56c5011f-ba84-4208-8dba-7264e875cd14",
+              "action_id": null
+            },
+            {
+              "ttft": 1.5118080830434337,
+              "e2e": 2.0259562080027536,
+              "tool_roundtrips": [],
+              "conversation_id": "baa282ec-06c6-43ba-9fb8-ab32f8194e0b",
+              "action_id": null
+            },
+            {
+              "ttft": 2.5534548339783214,
+              "e2e": 3.0582639589556493,
+              "tool_roundtrips": [],
+              "conversation_id": "831af666-43ae-4c79-ba0b-0042b7a3d17a",
+              "action_id": null
+            }
+          ],
+          "summary": {
+            "ttft": {
+              "mean": 2.077209966594819,
+              "p50": 2.269104207982309,
+              "p95": 2.5534548339783214,
+              "min": 1.2075348329963163,
+              "max": 2.8441478749737144,
+              "n": 5
+            },
+            "e2e": {
+              "mean": 2.6385054165963084,
+              "p50": 2.644523750001099,
+              "p95": 3.0582639589556493,
+              "min": 1.9169147910433821,
+              "max": 3.546868374978658,
+              "n": 5
+            },
+            "tool_roundtrips": {
+              "mean": null,
+              "p50": null,
+              "p95": null,
+              "min": null,
+              "max": null,
+              "n": 0
+            }
+          }
+        },
+        "v2": {
+          "runs": [
+            {
+              "ttft": 2.160825000028126,
+              "e2e": 2.614014666993171,
+              "tool_roundtrips": [],
+              "conversation_id": "b1bf84d0-6a79-4c07-a122-7f89679722f2",
+              "action_id": null
+            },
+            {
+              "ttft": 1.7949870000011288,
+              "e2e": 2.2607500000158325,
+              "tool_roundtrips": [],
+              "conversation_id": "9f309779-295e-48dd-b32d-40535239ea15",
+              "action_id": null
+            },
+            {
+              "ttft": 1.921736249991227,
+              "e2e": 2.2967847499530762,
+              "tool_roundtrips": [],
+              "conversation_id": "74ae1b61-1537-4c03-bbd5-16a53e0b25d9",
+              "action_id": null
+            },
+            {
+              "ttft": 3.868547749996651,
+              "e2e": 4.528166416974273,
+              "tool_roundtrips": [],
+              "conversation_id": "426dc299-b865-4373-bcdf-2ba4e72be1c8",
+              "action_id": null
+            },
+            {
+              "ttft": 3.040636500052642,
+              "e2e": 3.3098342080484144,
+              "tool_roundtrips": [],
+              "conversation_id": "b8a2a026-fe33-4f54-9f3b-994f87846b5d",
+              "action_id": null
+            }
+          ],
+          "summary": {
+            "ttft": {
+              "mean": 2.557346500013955,
+              "p50": 2.160825000028126,
+              "p95": 3.040636500052642,
+              "min": 1.7949870000011288,
+              "max": 3.868547749996651,
+              "n": 5
+            },
+            "e2e": {
+              "mean": 3.0019100083969534,
+              "p50": 2.614014666993171,
+              "p95": 3.3098342080484144,
+              "min": 2.2607500000158325,
+              "max": 4.528166416974273,
+              "n": 5
+            },
+            "tool_roundtrips": {
+              "mean": null,
+              "p50": null,
+              "p95": null,
+              "min": null,
+              "max": null,
+              "n": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "list_topics",
+      "kind": "chat",
+      "prompt": "调用 list_topics 工具列出所有订阅主题",
+      "backends": {
+        "v1": {
+          "runs": [
+            {
+              "ttft": 5.158850541047286,
+              "e2e": 7.5270960830384865,
+              "tool_roundtrips": [
+                {
+                  "id": "call_70f346e53f1d48c0b5e1fbd5",
+                  "name": "list_topics",
+                  "latency": 0.0016362920287065208
+                }
+              ],
+              "conversation_id": "640b9a0c-b9e8-4d70-95b0-b7c396cdffab",
+              "action_id": null
+            },
+            {
+              "ttft": 4.15682883298723,
+              "e2e": 5.978944208007306,
+              "tool_roundtrips": [
+                {
+                  "id": "call_dc32a7fcd69f44c988ff8a37",
+                  "name": "list_topics",
+                  "latency": 0.0007681249990127981
+                }
+              ],
+              "conversation_id": "4c28c7b1-349a-44eb-9ab9-491403901404",
+              "action_id": null
+            },
+            {
+              "ttft": 3.3345954170217738,
+              "e2e": 9.969730917015113,
+              "tool_roundtrips": [
+                {
+                  "id": "call_ab7f0727d2b44460a79275b1",
+                  "name": "list_topics",
+                  "latency": 0.0009090420207940042
+                }
+              ],
+              "conversation_id": "d086c650-e6d5-4498-a007-c8a7f65cc28a",
+              "action_id": null
+            },
+            {
+              "ttft": 1.4843817090149969,
+              "e2e": 4.604541499982588,
+              "tool_roundtrips": [
+                {
+                  "id": "call_129d47835b394ab6b34d9489",
+                  "name": "list_topics",
+                  "latency": 0.0039439580286853015
+                }
+              ],
+              "conversation_id": "7fc36b99-697f-46b0-93cc-6db4d02be7b7",
+              "action_id": null
+            },
+            {
+              "ttft": 3.4883729579742067,
+              "e2e": 5.464019957988057,
+              "tool_roundtrips": [
+                {
+                  "id": "call_9547fd5b0eca4cebaad42f49",
+                  "name": "list_topics",
+                  "latency": 0.0018925000331364572
+                }
+              ],
+              "conversation_id": "3050fa69-76af-4e75-9b82-8e5d9a64caa6",
+              "action_id": null
+            }
+          ],
+          "summary": {
+            "ttft": {
+              "mean": 3.5246058916090988,
+              "p50": 3.4883729579742067,
+              "p95": 4.15682883298723,
+              "min": 1.4843817090149969,
+              "max": 5.158850541047286,
+              "n": 5
+            },
+            "e2e": {
+              "mean": 6.70886653320631,
+              "p50": 5.978944208007306,
+              "p95": 7.5270960830384865,
+              "min": 4.604541499982588,
+              "max": 9.969730917015113,
+              "n": 5
+            },
+            "tool_roundtrips": {
+              "mean": 0.0018299834220670164,
+              "p50": 0.0016362920287065208,
+              "p95": 0.0018925000331364572,
+              "min": 0.0007681249990127981,
+              "max": 0.0039439580286853015,
+              "n": 5
+            }
+          }
+        },
+        "v2": {
+          "runs": [
+            {
+              "ttft": 4.435664249991532,
+              "e2e": 6.320444374985527,
+              "tool_roundtrips": [
+                {
+                  "id": "call_79d2ab64efb940b58dcb4fe7",
+                  "name": "list_topics",
+                  "latency": 0.00176062504760921
+                }
+              ],
+              "conversation_id": "221ed516-b356-4369-9fa4-8dcb137ef495",
+              "action_id": null
+            },
+            {
+              "ttft": 4.3318035419797525,
+              "e2e": 6.648665791959502,
+              "tool_roundtrips": [
+                {
+                  "id": "call_10f5c674427746c4a270bb41",
+                  "name": "list_topics",
+                  "latency": 0.0007765829795971513
+                }
+              ],
+              "conversation_id": "112b47f3-18ce-4b0c-bd1c-59d522cb4f31",
+              "action_id": null
+            },
+            {
+              "ttft": 2.571414250007365,
+              "e2e": 4.342246250016615,
+              "tool_roundtrips": [
+                {
+                  "id": "call_ef4d9064ee734f428ff05eb3",
+                  "name": "list_topics",
+                  "latency": 0.0010801669559441507
+                }
+              ],
+              "conversation_id": "fede0f79-4499-4105-9aae-3cfac509c25a",
+              "action_id": null
+            },
+            {
+              "ttft": 1.7132427499745972,
+              "e2e": 4.982586750003975,
+              "tool_roundtrips": [
+                {
+                  "id": "call_89ac44c031514969b9012d03",
+                  "name": "list_topics",
+                  "latency": 0.0011320410412736237
+                }
+              ],
+              "conversation_id": "83652a4b-924e-4e3d-babd-d741a9dcfaf4",
+              "action_id": null
+            },
+            {
+              "ttft": 2.6105700420448557,
+              "e2e": 4.360063625033945,
+              "tool_roundtrips": [
+                {
+                  "id": "call_34211ed8cfa84ab0a93084e3",
+                  "name": "list_topics",
+                  "latency": 0.0019907919922843575
+                }
+              ],
+              "conversation_id": "664c54fe-c84e-4bde-9911-852ce59cb889",
+              "action_id": null
+            }
+          ],
+          "summary": {
+            "ttft": {
+              "mean": 3.1325389667996206,
+              "p50": 2.6105700420448557,
+              "p95": 4.3318035419797525,
+              "min": 1.7132427499745972,
+              "max": 4.435664249991532,
+              "n": 5
+            },
+            "e2e": {
+              "mean": 5.3308013583999125,
+              "p50": 4.982586750003975,
+              "p95": 6.320444374985527,
+              "min": 4.342246250016615,
+              "max": 6.648665791959502,
+              "n": 5
+            },
+            "tool_roundtrips": {
+              "mean": 0.0013480416033416986,
+              "p50": 0.0011320410412736237,
+              "p95": 0.00176062504760921,
+              "min": 0.0007765829795971513,
+              "max": 0.0019907919922843575,
+              "n": 5
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "get_batch_job_status",
+      "kind": "chat",
+      "prompt": "调用 get_batch_job_status 工具查 job_id=test-bench-001 的状态",
+      "backends": {
+        "v1": {
+          "runs": [
+            {
+              "ttft": 1.3649006669875234,
+              "e2e": 5.904974417004269,
+              "tool_roundtrips": [
+                {
+                  "id": "call_8ec74a60235e402995abda4e",
+                  "name": "get_batch_job_status",
+                  "latency": 0.0010143750114366412
+                }
+              ],
+              "conversation_id": "8e29c2bc-2ff5-4083-9765-67275284c27b",
+              "action_id": null
+            },
+            {
+              "ttft": 1.2476702080457471,
+              "e2e": 3.8977658330113627,
+              "tool_roundtrips": [
+                {
+                  "id": "call_97d1ab43dff7434ab478824e",
+                  "name": "get_batch_job_status",
+                  "latency": 0.0005196660058572888
+                }
+              ],
+              "conversation_id": "64488c29-5fcd-4bde-b448-331b3223533c",
+              "action_id": null
+            },
+            {
+              "ttft": 4.896460207994096,
+              "e2e": 6.71084333298495,
+              "tool_roundtrips": [
+                {
+                  "id": "call_2b2d2f84b7464eea9a389423",
+                  "name": "get_batch_job_status",
+                  "latency": 0.000400999968405813
+                }
+              ],
+              "conversation_id": "7d8de77e-f408-44a8-93df-80c7b454e992",
+              "action_id": null
+            },
+            {
+              "ttft": 2.09401570900809,
+              "e2e": 8.905009583977517,
+              "tool_roundtrips": [
+                {
+                  "id": "call_c7199dad988c4ab681f59036",
+                  "name": "get_batch_job_status",
+                  "latency": 0.0011313330032862723
+                }
+              ],
+              "conversation_id": "5cc523df-0b28-4195-9649-7b693ede6558",
+              "action_id": null
+            },
+            {
+              "ttft": 2.2805850420263596,
+              "e2e": 3.552922500006389,
+              "tool_roundtrips": [
+                {
+                  "id": "call_5a302a3b3bdf48478b317a63",
+                  "name": "get_batch_job_status",
+                  "latency": 0.00036504195304587483
+                }
+              ],
+              "conversation_id": "b58091cb-ccb6-46a6-a761-6c3c6d5f45bb",
+              "action_id": null
+            }
+          ],
+          "summary": {
+            "ttft": {
+              "mean": 2.3767263668123633,
+              "p50": 2.09401570900809,
+              "p95": 2.2805850420263596,
+              "min": 1.2476702080457471,
+              "max": 4.896460207994096,
+              "n": 5
+            },
+            "e2e": {
+              "mean": 5.794303133396897,
+              "p50": 5.904974417004269,
+              "p95": 6.71084333298495,
+              "min": 3.552922500006389,
+              "max": 8.905009583977517,
+              "n": 5
+            },
+            "tool_roundtrips": {
+              "mean": 0.000686283188406378,
+              "p50": 0.0005196660058572888,
+              "p95": 0.0010143750114366412,
+              "min": 0.00036504195304587483,
+              "max": 0.0011313330032862723,
+              "n": 5
+            }
+          }
+        },
+        "v2": {
+          "runs": [
+            {
+              "ttft": 2.952037625014782,
+              "e2e": 3.2526438329950906,
+              "tool_roundtrips": [
+                {
+                  "id": "call_a7f13a7c77ad48abba1cd136",
+                  "name": "get_batch_job_status",
+                  "latency": 0.0005463330307975411
+                }
+              ],
+              "conversation_id": "74cb6d2c-0b3e-49e6-88fc-0cb146fe372f",
+              "action_id": null
+            },
+            {
+              "ttft": 2.792372041963972,
+              "e2e": 3.7873417499940842,
+              "tool_roundtrips": [
+                {
+                  "id": "call_6da75035d659458daf3235a5",
+                  "name": "get_batch_job_status",
+                  "latency": 0.0005870829918421805
+                }
+              ],
+              "conversation_id": "db3b5fda-90f3-4868-a411-79aa58f0b6bf",
+              "action_id": null
+            },
+            {
+              "ttft": 1.0622777079697698,
+              "e2e": 3.3735038330196403,
+              "tool_roundtrips": [
+                {
+                  "id": "call_65dfdca59a48423a83d55e9b",
+                  "name": "get_batch_job_status",
+                  "latency": 0.000528415956068784
+                }
+              ],
+              "conversation_id": "c344b824-436e-448c-aff2-0cc6035591d8",
+              "action_id": null
+            },
+            {
+              "ttft": 3.016322457988281,
+              "e2e": 3.600071042019408,
+              "tool_roundtrips": [
+                {
+                  "id": "call_d58b240158324d5babbff63c",
+                  "name": "get_batch_job_status",
+                  "latency": 0.00044775003334507346
+                }
+              ],
+              "conversation_id": "c0c7e358-d1fe-4b0b-af8d-19e303ee8740",
+              "action_id": null
+            },
+            {
+              "ttft": 2.9542191670043394,
+              "e2e": 5.511894916999154,
+              "tool_roundtrips": [
+                {
+                  "id": "call_ae06754e1ec24386bb8c2bd0",
+                  "name": "get_batch_job_status",
+                  "latency": 0.0002816659980453551
+                }
+              ],
+              "conversation_id": "3afdc132-f778-43ca-9841-10203c79c113",
+              "action_id": null
+            }
+          ],
+          "summary": {
+            "ttft": {
+              "mean": 2.5554457999882287,
+              "p50": 2.952037625014782,
+              "p95": 2.9542191670043394,
+              "min": 1.0622777079697698,
+              "max": 3.016322457988281,
+              "n": 5
+            },
+            "e2e": {
+              "mean": 3.9050910750054753,
+              "p50": 3.600071042019408,
+              "p95": 3.7873417499940842,
+              "min": 3.2526438329950906,
+              "max": 5.511894916999154,
+              "n": 5
+            },
+            "tool_roundtrips": {
+              "mean": 0.0004782496020197868,
+              "p50": 0.000528415956068784,
+              "p95": 0.0005463330307975411,
+              "min": 0.0002816659980453551,
+              "max": 0.0005870829918421805,
+              "n": 5
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "get_citation_tree",
+      "kind": "chat",
+      "prompt": "调用 get_citation_tree 工具查论文 11111111-2222-3333-4444-555555555555 的引用树",
+      "backends": {
+        "v1": {
+          "runs": [
+            {
+              "ttft": 2.4178529170458205,
+              "e2e": 8.814535707992036,
+              "tool_roundtrips": [
+                {
+                  "id": "call_65412fe226d94730954cc353",
+                  "name": "get_citation_tree",
+                  "latency": 0.003279290976934135
+                }
+              ],
+              "conversation_id": "778669b7-9e85-4f03-bb64-28618474b0da",
+              "action_id": null
+            },
+            {
+              "ttft": 1.9035742080304772,
+              "e2e": 6.858395875024144,
+              "tool_roundtrips": [
+                {
+                  "id": "call_69eb982b8eb6481fad9c563b",
+                  "name": "get_citation_tree",
+                  "latency": 0.004714749986305833
+                }
+              ],
+              "conversation_id": "471b6a4c-8498-45b0-aba0-6f13968236c5",
+              "action_id": null
+            },
+            {
+              "ttft": 1.676314459007699,
+              "e2e": 6.633283249975648,
+              "tool_roundtrips": [
+                {
+                  "id": "call_2eaac18960314365aa2a71dd",
+                  "name": "get_citation_tree",
+                  "latency": 0.002287832961883396
+                }
+              ],
+              "conversation_id": "56dca98a-e9b4-4672-992d-ac66eacf2c48",
+              "action_id": null
+            },
+            {
+              "ttft": 2.601340875029564,
+              "e2e": 16.920701000024565,
+              "tool_roundtrips": [
+                {
+                  "id": "call_d34b5eb3e3a34b28b2f83e29",
+                  "name": "get_citation_tree",
+                  "latency": 0.0026019170181825757
+                },
+                {
+                  "id": "call_c2a50af1aece4e9a976c7f49",
+                  "name": "get_paper_detail",
+                  "latency": 0.002205541997682303
+                },
+                {
+                  "id": "call_878d5207b6754b9496e0dabc",
+                  "name": "get_system_status",
+                  "latency": 0.0017654580296948552
+                }
+              ],
+              "conversation_id": "72243043-403e-4a5e-b6fa-f6df6e42336f",
+              "action_id": null
+            },
+            {
+              "ttft": 3.862859249988105,
+              "e2e": 9.223895374976564,
+              "tool_roundtrips": [
+                {
+                  "id": "call_7f7be8f769d641578107f66c",
+                  "name": "get_citation_tree",
+                  "latency": 0.0023167909821495414
+                }
+              ],
+              "conversation_id": "f61268b2-d308-42b6-8276-0de33fb56b74",
+              "action_id": null
+            }
+          ],
+          "summary": {
+            "ttft": {
+              "mean": 2.492388341820333,
+              "p50": 2.4178529170458205,
+              "p95": 2.601340875029564,
+              "min": 1.676314459007699,
+              "max": 3.862859249988105,
+              "n": 5
+            },
+            "e2e": {
+              "mean": 9.69016224159859,
+              "p50": 8.814535707992036,
+              "p95": 9.223895374976564,
+              "min": 6.633283249975648,
+              "max": 16.920701000024565,
+              "n": 5
+            },
+            "tool_roundtrips": {
+              "mean": 0.002957927451158563,
+              "p50": 0.0023167909821495414,
+              "p95": 0.003279290976934135,
+              "min": 0.0021909723485199115,
+              "max": 0.004714749986305833,
+              "n": 5
+            }
+          }
+        },
+        "v2": {
+          "runs": [
+            {
+              "ttft": 3.8218710409710184,
+              "e2e": 14.786939374986105,
+              "tool_roundtrips": [
+                {
+                  "id": "call_65a5b738b46349288fed20b5",
+                  "name": "get_citation_tree",
+                  "latency": 0.002515500003937632
+                },
+                {
+                  "id": "call_bcd30d12b26b4eb2b0d64456",
+                  "name": "get_paper_detail",
+                  "latency": 0.0013788330252282321
+                },
+                {
+                  "id": "call_54729700e31b4e25b35677ea",
+                  "name": "get_system_status",
+                  "latency": 0.001759166014380753
+                }
+              ],
+              "conversation_id": "28f9e235-d103-4dbb-8e75-4f6f7c263395",
+              "action_id": null
+            },
+            {
+              "ttft": 2.148812250001356,
+              "e2e": 11.876785208005458,
+              "tool_roundtrips": [
+                {
+                  "id": "call_e231aede67a64586bd6df958",
+                  "name": "get_citation_tree",
+                  "latency": 0.0014812920126132667
+                },
+                {
+                  "id": "call_04323c9e54804c098da89d62",
+                  "name": "get_system_status",
+                  "latency": 0.00034612498711794615
+                }
+              ],
+              "conversation_id": "2952a2da-8994-40f3-a8a5-f5e4f9a2da27",
+              "action_id": null
+            },
+            {
+              "ttft": 1.7476539579802193,
+              "e2e": 10.050969375006389,
+              "tool_roundtrips": [
+                {
+                  "id": "call_776dcbd3b0324f67aed210a0",
+                  "name": "get_citation_tree",
+                  "latency": 0.0008949170005507767
+                },
+                {
+                  "id": "call_5c3d096e44db4b6c96f9e07d",
+                  "name": "get_system_status",
+                  "latency": 0.0011299590114504099
+                }
+              ],
+              "conversation_id": "5162eff6-4fa9-401f-99a2-1def7f65a9e1",
+              "action_id": null
+            },
+            {
+              "ttft": 1.7674345839768648,
+              "e2e": 6.74709191697184,
+              "tool_roundtrips": [
+                {
+                  "id": "call_6d0ce4b7c03a4c33902dafc3",
+                  "name": "get_citation_tree",
+                  "latency": 0.001945250027347356
+                }
+              ],
+              "conversation_id": "76d0833b-f795-4f88-8c3d-9c73dd96035e",
+              "action_id": null
+            },
+            {
+              "ttft": 7.646803584008012,
+              "e2e": 9.268064500007313,
+              "tool_roundtrips": [
+                {
+                  "id": "call_3fa40173f3554a23b7d5d4c4",
+                  "name": "get_citation_tree",
+                  "latency": 0.0007960419752635062
+                }
+              ],
+              "conversation_id": "d37df65d-4178-47c0-9ace-f3a4cca1f04e",
+              "action_id": null
+            }
+          ],
+          "summary": {
+            "ttft": {
+              "mean": 3.426515083387494,
+              "p50": 2.148812250001356,
+              "p95": 3.8218710409710184,
+              "min": 1.7476539579802193,
+              "max": 7.646803584008012,
+              "n": 5
+            },
+            "e2e": {
+              "mean": 10.54597007499542,
+              "p50": 10.050969375006389,
+              "p95": 11.876785208005458,
+              "min": 6.74709191697184,
+              "max": 14.786939374986105,
+              "n": 5
+            },
+            "tool_roundtrips": {
+              "mean": 0.0013103876379318535,
+              "p50": 0.0010124380060005933,
+              "p95": 0.0018844996811822057,
+              "min": 0.0007960419752635062,
+              "max": 0.001945250027347356,
+              "n": 5
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "skim_paper confirm",
+      "kind": "confirm",
+      "prompt": "调用 skim_paper 工具粗读论文 11111111-2222-3333-4444-555555555555",
+      "backends": {
+        "v1": {
+          "runs": [
+            {
+              "e2e_trigger": null,
+              "e2e_confirm": 9.792009875003714,
+              "e2e_total": 9.792009875003714,
+              "ttft_confirm": 7.971718540997244,
+              "tool_roundtrips": [
+                {
+                  "id": "call_9b3b89ba9ab94ed588faa4d6",
+                  "name": "get_paper_detail",
+                  "latency": 0.006219625007361174
+                },
+                {
+                  "id": "call_b0d4b484097c4ece9ee759f7",
+                  "name": "get_system_status",
+                  "latency": 0.0036420419928617775
+                }
+              ],
+              "conversation_id": "f787fc0b-7f73-4bcc-a745-d728e167a8ac",
+              "action_id": "act_7fed991395b0"
+            },
+            {
+              "e2e_trigger": null,
+              "e2e_confirm": 3.8299856660305522,
+              "e2e_total": 3.8299856660305522,
+              "ttft_confirm": 1.8356408330146223,
+              "tool_roundtrips": [],
+              "conversation_id": "06b3f8b9-413c-4b80-a315-2c8bd3b6fe20",
+              "action_id": "act_b1b61e8bcf5e"
+            },
+            {
+              "e2e_trigger": null,
+              "e2e_confirm": 3.1366965000052005,
+              "e2e_total": 3.1366965000052005,
+              "ttft_confirm": 1.8872054159874097,
+              "tool_roundtrips": [],
+              "conversation_id": "35594587-1535-4b92-bba8-1dc8bbc47902",
+              "action_id": "act_ac672106f9c0"
+            },
+            {
+              "e2e_trigger": null,
+              "e2e_confirm": 9.94064291700488,
+              "e2e_total": 9.94064291700488,
+              "ttft_confirm": 8.245114792021923,
+              "tool_roundtrips": [
+                {
+                  "id": "call_f396a5ca002240dc837d4322",
+                  "name": "get_system_status",
+                  "latency": 0.004253874998539686
+                },
+                {
+                  "id": "call_082334b1d57b4eb38e45a6cb",
+                  "name": "get_paper_detail",
+                  "latency": 0.005761542008258402
+                }
+              ],
+              "conversation_id": "bb864fc0-198f-466e-8202-2021378e4079",
+              "action_id": "act_c431c8853454"
+            },
+            {
+              "e2e_trigger": null,
+              "e2e_confirm": 6.764176958997268,
+              "e2e_total": 6.764176958997268,
+              "ttft_confirm": 4.806775958975777,
+              "tool_roundtrips": [],
+              "conversation_id": "aa3df274-1ea5-46e8-bc26-9ad70bae4b85",
+              "action_id": "act_34dce4f301f5"
+            }
+          ],
+          "summary": {
+            "e2e_total": {
+              "mean": 6.692702383408323,
+              "p50": 6.764176958997268,
+              "p95": 9.792009875003714,
+              "min": 3.1366965000052005,
+              "max": 9.94064291700488,
+              "n": 5
+            },
+            "e2e_trigger": {
+              "mean": null,
+              "p50": null,
+              "p95": null,
+              "min": null,
+              "max": null,
+              "n": 0
+            },
+            "e2e_confirm": {
+              "mean": 6.692702383408323,
+              "p50": 6.764176958997268,
+              "p95": 9.792009875003714,
+              "min": 3.1366965000052005,
+              "max": 9.94064291700488,
+              "n": 5
+            },
+            "ttft_confirm": {
+              "mean": 4.949291108199395,
+              "p50": 4.806775958975777,
+              "p95": 7.971718540997244,
+              "min": 1.8356408330146223,
+              "max": 8.245114792021923,
+              "n": 5
+            }
+          }
+        },
+        "v2": {
+          "runs": [
+            {
+              "e2e_trigger": 4.2553744580363855,
+              "e2e_confirm": 9.43390725000063,
+              "e2e_total": 13.689281708037015,
+              "ttft_confirm": 2.649752583994996,
+              "tool_roundtrips": [
+                {
+                  "id": "call_d2ed094f651a43b9adba0601",
+                  "name": "skim_paper",
+                  "latency": 0.00032679096329957247
+                },
+                {
+                  "id": "call_03e8113109c04546864c23da",
+                  "name": "get_system_status",
+                  "latency": 0.0015202920185402036
+                }
+              ],
+              "conversation_id": "87748093-83dd-40d1-a8c1-a547fe69c6bf",
+              "action_id": "act_dc6e86a3_f0a6a0a8"
+            },
+            {
+              "e2e_trigger": 2.365009542030748,
+              "e2e_confirm": 4.286297667014878,
+              "e2e_total": 6.651307209045626,
+              "ttft_confirm": 2.89524204202462,
+              "tool_roundtrips": [
+                {
+                  "id": "call_217b1e4b39ab43e69b8308a0",
+                  "name": "skim_paper",
+                  "latency": 0.0014366250252351165
+                }
+              ],
+              "conversation_id": "4a8e7728-98a3-432a-9b8c-32c7b9f9867a",
+              "action_id": "act_0abc37f4_a55bf316"
+            },
+            {
+              "e2e_trigger": 5.235861708992161,
+              "e2e_confirm": 4.874384833034128,
+              "e2e_total": 10.110246542026289,
+              "ttft_confirm": 2.8639988329960033,
+              "tool_roundtrips": [
+                {
+                  "id": "call_d7499a42b3464342acaea803",
+                  "name": "skim_paper",
+                  "latency": 0.0010764580219984055
+                }
+              ],
+              "conversation_id": "17ce5b11-6344-43ed-b9c3-06c21d5e9ab8",
+              "action_id": "act_a4742243_1a91b99a"
+            },
+            {
+              "e2e_trigger": 3.1389356660074554,
+              "e2e_confirm": 15.234682417009026,
+              "e2e_total": 18.37361808301648,
+              "ttft_confirm": 3.306180250016041,
+              "tool_roundtrips": [
+                {
+                  "id": "call_04f07dec6ec64a9d97df5352",
+                  "name": "skim_paper",
+                  "latency": 0.0014937499654479325
+                },
+                {
+                  "id": "call_99f7cf919e7c403eb5efa525",
+                  "name": "get_system_status",
+                  "latency": 0.0007305830367840827
+                },
+                {
+                  "id": "call_57b52551aecf440f88bc0628",
+                  "name": "get_paper_detail",
+                  "latency": 0.0034985420061275363
+                }
+              ],
+              "conversation_id": "bac50627-dbdd-494a-8c45-3fbe3f654e3f",
+              "action_id": "act_7333c372_4762cf4a"
+            },
+            {
+              "e2e_trigger": 4.594678624998778,
+              "e2e_confirm": 13.65531333303079,
+              "e2e_total": 18.249991958029568,
+              "ttft_confirm": 7.73325637500966,
+              "tool_roundtrips": [
+                {
+                  "id": "call_6d579a7d388b4596acebb751",
+                  "name": "skim_paper",
+                  "latency": 0.0010417079902254045
+                },
+                {
+                  "id": "call_60ae10cecf0e452eba82066d",
+                  "name": "get_paper_detail",
+                  "latency": 0.0002906249719671905
+                },
+                {
+                  "id": "call_ba0a316ed908493caf47b3a0",
+                  "name": "get_system_status",
+                  "latency": 0.0020299170282669365
+                }
+              ],
+              "conversation_id": "cd284761-ca59-47c2-ba00-d98956cce549",
+              "action_id": "act_a930eb6f_271b0bf6"
+            }
+          ],
+          "summary": {
+            "e2e_total": {
+              "mean": 13.414889100030996,
+              "p50": 13.689281708037015,
+              "p95": 18.249991958029568,
+              "min": 6.651307209045626,
+              "max": 18.37361808301648,
+              "n": 5
+            },
+            "e2e_trigger": {
+              "mean": 3.9179720000131057,
+              "p50": 4.2553744580363855,
+              "p95": 4.594678624998778,
+              "min": 2.365009542030748,
+              "max": 5.235861708992161,
+              "n": 5
+            },
+            "e2e_confirm": {
+              "mean": 9.49691710001789,
+              "p50": 9.43390725000063,
+              "p95": 13.65531333303079,
+              "min": 4.286297667014878,
+              "max": 15.234682417009026,
+              "n": 5
+            },
+            "ttft_confirm": {
+              "mean": 3.889686016808264,
+              "p50": 2.89524204202462,
+              "p95": 3.306180250016041,
+              "min": 2.649752583994996,
+              "max": 7.73325637500966,
+              "n": 5
+            }
+          }
+        }
+      }
+    }
+  ],
+  "meta": {
+    "port": 8010,
+    "runs": 5,
+    "t0": "2026-07-19T14:39:24.578163+00:00",
+    "t1": "2026-07-19T14:45:43.645985+00:00"
+  },
+  "tokens": {
+    "count": 105,
+    "input_tokens_total": 555967,
+    "output_tokens_total": 18923
+  }
+}
