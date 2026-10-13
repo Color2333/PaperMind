@@ -112,6 +112,12 @@ func HasEffect(store *CoreStore, effectKey string) bool {
 		`SELECT effect_key FROM task_effects WHERE effect_key=$1`, effectKey).Scan(&one) == nil
 }
 
+// ReleaseEffect 回滚 claim（SMTP 明确拒绝=确定未发送，允许重试；
+// 超时类不确定结果不回滚——宁可少发不可重发）。
+func ReleaseEffect(store *CoreStore, effectKey string) {
+	_, _ = store.DB.Exec(`DELETE FROM task_effects WHERE effect_key=$1`, effectKey)
+}
+
 // RegisterEffect 登记副作用（唯一约束兜底并发；已存在返回 false）。
 // R13：task_effects.task_id 外键指向旧 tasks.id(32)——core_tasks 的 36 位 UUID
 // 写入必然 FK 失败且被忽略，导致邮件去重键永不登记。改为不关联旧执行体系，
