@@ -491,9 +491,15 @@ func HandleDailyBriefPublish(ctx context.Context, e *HandlerEnv, task *Task) (ma
 		effectKey := "brief_mail:" + recipient + ":" + userDateStr()
 		if HasEffect(e.Store, effectKey) {
 			log.Printf("[brief] 邮件今日已发送（账本命中），跳过: %s", recipient)
-		} else if SendEmailHTML(e.SMTP, recipient, "PaperMind Daily Brief", html) {
+		} else {
+			// V23 claim-first：先登记后发送——发送成功后崩溃/并发不会重复发；
+			// SMTP 明确拒绝（连接/认证失败=确定未发）则回滚 claim 允许重试
 			RegisterEffect(e.Store, effectKey, "mail_send", task.TaskID)
-			emailSent = true
+			if SendEmailHTML(e.SMTP, recipient, "PaperMind Daily Brief", html) {
+				emailSent = true
+			} else {
+				ReleaseEffect(e.Store, effectKey)
+			}
 		}
 	}
 	metadata := map[string]any{
@@ -531,11 +537,13 @@ func HandleSendBriefEmailEffect(ctx context.Context, e *HandlerEnv, task *Task) 
 			`SELECT COALESCE(markdown,'') FROM generated_contents WHERE id=$1`, contentID,
 		).Scan(&htmlContent)
 	}
+	// V23 claim-first：先登记后发送
+	RegisterEffect(e.Store, effectKey, "mail_send", task.TaskID)
 	if !SendEmailHTML(e.SMTP, recipient, subject, htmlContent) {
+		ReleaseEffect(e.Store, effectKey)
 		// R22：发送失败必须以 error 结束任务——nil error 会让任务假成功终结
 		return nil, fmt.Errorf("SMTP 未配置或发送失败（账本未登记，可重试）")
 	}
-	RegisterEffect(e.Store, effectKey, "mail_send", task.TaskID)
 	return map[string]any{"sent": true, "effect_key": effectKey}, nil
 }
 
